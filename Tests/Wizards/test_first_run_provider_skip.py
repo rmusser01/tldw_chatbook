@@ -641,3 +641,78 @@ async def test_enter_on_a_resumed_keyed_row_shows_its_key_field(request, monkeyp
         await pilot.pause(0.3)
         assert _key_field_on_screen(provider)
         assert app.focused is key_input(provider)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_skip_skips_while_the_field_holds_a_key_that_cannot_be_sent(
+    request, monkeypatch
+):
+    """Review v3r1, R1-02: with a smart dash in the typed key, readiness reads
+    the field as no key, so 'Skip — connect later' shows -- and clicking it
+    left the step on Provider with the non-ASCII refusal. An explicit skip
+    always advances; the unusable key is never staged."""
+    _without_openai_env(monkeypatch)
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, provider = current_step(wizard)
+        await pick_provider(pilot, provider, "openai")
+        key_input(provider).value = "sk-proj-abc–ddd0001"
+        await pilot.pause()
+        skip = provider.query_one("#setup-provider-skip", Button)
+        assert skip.display, "the unusable key reads as no key, so Skip shows"
+        await pilot.click("#setup-provider-skip")
+        await wait_for_step(pilot, wizard, STEP_MODEL)
+        assert pinned_error(wizard) == ""
+        assert wizard.query_one("SetupWizardContainer").staged_provider_draft is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_skip_the_wizard_never_ran_does_not_turn_a_later_refusal_into_a_skip(
+    request, monkeypatch
+):
+    """Review v3r1, R1-07: the one-shot flag was consumed only by commit(), so
+    a Skip pressed while an advance was already running survived to the next
+    Next -- which then skipped past a missing Azure resource URL instead of
+    asking for it."""
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        container, provider = current_step(wizard)
+        await pick_provider(pilot, provider, "azure")
+        await _type_into(pilot, key_input(provider), "azure-key-0001")
+        container._advancing = True  # an advance is already in flight
+        provider.skip_without_key()
+        container.action_next()  # fenced: nothing commits
+        container._advancing = False
+        await pilot.pause()
+        await pilot.press("ctrl+n")
+        await wait_until(pilot, lambda: pinned_error(wizard) != "")
+        assert step_id(wizard) == STEP_PROVIDER, "a stale skip skipped the URL"
+        assert "URL" in pinned_error(wizard)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_provider_change_or_a_key_edit_drops_a_pending_skip(request, monkeypatch):
+    """Review v3r1, R1-07: neither a provider change nor a key edit cleared the
+    flag, so a skip asked for one form could fire on another."""
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    _without_openai_env(monkeypatch)
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, provider = current_step(wizard)
+        await pick_provider(pilot, provider, "openai")
+        provider._skip_requested = True
+        await pick_provider(pilot, provider, "azure")
+        assert provider._skip_requested is False
+        provider._skip_requested = True
+        await _type_into(pilot, key_input(provider), "azure-key-0001")
+        assert provider._skip_requested is False

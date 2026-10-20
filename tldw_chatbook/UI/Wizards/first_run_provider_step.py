@@ -1395,6 +1395,7 @@ class ProviderStep(provider_check.ProviderCheckStep):
         endpoint_input = self.query_one("#setup-provider-endpoint", Input)
         if provider_changed:
             getattr(self.wizard, "_clear_pinned_step_error", lambda: None)()  # 34100.6
+            self._skip_requested = False  # review v3r1, R1-07: asked for another form
             self._capture_provider_ui_draft(previous_provider)
             self._note_unsaved_key(previous_provider, provider_key)  # coverage-08
             self._invalidate_provider_test(changed=False)
@@ -1501,7 +1502,13 @@ class ProviderStep(provider_check.ProviderCheckStep):
         if self.selected_provider_key and self._current_provider_readiness().ready:
             if not self.key_check_refusal():  # review F1: a rejected key can skip
                 return
-        self._skip_requested = True
+        # Review v3r1, R1-07: only when the advance will run (its own fences),
+        # or the flag outlives this press and turns a later refusal into a skip.
+        wizard = self.wizard
+        fenced = getattr(wizard, "_advancing", False) or getattr(
+            wizard, "_failure_action_running", False
+        )
+        self._skip_requested = not fenced and bool(getattr(wizard, "can_proceed", True))
 
     @on(Button.Pressed, "#setup-provider-skip")
     def _on_skip_pressed(self, event: Button.Pressed) -> None:
@@ -1570,6 +1577,7 @@ class ProviderStep(provider_check.ProviderCheckStep):
     def _on_key_changed(self, event: Input.Changed) -> None:
         if self._updating_connection_controls:
             return
+        self._skip_requested = False  # review v3r1, R1-07: a new key is a new ask
         # Review TASK-21143 follow-up (P-5): the returned-to-Provider notice
         # ("this API key was rejected") must not outlive the edit that
         # addresses it — a stale rejection over a fresh key reads as "still broken".
@@ -1595,6 +1603,9 @@ class ProviderStep(provider_check.ProviderCheckStep):
         if not provider_key:  # nothing picked: a skip (TASK-34100.6)
             return provider_skip.skip_provider_step(self)
         self.selected_provider_key = provider_key
+        if skip:  # review v3r1, R1-02: an explicit skip advances, whatever is typed
+            self.clear_key_echo()
+            return provider_skip.skip_provider_step(self)
         if refusal := (provider_skip.ask_resumed_key(self, skip)  # review G6-VR2-05, R2-06
                        or provider_key_entry.clean_key_for_commit(self)):
             return False, refusal
