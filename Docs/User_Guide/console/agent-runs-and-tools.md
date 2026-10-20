@@ -57,6 +57,10 @@ The exception is a conversation whose sub-agents are still running, or have
 sent reports nobody has read yet: it keeps the full agent surface until that
 work is picked up, so switching Full agent tools off mid-run never leaves the
 reply that collects the results unable to read or reach its sub-agents.
+A [goal run](#goal-runs) is not plain chat either: each iteration gets the
+tools its reviewed launch selected — including the trusted skill-script
+executor that runs a command-backed check — and the agent operating prompt,
+whether or not Full agent tools is on.
 A small local model whose context window cannot hold even the light set (a
 server the app has not sized yet is planned as 4,096 tokens) gets a plain
 request with no tools.
