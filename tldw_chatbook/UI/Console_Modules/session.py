@@ -845,11 +845,13 @@ class ConsoleManualReadVisit:
     navigation_generation: int
 
 
-def _request_console_repaint(screen: Any) -> None:
+def request_console_repaint(screen: Any) -> None:
     """Repaint the Console from the store: re-arm the running sync pass or start one.
 
-    TASK-35640: the shape of ``send_acknowledgement._resync``. Setting the
-    re-arm flag alone waits for a pass that may never come when none runs.
+    TASK-35640: setting the re-arm flag alone waits for a pass that may never
+    come when none runs. The one copy of this rule: a released send's
+    ``send_acknowledgement._resync`` calls it too, after forgetting the
+    transcript key its released row invalidated.
 
     Args:
         screen: The Console ``ChatScreen``.
@@ -3277,7 +3279,7 @@ class ConsoleSessionController:
             if switching:
                 # TASK-33622.7: the switch is already shown in the composer
                 # and tab strip; a sync pass repaints the rest (TASK-35640).
-                _request_console_repaint(self._screen)
+                request_console_repaint(self._screen)
             return
         if switching:
             # Task-13 review finding 2: this path activates an ALREADY-
@@ -3308,7 +3310,7 @@ class ConsoleSessionController:
                         session_id,
                     )
             if activate_if is not None and not activate_if():
-                _request_console_repaint(self._screen)  # TASK-35640
+                request_console_repaint(self._screen)  # TASK-35640
                 return
             await self._sync_native_console_chat_ui()
         if activate_if is not None and not activate_if():
@@ -3321,11 +3323,12 @@ class ConsoleSessionController:
     # Two of `ChatScreen.on_button_pressed`'s 19 branches mutated nothing
     # but this cluster's state (the chat controller's session set, the
     # per-session undo histories), so their bodies moved here whole and the
-    # screen's branches became calls. Each takes the session id the pressed
-    # button's own id encodes rather than the `Button.Pressed` event:
-    # Textual's event object stays on the screen -- it is the screen that
-    # must `event.stop()` -- and the id parsing is one `removeprefix` that
-    # belongs with the id string it mirrors.
+    # screen's branches became calls. The close handler takes the session id
+    # the pressed button's own id encodes; the tab press takes the
+    # `Button.Pressed` itself, because since TASK-35640 the record of the
+    # click behind it rides on that message. The screen still owns the
+    # `event.stop()` either way, and the id parsing is one `removeprefix`
+    # that belongs with the id string it mirrors.
 
     async def _close_console_session_tab(self, session_id: str) -> None:
         """Close one native session after one revision-pinned confirmation.
