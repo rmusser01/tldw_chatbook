@@ -6762,7 +6762,8 @@ async def test_settings_console_behavior_saves_paste_threshold(request, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_saves_max_parallel_runs(request, monkeypatch):
     app = _build_test_app()
     saved = []
 

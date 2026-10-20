@@ -5,7 +5,7 @@ Settings tasks in [PR #3176](https://github.com/rmusser01/tldw_chatbook/pull/317
 on product source rebased onto dev `8136af6f6f`. The book is reference material;
 its examples and exercises do not override repository contracts.
 
-## Next actionable correction
+## First follow-up completed
 
 **Medium priority: parallel-run programmatic events.** Chapter 7 pp. 144-145
 applies beyond the now-owned paste region. A fresh mounted private-profile
@@ -18,8 +18,14 @@ refresh; no data loss or changed production save is claimed.
 
 [TASK-35680](../../../backlog/tasks/task-35680%20-%20Keep-parallel-run-form-refreshes-out-of-Settings-drafts.md)
 owns this bounded follow-up under ADR-033. The diagnostic-only probe was kept
-out of production/tests committed by this PR; the task records its complete
-reproduction so implementation starts with a permanent red regression.
+out of production/tests committed by this PR; its recorded reproduction was
+used to create the permanent red regression for implementation.
+
+TASK-35680 is now implemented in the same PR. Permanent regressions reproduced
+both refresh and mount/re-entry origin failures, then passed after native
+prevention and stale/no-op handling. Compact/wide real-writer journeys and a
+full private-profile keyboard Save/Revert check qualify the correction; see
+[TASK-35680 qualification](./2026-10-19-task-35680-qualification.md).
 
 ## Candidates requiring evidence before more work
 

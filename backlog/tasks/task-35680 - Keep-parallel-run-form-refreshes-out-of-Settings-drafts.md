@@ -1,8 +1,9 @@
 ---
 id: TASK-35680
 title: Keep parallel-run form refreshes out of Settings drafts
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-10-19'
 labels:
   - settings
@@ -39,8 +40,33 @@ Reason: a bounded event-origin correction within the existing draft, validation 
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A mounted regression reproduces the extra max_parallel_runs draft value on the pre-fix source with an unrelated staged field and records the queued-event failure.
-- [ ] #2 Opening, value-changing refreshes, Save, confirmed Revert and category re-entry do not stage untouched parallel-run values or report a new edit after queued messages settle.
-- [ ] #3 Genuine parallel-run typing, including the first edit after refresh/re-entry, retains validation feedback, saves through the existing writer and reverts through the existing confirmation flow; unrelated staged values remain intact.
-- [ ] #4 Targeted private-profile regressions and a real keyboard Save/Revert journey qualify the correction, and an appropriate regression enters the existing PR test gate without weakening safety or performance guards.
+- [x] #1 A mounted regression reproduces the extra max_parallel_runs draft value on the pre-fix source with an unrelated staged field and records the queued-event failure.
+- [x] #2 Opening, value-changing refreshes, Save, confirmed Revert and category re-entry do not stage untouched parallel-run values or report a new edit after queued messages settle.
+- [x] #3 Genuine parallel-run typing, including the first edit after refresh/re-entry, retains validation feedback, saves through the existing writer and reverts through the existing confirmation flow; unrelated staged values remain intact.
+- [x] #4 Targeted private-profile regressions and a real keyboard Save/Revert journey qualify the correction, and an appropriate regression enters the existing PR test gate without weakening safety or performance guards.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/033-settings-commit-models-three-honestly-labeled.md; backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+Reason: correct one control's event origin within the existing draft, validation, writer and keyboard contracts; no ownership or policy change.
+
+1. Promote the prior diagnostic to a permanent mounted regression and observe the extra draft value on the current PR source, including untouched result feedback and a subsequent genuine edit.
+2. Replace only parallel-run programmatic event suppression with the existing Textual prevent(Input.Changed) idiom, removing its temporary flag. Ignore initialized/equal or stale queued values at the handler while retaining the next genuine edit and unchanged-value editing state.
+3. Qualify clean mount, validation, keyboard Save, confirmed Revert and category return under private profiles, plus the affected paste regression; add bounded coverage to the existing PR gate and tighten the measured Settings size ratchet.
+4. Run a real private-profile keyboard journey, review the final diff, update task/evidence and PR #3176, then inspect current-head CI and external feedback. Address verified findings; document any external review-service limitation without bypassing it.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Replaced the parallel-run sync flag with Textual prevent(Input.Changed). The handler now ignores stale queued values and values already represented by the current draft/config, covering initial mount and category return without suppressing the next genuine edit. Validation, screen-owned drafts and the configuration writer remain unchanged; no other control family was modified.
+
+The permanent origin regression failed on the original PR source with extra max_parallel_runs:2. A separate narrowed re-entry regression also failed specifically on the untouched parallel-run key. Final three cases pass (159.41s), including compact/wide real-writer invalid-0/Save-12/confirmed-Revert journeys and field-search/category-return checks. Existing direct-call max-parallel save plus two Settings size checks pass (58.14s); the two neighboring paste-origin cases also pass. New test lint/format, generated CSS, worker contract, Backlog and PR census guards pass. Settings' 13 inherited Ruff findings are unchanged; the screen shrank to 35,804 lines and its pin was tightened. Three regression entries were appended to the existing UI gate (336 total), preserving prior entries.
+
+Full private-profile keyboard verification used F6 to reach the action pane, s to save 12, then r and Tab/Enter to confirm discarding a later edit. The control and private TOML returned to 12 with a clean UI and zero unhandled exceptions. Independent product/test review and final test-setup recheck found no actionable issues. Detailed original failures, test-setup corrections and limits are in [qualification](../../Docs/superpowers/qa/2026-10-19-task-35680-qualification.md).
+
+ADR required: no new ADR; [ADR-033](../decisions/033-settings-commit-models-three-honestly-labeled.md) and [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md) continue to govern. Modified the screen handler/sync, permanent regression file, existing save test's private-profile marker, size ratchet and UI census. Updated PR #3176 and follow-up analysis. The unavailable Backlog CLI required direct Markdown updates verified by both repository Backlog guards. No full suite ran. Remote CI/review results are reported separately; Qodo reported exhausted workspace credits rather than code findings.
+<!-- SECTION:NOTES:END -->

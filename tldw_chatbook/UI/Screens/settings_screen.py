@@ -4078,7 +4078,6 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
-        self._syncing_console_max_parallel_runs = False
         self._syncing_console_agent_budget = False
         self._syncing_console_tool_result_display_chars = False
         self._syncing_console_sidechat = False
@@ -28828,7 +28827,11 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-console-max-parallel-runs")
     def handle_console_max_parallel_runs_changed(self, event: Input.Changed) -> None:
-        if self._syncing_console_max_parallel_runs:
+        # Mount-time initialization and stale queued values are not new edits.
+        if (
+            event.value != event.input.value
+            or event.value == str(self._console_max_parallel_runs_value())
+        ):
             return
         self._stage_console_max_parallel_runs_value(event.value)
         self._console_behavior_result = "Console behavior settings staged."
@@ -35306,13 +35309,9 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         try:
-            self._syncing_console_max_parallel_runs = True
-            try:
-                self.query_one(
-                    "#settings-console-max-parallel-runs", Input
-                ).value = str(self._console_max_parallel_runs_value())
-            finally:
-                self._syncing_console_max_parallel_runs = False
+            control = self.query_one("#settings-console-max-parallel-runs", Input)
+            with control.prevent(Input.Changed):
+                control.value = str(self._console_max_parallel_runs_value())
         except QueryError:
             pass
         for budget_field in AGENT_BUDGET_FIELDS:

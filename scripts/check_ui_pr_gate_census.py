@@ -444,7 +444,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # over S1's base of 360): S1's 36 nodes end at 399.
 # TASK-35676/35677/35678 append six bounded Settings entries after dev
 # ccf99a59c4: 405 entries before the parallel-run qualification.
-MINIMUM_FILES = 405
+# TASK-35680 appends three bounded parallel-run regressions: 408.
+MINIMUM_FILES = 408
 
 
 def read_census(path: Path) -> list[str]:
