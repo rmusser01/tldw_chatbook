@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-14 17:10
-updated_date: 2026-10-20 09:31
+updated_date: 2026-10-20 12:26
 labels:
 - settings
 - providers
@@ -128,6 +128,8 @@ Against the pre-fix code (the branch head cc3358bd88, in a scratch worktree) 14 
 - **Each receipt names its real cause.** The key branch called the shared check with `[model]`, which is also False for a model id the save cannot write, so the receipt would have blamed a good key. The join now tests the key alone with an id the check admits ("m"), then the model alone ("it is an id Settings cannot write (empty, over 120 characters, or not plain text)"), then the rest of the list. Nothing reaches the model case today: `persist_provider_settings_atomic` refuses an unsafe model before validation (that 120-vs-256 limit mismatch is the coordinator's separate task, unchanged here). Evidence: the validator case, renamed `test_the_shared_saved_list_check_and_each_refusal_the_join_names` (census node with it), gains a unit-level check of the join's reasons with a stand-in screen and only the pre-lock read patched; it fails at ebb4b25972 on its assertion (the receipt blamed the key "Llama_cpp"). Control: without the model-alone branch it fails again (the receipt says the list holds the id).
 - **The guide's example receipt** names a real model id (qwen2.5-coder-32b-instruct).
 - **Checks:** the new file 19/19; the size ratchets serially only the 7 base-red rows; Tests/CI 1015 passed, 1 skipped; preflight passes under a scratch HOME; ruff adds no finding on the touched .py files, and ruff format is clean on the new files.
+
+**Whole-S1 review** (e8f475a219..3eea655879, "With fixes"): ADR-002's amendment named only one case where the default saves alone (no single `[providers]` key matches). Its bullet now also names a served id equal to a shipped sample id (OD-1; such a pick never pends, so nothing says it joins) and, each with a receipt, a list holding an id the save cannot write, a `[providers]` key the save cannot write, and a config file that cannot be read (saved_model_list.py `join_pick`). Plan facts corrected in backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md, nothing else changed there: "Builds on" no longer says #3169 is armed in the merge queue (S1 is rebased onto dev once it merges); T1's Files bullet and New tests' "Each new census entry" now say a test file joins the census as one node per test function in the S1 block, balanced over the shard groups (positions i, i+10 and i+20 share a shard), with `MINIMUM_FILES` rising by the nodes added, not one entry per file at the tail with the floor rising by one. The review's Config reload fix (item 6) is TASK-35010's.
 
 **Files.** tldw_chatbook/UI/Settings_Modules/saved_model_list.py (new), scripts/markup_interpolation_census.tsv (one stale row deleted), tldw_chatbook/UI/Settings_Modules/providers_models_card.py, tldw_chatbook/UI/Screens/settings_screen.py, tldw_chatbook/UI/Screens/provider_model_resolution.py, tldw_chatbook/Chat/provider_setup_persistence.py, tldw_chatbook/Backup_Recovery/unsaved_editors.py; Tests/UI/test_settings_pick_joins_saved_list.py (new) and the rewritten test files above; Tests/Architecture/test_module_size_ratchet.py; scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py; Docs/User_Guide/settings.md; backlog/decisions/002-openai-compatible-model-discovery.md.
 
