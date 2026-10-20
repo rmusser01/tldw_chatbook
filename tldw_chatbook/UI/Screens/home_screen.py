@@ -538,6 +538,8 @@ class HomeScreen(BaseAppScreen):
         (or is cancelled by) the chatbook-artifact snapshot worker.
         """
         snapshot = await self._build_home_content_snapshot()
+        if snapshot is None:
+            return  # A hidden visit keeps its preceding complete snapshot.
         previous = self._home_content_snapshot
         self._home_content_snapshot = snapshot
         # Only re-sync when the snapshot actually changes what Home shows --
@@ -595,8 +597,10 @@ class HomeScreen(BaseAppScreen):
         if refreshed or pending_live_change or self._home_pending_refresh_sync:
             self._sync_home_triage_after_refresh(cache_ready=True)
 
-    async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
+    async def _build_home_content_snapshot(self) -> HomeContentSnapshot | None:
         """Assemble the T190 content snapshot from real seams, degrading quietly."""
+        if self.is_mounted and self.app.screen is not self:
+            return None
         console_ready = await asyncio.to_thread(
             self._home_console_provider_ready, background_credentials=False
         )
@@ -638,6 +642,8 @@ class HomeScreen(BaseAppScreen):
             include_keywords=False,
         )
 
+        if self.is_mounted and self.app.screen is not self:
+            return None
         merged = _home_content_records(notes_result, conversations_result, media_result)
         resume_kind, resume_id, resume_title, resume_updated_at = (
             _home_content_resume_fields(merged)
@@ -674,6 +680,10 @@ class HomeScreen(BaseAppScreen):
         as ``_refresh_home_chatbook_artifact_snapshot`` and Library's
         ``_study_count_or_none``).
         """
+        # Never cancel an issued native read. Once it has retired, hidden Home
+        # needs no further queries; the next visit starts its ordinary refresh.
+        if self.is_mounted and self.app.screen is not self:
+            return None
         if not callable(callable_obj):
             return None
         chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)

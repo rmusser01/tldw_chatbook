@@ -20,7 +20,12 @@ Home is a reusable route, and its only dispatch seam is **`on_screen_resume`** â
 Completion behind another screen records pending presentation instead of rebuilding
 the hidden dashboard (TASK-35612). The next successful cache warm replays it even
 when the snapshot/cache contents are unchanged; failed or cancelled warming leaves
-it pending. Snapshot collection, native checks and the adapter TTL are unchanged.
+it pending. The adapter TTL and native checks remain unchanged. Content builds
+stop issuing further queries once the mounted Home is hidden (TASK-35645). A
+read already issued remains awaited through its existing cleanup; a hidden
+partial build never replaces the last complete snapshot. The next visit starts
+the ordinary refresh. This suspension rule does not change the preexisting
+exclusive-worker cancellation behavior on a rapid subsequent resume.
 
 ## Dashboard build (dataflow)
 
