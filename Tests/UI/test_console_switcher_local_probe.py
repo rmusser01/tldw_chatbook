@@ -190,8 +190,8 @@ def _harness() -> SwitcherHarness:
     return app
 
 
-async def _wait(pilot, predicate) -> None:
-    for _ in range(100):
+async def _wait(pilot, predicate, tries: int = 100) -> None:
+    for _ in range(tries):
         if predicate():
             return
         await pilot.pause(0.02)
@@ -1089,6 +1089,15 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
     async with harness.run_test(size=(211, 44)) as pilot:
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
+        # The poll returns at its attach gate until the Console's attach
+        # reconcile ends; the selector only proves the summary mounted
+        # (a poll there refreshed nothing in about half the local runs).
+        await _wait(
+            pilot,
+            lambda: console._console_attach_reconciled
+            and not console._console_attach_reconcile_running,
+            tries=500,
+        )
         console._stop_console_credential_poll_timer()
         settings, _readiness = console._active_console_settings_readiness()
         identity = console_send_connection(
