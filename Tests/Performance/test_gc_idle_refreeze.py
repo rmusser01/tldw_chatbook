@@ -355,6 +355,87 @@ def test_only_real_growth_of_the_frozen_set_makes_a_compaction_due() -> None:
     assert refreezer.compaction_due()
 
 
+def test_stranded_garbage_makes_the_next_idle_moment_compact() -> None:
+    """A frozen transcript switched away compacts at once, whatever the budget.
+
+    Live (2026-10-19, 24 chat switches): left to the 25% budget, switched-away
+    transcripts piled up in the permanent generation and one compaction
+    collected 212-373K objects for 2.1-2.8 s of CPU on the UI loop, against
+    329 ms for dev's worst generation-2 pass. A stranded note bounds the
+    garbage a compaction meets to about one transcript.
+    """
+    clock, ops, owner = Clock(), Ops(frozen=1_000_000, added=50_000), Owner()
+    refreezer = make(
+        clock,
+        ops,
+        quiet_seconds=2.0,
+        compaction_quiet_seconds=5.0,
+        min_growth=10_000_000,  # the budget alone never compacts here
+    )
+    refreezer.request("conversation_painted", owner, owner_busy)
+    clock.now += 2.0
+    owner.fire_last()
+    assert ops.calls == ["refreeze:conversation_painted"]
+    assert not refreezer.compaction_due()
+
+    refreezer.note_stranded()
+    assert refreezer.compaction_due()
+    refreezer.request("conversation_painted", owner, owner_busy)
+    clock.now += 2.0
+    owner.fire_last()
+    assert len(ops.calls) == 1, "compacted before the compaction's quiet period"
+    assert owner.timers[-1][0] == pytest.approx(3.0)
+    clock.now += 3.0
+    owner.fire_last()
+    assert ops.calls[-1] == "compact:compact:conversation_painted"
+    assert not refreezer.compaction_due()
+
+    refreezer.request("run_settled", owner, owner_busy)
+    clock.now += 2.0
+    owner.fire_last()
+    assert ops.calls[-1] == "refreeze:run_settled"
+
+
+def test_a_stranded_note_outlives_a_request_dropped_while_busy() -> None:
+    """The switch's request can be dropped by a send; the owed compaction is not."""
+    clock, ops, owner = Clock(), Ops(), Owner()
+    refreezer = make(clock, ops, min_growth=10_000_000)
+    refreezer.note_stranded()
+    refreezer.request("conversation_painted", owner, owner_busy)
+    owner.busy = True
+    clock.now += 10
+    owner.fire_last()
+    assert ops.calls == []
+
+    owner.busy = False
+    refreezer.request("run_settled", owner, owner_busy)
+    clock.now += 10
+    owner.fire_last()
+    assert ops.calls == ["compact:compact:run_settled"]
+
+
+def test_every_freeze_advances_the_freeze_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boot freezes, re-freezes and compactions all count as a freeze.
+
+    The Console compares epochs to learn whether the transcript it replaces
+    was frozen while it was shown.
+
+    Args:
+        monkeypatch: Stubs the collector so nothing is really frozen.
+    """
+    for name in ("collect", "freeze", "unfreeze"):
+        monkeypatch.setattr(ui_responsiveness.gc, name, lambda *args: 0)
+    monkeypatch.setattr(ui_responsiveness.gc, "get_objects", lambda generation=None: [])
+    monkeypatch.setattr(ui_responsiveness.gc, "get_freeze_count", lambda: 0)
+    start = ui_responsiveness.heap_freeze_epoch()
+    ui_responsiveness.freeze_long_lived_heap("unit-test")
+    ui_responsiveness.refreeze_long_lived_heap("unit-test")
+    ui_responsiveness.compact_long_lived_heap("unit-test")
+    assert ui_responsiveness.heap_freeze_epoch() == start + 3
+
+
 class TranscriptApp(TextualAppGuards, App[None]):
     """Swaps whole "transcripts" (rows of nested widgets), as a chat switch does."""
 
@@ -596,6 +677,43 @@ async def test_real_console_transcript_rows_frozen_live_are_freed_by_the_compact
 
             assert refreezer.maintain("run_settled") == "compact"
             assert alive(frozen) == 0, "the compaction left switched-away rows alive"
+    finally:
+        gc.unfreeze()
+
+
+@pytest.mark.bootstrap_profile  # the transcript reads [console] settings
+async def test_a_stranded_note_frees_switched_away_transcripts_at_the_next_maintenance() -> (
+    None
+):
+    """The switch policy on the real transcript: frozen rows die at the next idle run.
+
+    Negative control: with the budget out of reach and no stranded note, the
+    maintenance after a switch only re-freezes, and the switched-away rows
+    (frozen while shown) survive a full collection. With the note, that
+    maintenance compacts and every switched-away row is freed.
+    """
+    gc.unfreeze()
+    gc.collect()
+    app = ConsoleTranscriptApp()
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            refreezer = real_refreezer(min_growth=10_000_000)
+            await app.show("alpha")
+            assert refreezer.maintain("conversation_painted") == "refreeze"
+            alpha = await switch_away(app, pilot, app.rows(), "bravo")
+            assert len(alpha) > 20, "the switch unmounted too few rows to test"
+            assert refreezer.maintain("conversation_painted") == "refreeze"
+            gc.collect()
+            assert alive(alpha) == len(alpha), (
+                "rows frozen while shown were collected without a compaction"
+            )
+
+            bravo = await switch_away(app, pilot, app.rows(), "charlie")
+            refreezer.note_stranded()
+            assert refreezer.maintain("conversation_painted") == "compact"
+            assert alive(alpha) == 0, "the compaction left stranded rows alive"
+            assert alive(bravo) == 0, "the compaction left stranded rows alive"
     finally:
         gc.unfreeze()
 

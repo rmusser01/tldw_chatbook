@@ -16,6 +16,7 @@ collector calls.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from textual.screen import Screen
@@ -150,3 +151,60 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
     ]
     assert inside == []
     assert timeline.index("refreeze:run_settled") > provider
+
+
+class PaintedScreen:
+    """Only what the paint policy reads: the (session, conversation) shown."""
+
+    def __init__(self) -> None:
+        self._console_chat_store = SimpleNamespace(active_session_id="s1")
+        self.conversation = "c1"
+        self.timers: list[tuple[float, object]] = []
+
+    def _current_console_conversation_id(self) -> str:
+        return self.conversation
+
+    def set_timer(self, delay: float, callback) -> None:
+        self.timers.append((delay, callback))
+
+
+def test_switching_away_from_a_transcript_frozen_while_shown_owes_a_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Console notes stranded garbage only when the outgoing rows were frozen.
+
+    The transcript is rebuilt on every switch, so rows a freeze caught while
+    shown become garbage no collection reaches. Rows replaced before any
+    freeze are ordinary garbage, which the re-freeze's own full collection
+    reclaims.
+
+    Args:
+        monkeypatch: Installs a recording refreezer and a settable freeze epoch.
+    """
+    epoch = [0]
+    monkeypatch.setattr(console_transcript, "heap_freeze_epoch", lambda: epoch[0])
+    refreezer = IdleHeapRefreezer(
+        enabled=lambda: True,
+        refreeze=lambda reason: 0,
+        compact=lambda reason: 1_000_000,
+        freeze_count=lambda: 1_000_000,
+        min_growth=10_000_000,
+    )
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    screen = PaintedScreen()
+
+    console_transcript.note_console_conversation_painted(screen)
+    assert len(screen.timers) == 1, "the first paint asked for no re-freeze"
+    console_transcript.note_console_conversation_painted(screen)
+    assert len(screen.timers) == 1, "a repaint of the same conversation asked again"
+
+    screen.conversation = "c2"  # switched before anything froze c1's rows
+    console_transcript.note_console_conversation_painted(screen)
+    assert len(screen.timers) == 2
+    assert not refreezer.compaction_due(), "unfrozen rows were reported stranded"
+
+    epoch[0] += 1  # a re-freeze ran while c2 was shown
+    screen._console_chat_store.active_session_id = "s2"  # another tab
+    console_transcript.note_console_conversation_painted(screen)
+    assert len(screen.timers) == 3
+    assert refreezer.compaction_due(), "rows frozen while shown were left stranded"

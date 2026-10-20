@@ -371,6 +371,20 @@ def _sample_stack(thread_id: int | None) -> dict[str, object]:
     return sample
 
 
+#: Freezes so far in this process: boot points, idle re-freezes, compactions.
+_freeze_epoch = 0
+
+
+def heap_freeze_epoch() -> int:
+    """How many times this process has frozen its heap (TASK-33620.15.3).
+
+    A caller that records the epoch when it shows something, and finds it
+    advanced when it replaces that thing, knows a freeze caught it while it
+    was live: its cyclic parts are now garbage that only a compaction frees.
+    """
+    return _freeze_epoch
+
+
 def freeze_long_lived_heap(reason: str, *, generation: int = 1) -> int:
     """Move the objects alive now into CPython's permanent GC generation.
 
@@ -391,8 +405,10 @@ def freeze_long_lived_heap(reason: str, *, generation: int = 1) -> int:
     Returns:
         The permanent generation's size after the freeze.
     """
+    global _freeze_epoch
     gc.collect(generation)
     gc.freeze()
+    _freeze_epoch += 1
     frozen = gc.get_freeze_count()
     logging.getLogger(__name__).debug("gc heap frozen (%s): %d objects", reason, frozen)
     return frozen
@@ -415,9 +431,11 @@ def refreeze_long_lived_heap(reason: str) -> int:
         How many objects it moved into the permanent generation. A full
         collection leaves every unfrozen survivor in generation 2.
     """
+    global _freeze_epoch
     gc.collect()
     added = len(gc.get_objects(generation=2))
     gc.freeze()
+    _freeze_epoch += 1
     logging.getLogger(__name__).debug(
         "gc heap re-frozen (%s): +%d objects", reason, added
     )
@@ -489,6 +507,13 @@ class IdleHeapRefreezer:
     compaction by more than that budget plus one re-freeze, and the next
     compaction reclaims whatever in it has become garbage.
 
+    The budget alone let switched-away transcripts pile up: live, across 24
+    chat switches, one compaction met 212-373K dead objects and held the UI
+    loop for 2.1-2.8 s of CPU (dev's worst generation-2 pass: 329 ms). So an
+    owner that replaces something a freeze caught while it was shown calls
+    :meth:`note_stranded`, and the next idle maintenance compacts whatever
+    the budget says, meeting about one transcript of garbage.
+
     Growth is tracked cheaply and checked exactly: re-freezes add what they
     froze to an upper bound, and only when that bound reaches the budget is
     the permanent generation walked to size it. Frozen objects freed by
@@ -546,6 +571,8 @@ class IdleHeapRefreezer:
         self._frozen = 0
         #: Whether ``_frozen`` includes re-freezes made since the last walk.
         self._estimated = False
+        #: Whether frozen objects became garbage since the last compaction.
+        self._stranded = False
         #: ``(action, reason)`` of each maintenance run, newest last.
         self.actions: deque[tuple[str, str]] = deque(maxlen=32)
 
@@ -573,12 +600,23 @@ class IdleHeapRefreezer:
         self._request = (reason, weakref.ref(owner), busy)
         self._arm(owner, self._quiet)
 
+    def note_stranded(self) -> None:
+        """Owe a compaction: frozen objects just became garbage.
+
+        The Console calls this when it replaces a transcript that a freeze
+        caught while it was shown. The note outlives dropped requests: the
+        next maintenance compacts, whatever asked for it.
+        """
+        self._stranded = True
+
     def compaction_due(self) -> bool:
-        """Whether the frozen set has grown enough since the last compaction.
+        """Whether stranded garbage or growth since the last compaction calls for one.
 
         Walks the permanent generation only when the cheap upper bound has
         reached the budget.
         """
+        if self._stranded:
+            return True
         if self._baseline is None:
             return False
         budget = max(self._min_growth, self._growth_ratio * self._baseline)
@@ -595,6 +633,7 @@ class IdleHeapRefreezer:
         if self.compaction_due():
             self._baseline = self._frozen = self._compact(f"compact:{reason}")
             self._estimated = False
+            self._stranded = False
             action = "compact"
         else:
             self._frozen += self._refreeze(reason)

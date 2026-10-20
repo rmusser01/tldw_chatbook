@@ -181,6 +181,23 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    kept. (Garbage can also form inside the post-compaction set -- a
    transcript frozen live, then switched away -- so the bound is on the
    frozen set's size, not on the garbage in the growth alone.)
+
+   **Switched-away transcripts compact at once (2026-10-19).** The budget
+   alone let them pile up. Live, across 24 chat switches and 12 runs, the
+   frozen set's garbage reached 212-373K objects before a compaction ran,
+   and each such compaction held the UI loop for 2.1-2.8 s of CPU (27-37 s
+   of wall time at a load average near 95), against 329 ms for dev's worst
+   generation-2 pass in the same run. The total collection CPU was the same
+   on both arms (12.4 s against 12.5 s); the budget only gathered it into a
+   few long stalls. The Console rebuilds its transcript for every
+   conversation it shows, so it records the process's freeze epoch
+   (`heap_freeze_epoch()`) with each conversation it paints. When it paints
+   another one and the epoch has moved, a freeze caught the outgoing rows
+   while they were shown, and it calls `IdleHeapRefreezer.note_stranded()`:
+   the next idle maintenance compacts, whatever the budget says, and meets
+   about one transcript of garbage. The note survives a request dropped by a
+   send. Rows replaced before any freeze are ordinary garbage, which the
+   re-freeze's own full collection reclaims, so rapid switching owes nothing.
 4. **Unchanged.** Thresholds stay at CPython's defaults. The collector is
    never disabled. The policy is off under pytest (`PYTEST_CURRENT_TEST`), as
    the screen pre-import is; `TLDW_IDLE_HEAP_REFREEZE` overrides it either way.
@@ -189,8 +206,11 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
 
 - A compaction scans the whole heap. That is the pass decision 2 kept off
   `_ui_ready`, and this ADR measured it at 130-420 ms. It runs only after 5 s
-  without input and with no send in flight, about once per 25% growth of the
-  frozen set.
+  without input and with no send in flight: after a switch away from a
+  transcript a freeze caught, and otherwise about once per 25% growth of the
+  frozen set. A user who switches chats often pays one compaction per
+  switch at idle, where origin/dev paid a generation-2 pass per switch that
+  could land anywhere, a send window included.
 - The "boot-era garbage becomes permanent" consequence above is now temporary:
   the first compaction reclaims it.
 - Re-freezing ends CPython's habit, noted in the measured result above, of
@@ -222,7 +242,11 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
   with the real collector and real Textual widgets, that a frozen
   switched-away transcript survives a full collection (negative control),
   that a compaction reclaims it, and that the frozen set stays bounded over
-  24 switches.
+  24 switches; a stranded note compacts at the next maintenance and frees
+  the real Console transcript's switched-away rows (negative control: without
+  it they survive), and survives a dropped request.
 - `Tests/UI/test_console_idle_heap_refreeze.py` (amendment): on the mounted
   Console, a re-freeze is requested when a conversation is painted and when a
-  run settles, and none runs from Enter to the provider call.
+  run settles, and the busy check holds on every loop turn from Enter to the
+  provider call; the paint policy notes stranded garbage only when a freeze
+  ran while the outgoing conversation was shown.

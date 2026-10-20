@@ -98,7 +98,7 @@ from textual.containers import Vertical
 from textual.css.query import QueryError
 from textual.widget import Widget
 
-from ...Utils.ui_responsiveness import heap_refreezer
+from ...Utils.ui_responsiveness import heap_freeze_epoch, heap_refreezer
 from ...Widgets.Console import ConsoleTranscript
 from .frame import frame_console_region
 
@@ -420,8 +420,8 @@ class ConsoleTranscriptRegion(Vertical):
         transcript.note_follow_intent()
 
 
-#: Screen attribute: the ``(session, conversation)`` the transcript last
-#: showed when an idle heap re-freeze was requested for it.
+#: Screen attribute: the ``((session, conversation), freeze epoch)`` the
+#: transcript last showed when an idle heap re-freeze was requested for it.
 _REFREEZE_PAINTED_ATTRIBUTE = "_console_heap_refreeze_painted"
 
 
@@ -443,6 +443,13 @@ def request_console_heap_refreeze(screen: Any, reason: str) -> None:
 def note_console_conversation_painted(screen: Any) -> None:
     """Request a re-freeze when the transcript shows a different conversation.
 
+    The transcript is rebuilt for every conversation it shows. When a freeze
+    ran while the outgoing one was shown, its rows were frozen live and are
+    now cyclic garbage no collection reaches, so the refreezer is told to
+    compact at the next idle moment (ADR-198 amendment). Rows replaced
+    before any freeze are ordinary garbage: the re-freeze's own full
+    collection reclaims them.
+
     Args:
         screen: The Console ``ChatScreen`` whose transcript was just synced.
     """
@@ -451,9 +458,12 @@ def note_console_conversation_painted(screen: Any) -> None:
         store.active_session_id if store is not None else None,
         screen._current_console_conversation_id(),
     )
-    if getattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, None) == key:
+    shown = getattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, None)
+    if shown is not None and shown[0] == key:
         return
-    setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, key)
+    if shown is not None and heap_freeze_epoch() != shown[1]:
+        heap_refreezer().note_stranded()
+    setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, heap_freeze_epoch()))
     request_console_heap_refreeze(screen, "conversation_painted")
 
 
