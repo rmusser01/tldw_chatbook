@@ -303,6 +303,7 @@ def light_surface_plan_inputs(
             request being assessed carries it.
     """
     from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        LIGHT_SURFACE_TOOL_NAMES,
         light_surface_budget,
         light_surface_prompts,
         light_surface_tool_schemas,
@@ -332,6 +333,7 @@ def light_surface_plan_inputs(
             "discovery_system_prompt": plain_prompt,
             "plain_system_prompt": plain_prompt,
             "allow_discovery": False,
+            "fallback_tools": LIGHT_SURFACE_TOOL_NAMES,
         },
     )
 
