@@ -1018,6 +1018,18 @@ class ConsoleModelPopover(
         # Catalogs first: the returned provider is "loading" at the rebuild,
         # so it neither highlights its NEEDS SETUP row nor clears the wait line.
         self._load_ready_catalogs(tuple(resolved))
+        # NO-1 (TASK-35010): a server read with no model has listed models
+        # since (its probe settled): read it again with the first one, as
+        # _load_catalogs does for a catalog, so a running one is listed.
+        listed = tuple(
+            key
+            for key in resolved
+            if targets[key] is None
+            and _only_needs_a_model(self._readiness.get(key))
+            and self._representative_model(key)
+        )
+        if listed and self.is_attached:
+            self._request_readiness(listed, refresh=True)
         self._rebuild_rows()
         self._sync_find_placeholder()
         self._offer_probes(resolved)
@@ -1028,7 +1040,10 @@ class ConsoleModelPopover(
             key: self._representative_model(key)
             for key, readiness in resolved.items()
             if key not in self._probes_offered
-            and readiness.blocker in _PROBED_BLOCKERS
+            and (
+                readiness.blocker in _PROBED_BLOCKERS
+                or self._untouched_server_without_a_model(key, readiness)
+            )
         }
         if self._connection_prober is None or not targets or not self.is_attached:
             return
@@ -1037,6 +1052,22 @@ class ConsoleModelPopover(
             self._connection_prober(targets, self.refresh_readiness),
             group="console-switcher-probes",
             exit_on_error=False,
+        )
+
+    def _untouched_server_without_a_model(
+        self, key: str, readiness: ConsoleSettingsReadiness
+    ) -> bool:
+        """A local server the user never set up, waiting only on a model.
+
+        TASK-35010 NO-1: vLLM's shipped list is empty and llama.cpp's,
+        koboldcpp's, Oobabooga's and llamafile's hold "None", so readiness
+        says model_missing before any endpoint result. The probe still finds
+        a running one (its listing supplies the model) or a refused one.
+        """
+        return (
+            readiness.blocker == "model_missing"
+            and key in URL_BASED_PROVIDER_KEYS
+            and provider_left_at_shipped_default(self._app_config, key)
         )
 
     def refresh_readiness(self, provider: str) -> None:
@@ -1522,7 +1553,11 @@ class ConsoleModelPopover(
             (
                 (
                     readiness.endpoint_category == "connection_refused"
-                    and _retries_in_place(readiness)
+                    and (
+                        _retries_in_place(readiness)
+                        # NO-1: its missing model outranks the refusal.
+                        or self._untouched_server_without_a_model(key, readiness)
+                    )
                 )
                 # Capture finding 11: one no probe can check is Ready from
                 # the template alone; listing nothing, it is as unset.

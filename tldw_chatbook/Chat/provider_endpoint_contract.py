@@ -87,6 +87,10 @@ _UNRESERVED_ASCII = frozenset(
 )
 _MAX_PROVIDER_LENGTH = 128
 _MAX_ENDPOINT_LENGTH = 4096
+#: KoboldAI's native generate route, koboldcpp's template endpoint. It lists
+#: nothing itself; koboldcpp serves its OpenAI-compatible ``/v1/models`` at
+#: the same root (TASK-35010, owner ruling 2026-10-20).
+_KOBOLD_NATIVE_GENERATE = ("api", "v1", "generate")
 _SUFFIXES: tuple[tuple[tuple[str, ...], EndpointForm], ...] = (
     (("v1", "chat", "completions"), "chat_url"),
     (("v1", "models"), "models_url"),
@@ -264,9 +268,14 @@ def _resolve_provider_endpoint(
             preset, provider_key, scheme, netloc, canonical_host, segments
         )
 
+    native = provider_key == "koboldcpp" and segments[-3:] == _KOBOLD_NATIVE_GENERATE
     suffix = _terminal_suffix(
-        segments, allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS
+        segments[:-3] if native else segments,
+        allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS,
     )
+    if native:
+        # Only from a plain root: an API suffix before the route is ambiguous.
+        suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
     if suffix is None:
         return _invalid_resolution(
             provider_key, "Endpoint path has ambiguous API suffixes."
@@ -277,7 +286,8 @@ def _resolve_provider_endpoint(
     root = urlunsplit((scheme, netloc, prefix_path, "", ""))
     normalized_path = f"/{'/'.join(segments)}" if segments else ""
     normalized_input = urlunsplit((scheme, netloc, normalized_path, "", ""))
-    chat_url = f"{root}/v1/chat/completions"
+    # A koboldcpp native endpoint is the URL its send posts to: kept whole.
+    chat_url = normalized_input if native else f"{root}/v1/chat/completions"
     models_url = f"{root}/v1/models"
     persisted_endpoint = root if provider_key in _LLAMA_PROVIDER_KEYS else chat_url
     warnings = (
