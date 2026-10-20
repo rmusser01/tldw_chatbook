@@ -108,11 +108,13 @@ class _DeviceStateExclusion:
     activation_required: bool = False
 
     def discover(self, config):
+        from dataclasses import replace
+
         from tldw_chatbook.Backup_Recovery.config_adapter import _excluded_root
         from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
 
         database = user_data_dir(config) / "tldw_chatbook_notes_sync_state.db"
-        return tuple(
+        items = (
             _excluded_root(
                 config,
                 self.owner_id,
@@ -121,6 +123,17 @@ class _DeviceStateExclusion:
                 local_id=suffix or "",
             )
             for suffix in ("", "-wal", "-shm", "-journal")
+        )
+        # TASK-34100.16.1: this store opens and closes with Library, and SQLite
+        # creates and removes its sidecars with each connection. Never captured,
+        # so whether a file exists is not backup scope: file metadata here made
+        # a Review taken while it was open fail at Create with scope_changed.
+        # A wrong-kind path still reports unsupported.
+        return tuple(
+            replace(item, metadata=None)
+            if item.status == "intentionally_excluded"
+            else item
+            for item in items
         )
 
     def schema_policy(self):

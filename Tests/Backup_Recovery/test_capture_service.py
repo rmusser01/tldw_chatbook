@@ -296,3 +296,67 @@ def test_unenrolled_default_profile_backs_up_through_the_known_profiles_selectio
         sealed.path, tmp_path / "inspect", ArchiveLimits(), None, Event()
     )
     assert verified.digest == sealed.digest
+
+
+def test_device_state_store_lifecycle_does_not_void_a_reviewed_scope(
+    tmp_path, monkeypatch
+):
+    """The excluded Notes device-state store may open and close between steps.
+
+    TASK-34100.16.1: Library opens ``tldw_chatbook_notes_sync_state.db`` in WAL
+    mode. A Review taken while it was open recorded its ``-wal``/``-shm`` files
+    with file metadata; a backup's pause then closed the store, SQLite removed
+    both, and Create rediscovered them without metadata. The reviewed digest no
+    longer matched and the backup ended in ``scope_changed`` (live inventory
+    diff: only those two items' metadata). The store is device-local and never
+    captured, so its files coming and going is not a change of backup scope.
+    """
+    from pathlib import Path
+
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+
+    def review():
+        return preview_capture((source,), options=options, include_known_profiles=True)
+
+    first = review()
+    database = next(
+        item.path
+        for item in first.items
+        if item.owner == "notes.sync_state"
+        and item.logical_id.endswith(":notes.sync_state")
+    )
+    sidecars = [Path(f"{database}{suffix}") for suffix in ("-wal", "-shm")]
+    # A started profile whose Library has not opened the device-state store yet.
+    _populate_required_dependencies(first)
+    assert not database.exists()
+    before = review().scope_digest
+    store = NotesDeviceStateStore(database)
+    try:
+        store.initialize()
+        with store.transaction() as connection:  # a held WAL read, as Library's
+            connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        assert database.exists() and all(path.exists() for path in sidecars)
+        while_open = review().scope_digest
+    finally:
+        store.close()
+    assert not any(path.exists() for path in sidecars), "SQLite kept its sidecars"
+    after_close = review().scope_digest
+
+    assert after_close == while_open, "closing the store voided the review"
+    assert before == while_open, "opening the store voided the review"
