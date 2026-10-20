@@ -275,6 +275,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     # see _advance_on_input_submit; SetupRadioSet requests an advance).
     # Merges with WizardContainer's escape/ctrl+b/ctrl+n bindings.
     BINDINGS = [Binding("enter", "next", "Next step", show=False)]
+    #: TASK-34100.13 review F8: steps read the config as it is now, not the
+    #: launch snapshot (first_run_setup_state.wizard_config_sections).
+    reads_live_config = True
 
     @on(SetupRadioSet.AdvanceRequested)
     def _on_radio_advance_requested(

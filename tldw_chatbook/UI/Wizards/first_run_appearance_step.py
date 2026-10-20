@@ -70,12 +70,15 @@ class AppearanceStep(SetupStep):
 
     def _read_current(self) -> None:
         """What is saved now, from the full TOML (load_settings has no splash table)."""
-        sections = wizard_state.full_config_sections(
-            self._app_config(), "splash_screen", "appearance"
+        sections = wizard_state.wizard_config_sections(
+            self.wizard, "splash_screen", "appearance"
         )
         self._current_startup = look.startup_choice(sections["splash_screen"])
         self._current_reduce, self._current_ascii = look.read_comfort(
             sections["appearance"]
+        )
+        self._ascii_start = look.ascii_checkbox_value(
+            sections["appearance"], self._environ
         )
         self._card_selection = str(
             sections["splash_screen"].get("card_selection") or ""
@@ -86,9 +89,6 @@ class AppearanceStep(SetupStep):
         # that never touches the theme radio must not clobber it on commit).
         prefill = wizard_state.read_wizard_prefill(self._app_config())
         self.selected_theme = prefill.default_theme
-        ascii_checked = self._current_ascii or look.ascii_preset_from_environment(
-            self._environ
-        )
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
@@ -118,7 +118,7 @@ class AppearanceStep(SetupStep):
             )
             yield SetupCheckbox(
                 "Plain ASCII status marks — for fonts without symbols (+ - ! x)",
-                ascii_checked,
+                self._ascii_start,
                 id="setup-appearance-ascii",
             )
             yield Static(
