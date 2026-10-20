@@ -219,3 +219,84 @@ def test_pre_tui_warnings_go_to_the_log_not_the_terminal() -> None:
     assert "doesn't match a supported version" in replayed
     assert "python-frontmatter not installed" in replayed
     assert "optional dependency missing" in replayed
+
+
+_EXIT_WITHOUT_REPLAY = r"""
+import logging, warnings
+from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+quiet_startup_stderr()
+warnings.warn("held python warning", UserWarning)
+from loguru import logger
+logger.warning("held loguru notice")
+logging.getLogger("some.dependency").warning("held stdlib notice")
+# A recovery subcommand, a refused unlock or an early crash: the app's
+# logging is never configured, so nothing replays the held notices.
+"""
+
+
+def test_held_warnings_reach_stderr_when_the_app_never_configures_logging() -> None:
+    """Review F10 (TASK-34100.13): quiet_startup_stderr() holds WARNINGs for the
+    log, but only Logging_Config replays them. ``tldw-cli recovery``, a refused
+    startup unlock or a crash before the TUI never got that far, so their
+    warnings -- which used to reach stderr -- were silently dropped."""
+    env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    result = subprocess.run(
+        [sys.executable, "-c", _EXIT_WITHOUT_REPLAY],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    for notice in ("held python warning", "held loguru notice", "held stdlib notice"):
+        assert notice in result.stderr
+
+
+_CONFIGURE_LOGGING = r"""
+import logging, warnings
+from types import SimpleNamespace
+from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+quiet_startup_stderr()
+warnings.warn("urllib3 (2.6.3) doesn't match a supported version!", UserWarning)
+from tldw_chatbook import Logging_Config
+
+records = []
+class Capture(logging.Handler):
+    def emit(self, record):
+        records.append(record.getMessage())
+logging.getLogger("tldw_chatbook.startup").addHandler(Capture())
+
+def no_log_widget(*_args, **_kwargs):
+    raise LookupError("no log widget in this probe")
+
+app = SimpleNamespace(
+    app_config={"general": {"log_level": "INFO"}, "logging": {}},
+    _rich_log_handler=None,
+    query_one=no_log_widget,
+)
+Logging_Config.configure_application_logging(app)
+print("\n".join(records))
+"""
+
+
+def test_configuring_the_app_log_replays_the_held_notices() -> None:
+    """review-tests F5: the app's own logging setup is what writes the held
+    notices to the log; removing that call must fail a test."""
+    env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    result = subprocess.run(
+        [sys.executable, "-c", _CONFIGURE_LOGGING],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    replayed = [
+        line for line in result.stdout.splitlines() if "Before the app opened" in line
+    ]
+    assert any("doesn't match a supported version" in line for line in replayed), (
+        result.stdout[-2000:]
+    )
+    assert "doesn't match a supported version" not in result.stderr
