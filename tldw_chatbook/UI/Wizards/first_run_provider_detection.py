@@ -267,6 +267,7 @@ class ProviderDetectionStep(SetupStep):
         Every writer goes through here; the leading glyph picks the outcome
         style: ✓ success, ✗ error, ! warning, anything else neutral.
         """
+        self._stale_line_owed = False  # any line replaces an owed 'test again'
         try:
             status = self.query_one("#setup-provider-probe-status", Static)
         except NoMatches:

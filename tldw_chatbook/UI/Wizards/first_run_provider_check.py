@@ -519,15 +519,26 @@ class ProviderCheckStep(ProviderListStep):
         note.set_class(not self._unsaved_key_owner, "hidden")
 
     def _stale_check_line(self) -> str:
-        """After an edit: name the check again only if its control is on screen."""
+        """After an edit: name the check again only if its control can run.
+
+        Review v3r1, G6-BV3-05: beside a Test that an endpoint error disabled
+        ('Fix it to enable Test connection') the line named an action that
+        can't succeed yet; it is owed until Test is enabled again.
+        """
         try:
             testable = self.query_one("#setup-provider-test", Button)
             connection = self.query_one("#setup-provider-connection")
         except NoMatches:
             return ""
-        if testable.display and connection.display:
+        if testable.display and connection.display and not testable.disabled:
             return "Provider settings changed since test; test again."
         return ""
+
+    def sync_stale_check_line(self) -> None:
+        """Show the owed 'test again' line once Test's state is current."""
+        if getattr(self, "_stale_line_owed", False):
+            self._set_status(self._stale_check_line())
+            self._stale_line_owed = True  # until another line replaces it
 
     def _discovery_failure_status(self, display: str, failure: str = "") -> str:
         """Failure copy that never promises what Next will refuse.

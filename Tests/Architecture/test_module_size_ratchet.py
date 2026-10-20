@@ -514,7 +514,13 @@ _BUDGETS: dict[str, int] = {
     # key check and status copy moved to first_run_provider_{detection,skip,
     # key_entry,list,check}.py (TASK-33008's listing and Test lines with
     # them); merged onto dev -> 1,665.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1665,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +13.
+    # 2026-10-20, TASK-34100.6 review v3r1: 1,665 -> 1,678. Skip always skips
+    # and never outlives its press (R1-02, R1-07: commit's skip branch, the
+    # advance fence, cleared on a provider change or key edit), and 'test
+    # again' waits for Test to be enabled (G6-BV3-05). In place, in the
+    # methods that own them.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1678,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
