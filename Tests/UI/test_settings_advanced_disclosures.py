@@ -906,8 +906,10 @@ async def test_custom_id_keeps_its_edge_on_one_row(request, size):
         ),
         (
             (),
-            "The selected models are already in OpenAI's model list. To make "
-            "one the default, choose it in Default model.",
+            (
+                "The selected models are already in OpenAI's model list. To make "
+                "one the default, choose it in Default model."
+            ),
         ),
     ],
 )

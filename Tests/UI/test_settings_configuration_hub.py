@@ -11552,7 +11552,8 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_discovery_controls_render_for_eligible_provider():
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_settings_provider_model_discovery_controls_render_for_eligible_provider(request):
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11600,7 +11601,8 @@ async def test_settings_provider_model_discovery_controls_render_for_eligible_pr
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_discovery_saves_selected_runtime_models():
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_settings_provider_model_discovery_saves_selected_runtime_models(request):
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11779,7 +11781,8 @@ async def test_model_discovery_crash_status_is_plain_language_without_raw_except
 
 
 @pytest.mark.asyncio
-async def test_discovered_model_save_crash_status_is_plain_language():
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_discovered_model_save_crash_status_is_plain_language(request):
     """TASK-23108: same contract for the persistence path."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}

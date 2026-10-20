@@ -172,7 +172,13 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(
         assert screen.query_one("#settings-model-value", Input).value == MODELS[1]
         assert screen._category_has_unsaved_changes(CATEGORY)
         assert app.app_config["chat_defaults"]["model"] == ""
-        assert "Saved 1" in _status(screen)
+        # TASK-35011 (C4 residual), rewritten on purpose: Add to model list's
+        # receipt names the model added, and that s still saves the default
+        # it filled.
+        assert _status(screen) == (
+            f"Added {MODELS[1]} to OpenAI's model list. Default model is now "
+            f"{MODELS[1]}; press s to save it."
+        )
         await _tab_to(host, pilot, "#settings-clear-discovered-provider-models")
         await pilot.press("enter")
         await _settle(host, pilot)

@@ -193,7 +193,9 @@ async def test_theme_category_documents_its_editor_owned_save_model(request):
         assert "Apply" not in text
 
 
-def test_guidance_row_builders_keep_a_uniform_row_count():
+@pytest.mark.asyncio
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_guidance_row_builders_keep_a_uniform_row_count(request):
     """Every guidance branch returns the same row count per category.
 
     The inspector composes one Static per row index and later refreshes
