@@ -20977,3 +20977,19 @@ small follow-up scripts. For a Unicode-heavy large file, inspect the complete
 diff and compare untouched method/string ASTs before treating targeted green
 tests as evidence for the final source. Compilation cannot detect text corruption
 that remains valid Python.
+
+
+## Replace seeded Textual Input text with explicit selection before typing
+
+**TASK-35868, 2026-10-20.** The Watchlists Rule draft regression initially used
+Ctrl+A before typing a replacement Name into a seeded Textual 8.2.8 `Input`.
+The pre-trigger value assertion caught `Unsaved ruleOriginal`: the default
+binding had moved to Home, leaving the seed in place. This was a test setup
+failure, not evidence of the draft-preservation bug. Home, Shift+End, Backspace
+then printable typing replaced the seed and let the Edit cases reach the
+actual refresh and section-return boundaries.
+
+For a single-line `Input` using these default bindings, explicitly select and
+replace its seed, then assert the actual text and settled focus before triggering
+the behavior under test. Do not infer another text widget's bindings or change
+screen keybindings to accommodate a test.

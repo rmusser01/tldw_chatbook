@@ -33,6 +33,20 @@ Three producers write `local_watchlist_runs`: scheduled checks (the handler rout
 
 Item search uses FTS5 only when the `_docsize` shadow coverage probe says the index is complete; on `sqlite3.OperationalError` (missing table or FTS5 compiled out) it falls back to AND-of-terms / OR-across-columns LIKE with escaped wildcards — "the search box must never raise into the reader". One search mode is pinned per page so counts, high-water marks, and rows agree. Delete triggers are membership-guarded so pre-migration rows get indexed on next update instead of raising "malformed"; a startup backfill worker tops the index up.
 
+## Rule editor view state
+
+`RulesPane.watch_rules` updates table rows and empty guidance in place, preserving
+mounted form controls, focus, cursor and selection during list publication.
+The original edit row is independent of the currently selected table row.
+`RuleFormVisibilityChanged` carries raw Name, Condition, Threshold, Severity and
+Enabled values (including unparsed threshold text) to
+`WatchlistsCollectionsScreen.handle_rule_form_visibility_changed`.
+The screen's existing `_rule_form_*` view state re-seeds a newly constructed Rules
+pane on section/region return; it remains ephemeral under ADR-033. Save and Cancel
+retire the draft, while a rejected empty Name leaves it open. Only explicit Save
+uses the existing rule mutation path; list refresh and section navigation never
+save a draft.
+
 ## Boundaries
 
 - Scheduling owns **when**; `LocalWatchlistsService` owns **what a run is**; `SubscriptionsDB` owns all durable state — handlers are stateless apart from the briefing handler's in-flight task set.
