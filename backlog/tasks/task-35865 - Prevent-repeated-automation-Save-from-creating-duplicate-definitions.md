@@ -1,7 +1,7 @@
 ---
 id: TASK-35865
 title: Prevent repeated automation Save from creating duplicate definitions
-status: To Do
+status: In Progress
 created_date: 2026-10-20 19:23
 labels:
 - scheduling
@@ -10,6 +10,9 @@ labels:
 priority: high
 documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-20 19:42
 ---
 
 ## Description
@@ -44,3 +47,18 @@ Reason: No new ADR is expected for a localized UI admission repair preserving se
 - [ ] #4 Local create/edit, server-owned queued/refused outcomes, and existing modal close/quit guards retain their established behavior; no schema, sync-policy or generic worker-framework change is introduced.
 - [ ] #5 Deterministic private-profile tests hold and release the real SQLite write, wait for physical settlement, and retain ordinary Save, failure and retry controls.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/018-local-server-hybrid-scheduled-tasks.md
+Reason: bounded form admission fix; preserve existing writer, ownership, validation and outcome contracts. ADR-099/116 remain Proposed context.
+
+1. Add real mounted form/service/SQLite duplicate Save, same-turn admission, and failure/retry regressions; record expected product failures first.
+2. Admit Save synchronously and retain pending ownership until the existing operation settles, preserving close/quit and local/server outcomes.
+3. Run targeted form/ownership checks and scoped static checks; update Schedules documentation.
+4. Obtain Superpowers spec/quality review before controller marks acceptance criteria complete.
+
+Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 1).
+<!-- SECTION:PLAN:END -->
