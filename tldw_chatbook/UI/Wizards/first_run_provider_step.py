@@ -795,6 +795,7 @@ class ProviderStep(provider_check.ProviderCheckStep):
         if (cancelled or invalidated or changed) and self.is_attached:
             # cross-cutting-07: 'test again' only beside a control that can.
             self._set_status(self._stale_check_line() if changed else "")
+            self._stale_line_owed = changed  # G6-BV3-05: re-read once Test is synced
         self._rejected_discovery_key = None
 
     def _credential_semantics_changed(self) -> None:
@@ -909,6 +910,7 @@ class ProviderStep(provider_check.ProviderCheckStep):
         identity = self._provider_current_draft_identity() if target else None
         test_available = bool(target and identity is not None)
         test_button.disabled = not readiness.ready or not test_available
+        self.sync_stale_check_line()
         self._refresh_endpoint_status(readiness)
         status = self.query_one("#setup-provider-key-status", Static)
         if readiness.subscription_status is not None:

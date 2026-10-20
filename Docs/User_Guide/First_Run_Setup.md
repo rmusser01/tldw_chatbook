@@ -203,11 +203,13 @@ empty list. OpenRouter, Hugging Face and Novita list models
 without a valid key, so that list can't confirm one. A rejected key (a 401)
 keeps you on the Provider step, with the reason under the key field; for an
 exported key the fix is **Store a different key for this app** (or another
-provider), and **Skip — connect later** stays available. Any other failed
+provider), and **Skip — connect later** stays available — it skips even
+when the field holds a key that can't be sent. Any other failed
 check marks Provider with **!** in the tracker as soon as it is known,
 including one the Model step finds. The status line under the step uses ✓,
 ✗ and ! with matching colours, nothing is reported as an error before you
-act, and **Test connection** (on local and custom rows) reports "✓ Connected
+act, "test again" appears only while **Test connection** can run, and
+**Test connection** (on local and custom rows) reports "✓ Connected
 — llama.cpp returned 3 models. Pick one on the next step." or names the HTTP
 status it got; a local server started with an API key that answers a keyless
 test says it needs one. A refusal that names the endpoint field goes away as

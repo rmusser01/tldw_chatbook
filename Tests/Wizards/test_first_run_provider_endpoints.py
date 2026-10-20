@@ -461,3 +461,30 @@ async def test_status_lines_print_what_the_user_typed_literally():
         ):
             assert "/[bold]x/[/y]" in static_text(step, selector), selector
         assert "[bold]x" in static_text(step, "#setup-provider-effective-chat")
+
+
+@pytest.mark.asyncio
+async def test_no_test_again_beside_a_test_an_endpoint_error_disabled():
+    """Review v3r1, G6-BV3-05 (live, scheme typo and KoboldCpp's bad path):
+    while the endpoint error said 'Fix it to enable Test connection', the
+    status line under it still said '…; test again.' -- an action that could
+    not run (cross-cutting-07: only actions that can succeed are named). The
+    line is owed until Test is enabled, then shown."""
+    stale = "Provider settings changed since test; test again."
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _c, step = current_step(wizard)
+        await pick_provider(pilot, step, "llama_cpp")
+        endpoint = step.query_one("#setup-provider-endpoint", Input)
+        test = step.query_one("#setup-provider-test", Button)
+        endpoint.value = "htp://127.0.0.1:9099"
+        await pilot.pause()
+        assert test.disabled
+        assert "enable Test connection" in static_text(step, "#setup-provider-endpoint-status")
+        assert "test again" not in static_text(step, "#setup-provider-probe-status")
+        endpoint.value = "http://127.0.0.1:9099"
+        await pilot.pause()
+        assert not test.disabled
+        assert static_text(step, "#setup-provider-probe-status") == stale
