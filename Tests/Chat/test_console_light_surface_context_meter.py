@@ -867,3 +867,85 @@ def test_a_first_message_in_the_gateways_safety_margin_goes_out_without_tools(
     assert bridge.preview_tool_schemas(
         resolution, session_id=session.id, messages=message
     ) == []
+
+
+# -- review round 3: the safe set survives capacity trimming (R3-3) ---------
+
+
+def _native_window(window: int):
+    """A native-tools resolution with a verified ``window`` and a small reply
+    reserve, so the whole request fits and only the 10% direct-disclosure
+    share decides which tools go out."""
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+
+    return _test_resolution(
+        provider="Groq",
+        execution_key="groq",
+        model="llama-3.3-70b-versatile",
+        max_tokens=1024,
+        context_window=ContextWindowResolution(window, "model catalog", True),
+    )
+
+
+def _light_schema_tokens(resolution) -> int:
+    from tldw_chatbook.Agents.agent_service import catalog_schema_tokens
+    from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        light_surface_tool_schemas,
+    )
+
+    return catalog_schema_tokens(
+        light_surface_tool_schemas(),
+        model=resolution.model,
+        api_endpoint=resolution.execution_key,
+        native_tools=True,
+    )
+
+
+def test_switching_a_tool_on_never_leaves_fewer_tools_than_the_default(tmp_path):
+    """Review round 3 (R3-3): the light plan's direct disclosure was all or
+    nothing, with no discovery fallback, so on a window whose 10% share held
+    the safe set but not the safe set plus one switched-on tool, turning that
+    tool on left plain chat with NO tools -- fewer than the default. Live on
+    an 8,192-token llama.cpp server: the light set measured 780 fenced tokens
+    against an 819-token share, and 907 with Read file on (evidence
+    g53v3-llama 10, 11). The safe set now survives the trimming ahead of the
+    opt-in extras, and the meter counts what the send carries."""
+    probe = _native_window(8_192)
+    light_tokens = _light_schema_tokens(probe)
+    assert save_setting_to_cli_config("tools", "read_file_enabled", True)
+    with_read_tokens = _light_schema_tokens(probe)
+    assert light_tokens < with_read_tokens
+    # The 10% share holds the safe set, but not the safe set plus Read file.
+    window = (light_tokens + with_read_tokens) // 2 * 10
+    resolution = _native_window(window)
+    request = [{"role": "user", "content": "Reply with just: hi"}]
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [["hi"], ["hi"]]
+    )
+
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        resolution,
+        agent_messages=request,
+        local_provider=_AskUserProvider(),
+    )
+    sent = _native_names(gateway, gateway.calls - 1)
+    metered = _row_names(
+        _preflight_tools(bridge, resolution, session_id=session.id, messages=request)
+    )
+
+    assert sent == LIGHT, sorted(sent)
+    assert metered == sent, (sorted(metered), sorted(sent))
+
+    # Control: where the share holds both, the switched-on tool goes out too.
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        _native_window(with_read_tokens * 10 + 100),
+        agent_messages=request,
+        local_provider=_AskUserProvider(),
+    )
+    assert _native_names(gateway, gateway.calls - 1) == LIGHT | {"read_file"}

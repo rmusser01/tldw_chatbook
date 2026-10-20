@@ -4801,6 +4801,8 @@ def build_console_first_request_plan(
         catalog_entries=catalog_entries,
         schema_loader=schema_loader,
         allow_discovery=not light_surface,
+        # The safe set outlasts opt-in extras that no longer fit (R3-3).
+        fallback_tools=surface.LIGHT_SURFACE_TOOL_NAMES if light_surface else (),
     )
     schemas = build_first_request_schema_plan(
         registry,

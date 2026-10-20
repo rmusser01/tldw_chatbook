@@ -778,6 +778,7 @@ def build_first_request_schema_plan(
     catalog_entries: tuple[ToolCatalogEntry, ...] | None = None,
     schema_loader: Callable[[str], ToolSchema] | None = None,
     allow_discovery: bool = True,
+    fallback_tools: tuple[str, ...] = (),
 ) -> FirstRequestSchemaPlan:
     """Choose direct disclosure only when schema share and request both fit.
 
@@ -820,6 +821,10 @@ def build_first_request_schema_plan(
         allow_discovery: ``False`` for plain chat's light surface
             (TASK-34100.5.3): when its few tools do not fit directly the
             request carries none, rather than ``find_tools``/``load_tools``.
+        fallback_tools: Names disclosed directly when the whole allowed set
+            does not fit and discovery is off or does not fit either -- plain
+            chat's safe set (TASK-34100.5.3 review round 3, R3-3), so turning
+            one more tool on never leaves fewer tools than the default.
 
     Returns:
         A frozen schema plan whose ``request_fits`` flag proves whether any
@@ -885,14 +890,56 @@ def build_first_request_schema_plan(
         else make_plan((), False, plain_system_prompt or direct_prompt)
     )
 
-    def validated_fallback(context_limit: int) -> FirstRequestSchemaPlan:
-        if _first_request_plan_fits(
-            discovery,
+    def direct_plan(
+        names: tuple[str, ...], context_limit: int
+    ) -> FirstRequestSchemaPlan | None:
+        """Every one of ``names`` disclosed directly, or ``None`` if they do not fit."""
+        active = probe_initial_catalog(
+            registry,
+            names,
+            int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION),
+            lambda schemas: catalog_schema_tokens(
+                schemas,
+                model=config.model,
+                api_endpoint=api_endpoint,
+                native_tools=config.native_tools,
+                reasoning_replay=config.reasoning_replay,
+            ),
+            catalog_entries=catalog_entries,
+            schema_loader=schema_loader,
+        )
+        if active is None:
+            return None
+        plan = make_plan(active, False, direct_prompt)
+        if not _first_request_plan_fits(
+            plan,
             config=config,
             api_endpoint=api_endpoint,
             messages=messages,
             context_limit=context_limit,
         ):
+            return None
+        return plan
+
+    def validated_fallback(context_limit: int) -> FirstRequestSchemaPlan:
+        discovery_fits = _first_request_plan_fits(
+            discovery,
+            config=config,
+            api_endpoint=api_endpoint,
+            messages=messages,
+            context_limit=context_limit,
+        )
+        if allow_discovery and discovery_fits:
+            return discovery
+        # TASK-34100.5.3 review round 3 (R3-3): the safe set survives the
+        # trimming ahead of the opt-in extras that no longer fit beside it.
+        wanted = frozenset(fallback_tools)
+        safe_set = tuple(name for name in allowed_tools if name in wanted)
+        if safe_set and len(safe_set) < len(allowed_tools):
+            safe_plan = direct_plan(safe_set, context_limit)
+            if safe_plan is not None:
+                return safe_plan
+        if discovery_fits:
             return discovery
         no_tools = FirstRequestSchemaPlan(
             active_schemas=(),
@@ -956,31 +1003,8 @@ def build_first_request_schema_plan(
             ))
         if type(context_limit) is not int or context_limit <= 0:
             return discovery
-        schema_limit = int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION)
-        active = probe_initial_catalog(
-            registry,
-            allowed_tools,
-            schema_limit,
-            lambda schemas: catalog_schema_tokens(
-                schemas,
-                model=config.model,
-                api_endpoint=api_endpoint,
-                native_tools=config.native_tools,
-                reasoning_replay=config.reasoning_replay,
-            ),
-            catalog_entries=catalog_entries,
-            schema_loader=schema_loader,
-        )
-        if active is None:
-            return settle(validated_fallback(context_limit))
-        direct = make_plan(active, False, direct_prompt)
-        if not _first_request_plan_fits(
-            direct,
-            config=config,
-            api_endpoint=api_endpoint,
-            messages=messages,
-            context_limit=context_limit,
-        ):
+        direct = direct_plan(allowed_tools, context_limit)
+        if direct is None:
             return settle(validated_fallback(context_limit))
         return direct
     except Exception:

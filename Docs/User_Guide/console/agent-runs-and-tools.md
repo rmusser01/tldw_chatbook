@@ -48,7 +48,9 @@ To turn more on:
   Create note, Expand document, `web_deep_search`, …) is offered in plain
   chat on the next send, without the rest of the agent surface. So are
   tools from an MCP server you added, and Library tools once a conversation
-  allows assistant Library access.
+  allows assistant Library access. On a small context window where they no
+  longer fit beside the light set, the request keeps the light set and
+  leaves them out, so switching one on never leaves you with fewer tools.
 - **One turn** — a message that names a skill (`$skill`) gets the full agent
   surface for that turn.
 
