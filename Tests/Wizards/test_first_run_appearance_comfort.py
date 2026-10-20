@@ -162,6 +162,36 @@ async def test_ascii_marks_are_preset_from_no_color_or_the_linux_console(
         assert step.query_one("#setup-appearance-ascii", Checkbox).value is expected
 
 
+@pytest.mark.parametrize("environ", [{"NO_COLOR": "1"}, {"TERM": "linux"}])
+@pytest.mark.asyncio
+async def test_a_saved_ascii_choice_beats_the_terminal_preset(environ) -> None:
+    """Review F2 (TASK-34100.13): the preset only stands in for a choice never
+    made. A deliberately saved ``ascii_glyphs = false`` showed ticked under
+    NO_COLOR, and Next without touching it wrote ``true``."""
+    wizard, step = _step(_raw(appearance={"ascii_glyphs": False}), environ=environ)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ticked = step.query_one("#setup-appearance-ascii", Checkbox).value
+        ok, _ = await step.commit()
+    assert ticked is False
+    assert ok
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_never_chosen_ascii_preset_is_saved_on_next() -> None:
+    """The preset is the step's proposal when nothing was ever chosen; Next
+    accepts it (the app reads ASCII mode from config, not the terminal)."""
+    wizard, step = _step(_raw(appearance={}), environ={"NO_COLOR": "1"})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ok, _ = await step.commit()
+    assert ok
+    assert wizard.commit_config.await_args.args[0] == {
+        "appearance": {"ascii_glyphs": True}
+    }
+
+
 def test_summary_shows_the_startup_and_motion_row() -> None:
     rows = {
         row.label: row
@@ -222,3 +252,41 @@ def test_summary_theme_row_uses_the_display_name() -> None:
         )
     }["Theme"]
     assert default.detail == "Default dark"
+
+
+class _LiveWizard(SimpleNamespace):
+    """Stands in for SetupWizardContainer: the app's own wizard reads live config."""
+
+    reads_live_config = True
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_shows_splash_settings_changed_since_launch(monkeypatch) -> None:
+    """Review F8 (TASK-34100.13): Settings ▸ Splash Screen changes made after
+    launch were invisible to a same-session re-run (launch-time snapshot)."""
+    import tldw_chatbook.config as config_module
+
+    stale = _raw(splash_screen={"enabled": True, "card_selection": "random"})
+    live = {"splash_screen": {"enabled": False, "card_selection": "matrix"}}
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", lambda **_: live
+    )
+    wizard = _LiveWizard(
+        app_instance=MagicMock(app_config=stale),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=8),
+        environ={},
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        off = step.query_one("#setup-startup-off", RadioButton).value
+        line = str(step.query_one("#setup-appearance-splash-card", Static).render())
+        ok, _ = await step.commit()
+    assert off is True
+    assert line.startswith("Splash card: Matrix")
+    assert ok
+    wizard.commit_config.assert_not_awaited()

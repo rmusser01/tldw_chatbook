@@ -2120,6 +2120,45 @@ def full_config_sections(
     return view
 
 
+def wizard_config_sections(
+    wizard: object, *names: str
+) -> dict[str, dict[str, object]]:
+    """Sections a step reads: the config file as it is now, under the app's wizard.
+
+    Review F8 (TASK-34100.13): ``COMPREHENSIVE_CONFIG_RAW`` is the TOML as it
+    was at launch, and ``app_config``'s own tables are launch-time copies too
+    (the MCP hub's gate switches write only the file). A same-session re-run
+    after changing a gate in MCP ▸ Tool gates or a setting in Settings ▸
+    Splash Screen showed the launch state. Under the app's own wizard
+    (``reads_live_config``) a step reads ``load_cli_config_and_ensure_
+    existence()``: a warm cache every in-app save refreshes and an external
+    edit invalidates. This run's saves are already in it -- the wizard writes
+    before it mirrors into ``app_config``. Any other host (a step mounted on
+    its own, a test double) reads ``full_config_sections``.
+
+    Args:
+        wizard: The step's wizard.
+        *names: Section names to read.
+
+    Returns:
+        ``{name: section}`` for every requested name.
+    """
+    app_config = getattr(getattr(wizard, "app_instance", None), "app_config", None)
+    app_config = app_config if isinstance(app_config, Mapping) else {}
+    if getattr(type(wizard), "reads_live_config", False) is not True:
+        return full_config_sections(app_config, *names)
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+    try:
+        live = load_cli_config_and_ensure_existence()
+    except Exception:  # noqa: BLE001 -- a step must still render
+        return full_config_sections(app_config, *names)
+    return {
+        name: dict(live[name]) if isinstance(live.get(name), Mapping) else {}
+        for name in names
+    }
+
+
 def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     chat_defaults = _section(app_config, "chat_defaults")
     general = _section(app_config, "general")

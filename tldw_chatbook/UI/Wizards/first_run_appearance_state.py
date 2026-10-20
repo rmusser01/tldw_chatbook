@@ -24,7 +24,6 @@ STARTUP_CHOICES = (STARTUP_OFF, STARTUP_SHORT, STARTUP_FULL)
 SHORT_SPLASH_SECONDS = 2.0
 
 SPLASH_SETTINGS_PATH = "Settings ▸ Splash Screen"
-THEME_SETTINGS_PATH = "Settings ▸ Theme"
 
 
 def _seconds(value: float) -> str:
@@ -82,6 +81,21 @@ def read_comfort(appearance: Mapping[str, Any]) -> tuple[bool, bool]:
 def ascii_preset_from_environment(environ: Mapping[str, str]) -> bool:
     """Whether the terminal suggests plain ASCII marks (NO_COLOR, or the Linux console)."""
     return bool(environ.get("NO_COLOR")) or environ.get("TERM", "") == "linux"
+
+
+def ascii_checkbox_value(
+    appearance: Mapping[str, Any], environ: Mapping[str, str]
+) -> bool:
+    """The ASCII box's starting value: the saved choice, else the terminal preset.
+
+    Review F2 (TASK-34100.13): the preset stands in only for a choice never
+    made. A saved ``ascii_glyphs = false`` stays unticked under NO_COLOR, so
+    Next on an untouched step writes nothing. With no saved choice the preset
+    is the step's proposal, and Next saves it like any other change.
+    """
+    if "ascii_glyphs" in appearance:
+        return read_comfort(appearance)[1]
+    return ascii_preset_from_environment(environ)
 
 
 def build_comfort_commit(

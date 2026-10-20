@@ -183,16 +183,16 @@ def quick_defaults_note(posture: ToolsPosture, *, auto_retrieve: bool) -> str:
     )
 
 
-def gate_config_view(app_config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def gate_config_view(wizard: Any) -> dict[str, dict[str, Any]]:
     """The ``[tools]``/``[console]`` sections the step reads gates from.
 
     Args:
-        app_config: The app's in-memory config.
+        wizard: The Tools step's wizard.
 
     Returns:
         ``{"tools": {...}, "console": {...}}`` for ``all_tool_gates(config=...)``,
-        read from the full TOML with this run's saves on top.
+        read from the config as it is now (``wizard_config_sections``).
     """
-    from tldw_chatbook.UI.Wizards.first_run_setup_state import full_config_sections
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import wizard_config_sections
 
-    return full_config_sections(app_config, "tools", "console")
+    return wizard_config_sections(wizard, "tools", "console")
