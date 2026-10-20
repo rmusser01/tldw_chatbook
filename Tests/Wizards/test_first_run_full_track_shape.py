@@ -78,3 +78,146 @@ def test_a_draft_with_a_retired_field_keeps_its_other_values(
     assert draft is not None
     assert draft.values["model"] == {"model_id": "gpt-4.1-mini"}
     assert retired_field not in draft.values.get(step_id, {})
+
+
+# -- In the real wizard frame ---------------------------------------------------
+
+
+def _hosted_wizard(*, resume_draft=None, app_config=None):
+    """The real FirstRunSetupWizard in the app stylesheet, without the app."""
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from textual.app import ComposeResult
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+
+    bundle = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/tldw_cli_modular.tcss"
+    )
+
+    class _Host(ConsolidatedCSSApp):
+        CSS_PATH = bundle
+
+        def __init__(self, wizard) -> None:
+            super().__init__()
+            self._wizard = wizard
+
+        def compose(self) -> ComposeResult:
+            yield from ()
+
+        async def on_mount(self) -> None:
+            self.push_screen(self._wizard)
+
+    app_instance = MagicMock()
+    app_instance.app_config = {} if app_config is None else app_config
+    wizard = FirstRunSetupWizard(app_instance, resume_draft=resume_draft)
+    return _Host(wizard)
+
+
+def _progress(container) -> tuple[int, int]:
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardNavigation
+
+    items = len(container.query(".setup-progress-item"))
+    nav = container.query_one(".wizard-navigation", WizardNavigation)
+    return items, nav.total_steps
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_the_live_full_track_counts_ten_steps_across_next_and_back() -> None:
+    """review-tests F9: the pure pin above held before Notes was removed too;
+    this one walks the mounted wizard, forward and back, with a key typed
+    part-way (the old trigger for a mid-run step-count change)."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+    app = _hosted_wizard()
+    seen: list[tuple[int, int]] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = app.screen.query_one(SetupWizardContainer)
+        container.select_track(wizard_state.TRACK_FULL)
+        order = [container._step_index_for_id(step) for step in container.active_ids]
+        for position, index in enumerate(order):
+            if position == 2:
+                container.note_key_entered()
+            container.show_step(index)
+            await pilot.pause()
+            seen.append(_progress(container))
+        for index in reversed(order[:-1]):
+            container.show_step(index)
+            await pilot.pause()
+            seen.append(_progress(container))
+        assert "notes" not in container.active_ids
+    assert set(seen) == {(10, 10)}
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_resumed_draft_puts_search_and_appearance_choices_back(
+    monkeypatch,
+) -> None:
+    """review-tests F4: the rewritten restore paths, without the app factory.
+
+    The live-contract tests that cover them stop in the app factory on this
+    machine, so this drives the real resume path (``_restore_resume_target``
+    on mount) and then checks that Next would save what was restored.
+    """
+    from unittest.mock import AsyncMock
+
+    from textual.widgets import Checkbox, RadioSet
+
+    from tldw_chatbook.UI.Wizards import first_run_rag_state as rag_state
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.embeddings_rag_deps_installed",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        rag_state,
+        "resolve_active_embedding_model",
+        lambda: rag_state.EmbeddingModelFacts(name="all-MiniLM-L6-v2", cloud=False),
+    )
+    draft = wizard_state.SetupDraft(
+        version=wizard_state.SETUP_DRAFT_VERSION,
+        track=wizard_state.TRACK_FULL,
+        active_step_id=wizard_state.STEP_APPEARANCE,
+        values={
+            wizard_state.STEP_WELCOME: {"track": wizard_state.TRACK_FULL},
+            wizard_state.STEP_RAG: {"auto_retrieve": True},
+            wizard_state.STEP_APPEARANCE: {
+                "startup": "short",
+                "reduce_motion": True,
+                "ascii_glyphs": True,
+            },
+        },
+    )
+    app = _hosted_wizard(resume_draft=draft)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.5)
+        container = app.screen.query_one(SetupWizardContainer)
+        rag = container.steps[container._step_index_for_id(wizard_state.STEP_RAG)]
+        look = container.steps[
+            container._step_index_for_id(wizard_state.STEP_APPEARANCE)
+        ]
+        rag_pressed = rag.query_one("#setup-rag-auto-retrieve", RadioSet).pressed_button
+        startup = look.query_one("#setup-startup-choice", RadioSet).pressed_button
+        reduce_box = look.query_one("#setup-appearance-reduce-motion", Checkbox).value
+        ascii_box = look.query_one("#setup-appearance-ascii", Checkbox).value
+        container.commit_config = AsyncMock(return_value=True)
+        rag_ok, _ = await rag.commit()
+        look_ok, _ = await look.commit()
+        writes = [call.args[0] for call in container.commit_config.await_args_list]
+    assert container.steps[container.current_step] is look
+    assert rag_pressed is not None
+    assert rag_pressed.id == "setup-rag-auto-retrieve-automatic"
+    assert startup is not None and startup.id == "setup-startup-short"
+    assert (reduce_box, ascii_box) == (True, True)
+    assert rag_ok and look_ok
+    assert {"chat_defaults": {"rag_auto_retrieve_on_send": True}} in writes
+    appearance = next(write for write in writes if "splash_screen" in write)
+    assert appearance["splash_screen"] == {"enabled": True, "duration": 2.0}
+    assert appearance["appearance"] == {"reduce_motion": True, "ascii_glyphs": True}

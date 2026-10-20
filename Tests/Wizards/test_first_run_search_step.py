@@ -187,6 +187,133 @@ def test_summary_search_row_ticks_only_for_automatic_retrieval() -> None:
     )
 
 
+DISTINCT_MODEL = "openai/zz-review-only-embedder"
+
+
+def _patch_active_rag_config(monkeypatch, model=DISTINCT_MODEL, base_url=None):
+    """Make the real RAG profile resolver return a model no default could."""
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    calls = []
+
+    def resolve():
+        calls.append(1)
+        return SimpleNamespace(
+            embedding=SimpleNamespace(model=model, base_url=base_url)
+        )
+
+    monkeypatch.setattr(active_config, "resolve_active_rag_config", resolve)
+    return calls
+
+
+def test_the_resolver_reads_the_active_rag_profile(monkeypatch) -> None:
+    """review-tests F3: the one link to ``resolve_active_rag_config()``.
+
+    Every other test injects the model; a resolver that returned a fixed
+    default without reading the profile passed them all.
+    """
+    calls = _patch_active_rag_config(monkeypatch)
+    facts = rag_state.resolve_active_embedding_model()
+    assert calls == [1]
+    assert facts == rag_state.EmbeddingModelFacts(name=DISTINCT_MODEL, cloud=True)
+
+
+def test_an_unresolvable_rag_profile_names_settings_instead(monkeypatch) -> None:
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    def broken():
+        raise RuntimeError("profile unreadable")
+
+    monkeypatch.setattr(active_config, "resolve_active_rag_config", broken)
+    assert rag_state.resolve_active_embedding_model() is None
+    assert rag_state.embedding_model_line(None) == (
+        f"Embedding model: see {rag_state.SEARCH_SETTINGS_PATH}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_step_built_without_a_resolver_shows_the_profiles_model(
+    monkeypatch,
+) -> None:
+    """The wizard builds RagStep without ``resolve_model``: the default path."""
+    _patch_active_rag_config(monkeypatch)
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = RagStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="rag", title="Search", step_number=5),
+        deps_installed=lambda: True,
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        line = str(step.query_one("#setup-rag-model", Static).render())
+    assert DISTINCT_MODEL in line
+    assert "OpenAI API" in line
+
+
+@pytest.mark.asyncio
+async def test_the_summary_search_row_is_repainted_with_the_resolved_model() -> None:
+    """review-tests F3: the Summary paints first, then once the model resolves."""
+    from tldw_chatbook.UI.Wizards.first_run_summary_step import SummaryStep
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "full"}},
+    )
+    facts = rag_state.EmbeddingModelFacts(name=DISTINCT_MODEL, cloud=True)
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=10),
+        load_config=lambda: {"chat_defaults": {"rag_auto_retrieve_on_send": True}},
+        rag_deps_installed=lambda: True,
+        speech_installed=lambda: False,
+        speech_runtime_installed=lambda: False,
+        rag_model=lambda: facts,
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        rows = ""
+        for _ in range(40):
+            await pilot.pause(0.05)
+            rows = str(step.query_one("#setup-summary-rows", Static).render())
+            if DISTINCT_MODEL in rows:
+                break
+    search = next(line for line in rows.splitlines() if " Search — " in line)
+    assert search.endswith(
+        f"Search — automatic when you chat · {DISTINCT_MODEL} (OpenAI API)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_commit_reads_the_pressed_radio_without_a_changed_event() -> None:
+    """review-tests F6 (the F-A pattern, ported to the new radio): a press
+    whose ``RadioSet.Changed`` never reached the step is still what Next
+    saves."""
+    wizard, step = _rag_step({"chat_defaults": {"rag_auto_retrieve_on_send": False}})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        radio = step.query_one("#setup-rag-auto-retrieve", RadioSet)
+        automatic = step.query_one("#setup-rag-auto-retrieve-automatic", RadioButton)
+        on_request = step.query_one("#setup-rag-auto-retrieve-on-request", RadioButton)
+        with radio.prevent(RadioButton.Changed, RadioSet.Changed):
+            on_request.value = False
+            automatic.value = True
+        radio._pressed_button = automatic
+        await pilot.pause()
+        assert step.auto_retrieve is False  # the step never heard about it
+        ok, _ = await step.commit()
+    assert ok
+    wizard.commit_config.assert_awaited_once_with(
+        {"chat_defaults": {"rag_auto_retrieve_on_send": True}}
+    )
+
+
 def test_an_openai_model_on_a_loopback_server_is_local() -> None:
     facts = rag_state.describe_embedding_model(
         "openai/nomic", base_url="http://127.0.0.1:8080/v1"

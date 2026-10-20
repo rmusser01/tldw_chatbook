@@ -74,6 +74,8 @@ async def test_first_run_step_names_the_default_on_groups_and_claims_nothing_fal
 
 @pytest.mark.asyncio
 async def test_the_console_master_switch_is_not_offered_in_setup() -> None:
+    """A non-regression pin, not RED evidence for AC#2: the base Tools step
+    never offered the ``[console]`` master switch either (review-tests F7)."""
     _wizard, step = _tools_step({})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -188,6 +190,55 @@ def test_quick_note_is_derived_from_the_same_posture() -> None:
     for claim in ("tools off", "all off", "RAG off"):
         assert claim not in note
     assert "web search and Watchlists" in note
+
+
+@pytest.mark.asyncio
+async def test_the_summary_quick_note_is_derived_from_the_reread_config() -> None:
+    """review-tests F2: the Summary's own note, not just the pure helper.
+
+    A note left as the old literal ("tools off, RAG off …") also contains
+    "recommended defaults", so only the derived text pins the wiring: a
+    switch turned on and automatic search must both show up in it.
+    """
+    from tldw_chatbook.UI.Wizards.first_run_rag_state import EmbeddingModelFacts
+    from tldw_chatbook.UI.Wizards.first_run_summary_step import SummaryStep
+
+    reread = {
+        "tools": {"read_file_enabled": True},
+        "console": {},
+        "chat_defaults": {"rag_auto_retrieve_on_send": True},
+    }
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=6),
+        load_config=lambda: reread,
+        rag_deps_installed=lambda: True,
+        speech_installed=lambda: False,
+        speech_runtime_installed=lambda: False,
+        rag_model=lambda: EmbeddingModelFacts(name="all-MiniLM-L6-v2", cloud=False),
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        for _ in range(30):
+            await pilot.pause(0.05)
+            note = str(step.query_one("#setup-summary-defaults-note", Static).render())
+            if note:
+                break
+    expected = posture_mod.quick_defaults_note(
+        posture_mod.tools_posture(all_tool_gates(config=reread)), auto_retrieve=True
+    )
+    assert note == expected
+    assert "1 file, note and document switches on" in note
+    assert "Library searched on every message" in note
+    for claim in ("tools off", "RAG off"):
+        assert claim not in note
 
 
 # -- AC#2/#4: blurbs on the shared gate rows -----------------------------------
