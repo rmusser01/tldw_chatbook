@@ -539,9 +539,16 @@ def test_install_failure_messages_are_typed_labeled_and_sanitized() -> None:
         GatedRepositoryError(marker),
         "Configure HUGGINGFACE_API_KEY (or HF_TOKEN) and retry.",
     )
+    # TASK-34100.14 ([voice-speech-08]): the busy copy no longer blames the
+    # caller's own model ("Another Whisper install..."); with no in-process
+    # holder named it stays generic, and a named holder is named.
     _check(
         AcquisitionBusyError(marker),
-        "Another Whisper install is already in progress. Try again shortly.",
+        "Another model download is already running. Try again when it finishes.",
+    )
+    _check(
+        AcquisitionBusyError(marker, holder_label="OmniVoice voice model"),
+        "The OmniVoice voice model download is still running.",
     )
     _check(
         ConsentMismatchError(marker),

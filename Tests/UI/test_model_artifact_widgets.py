@@ -134,18 +134,20 @@ async def test_plan_panel_renders_every_consent_field(tmp_path: Path) -> None:
         await pilot.pause()
         text = "\n".join(str(item.renderable) for item in app.query(Static))
 
+    # TASK-34100.14: same consent facts, new wording/placement -- the licence
+    # link is "Licence text", and provenance/staging live under Details.
     for expected in (
         "publisher/parakeet-v2",
         "immutable-revision",
-        "License: CC-BY-4.0",
-        "Source review page: https://example.test/license",
+        "Licence: CC-BY-4.0",
+        "Licence text: https://example.test/license",
         "int8",
         "4 files",
         str(tmp_path / "managed"),
         "Staging",
         "Enough free space",
-        "Every declared file is checked against pinned sizes and SHA-256 digests "
-        "before installation completes.",
+        "Every file is checked against its recorded size and SHA-256 before "
+        "install.",
     ):
         assert expected in text
 
@@ -166,7 +168,7 @@ async def test_plan_panel_shows_the_usage_terms_at_consent(tmp_path: Path) -> No
         text = "\n".join(str(item.renderable) for item in app.query(Static))
 
     assert f"Terms: {terms}" in text
-    assert text.index("License: other") < text.index("Terms:")
+    assert text.index("Licence: Other") < text.index("Terms:")
 
     # An entry without a notice renders no empty Terms line.
     plain = _PanelApp(_report(tmp_path / "managed2"))
@@ -218,9 +220,9 @@ async def test_plan_panel_labels_noassertion_as_unknown_and_separates_review_url
         await pilot.pause()
         text = "\n".join(str(item.renderable) for item in app.query(Static))
 
-    assert "License: Unknown / not declared" in text
-    assert "Source review page: https://example.test/license" in text
-    assert "License: NOASSERTION" not in text
+    assert "Licence: Unknown / not declared" in text
+    assert "Licence text: https://example.test/license" in text
+    assert "Licence: NOASSERTION" not in text
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,8 @@ async def test_plan_panel_renders_selected_file_details_as_plain_bounded_text(
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        panel = app.query_one(".model-plan-panel", Static)
+        # TASK-34100.14: hashes and pinned URLs moved under Details.
+        panel = app.query_one(".model-plan-details-text", Static)
         text = str(panel.renderable)
 
     assert "Selected upstream files:" in text
@@ -508,10 +511,10 @@ async def test_progress_widget_shows_each_phase_and_byte_detail() -> None:
             assert expected in text
             if index < 2:
                 assert "encoder.onnx" in text
-                assert "/" in text
+                assert " of " in text and "MiB" in text
             else:
                 assert "encoder.onnx" not in text
-                assert "/" not in text
+                assert " of " not in text
 
 
 def test_progress_callback_posts_a_message_without_touching_widgets() -> None:
@@ -1039,7 +1042,325 @@ async def test_progress_widget_reuses_byte_bar_for_local_copy_only() -> None:
             assert bar.display is (index == 0)
             if index == 0:
                 assert "outside.gguf" in text
-                assert "/" in text
+                assert " of " in text and "MiB" in text
             else:
                 assert "outside.gguf" not in text
-                assert "/" not in text
+                assert " of " not in text
+
+
+# ---------------------------------------------------------------------------
+# TASK-34100.14: speed/ETA, queued wait and Cancel in the shared progress
+# widget ([voice-speech-09], [voice-speech-08]); the install review leads with
+# what a newcomer needs and moves provenance under Details ([voice-speech-18]);
+# a staged partial download is offered as a resume ([voice-speech-11]).
+# ---------------------------------------------------------------------------
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 100.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _CancellableProgressApp(ConsolidatedCSSApp):
+    def __init__(self, clock) -> None:
+        self.clock = clock
+        self.cancel_requests = 0
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+        yield ModelInstallProgress(cancellable=True, clock=self.clock)
+
+    def on_model_install_progress_cancel_requested(self, event) -> None:
+        self.cancel_requests += 1
+
+
+def _progress_text(widget) -> str:
+    return "\n".join(str(item.render()) for item in widget.query(Static))
+
+
+@pytest.mark.asyncio
+async def test_progress_widget_shows_speed_and_time_left_from_successive_samples():
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    mib = 1024 * 1024
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    clock = _FakeClock()
+    app = _CancellableProgressApp(clock)
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        widget.update_progress(
+            AcquisitionProgress(
+                "fetch", reference, "encoder-model.int8.onnx", 0, 632 * mib
+            )
+        )
+        clock.now += 4.0
+        widget.update_progress(
+            AcquisitionProgress(
+                "fetch", reference, "encoder-model.int8.onnx", 16 * mib, 632 * mib
+            )
+        )
+        await pilot.pause()
+        text = _progress_text(widget)
+
+    assert "encoder-model.int8.onnx — 16.0 of 632.0 MiB · 4.0 MiB/s" in text
+    # 616 MiB left at 4 MiB/s is 154 s.
+    assert "about 3 min left" in text
+    assert widget.transfer_line == "16.0 of 632.0 MiB · 4.0 MiB/s · about 3 min left"
+
+
+@pytest.mark.asyncio
+async def test_progress_widget_names_the_download_a_queued_install_waits_for():
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    app = _CancellableProgressApp(_FakeClock())
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        widget.update_progress(
+            AcquisitionProgress(
+                "queued", reference, None, 0, 0, waiting_for="OmniVoice voice model"
+            )
+        )
+        await pilot.pause()
+        text = _progress_text(widget)
+        cancel = widget.query_one(".model-install-cancel", Button)
+        assert cancel.display is True
+
+    assert "Waiting for the OmniVoice voice model download to finish…" in text
+
+
+@pytest.mark.asyncio
+async def test_progress_widget_cancel_posts_one_request_and_says_it_is_stopping():
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    app = _CancellableProgressApp(_FakeClock())
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        widget.update_progress(
+            AcquisitionProgress("fetch", reference, "encoder.onnx", 1, 2)
+        )
+        await pilot.pause()
+        cancel = widget.query_one(".model-install-cancel", Button)
+        assert str(cancel.label) == "Cancel download"
+        assert cancel.display is True
+        await pilot.click(cancel)
+        await pilot.pause()
+        await pilot.click(cancel)
+        await pilot.pause()
+        text = _progress_text(widget)
+        assert cancel.disabled is True
+        # A later tick must not re-enable it or overwrite the notice.
+        widget.update_progress(
+            AcquisitionProgress("fetch", reference, "encoder.onnx", 2, 2)
+        )
+        await pilot.pause()
+        assert cancel.disabled is True
+        assert "Cancelling download…" in _progress_text(widget)
+
+    assert app.cancel_requests == 1
+    assert "Cancelling download…" in text
+
+
+@pytest.mark.asyncio
+async def test_progress_widget_hides_cancel_once_install_has_started_and_by_default():
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    app = _CancellableProgressApp(_FakeClock())
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        widget.update_progress(
+            AcquisitionProgress("verify-install", reference, None, 0, 0)
+        )
+        await pilot.pause()
+        assert widget.query_one(".model-install-cancel", Button).display is False
+
+    plain = _ProgressApp()
+    async with plain.run_test() as pilot:
+        await pilot.pause()
+        assert not plain.query(".model-install-cancel")
+
+
+def _closure_report(
+    destination: Path,
+    *,
+    already_staged_bytes: int = 0,
+    free_bytes: int = 120 * 1024**3,
+) -> PreflightReport:
+    """The real Parakeet v2 closure: CC-BY-4.0 root + MIT VAD dependency."""
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_v2_descriptor,
+        parakeet_vad_descriptor,
+    )
+
+    entries = []
+    for descriptor in (parakeet_v2_descriptor(), parakeet_vad_descriptor()):
+        entries.append(
+            ArtifactPreflightEntry(
+                ref=descriptor.reference,
+                source_url=descriptor.source_url,
+                repository=descriptor.upstream_repository,
+                revision=descriptor.upstream_revision,
+                license_id=descriptor.license_id,
+                license_url=descriptor.license_url,
+                precision=descriptor.precision,
+                total_bytes=descriptor.expected_installed_bytes,
+                file_count=len(descriptor.files),
+                already_installed=False,
+                provenance=descriptor.provenance,
+                usage_notice=descriptor.usage_notice,
+            )
+        )
+    total = sum(entry.total_bytes for entry in entries)
+    return PreflightReport(
+        root=entries[0].ref,
+        closure_fingerprint="f" * 64,
+        entries=tuple(entries),
+        download_bytes=total - already_staged_bytes,
+        already_staged_bytes=already_staged_bytes,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=destination,
+        free_bytes=free_bytes,
+        required_bytes=total,
+        sufficient_space=True,
+        gating_errors=(),
+    )
+
+
+def _panel_parts(app) -> tuple[str, str]:
+    summary = str(app.query_one(".model-plan-summary", Static).render())
+    details = str(app.query_one(".model-plan-details-text", Static).render())
+    return summary, details
+
+
+@pytest.mark.asyncio
+async def test_install_review_leads_with_size_location_and_licences(tmp_path: Path):
+    from textual.widgets import Collapsible
+
+    report = _closure_report(tmp_path / "managed")
+    app = _PanelApp(report)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        summary, details = _panel_parts(app)
+        collapsible = app.query_one(Collapsible)
+        assert collapsible.title == "Details"
+        assert collapsible.collapsed is True
+
+    assert "Download: 632.8 MiB" in summary
+    assert f"Installs to: {tmp_path / 'managed'} (120.0 GiB free)" in summary
+    assert (
+        "Licences: CC-BY-4.0 (speech model) · MIT (voice-activity detector)"
+        in summary
+    )
+    for moved in ("Source:", "Revision:", "Provenance:", "Staging", "SHA-256:"):
+        assert moved not in summary
+    assert "Source: istupakov/parakeet-tdt-0.6b-v2-onnx" in details
+    assert "Revision: 0bbb45a3365852604aef28b538a8f066f4ccaa85" in details
+    assert "Provenance: Curated by Chatbook" in details
+    assert "Staging overhead: 0.0 MiB" in details
+    whole = summary + details
+    assert "TASK-593" not in whole
+    assert "Source review page" not in whole
+    assert "Licence text: https://creativecommons.org/licenses/by/4.0/" in details
+    # The descriptor declares "mit"; only the licence URL may spell it so.
+    assert "Licence: MIT" in details
+    assert "Licence: mit" not in whole
+    assert "Contents: 1 file, 2.2 MiB" in details
+    assert "1 files" not in whole
+    assert (
+        "Voice-activity detector (2.2 MiB) — splits long recordings into chunks."
+        in details
+    )
+    assert "long-form segmentation" not in whole
+
+
+@pytest.mark.asyncio
+async def test_install_review_offers_resume_for_a_staged_partial(tmp_path: Path):
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    staged = 120 * 1024 * 1024
+    report = _closure_report(tmp_path / "managed", already_staged_bytes=staged)
+    app = _ModalApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(ModelInstallModal(report, model_label="Parakeet v2"))
+        await pilot.pause()
+        summary = str(app.screen.query_one(".model-plan-summary", Static).render())
+        confirm = app.screen.query_one("#model-install-confirm", Button)
+        assert str(confirm.label) == "Resume download"
+
+    assert "A previous download stopped at 120.0 of 632.8 MiB." in summary
+    assert "Download: 512.8 MiB" in summary
+
+    fresh = _ModalApp()
+    async with fresh.run_test(size=(100, 40)) as pilot:
+        await fresh.push_screen(
+            ModelInstallModal(
+                _closure_report(tmp_path / "managed"), model_label="Parakeet v2"
+            )
+        )
+        await pilot.pause()
+        assert (
+            str(fresh.screen.query_one("#model-install-confirm", Button).label)
+            == "Install"
+        )
+
+
+def test_curated_component_copy_keys_track_the_parakeet_constants() -> None:
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        PARAKEET_V2_ARTIFACT_ID,
+        PARAKEET_V3_ARTIFACT_ID,
+        PARAKEET_VAD_ARTIFACT_ID,
+    )
+    from tldw_chatbook.UI.Screens.model_browser_state import component_copy
+
+    for artifact_id in (
+        PARAKEET_V2_ARTIFACT_ID,
+        PARAKEET_V3_ARTIFACT_ID,
+        PARAKEET_VAD_ARTIFACT_ID,
+    ):
+        assert component_copy(artifact_id) is not None
+
+
+def test_curated_frozen_notices_match_the_descriptors_they_hide() -> None:
+    """Rewording a descriptor notice must update the review copy table too."""
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        PARAKEET_PRECISIONS,
+        parakeet_descriptor,
+        parakeet_vad_descriptor,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        PARAKEET_V2_MODEL,
+        PARAKEET_V3_MODEL,
+    )
+    from tldw_chatbook.UI.Screens.model_browser_state import component_copy
+
+    descriptors = [parakeet_vad_descriptor()] + [
+        parakeet_descriptor(model, precision)
+        for model in (PARAKEET_V2_MODEL, PARAKEET_V3_MODEL)
+        for precision in PARAKEET_PRECISIONS
+    ]
+    for descriptor in descriptors:
+        copy = component_copy(descriptor.reference.artifact_id)
+        assert copy is not None
+        assert copy.frozen_notice == descriptor.usage_notice
+
+
+def test_licence_ids_render_in_canonical_spdx_case() -> None:
+    from tldw_chatbook.UI.Screens.model_browser_state import display_license
+
+    assert display_license("mit") == "MIT"
+    assert display_license("cc-by-4.0") == "CC-BY-4.0"
+    assert display_license("apache-2.0") == "Apache-2.0"
+    assert display_license("NOASSERTION") == "Unknown / not declared"
+    assert display_license("Custom[v1]") == "Custom[v1]"

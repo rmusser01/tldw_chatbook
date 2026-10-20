@@ -104,8 +104,14 @@ class ModelInstallModal(SafeModalDismissMixin, ModalScreen[bool]):
                 yield Checkbox(self.required_acknowledgment)
             with Horizontal(classes="model-install-actions"):
                 yield Button("Cancel", id=self.cancel_id, variant="default")
+                # TASK-34100.14 ([voice-speech-11]): a staged partial is
+                # resumed, not restarted -- say so on the button too.
                 yield Button(
-                    "Install",
+                    (
+                        "Resume download"
+                        if self.report.already_staged_bytes
+                        else "Install"
+                    ),
                     id=self.confirm_id,
                     variant="primary",
                     disabled=self.ungrantable,

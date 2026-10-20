@@ -93,23 +93,38 @@ class ComponentCopy:
     Attributes:
         role: Short noun for the summary's licence line ("speech model").
         purpose: What the component does, in plain words.
-        notice: Replacement for the descriptor's usage notice; ``""`` shows
-            none (the panel's own closing line already says every file is
-            checked against its recorded size and SHA-256).
+        frozen_notice: The descriptor's engineering usage notice this copy
+            hides (exact text). Only that text is hidden -- the panel's own
+            closing line already says every file is checked against its
+            recorded size and SHA-256 -- so a descriptor that carries real
+            terms under the same id still shows them.
     """
 
     role: str
     purpose: str
-    notice: str = ""
+    frozen_notice: str = ""
 
+
+_PARAKEET_FROZEN_NOTICE = (
+    "Curated Parakeet TDT ONNX export pinned to one immutable upstream "
+    "revision and verified against the sizes and SHA-256 digests recorded "
+    "by TASK-593."
+)
 
 # Keyed by artifact id; Tests/UI/test_model_artifact_widgets.py pins these
-# keys to the constants in Local_Ingestion/parakeet_v2_artifact.py.
+# keys to the constants in Local_Ingestion/parakeet_v2_artifact.py and the
+# frozen notices to the descriptors' current text.
 _CURATED_COMPONENT_COPY: dict[str, ComponentCopy] = {
-    "parakeet-v2": ComponentCopy("speech model", "turns speech into text"),
-    "parakeet-v3": ComponentCopy("speech model", "turns speech into text"),
+    "parakeet-v2": ComponentCopy(
+        "speech model", "turns speech into text", _PARAKEET_FROZEN_NOTICE
+    ),
+    "parakeet-v3": ComponentCopy(
+        "speech model", "turns speech into text", _PARAKEET_FROZEN_NOTICE
+    ),
     "silero-vad": ComponentCopy(
-        "voice-activity detector", "splits long recordings into chunks"
+        "voice-activity detector",
+        "splits long recordings into chunks",
+        "Pinned Silero VAD ONNX model used for offline long-form segmentation.",
     ),
 }
 
@@ -429,7 +444,11 @@ def plan_rows(report: PreflightReport) -> tuple[PlanRow, ...]:
                 total_bytes=entry.total_bytes,
                 already_installed=entry.already_installed,
                 provenance=provenance_label(entry.provenance),
-                usage_notice=(copy.notice if copy is not None else entry.usage_notice),
+                usage_notice=(
+                    ""
+                    if copy is not None and entry.usage_notice == copy.frozen_notice
+                    else entry.usage_notice
+                ),
                 role=copy.role if copy is not None else "",
                 purpose=copy.purpose if copy is not None else "",
             )

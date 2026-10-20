@@ -1371,7 +1371,7 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from textual.widgets import Button
+    from textual.widgets import Button, Static
 
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_model_curated_view import _descriptor, _registry_with
@@ -1520,7 +1520,10 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
         )
         modal = app.screen
         modal_text = "\n".join(
-            str(item.renderable) for item in modal.query(".model-plan-panel")
+            # TASK-34100.14: hashes and pinned URLs sit under the plan's
+            # collapsed "Details" section.
+            str(item.renderable)
+            for item in modal.query(".model-plan-details-text").results(Static)
         )
         for artifact_file in descriptor.files:
             assert f"Path: {artifact_file.path}" in modal_text

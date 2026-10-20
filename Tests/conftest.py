@@ -1747,6 +1747,13 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # mounts instead -- keeping the bootstrap profile is the fit, as
             # for the Home cluster above.
             "test_timer_path_layout_cost.py",
+            # TASK-34100.14: the shared managed-model widget suite (progress,
+            # plan panel, install modal) hits the same signature through
+            # Tests/UI/conftest.py's _disable_model_catalog_refresh, which
+            # imports tldw_chatbook.app after the per-test redirect: all 31
+            # nodes errored in setup on a clean dev export (4de437a5c5) and
+            # all 31 pass enrolled. It never re-selects a config.
+            "test_model_artifact_widgets.py",
         }
     )
     test_data_dir = (
