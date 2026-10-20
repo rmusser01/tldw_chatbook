@@ -624,7 +624,7 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                     case.console, "_sync_native_console_transcript", rebuild_then_transcript
                 )
                 # The app's own sync may be running: this call would then
-                # return at entry (the two flags its entry guard checks).
+                # return at entry (two of the flags its entry guard checks).
                 # Nothing awaits between the check and entry.
                 async with asyncio.timeout(5):
                     while case.console._console_sync_in_progress or getattr(
