@@ -9,6 +9,8 @@ import time
 
 OUT = Path(__file__).resolve().parent
 ROOT = OUT.parents[3]
+CONTROL_BAR = "--control-bar" in sys.argv
+PREFIX = "control-bar" if CONTROL_BAR else "native-waits"
 SOURCES = (
     "tldw_chatbook/UI/Screens/home_screen.py",
     "tldw_chatbook/UI/Screens/chat_screen.py",
@@ -33,10 +35,12 @@ for tag, original in (
         "--attach-poll",
         "--clock-safe",
         "--tag",
-        f"native-waits-{tag}",
+        f"{PREFIX}-{tag}",
     ]
     if original:
-        command.append("--native-wait-baseline")
+        command.append(
+            "--control-bar-baseline" if CONTROL_BAR else "--native-wait-baseline"
+        )
     receipt = {
         "tag": tag,
         "original": original,
@@ -51,7 +55,7 @@ for tag, original in (
         },
     }
     started = time.monotonic()
-    with (OUT / f"native-waits-{tag}.log").open("wb") as log:
+    with (OUT / f"{PREFIX}-{tag}.log").open("wb") as log:
         try:
             result = subprocess.run(
                 command, cwd=ROOT, stdout=log, stderr=log, timeout=300
@@ -60,7 +64,7 @@ for tag, original in (
         except subprocess.TimeoutExpired:
             receipt["timeout_seconds"] = 300
     receipt["seconds"] = time.monotonic() - started
-    (OUT / f"native-waits-{tag}-exit.json").write_text(
+    (OUT / f"{PREFIX}-{tag}-exit.json").write_text(
         json.dumps(receipt, indent=2), encoding="utf-8"
     )
     print(json.dumps(receipt), flush=True)

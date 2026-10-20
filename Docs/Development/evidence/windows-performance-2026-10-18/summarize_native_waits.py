@@ -4,15 +4,28 @@ from collections import Counter
 import json
 from pathlib import Path
 from statistics import median
+import sys
 
 OUT = Path(__file__).resolve().parent
+CONTROL_BAR = "--control-bar" in sys.argv
+PREFIX = "control-bar" if CONTROL_BAR else "native-waits"
+BASE_REVISION = (
+    "473c32b4edbcf4c17e982045a749b5e7c6bc49b7"
+    if CONTROL_BAR
+    else "d24919ab402d503ca8210dc5ee6b0fd186adbd64"
+)
+BASE_SCOPE = (
+    ["tldw_chatbook/UI/Console_Modules/console_spend_projection.py"]
+    if CONTROL_BAR
+    else ["tldw_chatbook/UI/Screens/home_screen.py"]
+)
 comparisons = {}
 pooled = {"control": [], "after": []}
 for tag in ("control1", "after1", "after2", "control2"):
-    receipt = json.loads((OUT / f"native-waits-{tag}-exit.json").read_text())
+    receipt = json.loads((OUT / f"{PREFIX}-{tag}-exit.json").read_text())
     if receipt.get("exit_code") != 0:
         raise ValueError(f"Unsuccessful exact process exit: {tag}")
-    packet = json.loads((OUT / f"plain-ready-native-waits-{tag}.json").read_text())
+    packet = json.loads((OUT / f"plain-ready-{PREFIX}-{tag}.json").read_text())
     if packet["blocked_network_attempts"] or packet["real_profile_refusals"]:
         raise ValueError(f"Guard events: {tag}")
     rows = packet["console_resume"]
@@ -26,14 +39,14 @@ for tag in ("control1", "after1", "after2", "control2"):
         "median_attach_ms": median(r["resume_to_attach_ms"] for r in rows),
         "worst_input_ms": max(r["resume_to_input_ms"] for r in rows),
         "worst_attach_ms": max(r["resume_to_attach_ms"] for r in rows),
-        "exit_receipt": f"native-waits-{tag}-exit.json",
+        "exit_receipt": f"{PREFIX}-{tag}-exit.json",
         "guards": [packet["blocked_network_attempts"], packet["real_profile_refusals"]],
         "baseline_scope": packet.get("baseline_scope"),
     }
     pooled["control" if tag.startswith("control") else "after"].extend(rows)
 summary = {
-    "baseline_revision": "d24919ab402d503ca8210dc5ee6b0fd186adbd64",
-    "baseline_scope": ["tldw_chatbook/UI/Screens/home_screen.py"],
+    "baseline_revision": BASE_REVISION,
+    "baseline_scope": BASE_SCOPE,
     "runs": comparisons,
     "pooled": {
         arm: {
@@ -45,18 +58,22 @@ summary = {
         for arm, rows in pooled.items()
     },
 }
-(OUT / "native-waits-comparison.json").write_text(
+(OUT / f"{PREFIX}-comparison.json").write_text(
     json.dumps(summary, indent=2), encoding="utf-8"
 )
 print(json.dumps(summary["pooled"], indent=2))
 
 diagnostics = {}
-for tag in ("discovery", "phases", "home", "verified-final", "verified-control"):
-    source = OUT / f"plain-ready-native-waits-{tag}.json"
+for tag in (
+    ("observed-control", "observed-after")
+    if CONTROL_BAR
+    else ("discovery", "phases", "home", "verified-final", "verified-control")
+):
+    source = OUT / f"plain-ready-{PREFIX}-{tag}.json"
     if not source.exists():
         continue
     packet = json.loads(source.read_text())
-    receipt = json.loads((OUT / f"native-waits-{tag}-exit.json").read_text())
+    receipt = json.loads((OUT / f"{PREFIX}-{tag}-exit.json").read_text())
     if receipt.get("exit_code") != 0:
         raise ValueError(f"Unsuccessful diagnostic exit: {tag}")
     rows = packet.get("native_wait_spans", [])
@@ -88,6 +105,16 @@ for tag in ("discovery", "phases", "home", "verified-final", "verified-control")
         )
         else None,
         "home_edges": edges,
+        "control_bar_spans": [
+            row
+            for row in packet.get("control_bar_spans", [])
+            if row[0].startswith("console-resume")
+        ],
+        "main_config_entry_events": [
+            row
+            for row in packet.get("main_config_entry_events", [])
+            if row[0].startswith("console-resume")
+        ],
         "slow_return_timeline": [
             row
             for row in packet.get("return_async_timeline", [])
@@ -116,6 +143,6 @@ for tag in ("discovery", "phases", "home", "verified-final", "verified-control")
             if r[0].startswith("console-resume") and r[1] == "_checked_display_status"
         ],
     }
-(OUT / "native-waits-diagnostics.json").write_text(
+(OUT / f"{PREFIX}-diagnostics.json").write_text(
     json.dumps(diagnostics, indent=2), encoding="utf-8"
 )

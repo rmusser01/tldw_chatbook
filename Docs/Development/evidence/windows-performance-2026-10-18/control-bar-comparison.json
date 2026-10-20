@@ -1,0 +1,322 @@
+{
+  "baseline_revision": "473c32b4edbcf4c17e982045a749b5e7c6bc49b7",
+  "baseline_scope": [
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+  ],
+  "runs": {
+    "control1": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 188.20530001539737,
+          "resume_to_attach_ms": 713.260899996385,
+          "input_ms": 26.660500006983057,
+          "max_loop_overshoot_ms": 130.2523999765981,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 769.7183999989647
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 173.0960999848321,
+          "resume_to_attach_ms": 548.9181999873836,
+          "input_ms": 24.865100014721975,
+          "max_loop_overshoot_ms": 116.91899999277666,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 749.6040999831166
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 270.93249998870306,
+          "resume_to_attach_ms": 1170.9897000109777,
+          "input_ms": 54.52750000404194,
+          "max_loop_overshoot_ms": 185.11900000157766,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1205.258000001777
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 141.1048000154551,
+          "resume_to_attach_ms": 1042.625300004147,
+          "input_ms": 37.05029998673126,
+          "max_loop_overshoot_ms": 78.24909998453222,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1069.2986999929417
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 245.88370000128634,
+          "resume_to_attach_ms": 988.3925000031013,
+          "input_ms": 30.128699989290908,
+          "max_loop_overshoot_ms": 184.43829999887384,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 988.4211999888066
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 341.3322999840602,
+          "resume_to_attach_ms": 1639.3725000089034,
+          "input_ms": 108.14950001076795,
+          "max_loop_overshoot_ms": 201.74379998934455,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1658.9403999969363
+        }
+      ],
+      "median_input_ms": 217.04450000834186,
+      "median_attach_ms": 1015.5089000036241,
+      "worst_input_ms": 341.3322999840602,
+      "worst_attach_ms": 1639.3725000089034,
+      "exit_receipt": "control-bar-control1-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": [
+        "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+      ]
+    },
+    "after1": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 171.7740999883972,
+          "resume_to_attach_ms": 1665.3147999895737,
+          "input_ms": 20.784299995284528,
+          "max_loop_overshoot_ms": 119.72079999395646,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1702.0983999827877
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 184.47490001562983,
+          "resume_to_attach_ms": 1047.5469999946654,
+          "input_ms": 32.74319999036379,
+          "max_loop_overshoot_ms": 120.4184000089299,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1080.072900018422
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 169.31880000629462,
+          "resume_to_attach_ms": 1521.1383000132628,
+          "input_ms": 2.5255999935325235,
+          "max_loop_overshoot_ms": 135.51200000802055,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1521.1621999915224
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 159.95530001237057,
+          "resume_to_attach_ms": 1084.716399986064,
+          "input_ms": 15.700300020398572,
+          "max_loop_overshoot_ms": 112.95499998959713,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1117.2947000013664
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 164.97630000230856,
+          "resume_to_attach_ms": 1218.400500016287,
+          "input_ms": 33.871899999212474,
+          "max_loop_overshoot_ms": 99.8091000074055,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1257.9917999973986
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 162.5445999961812,
+          "resume_to_attach_ms": 1550.3981999936514,
+          "input_ms": 28.7434000056237,
+          "max_loop_overshoot_ms": 102.50490001635626,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1574.6268999937456
+        }
+      ],
+      "median_input_ms": 167.1475500043016,
+      "median_attach_ms": 1369.7694000147749,
+      "worst_input_ms": 184.47490001562983,
+      "worst_attach_ms": 1665.3147999895737,
+      "exit_receipt": "control-bar-after1-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": null
+    },
+    "after2": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 183.2021000154782,
+          "resume_to_attach_ms": 1120.0456000224221,
+          "input_ms": 18.761899991659448,
+          "max_loop_overshoot_ms": 133.16300002043135,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1141.7983999999706
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 181.7330000048969,
+          "resume_to_attach_ms": 771.5721999993548,
+          "input_ms": 41.0754999902565,
+          "max_loop_overshoot_ms": 109.35959999915212,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 820.0287999934517
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 278.812000004109,
+          "resume_to_attach_ms": 1067.6183000032324,
+          "input_ms": 52.89890000130981,
+          "max_loop_overshoot_ms": 194.63040001573972,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1111.262100021122
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 219.33809999609366,
+          "resume_to_attach_ms": 1750.471400009701,
+          "input_ms": 28.047900006640702,
+          "max_loop_overshoot_ms": 160.00329999951646,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1790.8488000102807
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 180.99090000032447,
+          "resume_to_attach_ms": 524.1333000012673,
+          "input_ms": 38.271900004474446,
+          "max_loop_overshoot_ms": 111.44189999322407,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 722.9081999976188
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 447.4425000080373,
+          "resume_to_attach_ms": 1344.6062000002712,
+          "input_ms": 97.78320000623353,
+          "max_loop_overshoot_ms": 318.24190000770614,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1383.0170000146609
+        }
+      ],
+      "median_input_ms": 201.27010000578593,
+      "median_attach_ms": 1093.8319500128273,
+      "worst_input_ms": 447.4425000080373,
+      "worst_attach_ms": 1750.471400009701,
+      "exit_receipt": "control-bar-after2-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": null
+    },
+    "control2": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 186.64450000505894,
+          "resume_to_attach_ms": 1178.8780000060797,
+          "input_ms": 60.71310001425445,
+          "max_loop_overshoot_ms": 94.61709999595769,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1206.7534999805503
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 214.21750000445172,
+          "resume_to_attach_ms": 784.5591999939643,
+          "input_ms": 67.88729998515919,
+          "max_loop_overshoot_ms": 245.2665999880992,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 816.9251000217628
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 351.06429998995736,
+          "resume_to_attach_ms": 1083.4686999733094,
+          "input_ms": 47.23970001214184,
+          "max_loop_overshoot_ms": 272.52739999676123,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1123.4812999900896
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 178.00590000115335,
+          "resume_to_attach_ms": 1778.5881999880075,
+          "input_ms": 26.553600007900968,
+          "max_loop_overshoot_ms": 269.59250000072643,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1795.426500000758
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 172.5633000023663,
+          "resume_to_attach_ms": 826.8295000016224,
+          "input_ms": 22.78400000068359,
+          "max_loop_overshoot_ms": 118.48470001132227,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 860.6394000235014
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 213.2636000169441,
+          "resume_to_attach_ms": 1720.998500008136,
+          "input_ms": 6.751000008080155,
+          "max_loop_overshoot_ms": 175.17979998956434,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1745.5289000063203
+        }
+      ],
+      "median_input_ms": 199.95405001100153,
+      "median_attach_ms": 1131.1733499896945,
+      "worst_input_ms": 351.06429998995736,
+      "worst_attach_ms": 1778.5881999880075,
+      "exit_receipt": "control-bar-control2-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": [
+        "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+      ]
+    }
+  },
+  "pooled": {
+    "control": {
+      "input_ms": 200.73445001617074,
+      "attach_ms": 1063.0469999887282,
+      "worst_input_ms": 351.06429998995736,
+      "worst_attach_ms": 1778.5881999880075
+    },
+    "after": {
+      "input_ms": 181.36195000261068,
+      "attach_ms": 1169.2230500193546,
+      "worst_input_ms": 447.4425000080373,
+      "worst_attach_ms": 1750.471400009701
+    }
+  }
+}

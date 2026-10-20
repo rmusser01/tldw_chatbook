@@ -207,6 +207,13 @@ async def main():
 
         report["baseline_revision"] = native_wait_baseline.BASE_REVISION
         report["baseline_scope"] = ["tldw_chatbook/UI/Screens/home_screen.py"]
+    if "--control-bar-baseline" in sys.argv:
+        import control_bar_baseline
+
+        report["baseline_revision"] = control_bar_baseline.BASE_REVISION
+        report["baseline_scope"] = [
+            "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+        ]
     if "--attachment-baseline" in sys.argv:
         import attachment_baseline
 
@@ -278,6 +285,11 @@ async def main():
     finish_storage_observation = None
     finish_return_observation = None
     finish_native_wait_observation = None
+    finish_control_bar_observation = None
+    if "--control-bar-observe" in sys.argv:
+        from control_bar_observer import install
+
+        finish_control_bar_observation = install(report, lambda: stage)
     if "--native-wait-observe" in sys.argv:
         from native_wait_observer import install
 
@@ -648,6 +660,8 @@ async def main():
         faulthandler.dump_traceback(file=stack_log)
         raise
     finally:
+        if finish_control_bar_observation is not None:
+            finish_control_bar_observation()
         if finish_native_wait_observation is not None:
             finish_native_wait_observation()
         if finish_return_observation is not None:
