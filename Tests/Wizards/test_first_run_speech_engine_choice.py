@@ -212,13 +212,107 @@ def test_openai_key_detection_never_counts_a_placeholder(app_config, environ, ex
     assert engines.openai_key_configured(app_config, environ) is expected
 
 
+async def _speech_in_wizard(pilot, wizard, monkeypatch):
+    """The Speech step shown in the real wizard frame, its on-show check settled."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+    await pilot.pause(0.3)
+    container = wizard.query_one(SetupWizardContainer)
+    container.select_track(wizard_state.TRACK_FULL)
+    container.show_step(container._step_index_for_id(wizard_state.STEP_SPEECH))
+    step = wizard.query_one(SpeechSetupStep)
+    step._runtime_installed = lambda: True
+    for _ in range(80):
+        await pilot.pause(0.05)
+        if step._loaded and not step._loading:
+            break
+    await pilot.pause()
+    return step
+
+
+def _wizard_with_facts(monkeypatch):
+    from tldw_chatbook.UI.Wizards import first_run_speech_step as speech_module
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+
+    monkeypatch.setattr(speech_module.engines, "detect_engine_facts", lambda *a, **k: FACTS)
+    monkeypatch.setattr(speech_module, "parakeet_v2_managed_service", _FakeService)
+    app_instance = MagicMock()
+    app_instance.app_config = {}
+    return FirstRunSetupWizard(app_instance)
+
+
+@pytest.mark.asyncio
+async def test_each_down_press_moves_to_the_next_engine(monkeypatch) -> None:
+    """Review F7 (TASK-34100.13): an engine change rebuilt the whole step, and
+    the new radio's highlight sat on the first row, so every second Down
+    press re-selected the engine already chosen. A change no longer rebuilds
+    the radio."""
+    wizard = _wizard_with_facts(monkeypatch)
+    async with _WizardHost(wizard).run_test(size=(120, 40)) as pilot:
+        step = await _speech_in_wizard(pilot, wizard, monkeypatch)
+        engine = step.query_one("#setup-speech-engine")
+        engine.focus()
+        await pilot.pause()
+        seen = []
+        for _ in range(3):
+            await pilot.press("down")
+            await pilot.pause()
+            seen.append(step._engine)
+        same_radio = step.query_one("#setup-speech-engine") is engine
+    assert seen == [
+        engines.ENGINE_INSTALLED,
+        engines.ENGINE_PARAKEET,
+        engines.ENGINE_CLOUD,
+    ]
+    assert same_radio
+
+
+@pytest.mark.asyncio
+async def test_a_rebuilt_engine_radio_keeps_its_highlight_on_the_choice(
+    monkeypatch,
+) -> None:
+    """The step still rebuilds for its own lifecycle (an install, a reload);
+    the engine radio's highlight then stays on the chosen engine."""
+    wizard = _wizard_with_facts(monkeypatch)
+    async with _WizardHost(wizard).run_test(size=(120, 40)) as pilot:
+        step = await _speech_in_wizard(pilot, wizard, monkeypatch)
+        step._engine = engines.ENGINE_CLOUD
+        await step.recompose()
+        await pilot.pause()
+        radio = step.query_one("#setup-speech-engine")
+        highlighted, pressed = radio._selected, radio.pressed_index
+    assert pressed == 3
+    assert highlighted == pressed
+
+
+@pytest.mark.asyncio
+async def test_the_engine_choice_is_locked_while_a_disk_model_is_checked(
+    monkeypatch,
+) -> None:
+    """Review F7: switching away mid-"Use model from disk…" hid the Cancel
+    button, and Next on another engine skipped the busy guard."""
+    wizard = _wizard_with_facts(monkeypatch)
+    async with _WizardHost(wizard).run_test(size=(120, 40)) as pilot:
+        step = await _speech_in_wizard(pilot, wizard, monkeypatch)
+        step._engine = engines.ENGINE_PARAKEET
+        step._external_busy = True
+        await step.recompose()
+        await pilot.pause()
+        locked = step.query_one("#setup-speech-engine").disabled
+        step._engine = engines.ENGINE_NONE  # however it got there
+        result = await step.commit()
+        step._external_busy = False
+    assert locked is True
+    assert result == (False, "Wait for external model verification to finish.")
+
+
 # -- AC#9: choice, then action ---------------------------------------------------
 
 
 async def _parakeet_step(pilot, step) -> None:
     step.query_one("#setup-speech-engine-parakeet", RadioButton).value = True
-    # The engine change recomposes, then the installed-state check recomposes
-    # once more; wait for the settled tree.
+    # The engine change shows the Parakeet block in place; the installed-state
+    # check may still rebuild the step once; wait for the settled tree.
     for _ in range(60):
         await pilot.pause(0.05)
         installs = list(step.query("#setup-speech-install"))
@@ -314,17 +408,69 @@ async def test_runtime_missing_copy_names_the_extras_package_with_a_copy_action(
     assert copied == [engines.PARAKEET_EXTRAS_PACKAGE]
 
 
+def _raw_settings(monkeypatch, *, openai=None, legacy_key=None) -> None:
+    """Stand in for get_cli_setting's raw-TOML reads (no load_settings fold)."""
+
+    def get_cli_setting(section, key=None, default=None):
+        if section == "api_settings.openai":
+            return dict(openai or {})
+        if (section, key) == ("API", "openai_api_key"):
+            return legacy_key if legacy_key is not None else default
+        return default if key is not None else key
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", get_cli_setting)
+
+
 def test_remote_whisper_reuses_the_openai_provider_key_only_for_openai(monkeypatch) -> None:
     from tldw_chatbook.Local_Ingestion import transcription_service as ts
 
-    monkeypatch.setattr(
-        "tldw_chatbook.config.get_cli_setting",
-        lambda section, default=None, *a: {"api_key": "sk-provider-key"}
-        if section == "api_settings.openai"
-        else default,
-    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _raw_settings(monkeypatch, openai={"api_key": "sk-provider-key"})
     assert ts._openai_key_for_endpoint(engines.OPENAI_TRANSCRIPTIONS_URL) == "sk-provider-key"
     assert ts._openai_key_for_endpoint("http://localhost:8000/v1/audio/transcriptions") == ""
+
+
+def test_remote_whisper_never_sends_the_key_over_plain_http(monkeypatch) -> None:
+    """Review F6 (TASK-34100.13): a hand-set http://api.openai.com endpoint got
+    the bearer key in clear text; the host check did not require https."""
+    from tldw_chatbook.Local_Ingestion import transcription_service as ts
+
+    _raw_settings(monkeypatch, openai={"api_key": "sk-provider-key"})
+    assert ts._openai_key_for_endpoint("http://api.openai.com/v1/audio/transcriptions") == ""
+
+
+def test_a_legacy_only_key_is_offered_and_used_alike(monkeypatch) -> None:
+    """Review F6 (TASK-34100.13): the step counted a legacy ``[API]
+    openai_api_key`` and offered Cloud, but transcription read only the raw
+    ``[api_settings.openai]`` table and the environment, so remote-whisper
+    sent no key (401). Readiness and spend now share one resolver."""
+    from tldw_chatbook.Local_Ingestion import transcription_service as ts
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app_config = {"API": {"openai_api_key": "sk-legacy-only-key"}}
+    assert engines.openai_key_configured(app_config, {}) is True
+    _raw_settings(monkeypatch, legacy_key="sk-legacy-only-key")
+    assert ts._openai_key_for_endpoint(engines.OPENAI_TRANSCRIPTIONS_URL) == (
+        "sk-legacy-only-key"
+    )
+
+
+@pytest.mark.parametrize(
+    ("openai", "legacy", "environ", "expected"),
+    [
+        ({"api_key": "sk-table"}, "sk-legacy", {"OPENAI_API_KEY": "sk-env"}, "sk-table"),
+        ({}, "sk-legacy", {"OPENAI_API_KEY": "sk-env"}, "sk-env"),
+        ({"api_key_env_var": "MY_KEY"}, None, {"MY_KEY": "sk-mine"}, "sk-mine"),
+        ({"api_key": "<API_KEY_HERE>"}, "sk-legacy", {}, "sk-legacy"),
+        ({}, "<API_KEY_HERE>", {}, None),
+    ],
+)
+def test_one_resolver_orders_table_then_environment_then_legacy(
+    openai, legacy, environ, expected
+) -> None:
+    from tldw_chatbook.config import resolve_openai_provider_key
+
+    assert resolve_openai_provider_key(openai, legacy, environ) == expected
 
 
 # -- the Summary row reads what the engine choice wrote ---------------------------

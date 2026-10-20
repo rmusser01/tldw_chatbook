@@ -41,11 +41,56 @@ PRECISION_LABELS = {
 }
 
 
+class EngineRadioSet(SetupRadioSet):
+    """The engine radio, its highlight kept on the chosen engine across a rebuild.
+
+    Review F7 (TASK-34100.13): RadioSet seats its highlight on the first row
+    when it mounts, so after any rebuild of the step the first Down press
+    re-selected the engine already chosen.
+    """
+
+    def on_mount(self) -> None:
+        # Runs before RadioSet's own mount handler, which seats row 0.
+        self.call_after_refresh(self._highlight_choice)
+
+    def _highlight_choice(self) -> None:
+        # The step may have been rebuilt again before this ran.
+        nodes = list(self.children)
+        if self.is_attached and self._pressed_button in nodes:
+            self._selected = nodes.index(self._pressed_button)
+
+
+def engine_locked(step: "SpeechSetupStep") -> bool:
+    """Whether the engine may not change now: an install, an activation or a
+    from-disk check is under way (its Cancel lives under Parakeet)."""
+    return bool(
+        step._operation is not None
+        or step._external_busy
+        or step._external_commit_pending
+    )
+
+
+def show_engine_choice(step: "SpeechSetupStep") -> None:
+    """Show the chosen engine's detail line and (under Parakeet) its block.
+
+    Updates in place: rebuilding the step for an engine change cost keyboard
+    users a dead Down press after every change (review F7).
+    """
+    choices = engines.engine_choices(step._engine_facts)
+    detail = next((c.detail for c in choices if c.key == step._engine), "")
+    for line in step.query("#setup-speech-engine-detail").results(Static):
+        line.update(detail)
+    for block in step.query("#setup-speech-parakeet"):
+        block.display = step._engine == engines.ENGINE_PARAKEET
+
+
 def _engine_block(step: "SpeechSetupStep") -> Iterator[Widget]:
     choices = engines.engine_choices(step._engine_facts)
     yield Label("Dictation engine", classes="setup-field-label")
-    with SetupRadioSet(
-        id="setup-speech-engine", classes="setup-choice-list setup-choice-fit"
+    with EngineRadioSet(
+        id="setup-speech-engine",
+        classes="setup-choice-list setup-choice-fit",
+        disabled=engine_locked(step),
     ):
         for choice in choices:
             yield SetupRadioButton(
