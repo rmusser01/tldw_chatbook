@@ -555,7 +555,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sync", ["recovery", "screen-resume", "full-ui", "full-ui-held"])
+@pytest.mark.parametrize("sync", ["recovery-and-resume", "full-ui", "full-ui-held"])
 async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
     """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
 
@@ -567,7 +567,8 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
     reconcile, and the guidance the attach reconcile's screen resume
     refreshes. Here the rebuild starts as the transcript step begins, which
     then reconciles the seeded rows ("full-ui"), before the whole sync
-    ("full-ui-held"), or before a screen resume. Queued refreshes get loop
+    ("full-ui-held"), or before the recovery sync and a screen resume
+    ("recovery-and-resume", one mount for both). Queued refreshes get loop
     turns inside the hold too. The watchdog records where the UI thread was
     waiting.
     """
@@ -611,13 +612,11 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         started = []  # when the hold began
         holder.start()
         try:
-            if sync in ("recovery", "screen-resume"):
+            if sync == "recovery-and-resume":
                 await settle(case.console)
                 start_rebuild()
-                if sync == "recovery":
-                    region.sync_recovery()
-                else:
-                    case.console.on_screen_resume()
+                region.sync_recovery()
+                case.console.on_screen_resume()
             else:
                 seed_answer(case)
                 transcript = case.console.query_one("#console-native-transcript")
