@@ -584,7 +584,7 @@ No workflow file is edited, unless NO-2 (a) applies (see T2 mechanism 8). `deriv
 11. The capability line on Settings and Console.
 12. The validator's `providers` branch admits only the mutation's own key and a list holding the model. It refuses another provider's key, a list without the model and a non-list (direct function cases). It admits `Custom_2` for Custom 2 (the `provider_config_key` owner check).
 
-**TASK-35012:** new nodes in `Tests/UI/test_console_model_switcher.py`, which is already in the census (line 39):
+**TASK-35012:** new nodes in `Tests/UI/test_console_switcher_saved_default.py`, one census node id per test function. `Tests/UI/test_console_model_switcher.py` is a whole-file census entry (line 39), and the census checker refuses a node id beside its own whole file:
 1. A default saved last of four shows in the top three.
 2. With the current model on the same provider, the default is second.
 3. A sample-id default is never lifted. Seed the sample directly in `providers_models` / `served_models`.
