@@ -36,16 +36,18 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 def test_a_first_launch_plays_no_splash() -> None:
-    assert startup_splash.splash_options({"splash_screen": {"enabled": True}}) is None
+    """The launch that created the profile's config file is its first."""
+    options = startup_splash.splash_options(
+        {"splash_screen": {"enabled": True}}, first_launch=True
+    )
+    assert options is None
 
 
 def test_a_later_launch_plays_the_configured_splash() -> None:
     options = startup_splash.splash_options(
-        {
-            "first_run": {"setup_started": True},
-            "splash_screen": {"enabled": True, "duration": 2.0, "card_selection": "matrix"},
-        },
+        {"splash_screen": {"enabled": True, "duration": 2.0, "card_selection": "matrix"}},
         environ={},
+        first_launch=False,
     )
     assert options == {
         "card_name": "matrix",
@@ -57,11 +59,40 @@ def test_a_later_launch_plays_the_configured_splash() -> None:
 
 
 def test_splash_off_plays_nothing_after_the_first_launch() -> None:
-    config = {"first_run": {"setup_completed": True}, "splash_screen": {"enabled": False}}
-    assert startup_splash.splash_options(config) is None
+    config = {"splash_screen": {"enabled": False}}
+    assert startup_splash.splash_options(config, first_launch=False) is None
 
 
-@pytest.mark.parametrize("card", sorted(startup_splash.OPT_IN_ONLY_CARDS))
+def test_a_configured_profile_that_never_ran_setup_plays_its_splash() -> None:
+    """Review F1 (TASK-34100.13): "first launch" used to mean "no [first_run]
+    flag", and a hand-written or pre-wizard config with an inline provider key
+    never gets one -- the wizard is not offered and no env-key notice fires.
+    Such a profile lost its configured splash on every launch, forever."""
+    config = {
+        "splash_screen": {"enabled": True, "card_selection": "matrix"},
+        "api_settings": {"openai": {"api_key": "sk-configured-inline"}},
+    }
+    options = startup_splash.splash_options(config, environ={}, first_launch=False)
+    assert options is not None
+    assert options["card_name"] == "matrix"
+
+
+#: The cards the AC names, written out here rather than read from the
+#: implementation's set: dropping one from OPT_IN_ONLY_CARDS must fail this
+#: test, not quietly take its case away (review-tests F1).
+JOKE_AND_PERSONA_CARDS = (
+    "retro_gaming_intro",  # the "A JULES PRODUCTION" intro
+    "character_select",  # a JULES player card
+    "arcade_high_score",  # the URMOM high-score table
+    "old_film",  # "Starring YOU!"
+)
+
+
+def test_the_opt_in_set_covers_every_named_card() -> None:
+    assert set(JOKE_AND_PERSONA_CARDS) <= startup_splash.OPT_IN_ONLY_CARDS
+
+
+@pytest.mark.parametrize("card", JOKE_AND_PERSONA_CARDS)
 def test_joke_and_persona_cards_never_play_at_random(card: str, monkeypatch) -> None:
     pools: list[list[str]] = []
     monkeypatch.setattr(
@@ -134,8 +165,7 @@ def test_reduce_motion_comes_from_the_environment(environ, expected) -> None:
 
 def test_the_environment_reduces_the_splash_motion() -> None:
     options = startup_splash.splash_options(
-        {"first_run": {"setup_started": True}, "splash_screen": {}},
-        environ={"NO_MOTION": "1"},
+        {"splash_screen": {}}, environ={"NO_MOTION": "1"}, first_launch=False
     )
     assert options is not None and options["reduced_motion"] is True
 
