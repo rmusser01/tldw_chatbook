@@ -165,12 +165,13 @@ async def test_unchanged_display_check_stops_after_its_scope_read(
 async def test_unchanged_display_check_keeps_the_probe_loop_cost(
     tmp_path, run_active
 ):
-    """Folding the reload in adds no UI-loop work to an unchanged check.
+    """Folding the reload in adds no UI-loop handoff to an unchanged check.
 
     The unchanged check is the common one (about once a second during a
     run). Like the original probe it makes one on-loop midpoint inside its
     pair and confirms the ambient scope on the loop after retirement; it
-    makes no reader owner check or extra loop handoff.
+    makes no reader owner check or extra loop handoff. (Qualifying the stock
+    readers still runs on the loop; this pins handoffs, not CPU.)
     """
     database = CharactersRAGDB(tmp_path / "loop-cost.sqlite", "one-helper")
     try:
@@ -182,6 +183,68 @@ async def test_unchanged_display_check_keeps_the_probe_loop_cost(
 
         assert controller.state is before
         assert observed == {"midpoints": 1, "owner_handoffs": 0, "owner_checks": 0}
+    finally:
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flap", ["owner-first-read", "owner-fence-read", "reader-first-read"]
+)
+async def test_unpublished_changed_check_leaves_no_idle_memo(
+    tmp_path, monkeypatch, flap
+):
+    """A changed check that publishes nothing does not keep the idle memo.
+
+    The original route reached ``refresh()`` whenever the scope changed, and
+    ``refresh()`` drops the last-successful-refresh marker on entry. Here a
+    run's check finds the scope changed, but its display owner (or a reader)
+    changes during the read and changes back afterwards, so it publishes
+    nothing. If the marker survived, the next idle display would take the
+    still-armed memo and keep showing the old revision until the next sync.
+    """
+    # Pin the memo window so a slow helper start cannot expire it first.
+    monkeypatch.setattr(
+        character_context, "_CHARACTER_PRESENTATION_TTL_SECONDS", 3600.0
+    )
+    database = CharactersRAGDB(tmp_path / "flap.sqlite", "one-helper")
+    try:
+        controller, screen, *_ = _character(database)
+        await controller.refresh()
+        assert await _display(controller, screen) is False  # arms the idle memo
+        shown = controller.state.data_revision
+        revision = database.increment_character_conversation_search_revision()
+        assert revision != shown
+        app = screen.app_instance
+        factory = controller._service_factory
+        target = 2 if flap == "owner-fence-read" else 1
+        pairs = []
+
+        def change(_frame, name, event, _argument):
+            if name != "pairs" or event != "call":
+                return
+            pairs.append(name)
+            if len(pairs) != target:
+                return
+            if flap.startswith("owner"):
+                app.chachanotes_db = object()  # another display owner
+            else:
+                controller._service_factory = object  # another reader
+
+        controller._run_active = lambda: True
+        try:
+            with _original_calls(database, barrier=change):
+                await _display(controller, screen)
+        finally:
+            app.chachanotes_db = database
+            controller._service_factory = factory
+        assert len(pairs) >= target
+        assert not worker_leases(database)
+
+        controller._run_active = lambda: False  # the reply ended
+        assert await _display(controller, screen) is True
+        assert controller.state.data_revision == revision
+        assert not controller.state.loading and not controller.state.error
     finally:
         database.close()
 
@@ -272,8 +335,8 @@ async def test_database_switch_mid_check_reads_the_new_database_its_own_way(
         assert not worker_leases(new)
 
         # A display owner that changed mid-check yields to the next check,
-        # which reads the new profile through its own single handle.
-        controller._scope_checked = None
+        # which reads the new profile through its own single handle. The
+        # switch itself defeats the run's one-second recheck interval.
         with _original_calls(new) as fresh:
             assert await _display(controller, screen) is True
         _retired(new, fresh)

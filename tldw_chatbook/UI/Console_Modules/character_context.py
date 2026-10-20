@@ -1370,7 +1370,10 @@ class ConsoleCharacterContextController:
         the pair, then the ambient scope confirmed on the loop after
         retirement, as ``_capture_scope`` does. Nothing is published until
         the callback has retired; a reload then advances the generation, as
-        ``_begin`` would, and publishes its result.
+        ``_begin`` would, and publishes its result. Every outcome other than
+        an unchanged scope or a published reload drops the last-successful-
+        refresh marker, as ``refresh()`` does on entry on the original route,
+        so the idle display memo cannot keep serving a list it never reloaded.
 
         Args:
             presentation: The original display-owner closure.
@@ -1416,7 +1419,10 @@ class ConsoleCharacterContextController:
                 is not vars(ConsoleCharacterContextController)[name]
                 for name in ("refresh", "refresh_if_scope_changed")
             )
-            return None if customized else True
+            if customized:
+                return None
+            self._successful_refresh_generation = None
+            return True
         except _ConsoleCharacterAmbientError as failure:
             ambient_error = failure.error
         except Exception:  # noqa: BLE001 - an unsettled or unreadable first scope.
@@ -1427,7 +1433,10 @@ class ConsoleCharacterContextController:
                 current = readers.ambient_current()
             except _ConsoleCharacterReaderChanged:
                 current = False
-            return None if current else False
+            if current:
+                return None
+            self._successful_refresh_generation = None
+            return False
         # Outside the catch, as _capture_scope does: the exact original
         # accessor exception, cause and traceback, after retirement.
         if ambient_error is not None:
@@ -1441,12 +1450,18 @@ class ConsoleCharacterContextController:
             ):
                 return None
             return False if self.state.scope_fingerprint == settled else None
+        # Past here the scope changed. Every exit that publishes nothing drops
+        # the last-successful-refresh marker, as ``refresh()`` does on entry
+        # on the original route, so the idle display memo cannot keep serving
+        # the old list.
         try:
-            if not readers.ambient_current():
-                # As the original batch: an owner that moved on during the
-                # read gets no publication; its next check reloads.
-                return True
+            current = readers.ambient_current()
         except _ConsoleCharacterReaderChanged:
+            current = False
+        if not current:
+            # As the original batch: an owner or reader that changed during
+            # the read gets no publication; its next check reloads.
+            self._successful_refresh_generation = None
             return True
         if not result.scope_current:
             # The first read already differed from ``settled``, so the scope
@@ -1458,7 +1473,9 @@ class ConsoleCharacterContextController:
                 await self.refresh()
             return True
         # Publish as the original batch does after its ``_begin``.
+        self._successful_refresh_generation = None
         self._generation += 1
+        generation = self._generation
         if result.load_failed:
             self._publish(
                 replace(
@@ -1473,7 +1490,12 @@ class ConsoleCharacterContextController:
         self._publish_recent_groups(
             result.snapshot.fingerprint, result.groups, result.details
         )
-        self._successful_refresh_generation = self._generation
+        try:
+            readers.require_current()
+            if generation == self._generation:
+                self._successful_refresh_generation = generation
+        except _ConsoleCharacterReaderChanged:
+            pass
         return True
 
     async def _refresh_recent_batch(
