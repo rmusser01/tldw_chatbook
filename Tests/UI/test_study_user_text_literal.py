@@ -47,7 +47,7 @@ async def _type_into_open_picker(pilot, select: Select, keys: str) -> None:
 
 @pytest.mark.asyncio
 async def test_workspace_name_with_markup_brackets_paints_literally_in_the_scope_banner():
-    """RED on dev 4de437a5c5: ``_sync_scope_banner`` hands
+    """RED on dev ce4aa4a231: ``_sync_scope_banner`` hands
     ``f"Workspace: {name}"`` to a markup-on ``Static``, so painting the
     banner raises ``MarkupError: closing tag '[/b]' does not match any open
     tag`` (and ``[new]`` would vanish as a style tag)."""
@@ -121,6 +121,10 @@ async def test_deck_and_quiz_pickers_find_a_markup_named_entry_by_typing():
             lambda: str(quiz_select.value) == "quiz-2",
             what="typing 'g' to pick the Graph quiz",
         )
-        await pilot.pause()
+        # Opening Quizzes starts an initialize worker that rebuilds the
+        # question list, and each quiz pick rebuilds it again (the unguarded
+        # TASK-34752 overlap). Let that worker finish before teardown, as the
+        # deck half does, so a rebuild still in flight cannot fail the test.
+        await _wait_for_study_workers(pilot, app, what="the quiz switch")
         assert _text(quiz_select.query_one("#label", Static)) == graph_drill
         assert app.is_running
