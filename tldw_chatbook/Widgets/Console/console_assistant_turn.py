@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     RawCliPresentation,
     console_activity_status_word,
 )
+from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 
 
 _RAW_CLI_ELAPSED_STATES = frozenset({"running", "stopping"})
@@ -405,7 +406,7 @@ class ConsoleActivityDisclosure(Vertical):
             return
         replacements = tuple(detail_widgets)
         if self.detail_stack.children:
-            await self.detail_stack.remove_children()
+            await finish_removal(self.detail_stack.remove_children())
             if not detail_is_live():
                 return
         if replacements:

@@ -36,7 +36,7 @@ needs the surface swapped hands the swap to the screen -- ``screen.call_next``
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Awaitable, Iterable
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -122,3 +122,47 @@ def log_refused_surface_swap(
         fallback=fallback,
         error=error,
     )
+
+
+async def finish_removal(removal: Awaitable[object]) -> None:
+    """Await a DOM removal that the caller's cancellation cannot cut short.
+
+    TASK-34982. ``AwaitRemove`` gathers the removed widgets' own message-pump
+    tasks, so cancelling the task that awaits it cancels those pumps mid-exit:
+    the widgets stay in the DOM with dead tasks, and their parent's next prune
+    (app shutdown included) raises a bare ``CancelledError``. The Console
+    transcript poll paints inside its timer's task, and Textual cancels that
+    task whenever the timer stops. Shielded, the removal finishes on its own and
+    the caller still sees its cancellation.
+
+    A caller that is itself one of the removed widgets' pumps awaits the
+    removal directly: ``AwaitRemove`` leaves the current task out of what it
+    waits on, and the shield's new task would not be left out. That await is
+    unshielded, so cancelling that pump still cuts its own removal short, as it
+    did before.
+
+    Args:
+        removal: The ``AwaitRemove`` (or other awaitable) a removal returned.
+    """
+    # ``_tasks`` is AwaitRemove's list of the removed pumps (Textual 8.2.8; a
+    # rename would send self-removals through the shield, which the self-pump
+    # test in test_console_transcript_poll_stop_removal.py catches).
+    if asyncio.current_task() in getattr(removal, "_tasks", ()):
+        await removal
+        return
+    inner = asyncio.ensure_future(removal)
+    try:
+        await asyncio.shield(inner)
+    except asyncio.CancelledError:
+        # Nobody awaits the removal now; keep a failure from going unseen.
+        inner.add_done_callback(_log_orphaned_removal_failure)
+        raise
+
+
+def _log_orphaned_removal_failure(task: asyncio.Future) -> None:
+    """Log a shielded removal's failure once no caller is left to see it."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning(
+            "A DOM removal failed after its awaiter was cancelled (exception_type={})",
+            type(task.exception()).__name__,
+        )
