@@ -582,16 +582,6 @@ Tests/UI/test_console_response_rules.py::test_console_syncs_never_wait_for_a_con
 Tests/UI/test_console_browser_quit_fence.py
 # The flat browser group must retain its issued native callback through drain.
 Tests/UI/test_console_view_worker_groups.py::test_host_drain_retains_finite_presentation_worker[console-flat-conversation-search]
-# TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
-Tests/UI/test_console_transcript_poll_stop_removal.py
-# TASK-34751: Study paints a markup-shaped workspace name in its scope banner,
-# and typing finds a markup-shaped deck/quiz name in the open pickers
-# (2 tests, 13.5 s pytest unloaded).
-Tests/UI/test_study_user_text_literal.py
-# TASK-34751: a card-list rebuild resuming while the app quits ends quietly,
-# not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
-# unit cases that build no app).
-Tests/UI/test_study_flashcards_quit_mid_rebuild.py
 # TASK-33005.11 (Phase 9): Switch model rows read verified only for the models the key check listed, and agree with the Console and Settings (4 s, private profile).
 Tests/UI/test_console_switcher_local_probe.py::test_rows_read_verified_only_for_the_models_the_key_check_listed
 # TASK-33002.9: a model the server did not list leads the Test rows, and the toast warns (under a second).
@@ -668,3 +658,13 @@ Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_rea
 # Phase 9 Task 18 review round 3 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
 # TASK-35190: an open on a moved endpoint runs two probers under one in-flight cap, four local servers at most SWITCHER_PROBES_IN_FLIGHT at a time (~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap
+# TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
+Tests/UI/test_console_transcript_poll_stop_removal.py
+# TASK-34751: Study paints a markup-shaped workspace name in its scope banner,
+# and typing finds a markup-shaped deck/quiz name in the open pickers
+# (2 tests, 13.5 s pytest unloaded).
+Tests/UI/test_study_user_text_literal.py
+# TASK-34751: a card-list rebuild resuming while the app quits ends quietly,
+# not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
+# unit cases that build no app).
+Tests/UI/test_study_flashcards_quit_mid_rebuild.py

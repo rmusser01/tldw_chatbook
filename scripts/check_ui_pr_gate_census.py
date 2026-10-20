@@ -341,12 +341,6 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # rebuild pin, appended last (one mounted Console, about 3 s).
 # TASK-34406.28 raised it by two, to 326: ten browser Quit cases and the
 # flat-search native-drain regression, appended without moving earlier entries.
-# TASK-34982 raised it by 1, to 327: the poll-timer-stop row-removal pins,
-# appended last (a bare transcript host; well under 1 s).
-# TASK-34751 (2026-10-19) raised it by 2, to 329: Study's literal-text pins
-# (a markup-shaped workspace name in the scope banner; type-to-search over
-# markup-shaped deck and quiz names) and its quit-mid-rebuild pin, appended
-# last.
 # Phase 9 Task 2 (2026-10-17) appends its Tests/UI tests that no lane ran,
 # each a node id (their files are slow whole or hold reds that are not this
 # task's), each 3 of 3 serial alone. TASK-33005.11's switcher rows: 321.
@@ -430,7 +424,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # so no other entry changes shard. Each still runs in one PR lane: 358.
 # Rebased again onto dev at e3d32ce81a (2026-10-19), whose floor was 326
 # (TASK-34406.28's two entries): Phase 9's 34 entries end at 360 here.
-MINIMUM_FILES = 360
+# Rebased onto dev 0fef489ece, whose TASK-34982 raised it by 1: the
+# poll-timer-stop row-removal pins (a bare transcript host; well under
+# 1 s), appended after Phase 9's entries so none of those changes shard
+# from its measured runs: 361.
+# Rebased onto dev 8e879de639, whose TASK-34751 (2026-10-19) raised it by 2:
+# Study's literal-text pins (a markup-shaped workspace name in the scope
+# banner; type-to-search over markup-shaped deck and quiz names) and its
+# quit-mid-rebuild pin, appended last, after TASK-34982's entry: 363.
+MINIMUM_FILES = 363
 
 
 def read_census(path: Path) -> list[str]:
