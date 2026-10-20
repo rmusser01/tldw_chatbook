@@ -386,7 +386,8 @@ stack?". For "has this screen left the stack": a screen that is not installed
 (not a `reusable` route, like Settings) is removed on pop, so `is_attached`
 answers it; an installed screen (the `reusable` routes Home, Chat and Library
 in screen_registry.py) stays attached after a pop, so check
-`screen in app.screen_stack` (or `is_current`) there. Pin it with a test that
+`screen in app.screen_stack` there (`is_current` is narrower: it is False for
+a screen still on the stack but covered by another one). Pin it with a test that
 pops the screen first
 (`test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists`
 failed with `is_mounted`).
