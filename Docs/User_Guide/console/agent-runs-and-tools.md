@@ -76,10 +76,13 @@ prepared for the conversation, with its tools planned for that request's
 model, window and conversation, as the send plans them — a model with a
 small window, or a conversation that leaves no room, counts the smaller set
 the send gets, or none. With Full agent tools on, the meter learns the local,
-MCP and skill tools a conversation composes from its first full send, so the
-first send after you switch it on is counted with only the built-in tools
-and the next one with everything; the send itself is sized correctly either
-way.
+MCP and skill tools a conversation composes from its full sends. Until one
+has gone out in this conversation, it uses the tools of the most recent full
+send in any conversation, or only the built-in tools if there has been none
+since the app started; the send itself is sized correctly either way. A send
+that compacts older turns first is shown as the request stood before
+compacting, tools included; the next send's reading reflects the compacted
+conversation and the tools that fit beside it.
 
 ## Getting there
 
