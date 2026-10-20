@@ -239,6 +239,44 @@ async def test_sync_log_retention_retires_its_worker_connections(
 
 
 @pytest.mark.asyncio
+async def test_note_backlinks_lookup_retires_its_worker_connection(tmp_path, local_root):
+    """Opening a note's Info leaves no pool-thread handle holding storage.
+
+    TASK-34100.16.1: Library's Info lists the notes that link to the open one
+    through ``NotesScopeService.list_note_backlinks``, which ran the read on an
+    executor thread and left that thread's ChaChaNotes connection cached. Its
+    storage lease is one a backup's local pause never revokes, so every Create
+    backup after a note was opened ended in ``admission_timeout`` (live drain
+    residue: one lease, created in ``get_notes_linking_to`` on ``asyncio_1``).
+    """
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    target = db.add_note("Target", "hub")
+    linker = db.add_note("Linker", f"See [t](note://{target}).")
+    notes = NotesInteropService(
+        base_db_directory=tmp_path, api_client_id="test", global_db_to_use=db
+    )
+    # The app reuses one cached per-user handle after its first use; seed it so
+    # the test does not construct one (that path reads config, not storage).
+    notes._db_instances["test-user"] = db
+    service = NotesScopeService(
+        local_notes_service=notes, server_service=None, policy_enforcer=None
+    )
+    try:
+        backlinks = await service.list_note_backlinks(
+            scope="local_note", note_id=target, user_id="test-user"
+        )
+
+        assert [row["id"] for row in backlinks] == [linker]
+        assert not worker_leases(db), "the backlinks worker kept its connection"
+        assert [row["id"] for row in db.get_notes_linking_to(target)] == [linker]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("shape", ["custom", "subclass", "memory"])
 async def test_subscription_unqualified_owner_keeps_previous_route(shape):
     class CustomDB:
