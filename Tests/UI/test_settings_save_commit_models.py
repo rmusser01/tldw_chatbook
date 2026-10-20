@@ -224,6 +224,11 @@ def test_guidance_row_builders_keep_a_uniform_row_count():
         "settings-model-profile-thinking-effort",
         "settings-model-profile-thinking-budget-tokens",
         "settings-model-profile-streaming",
+        # TASK-35011 (B19): the Saved model list's controls have guides too.
+        "settings-discover-provider-models",
+        "settings-discovered-models-list",
+        "settings-save-discovered-provider-models",
+        "settings-clear-discovered-provider-models",
     )
     appearance_field_ids = (
         "settings-appearance-open-theme",

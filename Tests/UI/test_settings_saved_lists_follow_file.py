@@ -112,7 +112,8 @@ async def _until(pilot, condition, timeout: float = 8.0) -> None:
 
 
 async def _save_selected(host, pilot, screen, *model_ids: str) -> str:
-    """Discover, tick ``model_ids``, press Save selected; return its line."""
+    """Discover, tick ``model_ids``, press Add to model list (once Save
+    selected); return its line."""
     await _press_discover(host, pilot, screen)
     listing = screen.query_one("#settings-discovered-models-list", SelectionList)
     listing.deselect_all()
@@ -183,7 +184,8 @@ async def test_save_selected_keeps_a_model_the_file_gained_after_start(
         label = screen._provider_display_label("llama_cpp")
 
     assert _saved("Llama_cpp") == ["None", "m-one", "hand-added", "fake-beta"]
-    assert line == f"Saved 1 discovered model to {label}."
+    # TASK-35011 (C4 residual), rewritten on purpose: it names the model.
+    assert line == f"Added fake-beta to {label}'s model list."
     assert app.providers_models["Llama_cpp"] == _saved("Llama_cpp")
 
 
@@ -206,7 +208,11 @@ async def test_save_selected_says_already_saved_when_the_file_lists_them(
         line = await _save_selected(host, pilot, screen, "hand-added")
         label = screen._provider_display_label("llama_cpp")
 
-    assert line == f"The selected models are already saved for {label}."
+    # TASK-35011 (C4 residual), rewritten on purpose.
+    assert line == (
+        f"The selected models are already in {label}'s model list. To make one "
+        "the default, choose it in Default model."
+    )
     assert _config_path().read_bytes() == before
     assert app.providers_models["Llama_cpp"] == ["None", "m-one", "hand-added"]
 

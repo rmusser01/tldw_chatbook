@@ -25,6 +25,7 @@ from ..config import (
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
     is_valid_provider_api_key,
+    normalize_provider_config_key,
 )
 from ..provider_registry import ALL_RECORDS
 from .provider_endpoint_contract import (
@@ -1573,6 +1574,20 @@ def _validate_combined_provider_settings_mutation(
                 not model
                 or extra_keys != {model}
                 or not isinstance(values[model], Mapping)
+            ):
+                raise error
+        elif section == "providers":
+            # TASK-35011: a discovered pick joins its own provider's saved
+            # list. The owner by provider_config_key: _ownership_for cannot
+            # spell the template's Custom_2.
+            list_key, models = next(iter(values.items()))
+            if (
+                not model
+                or len(values) != 1
+                or normalize_provider_config_key(list_key) != ownership.provider_key
+                or type(models) is not list
+                or model not in models
+                or any(_safe_model(item) is None for item in models)
             ):
                 raise error
         elif extra_keys:

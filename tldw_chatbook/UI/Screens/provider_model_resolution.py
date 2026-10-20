@@ -18,8 +18,11 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
 from ...LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
 
 
+#: TASK-35011 (C-M2): saving never resolves capabilities, so the line no
+#: longer says it does. Settings' discovery card and Console's Chat settings
+#: readiness detail both show it.
 MODEL_CAPABILITY_UNKNOWN_WARNING = (
-    "Capabilities unknown until saved or verified; text chat is assumed."
+    "Capabilities unknown for models no catalog lists; text chat is assumed."
 )
 _ENDPOINT_CATALOG_SOURCES = {"persisted_discovered", "runtime_discovered"}
 _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS = {

@@ -38,6 +38,7 @@ from Tests.UI.test_settings_connect_rows import _until
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from Tests.UI.test_settings_provider_key_check import _Provider, _route_discovery_to
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.config import get_cli_providers_and_models
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
     ModelDiscoveryResult,
@@ -230,8 +231,12 @@ async def test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with
     request, monkeypatch
 ):
     """AC#3, AC#4, AC#7 (closes C4): one choice stages a discovered model over
-    a set default, marks the category dirty, and s saves it; the saved model
-    list is not touched."""
+    a set default, marks the category dirty, and s saves it.
+
+    TASK-35011, rewritten on purpose (the owner's 2026-10-14 "Pick = use as
+    default" ruling supersedes TASK-33007.3 AC#4): the pick writes nothing,
+    and the s that saves it also appends it to the provider's list as the
+    file holds it, in the same mutation."""
     mutations = _capture_provider_settings_mutations(monkeypatch)
     app = _app("openai", "gpt-4o", catalog=("gpt-4o",), served=("o3-mini-new",))
     host = _SettingsCssHarness(app, "settings")
@@ -259,15 +264,19 @@ async def test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with
         await pilot.press("escape")
         await pilot.pause()
         assert host.focused is None
+        file_list = get_cli_providers_and_models()["OpenAI"]
         await pilot.press("s")
         await _settle(host, pilot)
 
-        assert any(
-            values.get("chat_defaults", {}).get("model") == "o3-mini-new"
+        (saved,) = [
+            values
             for values, _deleted in mutations
-        ), mutations
-        assert all("providers" not in values for values, _deleted in mutations)
-        assert app.providers_models == before
+            if values.get("chat_defaults", {}).get("model") == "o3-mini-new"
+        ]
+        assert saved["providers"] == {"OpenAI": [*file_list, "o3-mini-new"]}
+        # The lists re-read after the save are the config's (this fake
+        # writes no file; the save's in-memory apply is what they read).
+        assert app.providers_models == get_cli_providers_and_models()
         assert not screen._category_has_unsaved_changes(PROVIDERS_MODELS)
 
 
@@ -514,12 +523,16 @@ async def test_discovered_models_stay_in_the_picker_after_the_card_rebuilds(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_a_discovered_model_becomes_the_saved_default_without_joining_the_list(
+async def test_a_discovered_model_becomes_the_saved_default_and_joins_the_list(
     request, monkeypatch
 ):
     """AC#10: the real discovery service on a private profile, only its
     transport stubbed: discover, pick a model that is not the default, save;
-    chat_defaults.model changes on disk and the [providers] list does not."""
+    chat_defaults.model changes on disk.
+
+    TASK-35011, rewritten on purpose (the 2026-10-14 ruling supersedes AC#10's
+    "[providers] list did not change"): the same save appends the pick to
+    the OpenAI list, and the app's lists are the file's."""
     served = "gpt-test-served-only"
     listing = {"data": [{"id": "gpt-4.1-2025-04-14"}, {"id": served}]}
     provider = _Provider(httpx.Response(200, json=listing))
@@ -558,8 +571,11 @@ async def test_a_discovered_model_becomes_the_saved_default_without_joining_the_
 
     saved = toml.loads(config_path.read_text())
     assert saved["chat_defaults"]["model"] == served
-    assert saved.get("providers", {}) == providers_before
-    assert app.providers_models == providers_before
+    assert saved["providers"] == {
+        **providers_before,
+        "OpenAI": [*providers_before["OpenAI"], served],
+    }
+    assert app.providers_models == saved["providers"]
     assert len(provider.requests) == 1
 
 

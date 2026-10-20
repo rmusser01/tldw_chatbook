@@ -396,7 +396,9 @@ def _assert_public_text_present(
 def _capture_provider_settings_mutations(monkeypatch):
     calls = []
 
-    def apply_mutation(section_values, *, delete_keys=None):
+    # TASK-35011: the real writer also takes the locked-snapshot check an s
+    # that adds a discovered pick passes; this fake applies regardless.
+    def apply_mutation(section_values, *, delete_keys=None, **_preconditions):
         calls.append((section_values, delete_keys or {}))
         return ConfigMutationResult(True, True, None)
 
@@ -11589,8 +11591,10 @@ async def test_settings_provider_model_discovery_controls_render_for_eligible_pr
         )
         assert _visible_text(screen).count("discovered yet") == 1
         assert "No discovered models yet" not in _visible_text(screen)
+        # TASK-35011 (C-M2), rewritten on purpose: saving never resolves
+        # capabilities, so the line no longer says it does.
         assert (
-            "Capabilities unknown until saved or verified; text chat is assumed."
+            "Capabilities unknown for models no catalog lists; text chat is assumed."
             in _visible_text(screen)
         )
 
@@ -11660,8 +11664,9 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
             screen,
             pilot,
             # Capture fix 3, finding 6, rewritten on purpose: the receipt names
-            # the provider, not its config key, and counts without "(s)".
-            "Saved 1 discovered model to OpenAI.",
+            # the provider, not its config key; TASK-35011 (C4), again: and
+            # the models it added.
+            "Added gpt-4o-mini to OpenAI's model list.",
         )
 
     assert scope.discover_calls == [
@@ -11789,7 +11794,7 @@ async def test_discovered_model_save_crash_status_is_plain_language():
     status = screen._model_discovery_status
     assert "disk sadness" not in status
     assert status.startswith("Could not save the discovered models (OSError).")
-    assert "Try Save again" in status
+    assert "Press Add to model list again" in status  # TASK-35011
     assert "Logs (F3)" in status
 
 

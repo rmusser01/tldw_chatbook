@@ -6062,9 +6062,10 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
     )
 
     assert [option.model_id for option in options] == ["gpt-4.1", "gpt-5"]
+    # TASK-35011 (C-M2), rewritten on purpose: saving never resolves them.
     assert (
         options[1].warning
-        == "Capabilities unknown until saved or verified; text chat is assumed."
+        == "Capabilities unknown for models no catalog lists; text chat is assumed."
     )
     assert scope.merge_calls == [
         {
