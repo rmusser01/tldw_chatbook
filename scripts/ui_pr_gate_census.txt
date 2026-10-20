@@ -36,7 +36,8 @@ Tests/UI/test_console_library_policy_controller.py
 Tests/UI/test_console_library_search_modal.py
 Tests/UI/test_console_model_popover_no_provider.py
 Tests/UI/test_console_model_popover_registry_options.py
-Tests/UI/test_console_model_switcher.py
+# TASK-33620.9: durable rename publication through the mounted rail menu.
+Tests/UI/test_console_rename_consistency.py
 Tests/UI/test_console_pending_interrupt_projection.py
 Tests/UI/test_console_popover_context_window.py
 Tests/UI/test_console_progress_navigation_owners.py
@@ -210,8 +211,7 @@ Tests/UI/test_library_media_export_no_freeze.py
 # wall, too close to the lane's 60 s budget.
 Tests/UI/test_study_flashcards_real_service_contract.py
 
-# TASK-33620.9: durable rename publication through the mounted rail menu.
-Tests/UI/test_console_rename_consistency.py
+Tests/UI/test_console_model_switcher.py
 
 # TASK-31245: constructor hydration and finite workspace handle ownership.
 Tests/UI/test_console_fixture_ownership.py
@@ -384,16 +384,16 @@ Tests/UI/test_console_session_settings.py::test_console_settings_modal_holds_ant
 Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_lists_console_supported_catalog
 # R1 #29 (C6): Settings spells a number one way.
 Tests/UI/test_settings_number_spelling.py
-# TASK-33007.3: the Default model picker -- one row, ids grouped by where they
-# came from, Custom ID and its rollback, a wide id read from its head.
-Tests/UI/test_settings_default_model_picker.py
+# TASK-33007.5: Model defaults' one-row field-truth rows, the one-row Select
+# rows, and a real save of a blanked field.
+Tests/UI/test_settings_model_defaults_rows.py
 # Whole-PR review of Phase 9, round 1 (in a bootstrap_profile geometry node's slot): TASK-33003.22 AC#2, the Python style ratchet holds at zero (~45 s under load, private profile).
 Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
 # Capture round 2, finding 1: the Inspector starts at a heading, says more above.
 Tests/UI/test_settings_field_guide_in_view.py::test_the_inspector_starts_at_a_heading_and_says_when_more_is_above
-# TASK-33007.5: Model defaults' one-row field-truth rows, the one-row Select
-# rows, and a real save of a blanked field.
-Tests/UI/test_settings_model_defaults_rows.py
+# TASK-33007.3: the Default model picker -- one row, ids grouped by where they
+# came from, Custom ID and its rollback, a wide id read from its head.
+Tests/UI/test_settings_default_model_picker.py
 # TASK-33007.9: Connect painted whole -- the open provider list's box and a
 # wide provider name from its head, at both full-screen sizes.
 Tests/UI/test_settings_connect_paint.py
@@ -712,11 +712,11 @@ Tests/UI/test_console_switcher_saved_default.py::test_a_lifted_default_lists_the
 # TASK-35676/35677/35678: local paste events, retained editing state and shared
 # action support. Split the mounted journeys by parameter to bound each entry.
 Tests/UI/test_composer_paste_settings_panel.py
-Tests/UI/test_settings_action_availability.py
+Tests/UI/test_settings_paste_event_origin.py::test_paste_search_typing_and_category_return[size1]
 Tests/UI/test_settings_paste_event_origin.py::test_value_changing_paste_refresh_is_not_a_user_edit[collapse_large_pastes]
 Tests/UI/test_settings_paste_event_origin.py::test_value_changing_paste_refresh_is_not_a_user_edit[paste_collapse_threshold]
 Tests/UI/test_settings_paste_event_origin.py::test_paste_search_typing_and_category_return[size0]
-Tests/UI/test_settings_paste_event_origin.py::test_paste_search_typing_and_category_return[size1]
+Tests/UI/test_settings_action_availability.py
 
 # TASK-35680: queued refresh origin, real config Save/Revert and category return.
 Tests/UI/test_settings_parallel_run_event_origin.py::test_parallel_refresh_preserves_unrelated_draft_and_delivers_next_edit

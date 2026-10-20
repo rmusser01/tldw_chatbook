@@ -20937,3 +20937,19 @@ Product security checks stayed enabled. Keep diagnostic file-tool writes outside
 private fixture ancestry, use native writes for helpers inside it, and inspect
 the actual ACL when an established fixture suddenly fails storage admission.
 Retain the rejected runs separately from behavior evidence.
+
+
+## Repeated file names can corrupt per-file timing replay (PR #3176, 2026-10-20)
+
+**Incident.** While diagnosing UI shard 9's job-budget cancellation in run
+39447290920, the replay helper reported -28.36 s for the model-default rows.
+Two nonconsecutive Theme node entries share a file name; the helper's final
+per-file timestamp was reused for its earlier occurrence, charging the middle
+file to Theme and subtracting it again. Raw consecutive progress lines measured
+the model-row occurrence at 380.89 s. The upstream passing run and the candidate
+picker file were checked the same way before changing test placement.
+
+**What to do.** When a census splits one file into separated node entries,
+profile each occurrence in order. Check for negative costs before trusting a
+replay aggregate. This incident used raw per-occurrence intervals; it does not
+claim to fix the helper.

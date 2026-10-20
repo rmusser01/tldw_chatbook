@@ -139,3 +139,55 @@ against dev. TASK-35676/35677/35678 are complete in this branch. The
 [follow-up analysis](./2026-10-19-textual-book-followup.md) records the separate
 parallel-run diagnostic failure as new work, not as a failure of the fixed
 paste-region contract or a reason to widen the completed tasks.
+
+
+## Current-dev qualification and UI budget follow-up (2026-10-20)
+
+TASK-35677 and TASK-35678 were already implemented, Done and included in
+PR #3176. The requested fresh review audited them against their acceptance
+criteria on `1bbc145ffc..3c2b0e5601`; no Critical, Important or Minor issue
+was found, and Declined to judge was empty. Rebase conflicts affected only
+the census and size ratchet. Product patches survived the replay, no new
+duplicate Settings methods appeared, and the measured size is 35,757 lines.
+
+On that head, 17 selected Settings behavior cases and both size/no-slack
+checks passed. All ten new panel/action/paste/parallel cases passed. Seven
+additional footer cases stopped before behavior at
+`RecoveryRequired: raw_source_selection_changed`; exactly the same seven
+nodes and exception signatures reproduced on unchanged `1bbc145ffc` in a
+separate clean worktree. The config, raw-participant and app-factory paths
+are unchanged by the PR. Scoped lint/format, CSS reproduction, census and
+Backlog checks passed. No full suite ran.
+
+[Run 39447290920, UI shard 9](https://github.com/rmusser01/tldw_chatbook/actions/runs/39447290920/job/118712469761)
+then reached its fixed 20-minute job limit while the final added wide paste
+journey was running. The last preceding file finished at 15:46:56 UTC and
+GitHub canceled the step at 15:47:11; the log contains no assertion failure.
+The other nine UI shards, all three fast lanes, Console P0, Dreams and Perf
+Guard passed. This is a CI scheduling qualification issue, not a reproduced
+failure of the journey (its local wide case passed in 35.47 s).
+
+Following the existing workflow's reorder-first policy under
+[ADR-103](../../../backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md),
+three pairs of census slots were exchanged across shards 5, 6 and 9:
+
+- Model-default rows and the default-model picker: 380.89/314.36 s in this
+  run; 360.72/331.14 s in the latest passing upstream run 39420530080.
+- Console model-switcher and rename-consistency files: 153.53/123.15 s in
+  this run, shifting about 30 s away from shard 9.
+- The new wide paste journey and action-availability file: the latter took
+  8.49 s on hosted CI; shard 5 completed in 17m45s before the exchange.
+
+Four upstream entries therefore change placement, an explicit exception to
+the initial append-only placement. All 372 entries remain exactly once;
+only six slots change, and their subject comments move with them. No
+assertion, product source, workflow, shard count, timeout or census floor
+changes. Seventy-eight census rejection-path and shard-count checks pass,
+and the committed census passes its real checker. New hosted qualification
+must still confirm the adjusted placement; these timings are evidence for
+choosing the swaps, not a claim that the next run has passed.
+
+The stock replay helper assigned a negative model-row cost because the Theme
+file appears on both sides of it. These measurements instead use consecutive
+per-occurrence progress timestamps. The helper itself is outside this change.
+No new ADR is required: this applies the existing CI placement policy.

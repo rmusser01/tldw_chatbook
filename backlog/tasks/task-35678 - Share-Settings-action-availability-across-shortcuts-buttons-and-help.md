@@ -71,6 +71,7 @@ Reason: bounded changes under the existing Settings and approved screen-decompos
 2. Share pure category eligibility for save/revert/test, RAG and profile actions across handlers, footer/help and relevant controls.
 3. Preserve guidance-only and focused-text semantics and mutation-time safety gates.
 4. Verify matrix, keyboard/button flows, narrow layouts and scoped static checks.
+5. Qualify the rebased PR within the existing UI job budget: use hosted per-occurrence timings to rebalance census slots if the new journey reaches the 20-minute limit; retain every entry and assertion, the 372-entry floor, shard count and timeouts (existing CI workflow policy; ADR-103).
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -81,4 +82,7 @@ Shared pure category support across Save/Revert/Test dispatch, guided buttons, f
 The before/after category/focus matrix and targeted mounted/keyboard evidence are in [qualification](../../Docs/superpowers/qa/2026-10-19-textual-settings-patterns.md). An existing Theme screen-binding test failed on the original source because focus remained in ThemeOptionList, whose t means Try; its setup now explicitly releases that focus, preserving all assertions. Affected mounted tests use the required private-profile process. Independent initial and post-rebase reviews found no remaining defects. New regression entries were appended to the PR UI census without moving earlier entries.
 
 ADR required: no new ADR; [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md) and [ADR-033](../decisions/033-settings-commit-models-three-honestly-labeled.md) remain governing. Modified the Settings screen, action-availability and affected footer tests, architecture docs and test census. No worker, polling, global bindings or screen-wide recomposition changes were included. Existing performance and polling owners remain linked above.
+
+
+Current-dev qualification (2026-10-20): a fresh requested Superpowers review found no issues on 1bbc145ffc..3c2b0e5601; 17 targeted Settings cases and two size checks passed. Seven additional local footer fixture failures reproduced identically on unchanged dev. Hosted UI shard 9 then exhausted its existing 20-minute budget without an assertion failure. Qualification therefore swaps three measured census pairs across shards 5/6/9, including four upstream entries as an explicit exception to initial append-only placement. All 372 entries and assertions remain; workflow limits and product source are unchanged. The 78 census/count checks and real census validation pass. The qualification report records timestamps, upstream comparison and pending hosted confirmation. This follows existing [ADR-103](../decisions/103-fast-pr-lane-and-required-gate-aggregation.md), with no new ADR. Backlog CLI is unavailable locally; this plan/note update preserves the task's existing metadata and completed criteria.
 <!-- SECTION:NOTES:END -->
