@@ -16961,6 +16961,7 @@ class ChatScreen(BaseAppScreen):
                 ``True`` -- the review-notes edit/delete reload otherwise
                 skips as a no-op until the user's next send.
         """
+        from ..Console_Modules.config_sync import run_console_presentation_sync
         from ..Console_Modules.transcript import ConsoleChangeReviewProjection
 
         if type(self._change_review_projection) is ConsoleChangeReviewProjection:
@@ -17162,7 +17163,7 @@ class ChatScreen(BaseAppScreen):
                     )
                     _global, _local, effective_memory = (
                         memory_controller.context_control_inputs(
-                            store.active_session_id
+                            store.active_session_id, include_global=False
                         )
                     )
                 except Exception:
@@ -17290,7 +17291,8 @@ class ChatScreen(BaseAppScreen):
                         ),
                     )
                 self._last_native_transcript_refresh_key = refresh_key
-            self._sync_console_transcript_guidance()
+            # TASK-35444: checked display config; a deferral replays the bar.
+            run_console_presentation_sync(self, self._sync_console_transcript_guidance)
             self._last_native_transcript_session_id = (
                 self._ensure_console_chat_store().active_session_id
             )
@@ -17582,6 +17584,7 @@ class ChatScreen(BaseAppScreen):
                 if not _console_screen_is_torn_down(self):
                     raise
             return False
+        from ..Console_Modules import config_sync
         visit = self._current_console_attach_visit()
         poll_record = run_controls.preparing_poll_record(self) if _preparing_poll else None
         full_source = run_controls.poll_source(self) if poll_record is None else None
@@ -17690,9 +17693,7 @@ class ChatScreen(BaseAppScreen):
             # workers and handlers interleaving during the awaits build live.
             with self._workspace.tick_workspace_build_scope():
                 if self._sync_console_rail_and_controls() is False:
-                    self._console_control_bar_replay_whole_sync = True
-                    self._request_console_control_bar_sync(delayed=True)
-                    return False
+                    return config_sync.replay_whole_console_sync(self)
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
                 # both update the session ledger on their own later path.
@@ -17713,9 +17714,8 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
-                self._sync_console_rail_visibility_if_changed(
-                    self._current_console_rail_state()
-                )
+                if not config_sync.sync_console_rail_visibility(self):
+                    return False
             self._dispatch_console_rail_preference_prune()
             self._session.schedule_manual_read_acknowledgement()
             if (

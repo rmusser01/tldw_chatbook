@@ -23697,7 +23697,7 @@ class ConsoleChatController:
         return effective, project_effective_memory(provider_messages, effective)
 
     def context_control_inputs(
-        self, session_id: str
+        self, session_id: str, *, include_global: bool = True
     ) -> tuple[
         ConsoleContextPolicyOverrides,
         ConsoleContextPolicyOverrides | None,
@@ -23707,6 +23707,7 @@ class ConsoleChatController:
 
         This read-only seam keeps widgets away from the repository and from
         the active-lineage validation rules used by provider dispatch.
+        ``include_global=False`` skips the cold-cache global policy read (TASK-35444).
         """
         owner = next(
             (item for item in self.store.sessions() if item.id == session_id), None
@@ -23714,7 +23715,7 @@ class ConsoleChatController:
         if owner is None:
             raise KeyError(session_id)
         try:
-            global_overrides = self._global_context_policy_overrides()
+            global_overrides = self._global_context_policy_overrides() if include_global else None
         except Exception:
             global_overrides = None
         effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
