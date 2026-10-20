@@ -70,10 +70,10 @@ def _live_app_config(app_instance: Any) -> Optional[dict]:
 class WelcomeFooter(Vertical):
     """Welcome's quiet rows, placed below the nav bar.
 
-    E7: "Reduce motion" applies at once, to the in-memory settings every
-    animated surface reads (the Console setup backdrop, Buddy, character
-    expressions); WelcomeStep writes it on Next, as its own change. It is
-    offered only where it can apply live.
+    E7: "Reduce motion" applies at once, to the in-memory settings the live
+    animated surfaces read (Buddy, character expressions); WelcomeStep writes
+    it on Next, as its own change, and the splash honours the saved value from
+    the next launch. It is offered only where it can apply live.
     """
 
     DEFAULT_CLASSES = "setup-welcome-footer"
@@ -187,6 +187,16 @@ class WelcomeStep(SetupStep):
             container.mount(footer, after=nav)
         else:
             self.mount(footer)
+
+    def on_unmount(self) -> None:
+        """The rows live in the wizard container, so they leave with the step.
+
+        A failed Welcome replaced by ``_retry_failed_step`` must not orphan
+        them, or the new step's rows collide with the old id (review F11).
+        """
+        footer, self._footer = self._footer, None
+        if footer is not None and footer.parent is not None and footer.parent is not self:
+            footer.remove()
 
     def on_show(self) -> None:
         super().on_show()
