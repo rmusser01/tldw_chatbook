@@ -2258,7 +2258,7 @@ class TestSummaryThreeState:
         assert rows["Tools"].detail == (
             "on: date and time, calculator and ask you a question, plus tools "
             "from MCP servers you add and Library tools in chats you allow. "
-            "Sub-agents, skills, web, Watchlists, workspace files and characters "
+            "Sub-agents, skills, web, Watchlists, workspace tools and characters "
             f"stay off until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}. "
             "A model with a small or not-yet-known context window gets no tools."
         )
