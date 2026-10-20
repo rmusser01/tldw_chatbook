@@ -263,6 +263,35 @@ def _active_lookup(result):
     return lambda model, precision, *, service: result
 
 
+async def _pick_language(pilot, step: SpeechSetupStep, language: str) -> None:
+    """Pick a Language option and wait until the reload it starts has settled.
+
+    TASK-34100.13 made Language a one-row Select. Setting its value posts
+    Changed without the extra pauses ``pilot.click()`` takes on a radio, so
+    a single pause could land inside the reload's recompose (children
+    removed, not yet remounted) and ``#setup-speech-precision-f32`` was
+    missing about half the time. Settled means: the pick reached the step,
+    no load or recompose is pending, and the same Precision radio survives
+    two consecutive pauses.
+    """
+    step.query_one("#setup-speech-language", Select).value = language
+    previous = None
+    for _ in range(300):
+        await pilot.pause(0.01)
+        radios = step.query("#setup-speech-precision-f32")
+        settled = (
+            step._selected_language == language
+            and not step._loading
+            and not step._recompose_required
+            and len(radios) == 1
+        )
+        current = radios.first() if settled else None
+        if current is not None and current is previous:
+            return
+        previous = current
+    raise AssertionError(f"the Speech step never settled after picking {language!r}")
+
+
 class _StepHost(ConsolidatedCSSApp):
     def __init__(self, step):
         super().__init__()
@@ -320,8 +349,7 @@ async def test_non_english_f32_selection_changes_the_exact_managed_target():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        step.query_one("#setup-speech-language", Select).value = language
-        await pilot.pause()
+        await _pick_language(pilot, step, language)
         step.query_one("#setup-speech-precision-f32", RadioButton).value = True
         await pilot.pause()
 
@@ -1153,8 +1181,7 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        step.query_one("#setup-speech-language", Select).value = v3_language
-        await pilot.pause()
+        await _pick_language(pilot, step, v3_language)
         # commit() must run before the App tears its widget tree down (see
         # the sibling byte-identical test's comment for why).
         ok, error = await step.commit()
@@ -1201,8 +1228,7 @@ async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        step.query_one("#setup-speech-language", Select).value = language
-        await pilot.pause()
+        await _pick_language(pilot, step, language)
         step.query_one("#setup-speech-precision-f32", RadioButton).value = True
         await pilot.pause()
         ok, error = await step.commit()
