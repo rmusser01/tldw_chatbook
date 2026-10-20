@@ -1,7 +1,7 @@
 """TASK-34000.27: a vetoed nav-bar switch says why, keeps the current
 destination highlighted, and lets the retry click work.
 
-Review S-17 (qa/notes-library-ux-review-2026-10-02, captures
+Review S-17 (Docs/QA/notes-library-ux-review-2026-10-02, captures
 `verify/nl-vb-15/16-veto-t7-160x45.ansi` and `18-retry-console-160x45.txt`):
 with the note editor reporting "Title begins or ends with whitespace — remove
 it to save.", clicking ⌃2 Console left Library on screen while the nav bar

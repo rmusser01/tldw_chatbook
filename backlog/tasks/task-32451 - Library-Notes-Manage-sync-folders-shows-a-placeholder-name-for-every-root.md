@@ -53,7 +53,7 @@ Evidence: captures cap-06 and cap-07 under the wave-3 sync scratchpad (live walk
 4. Canvas pins for name safety: a markup-shaped name paints literally; a 160-character name keeps the row's controls.
 5. Guide (`Docs/User_Guide/library/notes.md`), FAST_LANE + workflow entries, size ratchet if the controller grew.
 6. Live verification on the isolated harness at 160x45 and 100x30 with the seeded "VSync" root; captures under
-   `qa/notes-library-ux-review-2026-10-02/fixes/task-32451/`.
+   `Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-32451/`.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -80,7 +80,7 @@ identically on a base probe worktree: an unrelated `get_cli_setting` allowlist m
 w4 + journey + controller + lasting-flow with the scratch plugin 224 passed, 0 failed. Live on the isolated
 harness with the seeded "VSync" root: 160x45 and 100x30 both title the row `VSync` with "✓ Up to date as of HH:MM
 · Next: Check changes", and the Notes tree shows "▸ VSync ⇄ Sync managed"; 0 Tracebacks and no vault path in
-either run's log. Captures: `qa/notes-library-ux-review-2026-10-02/fixes/task-32451/`.
+either run's log. Captures: `Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-32451/`.
 
 **Trade-offs.** No new DB read on the render path (names resolve on the maintenance path at startup/activation).
 The size ratchet row for the controller rose 2375 -> 2378 (owner ruling).
