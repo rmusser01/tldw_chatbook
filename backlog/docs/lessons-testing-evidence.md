@@ -1639,6 +1639,18 @@ is called green — the plain run is the one CI does. (The P1-C batch added the 
 to its brief for the same reason; `Tests/Notes/test_notes_sync_refused_files_integrity.py`
 is the worked example: real `NotesDeviceStateStore`, marker carried, green with no plugin.)
 
+**TASK-34100.14, 2026-10-19: the wall also hides tests that pin the copy you just changed.**
+The first pass reworded the shared install review and the "already in progress" busy
+message, then ran the suites it had edited -- all green. `Tests/UI/test_model_browser_state.py`
+still asserted the old busy copy ("Another Whisper install is already in progress. Try again
+shortly."), but every one of its nodes errored at setup locally with
+`raw_source_selection_changed`, so the stale pin never ran and was never seen. A grep for the
+old strings across `Tests/` found it; a run through a scratch bootstrap plugin then failed it
+for the expected reason, and the same plugin run at the base commit showed the file's two
+other failures were pre-existing. **When you change user-facing copy, grep `Tests/` for the
+old wording and run every file that pins it through a plugin or `private_profile_test`**:
+"the suites I edited are green" says nothing about the ones that error before they assert.
+
 ## A mutation check against one of two layered guards proves nothing (TASK-34000.22 fix round 1, 2026-10-21)
 
 **Incident.** The review asked for a mutation check on the `on_descendant_focus`
