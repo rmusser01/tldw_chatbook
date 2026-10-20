@@ -554,3 +554,46 @@ def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
     )
     assert controller.app.console_mcp_tool_count == 3
     assert controller.app.console_tool_count == 0
+
+
+@pytest.mark.asyncio
+async def test_the_tools_chip_sees_the_sessions_live_sub_agents(tmp_path):
+    """Review round 2 (R2-2): the F8 fix reached the meter and the send but
+    only half of the Tools chip. The MCP count asked about the run's session
+    and saw its live fleet; the built-in count asked with no session, so it
+    always answered "light". With Full agent tools switched off while this
+    conversation's sub-agents still run, the chip added the light set's 3 to
+    the full MCP catalog -- a figure matching neither surface. Both halves now
+    ask about the composing run's session."""
+    from types import SimpleNamespace
+
+    from Tests.Agents.test_mcp_tool_provider import (
+        FakeMCPService,
+        _catalog_record,
+        _tool_dict,
+    )
+    from Tests.Chat.test_console_agent_swap import _fake_app
+    from Tests.Chat.test_console_voice_preflight import controller_for
+
+    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
+    controller = controller_for(SimpleNamespace())
+    controller._agent_bridge = bridge
+    controller.app = _fake_app(
+        FakeMCPService(
+            catalog_records=[
+                _catalog_record("c", [_tool_dict("t1")], is_connected=True)
+            ]
+        )
+    )
+
+    await controller._compose_mcp_provider(session_id=session.id)
+    assert controller.app.console_tool_count == len(LIGHT)
+
+    conversation_id = session.persisted_conversation_id or session.id
+    bridge._fleet_coordinators[conversation_id] = _LiveFleet()
+    provider = await controller._compose_mcp_provider(session_id=session.id)
+
+    # The agent surface: the built-ins go uncounted, as before this task,
+    # and the whole composed catalog is offered.
+    assert controller.app.console_tool_count == 0
+    assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
