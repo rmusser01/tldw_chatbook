@@ -678,3 +678,72 @@ async def test_omnivoice_install_names_itself_waits_in_line_and_can_be_cancelled
     assert control.cancel_requested is True
     assert status == "Download cancelled — nothing was saved."
     assert install.disabled is False
+
+
+async def test_omnivoice_download_ending_under_a_focused_cancel_keeps_focus_alive(
+    monkeypatch,
+) -> None:
+    """TASK-34100.14 live recheck: the step hides the whole progress widget
+    when the download ends. Textual blurs a hidden focused widget, and the
+    Cancel button had no focusable sibling, so focus fell to None and the
+    wizard's Ctrl+N/Ctrl+B (bound on its container) did nothing until Tab.
+    """
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+
+    _state(monkeypatch, "model_missing")
+    release = asyncio.Event()
+
+    async def preflight(**_):
+        return "REPORT"
+
+    async def provision(report, *, progress=None, control=None, **_):
+        progress(
+            AcquisitionProgress(
+                "fetch", ArtifactRef("omnivoice-onnx-int8hq", "r1", "int8"),
+                "model.onnx", 1, 2,
+            )
+        )
+        for _ in range(100):
+            if release.is_set():
+                break
+            await asyncio.sleep(0.05)
+        raise RuntimeError("upstream went away")
+
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
+    step = _step()
+    host = _Host(step)
+    monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-omnivoice-install", Button).press()
+        cancel = None
+        for _ in range(40):
+            await pilot.pause(0.05)
+            found = step.query("#setup-voice-omnivoice-progress .model-install-cancel")
+            if found and found.first(Button).display:
+                cancel = found.first(Button)
+                break
+        assert cancel is not None, "no Cancel download on the OmniVoice progress"
+        cancel.focus()
+        await pilot.pause()
+        assert host.focused is cancel
+        host.call_later(release.set)
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if not step._omnivoice_installing:
+                break
+        await pilot.pause()
+        focused = host.focused
+        alive = focused is not None and focused.is_attached
+        node = focused
+        while alive and node is not None and node is not host.screen:
+            alive = bool(node.display)
+            node = node.parent
+        in_step = focused is not None and step in focused.ancestors
+
+    assert not step._omnivoice_installing
+    assert alive, f"focus stranded after the download ended: {focused!r}"
+    assert in_step, f"focus left the step: {focused!r}"

@@ -245,8 +245,23 @@ class ModelInstallProgress(Widget):
         if not self._cancellable:
             return
         cancel = self.query_one(".model-install-cancel", Button)
-        cancel.display = phase in self._CANCELLABLE_PHASES
+        show = phase in self._CANCELLABLE_PHASES
+        if not show or self._cancel_pending:
+            self._hand_off_focus(cancel)
+        cancel.display = show
         cancel.disabled = self._cancel_pending
+
+    def _hand_off_focus(self, cancel: Button) -> None:
+        """Move focus off Cancel before it is disabled or hidden.
+
+        Textual blurs a focused widget that becomes disabled or hidden, and
+        nothing else in this widget can take focus, so it fell to None: the
+        first-run wizard's Ctrl+N/Ctrl+B, bound on its container, then did
+        nothing until Tab (TASK-34100.14 live recheck). The next control in
+        the screen's focus chain takes it instead.
+        """
+        if cancel.has_focus:
+            self.screen.focus_next()
 
     @on(Button.Pressed, ".model-install-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:
@@ -255,6 +270,7 @@ class ModelInstallProgress(Widget):
         if self._cancel_pending:
             return
         self._cancel_pending = True
+        self._hand_off_focus(event.button)
         event.button.disabled = True
         self.query_one("#model-install-progress-phase", Static).update(
             "Cancelling download…"

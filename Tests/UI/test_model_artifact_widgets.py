@@ -1170,6 +1170,66 @@ async def test_progress_widget_cancel_posts_one_request_and_says_it_is_stopping(
     assert "Cancelling download…" in text
 
 
+class _CancelThenNextApp(ConsolidatedCSSApp):
+    """A host with one more focusable control after the progress widget."""
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+        yield ModelInstallProgress(cancellable=True, clock=_FakeClock())
+        yield Button("Next", id="after-progress")
+
+
+def _focus_is_alive(app) -> bool:
+    """Something attached and on screen has focus (every ancestor displayed)."""
+    node = app.focused
+    if node is None or not node.is_attached:
+        return False
+    while node is not None and node is not app.screen:
+        if not node.display:
+            return False
+        node = node.parent
+    return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["pressed", "install-started"])
+async def test_progress_widget_cancel_never_strands_keyboard_focus(how):
+    """TASK-34100.14 live recheck: Textual blurs a focused widget that is
+    disabled or hidden, and with nothing focusable beside the Cancel button
+    focus fell to None -- the first-run wizard's Ctrl+N/Ctrl+B (bound on its
+    container) then did nothing until Tab. The widget hands focus on before
+    it disables or hides its own focused Cancel.
+    """
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    app = _CancelThenNextApp()
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        widget.update_progress(
+            AcquisitionProgress("fetch", reference, "encoder.onnx", 1, 2)
+        )
+        await pilot.pause()
+        cancel = widget.query_one(".model-install-cancel", Button)
+        cancel.focus()
+        await pilot.pause()
+        assert app.focused is cancel
+        if how == "pressed":
+            await pilot.press("enter")
+        else:
+            widget.update_progress(
+                AcquisitionProgress("verify-install", reference, None, 0, 0)
+            )
+        await pilot.pause()
+        alive = _focus_is_alive(app)
+        focused = app.focused
+
+    assert alive, f"focus stranded: {focused!r}"
+    assert focused is not cancel
+
+
 @pytest.mark.asyncio
 async def test_progress_widget_hides_cancel_once_install_has_started_and_by_default():
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress

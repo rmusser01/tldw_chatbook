@@ -422,6 +422,10 @@ class OmniVoiceStepBase(SetupStep):
             ).display = False
         except NoMatches:
             pass
+        # TASK-34100.14: hiding the progress blurs a focused Cancel, which
+        # has no focusable sibling, so focus fell to None and Ctrl+N/Ctrl+B
+        # went inert. Re-anchor it (a no-op when focus is alive).
+        self.call_after_refresh(self._heal_orphaned_focus)
         if error is not None:
             self._omnivoice_state_generation += 1  # drop any pre-install check
             self._apply_omnivoice_state("model_missing", message=error)
