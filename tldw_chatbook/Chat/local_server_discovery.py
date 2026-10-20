@@ -166,6 +166,12 @@ def _plain_http_confirm_client() -> httpx.AsyncClient:
     )
 
 
+def https_on_loopback(url: str) -> bool:
+    """Whether ``url`` is https on 127.0.0.1/localhost (plain HTTP can be confirmed)."""
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and (parsed.hostname or "").lower() in _LOCALHOST_HOSTNAMES
+
+
 async def loopback_answers_plain_http(url: str) -> bool:
     """Whether the loopback server behind an https ``url`` answers plain HTTP.
 
@@ -176,9 +182,9 @@ async def loopback_answers_plain_http(url: str) -> bool:
         True only when ``url`` is https on 127.0.0.1/localhost and a plain
         GET to the same host:port gets any HTTP response.
     """
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in _LOCALHOST_HOSTNAMES:
+    if not https_on_loopback(url):
         return False
+    parsed = urlparse(url)
     try:
         async with _plain_http_confirm_client() as client:
             await client.get(f"http://{parsed.netloc}/")

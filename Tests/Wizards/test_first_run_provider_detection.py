@@ -587,6 +587,46 @@ async def test_a_check_the_wizard_times_out_still_names_its_cause(monkeypatch, s
             assert outcome.error.category == ("tls_plain_http" if scheme == "https" else "timeout")
 
 
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_only_an_https_loopback_listing_gives_up_time_for_the_plain_http_check(
+    monkeypatch,
+):
+    """Review v3r1, R1-08: R2-07 cut every listing's wait to leave room for the
+    plain-HTTP confirmation, which only an https loopback address can use. A
+    cloud listing that took longer than the cut (OpenAI or OpenRouter on a slow
+    link) used to succeed inside the full wait and now ended as a 'timeout':
+    Provider '!', Model 'Couldn't reach the server'."""
+    import asyncio
+
+    monkeypatch.setattr(model_discovery, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 2.0)
+    monkeypatch.setattr(local_server_discovery, "PLAIN_HTTP_CONFIRM_TIMEOUT_SECONDS", 0.5)
+
+    async def slow_listing(**kwargs):
+        await asyncio.sleep(1.4)  # past the cut wait (1.0 s), inside the full 2.0 s
+        provider = kwargs["provider"]
+        return ModelDiscoveryResult(
+            provider=provider,
+            provider_list_key=provider,
+            endpoint_fingerprint=None,
+            status="success",
+        )
+
+    def staged(provider: str, endpoint: str) -> dict:
+        from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+        return {"api_settings": {provider: {provider_endpoint_key(provider): endpoint}}}
+
+    cloud = await model_discovery.discover_within_timeout(
+        slow_listing, "openai", staged("openai", "https://api.openai.com/v1")
+    )
+    assert cloud.status == "success", "a cloud listing keeps the full wait"
+    loopback = await model_discovery.discover_within_timeout(
+        slow_listing, "custom", staged("custom", "https://127.0.0.1:9/v1/chat/completions")
+    )
+    assert loopback.status == "error" and loopback.error.category == "timeout"
+
+
 @pytest.mark.asyncio
 async def test_a_pick_before_the_first_scan_returns_keeps_what_it_finds(monkeypatch):
     """Review round 2, G6-VR2-02 (live: type 'openai', Enter, as the step
