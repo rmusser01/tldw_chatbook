@@ -859,7 +859,9 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
 
     def sync_recovery(self) -> None:
         """Synchronize the always-mounted recovery placeholder in place."""
-        if not self.is_mounted:
+        # TASK-33621.20: Textual marks a removed subtree as pruning at once and
+        # prunes children first, so mid-swap a card can outlive its own title.
+        if not self.is_mounted or self._pruning:
             return
         try:
             trace = self.query_one(TraceCallRecoveryCallout)

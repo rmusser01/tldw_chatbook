@@ -1001,9 +1001,11 @@ message was not sent", chip **Blocked — check provider**). It then offers
 The paused message is also listed as an **unsent turn** above the composer.
 Its **Restore** and **Discard** release the paused send too, so the next
 message you send in that conversation goes through. Once you act on the card,
-the message leaves that list while the card handles it, so the same message is
-never offered in two places. If Cancel finds text already in the composer, the
-message goes back on the list for **Restore** later. If you switch to another
+the message leaves that list while the card handles it, so it is never sent
+twice. On a busy machine the list can take a moment to catch up; Restore or
+Discard pressed meanwhile only says the unsent turn is no longer available.
+If Cancel finds text already in the composer, the message goes back on the
+list for **Restore** later. If you switch to another
 conversation while Cancel runs, the message goes back to its own
 conversation's draft, not to the one on screen; if you had typed something
 new in that draft, your text stays and the message is listed for **Restore**

@@ -51,6 +51,9 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
 )
+from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+    TraceCallRecoveryCallout,
+)
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -137,7 +140,12 @@ async def test_send_once_with_a_provider_that_is_not_ready_never_jams_the_chat()
             await until(
                 lambda: console.query_one("#console-trace-retry", Button).display
             )
-            assert not _shelf_offers_unsent_turn(console)
+            # The card covers it, so the runtime keeps it off the shelf at once.
+            # The painted shelf follows on the next Console sync, which a sync
+            # already running defers (it trailed under load).
+            session_id = controller.store.active_session_id
+            assert console._console_runtime().recoveries_for_session(session_id) == ()
+            await until(lambda: not _shelf_offers_unsent_turn(console))
             assert gateway.stream_calls == 0
 
             controller._resolve_for_send_bounded = ready_resolver
@@ -183,18 +191,20 @@ async def test_the_shelf_never_offers_a_send_the_card_is_sending(phase):
                 await until(lambda: gateway.stream_calls == 1)
             await pilot.pause()
 
-            assert not _shelf_offers_unsent_turn(console)
+            # Never offered: the runtime refuses it at once. The painted shelf
+            # follows on the next Console sync (a running sync defers it).
             assert runtime.recoveries_for_session(session_id) == ()
             assert runtime.discard_turn_recovery(entry.turn_id) is False
             with pytest.raises(RuntimeError):
                 runtime.restore_turn_recovery(entry.turn_id)
+            await until(lambda: not _shelf_offers_unsent_turn(console))
             assert composer.draft_text() == ""
 
             library.release.set()
             gateway.release.set()
             await until(lambda: REPLY in _screen_text(host))
             await until(lambda: runtime.recoveries_for_session(session_id) == ())
-            assert not _shelf_offers_unsent_turn(console)
+            await until(lambda: not _shelf_offers_unsent_turn(console))
             assert gateway.stream_calls == 1
             assert composer.draft_text() == ""
 
@@ -237,8 +247,8 @@ async def test_card_cancel_returns_the_message_with_its_staged_attachment(
             await pilot.pause()
             restored = store.pending_attachments(session_id)
             assert [item.display_name for item in restored] == ["diagram.png"]
-            assert not _shelf_offers_unsent_turn(console)
             assert console._console_runtime().recoveries_for_session(session_id) == ()
+            await until(lambda: not _shelf_offers_unsent_turn(console))
             assert gateway.stream_calls == 0
 
 
@@ -286,6 +296,47 @@ async def test_a_card_retry_cancelled_by_a_center_swap_leaves_a_recoverable_paus
             screen = _screen_text(host)
             assert "Another send is still preparing" not in screen
             assert "Last send is blocked" not in screen
+
+
+@pytest.mark.asyncio
+async def test_a_recovery_sync_during_a_center_swap_never_fails_the_sync():
+    """A sync that lands while the center swap removes the card's region.
+
+    Textual prunes children before their parent, so for a moment the card is
+    still in the DOM while its title is already gone. A Console sync then
+    (the interrupted card action's own re-sync lands exactly then, and the
+    0.2 s tick can) raised NoMatches('#console-trace-title') in the
+    console-sync worker, and a failed worker exits the app. Found under load
+    on the head rebased onto dev 0fef489ece.
+    """
+    gateway = _Gateway()
+    host = _build_with(gateway)
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _timed_out_send(host, pilot, library)
+            region = console.query_one("#console-main-column")
+            card = region.query_one(TraceCallRecoveryCallout)
+            title = card.query_one("#console-trace-title")
+
+            swap = asyncio.ensure_future(console._swap_console_center())
+            for _ in range(10_000):
+                if title.parent is None:
+                    break
+                await asyncio.sleep(0)
+            # The window: the card's title has left the DOM, the card has not.
+            assert title.parent is None
+            assert card.parent is not None
+
+            region.sync_recovery()  # raised NoMatches before the fix
+
+            await swap
+            await until(lambda: _paused_retrieval(controller))
+            await until(
+                lambda: console.query_one(_CARD_ACTIONS["Cancel send"], Button).display
+            )
+            library.release.set()
 
 
 @pytest.mark.asyncio
