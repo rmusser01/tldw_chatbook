@@ -16,6 +16,11 @@ def install(report, stage):
     from tldw_chatbook.UI.Console_Modules import config_sync
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
         ConsoleReadinessConfigProjection,
+        ConsoleContextReadSnapshot,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_context_policy import (
+        read_global_context_policy_overrides,
     )
     from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
     from tldw_chatbook.Chat.console_preparation_reads import run_preparation_read
@@ -32,6 +37,8 @@ def install(report, stage):
         ChatScreen.on_screen_resume,
         config_sync.run_console_presentation_sync,
         config_sync.run_console_config_sync,
+        ConsoleChatController.context_control_inputs,
+        read_global_context_policy_overrides,
     ]
     names = {fn.__code__: fn.__qualname__ for fn in functions}
     asynchronous = [
@@ -42,6 +49,8 @@ def install(report, stage):
         config_sync.prepare_console_presentation_sync,
         ConsoleReadinessConfigProjection._refresh,
         ConsoleReadinessConfigProjection.warm,
+        ConsoleContextReadSnapshot.warm,
+        ConsoleChatController.context_control_presentation_inputs,
         inspect.unwrap(
             ConsoleWorkspaceController.prepare_console_workspace_reconciliation
         ),

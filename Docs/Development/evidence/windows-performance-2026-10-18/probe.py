@@ -207,6 +207,15 @@ async def main():
 
         report["baseline_revision"] = native_wait_baseline.BASE_REVISION
         report["baseline_scope"] = ["tldw_chatbook/UI/Screens/home_screen.py"]
+    if "--memory-baseline" in sys.argv:
+        import memory_source_baseline as memory_baseline
+
+        report["baseline_revision"] = memory_baseline.BASE_REVISION
+        report["baseline_loaded_sources"] = memory_baseline.LOADED_SOURCES
+        report["baseline_scope"] = [
+            "tldw_chatbook/UI/Screens/chat_screen.py",
+            "tldw_chatbook/UI/Console_Modules/console_spend_projection.py",
+        ]
     if "--control-bar-baseline" in sys.argv:
         import control_bar_baseline
 
@@ -402,6 +411,10 @@ async def main():
                     beat = asyncio.create_task(heartbeat())
                     await asyncio.sleep(0)
                     started = time.perf_counter()
+                    if "--return-observe" in sys.argv:
+                        report.setdefault("return_journey_edges", []).append(
+                            [stage, "navigate", started]
+                        )
                     app.post_message(NavigateToScreen("chat"))
                     await until(lambda: type(app.screen).__name__ == "ChatScreen")
                     resume_screen = app.screen
@@ -422,6 +435,10 @@ async def main():
                     )
 
                     input_started = time.perf_counter()
+                    if "--return-observe" in sys.argv:
+                        report["return_journey_edges"].append(
+                            [stage, "key-posted", input_started]
+                        )
                     app._driver.send_message(events.Key("z", "z"))
                     try:
                         await until(lambda: composer.draft_text() != before, 10)
@@ -482,6 +499,10 @@ async def main():
                         raise
                     input_ms = (time.perf_counter() - input_started) * 1000
                     arrival_input_ms = (time.perf_counter() - started) * 1000
+                    if "--return-observe" in sys.argv:
+                        report["return_journey_edges"].append(
+                            [stage, "key-observed", time.perf_counter()]
+                        )
                     report["pending_resume"] = {
                         "iteration": iteration,
                         "resume_to_input_ms": arrival_input_ms,
@@ -491,6 +512,10 @@ async def main():
                     await until(lambda: app.screen._console_attach_reconciled, 10)
                     if attach_observer is not None:
                         attach_ms = await attach_observer
+                    if "--return-observe" in sys.argv:
+                        report["return_journey_edges"].append(
+                            [stage, "attach-poll-returned", time.perf_counter()]
+                        )
                     running = False
                     await beat
                     report["console_resume"].append(

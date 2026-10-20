@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-20 02:27'
-updated_date: '2026-10-20 02:34'
+updated_date: '2026-10-20 03:16'
 labels: []
 dependencies: []
 ---
@@ -18,10 +18,10 @@ Investigate slower Console attachment and input tails, remove the next measured 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The transcript memory banner uses the existing finite presentation reader without main-thread native config or memory reads for qualified stock owners.
+- [x] #1 The transcript memory banner uses the existing finite presentation reader without main-thread native config or memory reads for qualified stock owners.
 - [ ] #2 Memory selection, custom-reader compatibility, source and owner changes, cancellation and physical retirement retain their original safety behavior.
-- [ ] #3 Before and after native profiles retain all return/input/attachment timings, exact exits, source hashes and guard counts, including adverse results.
-- [ ] #4 Targeted verification and independent review are recorded; PR3166 is updated with auto-merge disabled.
+- [x] #3 Before and after native profiles retain all return/input/attachment timings, exact exits, source hashes and guard counts, including adverse results.
+- [x] #4 Targeted verification and independent review are recorded; PR3166 is updated with auto-merge disabled.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -29,3 +29,9 @@ Investigate slower Console attachment and input tails, remove the next measured 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no. ADR path: N/A. Reason: adopt the existing disposable context-presentation memo and finite native ownership under ADR126/230; no new cache, TTL, storage/schema, permission or service boundary. 1. Retain original tail samples and separate original callback/worker timing: transcript live-policy read568ms during leave, styling215ms before worst input, config/workspace waits on attach. 2. RED/GREEN actual transcript tests pin zero unused live-policy/native config entry and publication reopening its unchanged gate. 3. Reuse the already-wired finite context inputs for qualified original callbacks before the transcript gate, include effective-memory publication in that gate, and leave custom/partial callbacks synchronous. Do not await context completion or stall streaming. 4. Verify cold/held-worker streaming progress, memory banner parity, source/owner drift, original custom affinity and native cancellation/retirement. 5. Run serial preceding-head control/current ABBA with independent review, preserve adverse outcomes, update PR3166 with auto-merge off and remove exact owned fixtures.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented qualified transcript reuse of existing finite context inputs with source-identity invalidation; original custom-reader cadence and storage checks remain. Product commit9220460203. 104 distinct targeted checks passed; three connected tab-publication controls remain unqualified (also fail at different stages on exact original sources), so AC2 and task status remain open. Serial ABBA and independent review recorded in MEMORY_RESULTS.md: no consistent overall speedup; median input177.02 to186.68ms, attachment1023.92 to1038.45ms; worst input203.79 to247.49ms, worst attachment1973.95 to1590.37ms. Original startup policy call479ms to zero updated; neither settled return trace calls it. PR3166 update prepared with auto-merge off. ADR required:no under existing ADR126/230; no storage/schema or authority change.
+<!-- SECTION:NOTES:END -->

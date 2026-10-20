@@ -15,6 +15,18 @@ if "--return-matcher" in sys.argv:
         Path(__file__).with_name("return-matcher-baseline-receipts.jsonl").resolve()
     )
     sys.path.insert(0, str(LOADER.parent))
+if "--memory-sources" in sys.argv:
+    sys.argv.remove("--memory-sources")
+    LOADER = Path(__file__).with_name("memory_source_baseline.py").resolve()
+    RECEIPTS = (
+        Path(__file__).with_name("memory-source-baseline-receipts.jsonl").resolve()
+    )
+    sys.path.insert(0, str(LOADER.parent))
+if "--memory" in sys.argv:
+    sys.argv.remove("--memory")
+    LOADER = Path(__file__).with_name("memory_baseline.py").resolve()
+    RECEIPTS = Path(__file__).with_name("memory-baseline-receipts.jsonl").resolve()
+    sys.path.insert(0, str(LOADER.parent))
 if "--control-bar" in sys.argv:
     sys.argv.remove("--control-bar")
     LOADER = Path(__file__).with_name("control_bar_baseline.py").resolve()
@@ -50,7 +62,12 @@ class BaselineChildren(OriginalPopen):
 
 
 subprocess.Popen = BaselineChildren
-if LOADER.name in {"return_matcher_baseline.py", "control_bar_baseline.py"}:
+if LOADER.name in {
+    "return_matcher_baseline.py",
+    "control_bar_baseline.py",
+    "memory_baseline.py",
+    "memory_source_baseline.py",
+}:
     runpy.run_path(str(LOADER.with_name("matching_tests.py")), run_name="__main__")
 from Tests.windows_private_fixture_runner import main  # noqa: E402
 
