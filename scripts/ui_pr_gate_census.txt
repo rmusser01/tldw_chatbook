@@ -675,7 +675,7 @@ Tests/UI/test_settings_saved_lists_follow_file.py
 Tests/UI/test_settings_pick_joins_saved_list.py
 # TASK-35010 (S1 T1): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (12 functions, private profile, 86 s serial in the lane's install set).
 # TASK-35011 (S1 T2): a discovered model chosen as the default joins its saved list on s, Add to model list's label, order, receipts and Inspector rows (15 functions, private profile, 145 s serial in the lane's install set).
-# TASK-35011 review round 1 (2026-10-20): both files as one node per test function, interleaved so any ten consecutive entries deal each shard 2-3 of them, 24-27 s 3 of 3 serial in the lane's install set (collection included; about 1.1 min on CI at 2.6x), wherever the tail starts. Whole, T1 cost one shard 86 s and T2 another 145 s.
+# TASK-35011 review rounds 1-2 (2026-10-20): both files as one node per test function. The lane deals entries[index::10], so tail positions i, i+10 and i+20 always share a shard whatever index the tail starts at; the order balances those ten fixed groups by measured time, one group per shard: 22.7-25.6 s per group summed from junit test durations (setup, call, teardown), 24.4-27.4 s pytest session time with collection, 3 of 3 serial in the lane's install set (about 1.1 min on CI at 2.6x). Whole, T1 cost one shard 86 s and T2 another 145 s.
 Tests/UI/test_settings_pick_joins_saved_list.py::test_s_saves_the_default_and_says_why_a_pick_did_not_simply_join
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_model_staged_any_other_way_leaves_the_saved_list_unchanged
 Tests/UI/test_settings_saved_lists_follow_file.py::test_save_selected_says_already_saved_when_the_file_lists_them
