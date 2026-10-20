@@ -2060,7 +2060,12 @@ class NotesScopeService:
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope is not ScopeType.LOCAL_NOTE:
             raise ValueError("Backlinks are only listed for local notes.")
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        # TASK-34100.16.1: a bare executor read left its cached connection
+        # holding storage, so Create backup after opening a note timed out.
         return await asyncio.to_thread(
+            run_finite_local_worker,
             self.local_notes_service.get_notes_linking_to,
             self._require_user_id(user_id),
             note_id,
