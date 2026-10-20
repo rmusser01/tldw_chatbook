@@ -19,6 +19,8 @@ anywhere else would not show the light surface.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from Tests.Chat.test_console_agent_bridge import (
@@ -221,6 +223,14 @@ def test_a_fresh_profile_plain_send_offers_exactly_the_light_set_native(tmp_path
     assert outcome.status == "done"
     names = _native_names(gateway)
     assert names == LIGHT, sorted(names)
+    # Review round 3 (TE-6): the native path carries the "answer directly"
+    # line too -- the one that took gpt-4.1-nano from 15/15 tool calls for
+    # "hi" to 0/15.
+    system = str(gateway.messages_seen[0][0]["content"])
+    assert system.startswith(
+        "You are a helpful assistant.\n\nAnswer directly; call a tool only "
+        "when the request needs one."
+    ), system[:200]
 
 
 def test_a_fresh_profile_plain_send_carries_the_minimal_prompt_fenced(tmp_path):
@@ -400,6 +410,60 @@ def test_a_plugin_group_keeps_user_servers_but_not_plugin_or_builtin_tools():
     assert user_mcp_tool_names(group) == frozenset({"mcp__weather__forecast"})
 
 
+def test_library_tools_and_an_armed_shell_stay_in_plain_chat(tmp_path):
+    """Review round 3 (TE-3): two sources the user turns on themselves stay
+    in the light surface -- Library tools (composed only when the session
+    allows assistant Library access) and a raw shell the user armed. Nothing
+    guarded that path: dropping both from the narrowing's user sources
+    silently removed them from plain chat. Both go out beside the safe set,
+    nothing else does, and the meter counts them for this session."""
+    from Tests.Agents.test_raw_shell_tool_provider import _provider as _raw_shell
+    from Tests.Chat.test_console_agent_bridge import (
+        _authenticated_library_provider,
+        _BridgeLibraryService,
+    )
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+
+    roomy = _test_resolution(
+        provider="Groq",
+        execution_key="groq",
+        max_tokens=4096,
+        context_window=ContextWindowResolution(1_047_576, "model catalog", True),
+    )
+    library, authority = _authenticated_library_provider(
+        LibraryToolProvider(_BridgeLibraryService())
+    )
+    library_names = {entry.name for entry in library.list_catalog()}
+    assert library_names, "the Library provider must list tools"
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    request = [{"role": "user", "content": "Reply with just: hi"}]
+
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        roomy,
+        agent_messages=request,
+        library_provider=library,
+        library_authority=authority,
+        raw_shell_provider=_raw_shell(tmp_path),
+    )
+
+    expected = LIGHT | library_names | {RAW_SHELL_TOOL_NAME}
+    sent = _native_names(gateway)
+    assert sent == expected, sorted(sent ^ expected)
+    metered = {
+        row["function"]["name"]
+        for row in bridge.preview_tool_schemas(
+            roomy, session_id=session.id, messages=request
+        )
+    }
+    assert metered == sent, sorted(metered ^ sent)
+
+
 @pytest.mark.parametrize(
     ("tool", "args", "confirm_kw"),
     [
@@ -497,47 +561,84 @@ def test_live_agent_work_keeps_the_agent_surface(tmp_path, monkeypatch):
     assert not bridge.light_surface_for((), session_id=session.id)
 
 
-def test_a_send_asks_about_its_own_conversations_agent_work(tmp_path, monkeypatch):
-    """The send passes its session and conversation, so live work in THIS
-    conversation keeps the agent surface on the very next send."""
+@pytest.mark.parametrize(
+    ("fleet_conversation", "agent_surface"),
+    [("conv-light", True), ("another-conversation", False)],
+    ids=["this-conversation", "another-conversation"],
+)
+def test_a_send_asks_about_its_own_conversations_agent_work(
+    tmp_path, fleet_conversation, agent_surface
+):
+    """The send passes its session and conversation, so live sub-agents in
+    THIS conversation keep the agent surface on the very next send, and live
+    work in another conversation leaves this one light.
+
+    Review round 3 (TE-5): the detector itself is exercised -- a real fleet
+    coordinator holding a reserved, live child is registered where the
+    bridge keeps them, not a stubbed answer."""
+    import time
+
+    from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+
     bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
-    asked: list[tuple[object, object]] = []
-
-    def in_flight(session_id, conversation_id):
-        asked.append((session_id, conversation_id))
-        return conversation_id == "conv-light"
-
-    monkeypatch.setattr(bridge, "_agent_work_in_flight", in_flight)
+    fleet = FleetCoordinator(max_live=2, clock=time.monotonic)
+    assert fleet.reserve(task="research", agent=None) is not None
+    assert fleet.live_count() == 1
+    with bridge._fleet_admission_lock:
+        bridge._fleet_coordinators[fleet_conversation] = fleet
 
     _send(bridge, session, assistant_id, _native_resolution())
 
-    assert (session.id, "conv-light") in asked
-    assert "spawn_subagent" in _native_names(gateway)
+    names = _native_names(gateway)
+    if agent_surface:
+        assert "spawn_subagent" in names, sorted(names)
+    else:
+        assert names == LIGHT, sorted(names)
 
 
-def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
+@pytest.mark.asyncio
+async def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
     """Review round 1 (B-F4): on a light-surface profile the status strip
     read "Tools: 5 ready" and the Inspector "tools 5" -- chatbook's own MCP
     tools, which the light surface does not offer -- while the request
     carried three others. The published counts are now the light surface's:
-    its own tools, and only the MCP tools from servers the user added."""
-    from types import SimpleNamespace
+    its own tools, and only the MCP tools from servers the user added.
 
+    Review round 3 (TE-2): driven through the controller's own compose path
+    (``_compose_mcp_provider``), whose catalog holds chatbook's built-in MCP
+    source beside one server the user added, so the controller's choice of
+    count is what is checked -- not a value the test computed itself."""
+    from Tests.Agents.test_mcp_tool_provider import (
+        FakeMCPService,
+        _catalog_record,
+        _tool_dict,
+    )
+    from Tests.Chat.test_console_agent_swap import _fake_app
     from Tests.Chat.test_console_voice_preflight import controller_for
     from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 
     bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
     controller = controller_for(SimpleNamespace())
     controller._agent_bridge = bridge
-    controller.app = SimpleNamespace()
-    mcp = _SourcedMCPProvider(user_server=True)
-
-    from tldw_chatbook.Agents.plain_chat_tool_surface import offered_mcp_tool_count
-
-    controller._publish_mcp_inspector_counts(
-        offered_mcp_tool_count(bridge, mcp, session.id), 0
+    controller.app = _fake_app(
+        FakeMCPService(
+            inventory={
+                "tools": [
+                    _tool_dict("create_note", "Create a note."),
+                    _tool_dict("search_notes", "Search notes."),
+                ]
+            },
+            catalog_records=[_catalog_record("weather", [_tool_dict("forecast")])],
+        )
     )
 
+    provider = await controller._compose_mcp_provider(session_id=session.id)
+
+    catalog = {entry.name for entry in provider.list_catalog()}
+    assert "mcp__weather__forecast" in catalog, sorted(catalog)
+    assert any(
+        provider.server_key_for(name) == BUILTIN_MCP_SERVER_KEY for name in catalog
+    ), sorted(catalog)
     assert controller.app.console_mcp_tool_count == 1  # the user's weather server
     assert controller.app.console_tool_count == len(LIGHT)
     chip = ConsoleControlState.from_values(
@@ -549,10 +650,9 @@ def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
     # Full agent tools on: the whole composed MCP catalog is offered again,
     # and the built-ins go uncounted as before this task.
     assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
-    controller._publish_mcp_inspector_counts(
-        offered_mcp_tool_count(bridge, mcp, session.id), 0
-    )
-    assert controller.app.console_mcp_tool_count == 3
+    provider = await controller._compose_mcp_provider(session_id=session.id)
+    assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
+    assert controller.app.console_mcp_tool_count > 1
     assert controller.app.console_tool_count == 0
 
 
