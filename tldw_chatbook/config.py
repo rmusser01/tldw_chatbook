@@ -344,13 +344,6 @@ def _default_stt_provider_for_platform() -> str:
     return "faster-whisper"
 
 
-def _appearance_with_motion_environment(appearance: Any) -> Dict[str, Any]:
-    """Fold the reduce-motion environment variables into ``[appearance]``."""
-    from tldw_chatbook.Utils.startup_logging import with_motion_environment
-
-    return with_motion_environment(appearance)
-
-
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
@@ -2489,11 +2482,10 @@ def _load_settings_uncached(
         "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
-        # TASK-34100.13 (E7): TLDW_REDUCE_MOTION / NO_MOTION reduce motion
-        # from launch; in the loaded settings only, never written back.
-        "appearance": _appearance_with_motion_environment(
-            copy.deepcopy(toml_config_data.get("appearance", {}))
-        ),
+        # TASK-34100.13 review F5: TLDW_REDUCE_MOTION / NO_MOTION are applied
+        # where motion is read (startup_logging.motion_reduced), never here --
+        # Settings ▸ Appearance saves this table back whole.
+        "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-229)

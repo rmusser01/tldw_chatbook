@@ -179,9 +179,10 @@ def replay_startup_notices() -> None:
 # ---------------------------------------------------------------------------
 # TASK-34100.13 (E7): reduced motion from the environment, before any config.
 # It lives here, beside the other pre-TUI environment switches, because this
-# module is dependency-free and already resident at boot: config.load_settings
-# folds it into [appearance] without adding a module to the boot census
-# (ADR-097's ui-ready ratchet).
+# module is dependency-free and already resident at boot (ADR-097's ui-ready
+# ratchet). Each place that reads motion applies it (``motion_reduced``); it
+# is never folded into the loaded settings, which Settings ▸ Appearance saves
+# back whole (review F5).
 # ---------------------------------------------------------------------------
 
 #: Environment variables that ask for reduced motion before any config is read.
@@ -206,10 +207,33 @@ def motion_reduced_by_environment(environ=None) -> bool:
     )
 
 
+_TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
+
+
+def motion_reduced(appearance, environ=None) -> bool:
+    """Whether motion is reduced: the saved ``reduce_motion`` or the environment.
+
+    Args:
+        appearance: The ``[appearance]`` table (any mapping; anything else is
+            treated as empty).
+        environ: The environment mapping; ``os.environ`` when None.
+
+    Returns:
+        True when ``reduce_motion`` is saved on or the environment asks for it.
+    """
+    if motion_reduced_by_environment(environ):
+        return True
+    value = appearance.get("reduce_motion") if hasattr(appearance, "get") else None
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in _TRUE_WORDS
+
+
 def with_motion_environment(appearance, environ=None) -> dict:
     """An ``[appearance]`` table with ``reduce_motion`` forced on by the environment.
 
-    The override lives in the loaded settings only; nothing is written.
+    For a caller about to hand the table to a motion reader (the splash).
+    Never store the result where a save could write it back.
 
     Args:
         appearance: The ``[appearance]`` table (any mapping).
