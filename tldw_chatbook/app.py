@@ -1729,7 +1729,7 @@ class TldwCli(
         payload: "ChatHandoffPayload",
         *,
         action_label: str = "Use in Chat",
-    ) -> None:
+    ) -> bool:
         return _destinations().open_chat_with_handoff(
             self,
             payload,
@@ -1751,7 +1751,7 @@ class TldwCli(
         status: str | None = None,
         recovery: str | None = None,
         action_label: str | None = None,
-    ) -> None:
+    ) -> bool:
         return _destinations().open_console_for_live_work(
             self,
             source=source,

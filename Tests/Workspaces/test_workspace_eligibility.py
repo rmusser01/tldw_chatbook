@@ -130,3 +130,40 @@ def test_recovery_copy_without_a_name_says_the_active_workspace() -> None:
         "in Console."
     )
     assert "ws-a" not in result.recovery_copy
+
+
+def test_a_nameless_workspace_record_is_never_named_by_its_id() -> None:
+    """Fix round 1, M-5: the display-name rule falls back to a plain phrase,
+    never the raw id, and the depth state's shared copy stays grammatical
+    ("into the active workspace", not "into the the active workspace
+    workspace")."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Workspaces.display_state import (
+        NAMELESS_WORKSPACE_LABEL,
+        build_library_workspace_depth_state,
+        library_workspace_display_name,
+    )
+
+    record = SimpleNamespace(workspace_id="ws-9f2c", name="", active=True)
+    assert library_workspace_display_name(record) == NAMELESS_WORKSPACE_LABEL == (
+        "the active workspace"
+    )
+    assert "ws-9f2c" not in library_workspace_display_name(record)
+
+    registry = SimpleNamespace(
+        get_active_workspace=lambda: record,
+        get_item_memberships=lambda **kwargs: (),
+        get_workspace=lambda workspace_id: None,
+    )
+    state = build_library_workspace_depth_state(
+        registry_service=registry,
+        source_records={"media": ({"id": "1", "title": "Interview"},)},
+    )
+    (row,) = state.source_rows
+    assert row.recovery_copy == (
+        "Copy or link this media into the active workspace before using it "
+        "in Console."
+    )
+    assert "ws-9f2c" not in row.recovery_copy
+    assert state.workspace_name == "the active workspace"

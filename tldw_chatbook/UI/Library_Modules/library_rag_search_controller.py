@@ -360,10 +360,12 @@ from ...Library.library_rag_state import (
     library_rag_scope_summary,
     update_search_history,
 )
-from ...Workspaces.eligibility import linkable_ineligibility_label
+from ...Workspaces.display_state import library_workspace_item_type
 from ...Workspaces.link_on_use import (
-    link_item_to_active_workspace,
-    resolve_workspace_item_id,
+    LinkOnUseDecision,
+    UnlinkOutcome,
+    decide_link_on_use,
+    unlink_item_from_workspace,
 )
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH, LIBRARY_ROW_INGEST_MEDIA
 from ...Widgets.Library import (
@@ -1279,20 +1281,21 @@ class LibraryRagSearchController:
                 )
             return
 
-        # TASK-34000.24: the same link-on-use rule the Media reader's `c`
-        # obeys -- a local item is linked into the active workspace before
-        # it is staged, so `u` and `c` leave the same membership behind. A
+        # TASK-34000.24: the same link-on-use decision the Media reader's
+        # `c` acts on (fix round 1, I-2: ONE decision function) -- a local
+        # item is linked into the active workspace before it is staged, so
+        # `u` and `c` leave the same membership behind; a sampled row whose
         # block a link cannot resolve refuses here exactly as the reader
-        # would, and staging proceeds only for a non-blocked item.
-        link_receipt = self._link_library_rag_result_on_use(
+        # would; an item the depth state never sampled links too (I-1).
+        decision, item_type, item_id = self._link_library_rag_result_on_use(
             panel_state.selected_result
         )
-        if link_receipt is None:
-            return
-        if link_receipt:
+        if decision.kind == "refuse":
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify(link_receipt, severity="information", markup=False)
+                notify(decision.copy, severity="warning", markup=False)
+            return
+        link = decision.result
 
         # Task-2852 (b): Console's blocking first-run setup card visually
         # covers the whole workbench, so if we said nothing here the user's
@@ -1309,83 +1312,97 @@ class LibraryRagSearchController:
                     severity="information",
                 )
 
-        opener(
-            source="Library Search/RAG",
-            title=panel_state.selected_result.title,
-            payload=build_library_rag_console_live_work_payload(
-                panel_state.selected_result,
-                query=panel_state.query_state.query,
-            ),
-            status="staged",
-            recovery="Review citations before sending.",
-            action_label="Review evidence in Console",
-        )
+        try:
+            staged = opener(
+                source="Library Search/RAG",
+                title=panel_state.selected_result.title,
+                payload=build_library_rag_console_live_work_payload(
+                    panel_state.selected_result,
+                    query=panel_state.query_state.query,
+                ),
+                status="staged",
+                recovery="Review citations before sending.",
+                action_label="Review evidence in Console",
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Library Search/RAG Console handoff failed."
+            )
+            staged = False
+        # Fix round 1 (I-2): the receipt is said only AFTER Console took the
+        # stage, and a refused stage (``False``; the opener has already said
+        # so) takes the membership this press wrote back with it -- the
+        # reader's own rule. ``None`` is a caller that does not report.
+        if staged is False:
+            if link is not None and link.written:
+                outcome = unlink_item_from_workspace(
+                    getattr(self.app_instance, "workspace_registry_service", None),
+                    link.workspace_id,
+                    item_type=item_type,
+                    item_id=item_id,
+                )
+                self._invalidate_library_workspace_depth_state()
+                if outcome is UnlinkOutcome.FAILED:
+                    notify = getattr(self.app_instance, "notify", None)
+                    if callable(notify):
+                        notify(
+                            f"Console could not take this {item_type}, and it "
+                            f"stayed linked to {link.workspace_name}. Next: try "
+                            "again.",
+                            severity="warning",
+                            markup=False,
+                        )
+            return
+        if link is not None and link.written:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    f"Linked to {link.workspace_name} · staged in Console",
+                    severity="information",
+                    markup=False,
+                )
 
-    def _link_library_rag_result_on_use(self, result: Any) -> str | None:
-        """Link a LOCAL evidence row's item into the active workspace (TASK-34000.24).
+    def _link_library_rag_result_on_use(
+        self, result: Any
+    ) -> tuple[LinkOnUseDecision, str, str]:
+        """Decide a LOCAL evidence row's link-on-use (TASK-34000.24).
 
-        The membership is written under the id the Library row model reads
-        for that record (``resolve_workspace_item_id``), never under the
-        retrieval spelling, or the reader's gate would stay closed after
-        the link. A row the model does not carry (not in the loaded local
-        records, a server result) is staged as before, unlinked -- the
-        resolver never guesses an id.
+        The membership is keyed by the record's own id -- what
+        ``LibraryRagResultRow.local_record_id`` parses off the retrieval
+        spelling (``local:media:3`` -> ``3``) and what the Library row model
+        reads -- never under the retrieval spelling, or the reader's gate
+        would stay closed after the link. A row that is not a local record
+        (server authority, an unusable id) stages as-is, unlinked.
 
         Args:
             result: The selected ``LibraryRagResultRow``.
 
         Returns:
-            ``""`` when nothing had to be written (already linked, not a
-            local item); the ``Linked to … · staged in Console`` receipt
-            when a membership was written; ``None`` when a block a link
-            cannot resolve refused the hand-off (already notified).
+            ``(decision, item_type, item_id)`` -- the seam's one decision
+            (fix round 1, I-2) plus the membership key the caller needs to
+            take its own write back.
         """
-        item_type = {
-            "media": "media",
-            "notes": "note",
-            "conversations": "conversation",
-        }.get(str(getattr(result, "open_source_type", "") or ""), "")
-        source_id = str(getattr(result, "source_id", "") or "").strip()
-        if not item_type or not source_id:
-            return ""
+        item_type = library_workspace_item_type(
+            str(getattr(result, "open_source_type", "") or "")
+        )
+        if item_type not in {"media", "note", "conversation"}:
+            return LinkOnUseDecision(kind="stage"), "", ""
         try:
-            result.resolve_local_open_id()
+            item_id = str(result.local_record_id() or "").strip()
         except (ValueError, AttributeError):
             # Not a local record (server authority, unusable id): no local
             # membership to write.
-            return ""
-        state = self._library_workspace_depth_state()
-        item_id = resolve_workspace_item_id(state.source_rows, item_type, source_id)
-        row = next(
-            (
-                candidate
-                for candidate in state.source_rows
-                if candidate.item_type == item_type and candidate.item_id == item_id
-            ),
-            None,
-        )
-        if row is None or row.active_context_eligible:
-            return ""
-        if not linkable_ineligibility_label(row.reason_code):
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(row.recovery_copy, severity="warning", markup=False)
-            return None
-        link = link_item_to_active_workspace(
+            return LinkOnUseDecision(kind="stage"), "", ""
+        decision = decide_link_on_use(
+            self._library_workspace_depth_state().source_rows,
             getattr(self.app_instance, "workspace_registry_service", None),
             item_type=item_type,
             item_id=item_id,
             title=str(getattr(result, "title", "") or ""),
         )
-        if link.blocked_reason:
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(link.blocked_reason, severity="warning", markup=False)
-            return None
-        if not link.written:
-            return ""
-        self._invalidate_library_workspace_depth_state()
-        return f"Linked to {link.workspace_name} · staged in Console"
+        if decision.result is not None and decision.result.written:
+            self._invalidate_library_workspace_depth_state()
+        return decision, item_type, item_id
 
     async def _apply_library_rag_search_outcome(
         self,

@@ -3333,11 +3333,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
     text-overflow: ellipsis;
     text-wrap: nowrap;
-    /* Left gutter only, and no Undo margin: measured at 160x45 the Reader
-       pane gives this row 56 cells, and "Linked to Local Default · staged
-       in Console" (44) + gutter (1) + the compact Undo (11) is exactly 56.
-       The right padding and the canvas-action margin clipped it to
-       "…staged in Con…". */
+    /* Left gutter only, and an Undo with neither margin nor padding:
+       measured at 160x45 (fix round 1, M-9) the Reader pane gives this row
+       56 cells; "Linked to Local Default · staged in Console" is 43, the
+       gutter 1, and the compact Undo paints 9 + 2 intrinsic = 11, so the
+       default receipt fits with one cell to spare (receipt 45, Undo 11).
+       With the canvas-action padding the Undo took 13 and the receipt
+       clipped to "staged in Conso…". The "Already linked to …" spelling
+       (51) cannot fit beside the Undo at this width and ellipsises after
+       the workspace name; a long custom name ellipsises at the name. */
     padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
@@ -3345,6 +3349,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: auto;
     min-width: $ds-size-0;
     margin: $ds-space-0;
+    padding: $ds-space-0;
 }
 
 #library-media-title {

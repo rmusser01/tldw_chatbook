@@ -1795,6 +1795,26 @@ class LibraryRagResultRow:
             raise ValueError(invalid_id_message)
         return f"local:media:{record_id}" if source_type == "media" else str(record_id)
 
+    def local_record_id(self) -> str:
+        """The bare local record id ``resolve_local_open_id`` parsed.
+
+        TASK-34000.24 (fix round 1): a workspace membership is keyed by the
+        record's own id -- what ``LocalMediaReadingService`` returns as
+        ``"id"`` and the Library row model reads -- so a Media result's
+        ``local:media:N`` envelope is taken off here, once, next to the
+        resolver that put it on. Notes and conversations keep their opaque
+        ids.
+
+        Returns:
+            The bare record id.
+
+        Raises:
+            ValueError: As ``resolve_local_open_id`` (not a local record).
+        """
+        resolved = self.resolve_local_open_id()
+        prefix = "local:media:"
+        return resolved[len(prefix):] if resolved.startswith(prefix) else resolved
+
 
 def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
     """True when every row carrying a similarity bands weak (RAG-34/Task 8).

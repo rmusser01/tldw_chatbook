@@ -15,34 +15,58 @@ in task-32536 and to media here. This module is that algorithm written once:
 * never raise: every failure is a ``blocked_reason`` sentence the caller can
   show as-is.
 
-Notes and conversations keep their own link code for now (they are Done
-tasks); the media hand-off and Search ▸ evidence ▸ ``u`` consume this seam.
+``decide_link_on_use`` (fix round 1, I-2) is the ONE gate-to-link decision
+both entry points -- the Media reader's ``c`` and Search ▸ evidence ▸ ``u`` --
+call, so they cannot disagree about what a row's block means or what an item
+the depth state never sampled should do. Notes and conversations keep their
+own link code for now (they are Done tasks).
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from enum import Enum
+from typing import Any, Literal
 
 from loguru import logger
 
 from .display_state import LibraryWorkspaceSourceRow, library_workspace_display_name
+from .eligibility import linkable_ineligibility_label
 
-#: The existing no-active-workspace sentence (``eligibility.py``): the one
-#: block a link cannot resolve.
+#: The existing no-active-workspace sentence (``eligibility.py``). Under
+#: task-15120 no active workspace IS the global scope, so the callers treat
+#: this block as "stage as-is", never as a refusal.
 NO_ACTIVE_WORKSPACE_COPY = (
     "Select an active workspace before using this item in Console."
 )
 
-#: Retrieval may hand a media record back wrapped in its legacy document
-#: prefix or local scope envelope (the same two wrappers
-#: ``LibraryRagResultRow.resolve_local_open_id`` accepts). Only the record
-#: number is compared; a dash-separated fixture id such as ``media-1`` is a
-#: literal row id in the Library test fixtures, so it matches by equality
-#: first and is never unwrapped away from a row that spells it.
-_MEDIA_ID_WRAPPER = re.compile(r"(?:local:media:|media[_-])?([0-9]+)")
+
+def registry_unavailable_copy(item_type: str) -> str:
+    """The notes hand-off's sentence for a missing registry (fix round 1, M-6).
+
+    Args:
+        item_type: Canonical item type, for the sentence.
+
+    Returns:
+        A whole sentence with the next step.
+    """
+    return (
+        f"Can't use this {item_type or 'item'} in Console — the workspace "
+        "registry is unavailable. Next: restart Chatbook, then try again."
+    )
+
+
+class UnlinkOutcome(Enum):
+    """What ``unlink_item_from_workspace`` found (fix round 1, M-4).
+
+    ``ABSENT`` -- the membership was already gone (removed elsewhere) -- is
+    the outcome an Undo wanted and must not read as a failure to retry.
+    """
+
+    REMOVED = "removed"
+    ABSENT = "absent"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -70,6 +94,24 @@ class LinkOnUseResult:
         return bool(self.workspace_id) and not self.blocked_reason
 
 
+@dataclass(frozen=True)
+class LinkOnUseDecision:
+    """The one answer both entry points act on.
+
+    Attributes:
+        kind: ``"refuse"`` (show ``copy``, stage nothing), ``"linked"`` (the
+            item is a member now -- ``result`` says whether this press wrote
+            it -- stage it and show the receipt) or ``"stage"`` (stage as-is,
+            no link, no receipt: a non-local item, or the global scope).
+        copy: The refusal sentence for ``"refuse"``; ``""`` otherwise.
+        result: The seam's result for ``"linked"``; ``None`` otherwise.
+    """
+
+    kind: Literal["refuse", "linked", "stage"]
+    copy: str = ""
+    result: LinkOnUseResult | None = None
+
+
 def link_item_to_active_workspace(
     registry: Any,
     *,
@@ -85,7 +127,7 @@ def link_item_to_active_workspace(
         item_type: Canonical item type as memberships carry it (``"media"``,
             ``"note"``, ``"conversation"``).
         item_id: The item's membership id -- the SAME id the Library row
-            model reads for the record (see ``resolve_workspace_item_id``).
+            model reads for the record (the record's own id).
         title: Title stored on a freshly written membership.
 
     Returns:
@@ -94,7 +136,7 @@ def link_item_to_active_workspace(
     clean_type = str(item_type or "").strip()
     clean_id = str(item_id or "").strip()
     if registry is None or not clean_type or not clean_id:
-        return LinkOnUseResult(blocked_reason=NO_ACTIVE_WORKSPACE_COPY)
+        return LinkOnUseResult(blocked_reason=registry_unavailable_copy(clean_type))
     try:
         active = registry.get_active_workspace()
     except Exception as error:
@@ -146,7 +188,7 @@ def unlink_item_from_workspace(
     *,
     item_type: str,
     item_id: str,
-) -> bool:
+) -> UnlinkOutcome:
     """Remove one membership -- the inverse of a fresh link-on-use write.
 
     Takes the workspace id the RECEIPT names, never "whatever is active now":
@@ -160,15 +202,16 @@ def unlink_item_from_workspace(
         item_id: Membership item id.
 
     Returns:
-        Whether a membership was removed; ``False`` on any failure.
+        ``REMOVED`` when a membership was deleted, ``ABSENT`` when there was
+        none to delete, ``FAILED`` on any failure (including no registry).
     """
     clean_workspace = str(workspace_id or "").strip()
     clean_type = str(item_type or "").strip()
     clean_id = str(item_id or "").strip()
     if registry is None or not clean_workspace or not clean_type or not clean_id:
-        return False
+        return UnlinkOutcome.FAILED
     try:
-        return bool(
+        removed = bool(
             registry.unlink_membership(
                 clean_workspace, item_type=clean_type, item_id=clean_id
             )
@@ -179,56 +222,79 @@ def unlink_item_from_workspace(
             item_type=clean_type,
             error_type=type(error).__name__,
         )
-        return False
+        return UnlinkOutcome.FAILED
+    return UnlinkOutcome.REMOVED if removed else UnlinkOutcome.ABSENT
 
 
-def resolve_workspace_item_id(
-    rows: Sequence[LibraryWorkspaceSourceRow],
+def decide_link_on_use(
+    rows: Sequence[LibraryWorkspaceSourceRow] | None,
+    registry: Any,
+    *,
     item_type: str,
-    source_id: str,
-) -> str:
-    """Map a hand-off's source id onto the id the Library row model reads.
+    item_id: str,
+    title: str = "",
+    local: bool = True,
+) -> LinkOnUseDecision:
+    """Decide what using one item in Console does to its workspace membership.
 
-    A membership written under any other spelling would leave the gate
-    closed after linking: ``_library_workspace_source_row`` reads the record's
-    own ``id``, while retrieval may carry the same media record wrapped
-    (``local:media:3``, ``media_3``).
+    The rules, in order (fix round 1, I-1/I-2):
+
+    * a non-local item (a server detail, a server result) stages as-is --
+      there is no local membership to write;
+    * a depth-state row that EXISTS and carries a block a link cannot resolve
+      refuses with that row's own sentence;
+    * otherwise the seam links: a row the depth state never sampled (the
+      first-page sample holds 50 local media; the power user's library is
+      larger) is linked exactly like a sampled, linkable row -- the seam
+      reads memberships itself and needs no row;
+    * a seam block means the global scope (no active workspace: stage
+      as-is, task-15120) or, for a row the gate already called eligible,
+      stage as-is too; any other block refuses with the seam's sentence.
 
     Args:
-        rows: The depth state's source rows.
+        rows: The depth state's source rows, or ``None``.
+        registry: The workspace registry service, or ``None``.
         item_type: Canonical item type (``"media"``, ``"note"``,
             ``"conversation"``).
-        source_id: The hand-off's source id.
+        item_id: The item's record id (the one the row model reads).
+        title: Title for a freshly written membership.
+        local: Whether the item is a local record.
 
     Returns:
-        The matching row's ``item_id``; the raw ``source_id`` when no row
-        matches (never a guess).
+        A ``LinkOnUseDecision``; never raises.
     """
     clean_type = str(item_type or "").strip()
-    clean_source = str(source_id or "").strip()
-    if not clean_source:
-        return ""
-    candidates = [row for row in rows if row.item_type == clean_type]
-    for row in candidates:
-        if row.item_id == clean_source:
-            return row.item_id
-    if clean_type != "media":
-        return clean_source
-    source_number = _media_record_number(clean_source)
-    if source_number is None:
-        return clean_source
-    for row in candidates:
-        if _media_record_number(row.item_id) == source_number:
-            return row.item_id
-    return clean_source
-
-
-def _media_record_number(value: str) -> int | None:
-    match = _MEDIA_ID_WRAPPER.fullmatch(value)
-    if match is None:
-        return None
-    number = int(match[1])
-    return number if number > 0 else None
+    clean_id = str(item_id or "").strip()
+    if not local or not clean_type or not clean_id:
+        return LinkOnUseDecision(kind="stage")
+    row = next(
+        (
+            candidate
+            for candidate in (rows or ())
+            if candidate.item_type == clean_type and candidate.item_id == clean_id
+        ),
+        None,
+    )
+    if (
+        row is not None
+        and not row.active_context_eligible
+        and not linkable_ineligibility_label(row.reason_code)
+    ):
+        return LinkOnUseDecision(
+            kind="refuse",
+            copy=row.recovery_copy
+            or f"This {clean_type} can't be used in Console from this workspace.",
+        )
+    result = link_item_to_active_workspace(
+        registry, item_type=clean_type, item_id=clean_id, title=title
+    )
+    if result.blocked_reason:
+        if result.blocked_reason == NO_ACTIVE_WORKSPACE_COPY or (
+            row is not None and row.active_context_eligible
+        ):
+            return LinkOnUseDecision(kind="stage")
+        return LinkOnUseDecision(kind="refuse", copy=result.blocked_reason)
+    return LinkOnUseDecision(kind="linked", result=result)
 
 
 def _write_failed_copy(item_type: str, workspace_name: str) -> str:

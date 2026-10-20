@@ -4,9 +4,12 @@
 (``library_notes_controller._link_open_note_to_active_workspace``)
 generalised: read memberships first, write only when absent, name the
 workspace by its display name, never raise. ``unlink_item_from_workspace`` is
-its inverse. Pinned against a REAL ``LocalWorkspaceRegistryService`` over a
-temp ``WorkspaceDB`` (the ``test_workspace_cold_provisioning.py`` shape), not
-a fake registry -- ``link_membership`` is INSERT OR IGNORE and returns the
+its inverse and says whether it removed, found nothing, or failed (fix round
+1, M-4). ``decide_link_on_use`` is the ONE gate-to-link decision both entry
+points (the Media reader's ``c`` and Search ``u``) call (fix round 1, I-2).
+Pinned against a REAL ``LocalWorkspaceRegistryService`` over a temp
+``WorkspaceDB`` (the ``test_workspace_cold_provisioning.py`` shape), not a
+fake registry -- ``link_membership`` is INSERT OR IGNORE and returns the
 EXISTING row, which is exactly the contract a fake would get wrong.
 """
 
@@ -20,8 +23,10 @@ from tldw_chatbook.Workspaces.display_state import LibraryWorkspaceSourceRow
 from tldw_chatbook.Workspaces.link_on_use import (
     NO_ACTIVE_WORKSPACE_COPY,
     LinkOnUseResult,
+    UnlinkOutcome,
+    decide_link_on_use,
     link_item_to_active_workspace,
-    resolve_workspace_item_id,
+    registry_unavailable_copy,
     unlink_item_from_workspace,
 )
 from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
@@ -101,12 +106,18 @@ def test_no_active_workspace_is_blocked_with_the_existing_sentence(registry) -> 
     assert _memberships(registry) == ()
 
 
-def test_no_registry_is_blocked_and_never_raises() -> None:
+def test_no_registry_says_the_registry_is_unavailable_and_never_raises() -> None:
+    """Fix round 1, M-6: the notes precedent's sentence, not a workspace
+    selection the user cannot make."""
     result = link_item_to_active_workspace(
         None, item_type="media", item_id="media-1", title="Interview Recording"
     )
 
-    assert result.blocked_reason == NO_ACTIVE_WORKSPACE_COPY
+    assert result.blocked_reason == registry_unavailable_copy("media") == (
+        "Can't use this media in Console — the workspace registry is "
+        "unavailable. Next: restart Chatbook, then try again."
+    )
+    assert "Select an active workspace" not in result.blocked_reason
     assert result.written is False
 
 
@@ -128,7 +139,9 @@ def test_a_failing_write_is_blocked_with_the_workspace_named(registry) -> None:
     assert "workspace-default" not in result.blocked_reason
 
 
-def test_unlink_is_the_exact_inverse_of_a_fresh_link(registry) -> None:
+def test_unlink_distinguishes_removed_absent_and_failed(registry) -> None:
+    """Fix round 1, M-4: "already removed elsewhere" is the outcome the user
+    wanted and must not read as a failure to retry."""
     result = link_item_to_active_workspace(
         registry, item_type="media", item_id="media-1", title="Interview Recording"
     )
@@ -138,48 +151,141 @@ def test_unlink_is_the_exact_inverse_of_a_fresh_link(registry) -> None:
         unlink_item_from_workspace(
             registry, result.workspace_id, item_type="media", item_id="media-1"
         )
-        is True
+        is UnlinkOutcome.REMOVED
     )
     assert _memberships(registry) == ()
-    # Idempotent and silent on a second press.
     assert (
         unlink_item_from_workspace(
             registry, result.workspace_id, item_type="media", item_id="media-1"
         )
-        is False
+        is UnlinkOutcome.ABSENT
     )
-    assert unlink_item_from_workspace(None, "x", item_type="media", item_id="media-1") is False
+    assert (
+        unlink_item_from_workspace(None, "x", item_type="media", item_id="media-1")
+        is UnlinkOutcome.FAILED
+    )
+
+    def failing_unlink(*args, **kwargs):
+        raise WorkspaceRegistryServiceError("disk full")
+
+    registry.unlink_membership = failing_unlink
+    assert (
+        unlink_item_from_workspace(
+            registry, result.workspace_id, item_type="media", item_id="media-1"
+        )
+        is UnlinkOutcome.FAILED
+    )
 
 
-def _row(item_type: str, item_id: str) -> LibraryWorkspaceSourceRow:
+# --- fix round 1, I-2: one gate-to-link decision for both entry points -------
+
+
+def _row(item_type: str, item_id: str, *, eligible: bool, reason: str) -> LibraryWorkspaceSourceRow:
     return LibraryWorkspaceSourceRow(
         item_type=item_type,
         item_id=item_id,
         title=item_id,
-        workspace_ids=(),
+        workspace_ids=() if not eligible else (DEFAULT_WORKSPACE_ID,),
         workspace_label="Unassigned",
         visible=True,
-        active_context_eligible=False,
+        active_context_eligible=eligible,
         authority_label="",
         context_label="",
-        recovery_copy="",
-        reason_code="not_in_active_workspace",
+        recovery_copy="" if eligible else f"Copy or link this {item_type} into the Local Default workspace before using it in Console.",
+        reason_code=reason,
     )
 
 
-def test_resolve_workspace_item_id_returns_the_id_the_row_model_reads() -> None:
-    """Search `u` must write the SAME id the reader's row model reads, or the
-    gate would stay closed after linking. The row model reads the media
-    record's own ``id`` (``"media-1"`` in the Library fixtures, ``"3"`` for a
-    real record); retrieval may hand the same item back wrapped
-    (``local:media:3``, ``media_3``)."""
-    rows = (_row("media", "media-1"), _row("media", "3"), _row("note", "n-1"))
+def test_a_linkable_row_links_and_reports_it(registry) -> None:
+    rows = (_row("media", "7", eligible=False, reason="not_in_active_workspace"),)
 
-    assert resolve_workspace_item_id(rows, "media", "media-1") == "media-1"
-    assert resolve_workspace_item_id(rows, "media", "local:media:3") == "3"
-    assert resolve_workspace_item_id(rows, "media", "media_3") == "3"
-    assert resolve_workspace_item_id(rows, "media", "3") == "3"
-    assert resolve_workspace_item_id(rows, "note", "n-1") == "n-1"
-    # Unknown to the row model: the raw id, unchanged (never a guess).
-    assert resolve_workspace_item_id(rows, "media", "local:media:9") == "local:media:9"
-    assert resolve_workspace_item_id(rows, "conversation", "chat-9") == "chat-9"
+    decision = decide_link_on_use(
+        rows, registry, item_type="media", item_id="7", title="Seven"
+    )
+
+    assert decision.kind == "linked"
+    assert decision.result is not None and decision.result.written is True
+    assert decision.result.workspace_name == "Local Default"
+    assert [row.item_id for row in _memberships(registry, "7")] == ["7"]
+
+
+def test_an_item_outside_the_snapshot_links_too(registry) -> None:
+    """I-1: the depth state samples the first page of local media; an item
+    past it has no row and must still link -- the seam reads memberships
+    itself and needs no row."""
+    rows = (_row("media", "1", eligible=False, reason="not_in_active_workspace"),)
+
+    decision = decide_link_on_use(
+        rows, registry, item_type="media", item_id="51", title="Fifty-one"
+    )
+
+    assert decision.kind == "linked"
+    assert decision.result is not None and decision.result.written is True
+    assert [row.item_id for row in _memberships(registry, "51")] == ["51"]
+    assert _memberships(registry, "1") == ()
+
+
+def test_only_an_existing_row_with_a_non_linkable_block_refuses(registry) -> None:
+    rows = (_row("media", "7", eligible=False, reason="generic_block"),)
+
+    decision = decide_link_on_use(
+        rows, registry, item_type="media", item_id="7", title="Seven"
+    )
+
+    assert decision.kind == "refuse"
+    assert decision.copy == rows[0].recovery_copy
+    assert _memberships(registry, "7") == ()
+
+
+def test_an_already_linked_row_reports_already_linked(registry) -> None:
+    link_item_to_active_workspace(registry, item_type="media", item_id="7", title="Seven")
+    rows = (_row("media", "7", eligible=True, reason="active_workspace_match"),)
+
+    decision = decide_link_on_use(
+        rows, registry, item_type="media", item_id="7", title="Seven"
+    )
+
+    assert decision.kind == "linked"
+    assert decision.result is not None and decision.result.written is False
+    assert len(_memberships(registry, "7")) == 1
+
+
+def test_no_active_workspace_is_the_global_scope_and_stages_as_is(registry) -> None:
+    registry.clear_active_workspace()
+    rows = (_row("media", "7", eligible=True, reason="visible"),)
+
+    decision = decide_link_on_use(
+        rows, registry, item_type="media", item_id="7", title="Seven"
+    )
+
+    assert decision.kind == "stage"
+    assert _memberships(registry, "7") == ()
+    # ...and so does an item the snapshot does not carry.
+    assert decide_link_on_use((), registry, item_type="media", item_id="9", title="").kind == "stage"
+
+
+def test_a_non_local_item_stages_as_is(registry) -> None:
+    decision = decide_link_on_use(
+        (), registry, item_type="media", item_id="server:media:3", title="", local=False
+    )
+
+    assert decision.kind == "stage"
+    assert _memberships(registry, "server:media:3") == ()
+
+
+def test_a_failed_link_refuses_with_the_seams_sentence(registry) -> None:
+    def failing_link(*args, **kwargs):
+        raise WorkspaceRegistryServiceError("disk full")
+
+    registry.link_membership = failing_link
+    rows = (_row("media", "7", eligible=False, reason="not_in_active_workspace"),)
+
+    decision = decide_link_on_use(
+        rows, registry, item_type="media", item_id="7", title="Seven"
+    )
+
+    assert decision.kind == "refuse"
+    assert decision.copy == (
+        "Can't use this media in Console — it could not be linked to "
+        "Local Default. Next: try again."
+    )

@@ -8,13 +8,13 @@
 │ │     Import…                    │  v  │ Media · 1 of 1 · all types · sort: Newest            │  e  /.worktrees/.nlrev-harness/runs/clr-t5-1/cwd/roadmap-int │
 │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  erview.txt                                               │
 │ │ ▊ Search Library…        ▎▊x▎  │     │  ▊  Title/keyword…                  ▎                │  s    Find  Note  Read later  Use in Console  More           │
-│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │      Linked to Local Default · staged in Conso…  Undo link   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │      Linked to Local Default · staged in Console  Undo link  │
 │ │                                │     │    type: All types    sort: Newest                   │                                                              │
 │ │ ─────────────────────────────  │     │                                                      │       Read (selected)  Analysis  Highlights  Info            │
 │ │ Browse                    ▾    │     │    Export…     Trash     Select                      │     ┌──────────────────────────────────────────────────────┐ │
 │ │  ▸ Media (1) — your files      │     │    Review these                                      │     │ Quarterly roadmap interview                          │ │
 │ │    Conversations (0)           │     │  ▸ roadmap-interview                                 │     │                                                      │ │
-│ │    Notes (0)                   │     │      plaintext · updated 20m · loaded                │     │ The interview covers the quarterly roadmap, the      │ │
+│ │    Notes (0)                   │     │      plaintext · updated 9h · loaded                 │     │ The interview covers the quarterly roadmap, the      │ │
 │ │    Prompts (0) — reuse         │     │                                                      │     │ hiring plan and the two launches scheduled for       │ │
 │ │    Skills (1) — AI add-ons     │<--- │                                                      │     │ spring. Jordan asked about the research budget;      │ │
 │ │    Collections (0)             │     │                                                      │     │ Morgan confirmed the thesis workstream keeps its     │ │

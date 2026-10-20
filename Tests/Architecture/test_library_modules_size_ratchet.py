@@ -379,7 +379,7 @@ _BUDGETS: dict[str, int] = {
     # the unchanged-compare (+10), the receipt's visibility rule
     # `_library_media_visible_link_receipt` (+41), and the per-item clear at
     # the selection entry (+6, with its comment). No code was moved or
-    # reflowed to fit.
+    # reflowed to fit. Re-measured after fix round 1: still 4874.
     "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4874,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,

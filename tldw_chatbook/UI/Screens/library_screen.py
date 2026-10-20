@@ -386,7 +386,8 @@ from ...Workspaces.eligibility import (
     linkable_ineligibility_label,
 )
 from ...Workspaces.link_on_use import (
-    link_item_to_active_workspace,
+    UnlinkOutcome,
+    decide_link_on_use,
     unlink_item_from_workspace,
 )
 from ...Workspaces.registry_service import WorkspaceRegistryServiceError
@@ -36737,16 +36738,20 @@ class LibraryScreen(BaseAppScreen):
         does not exist for media ("Copy or link this media into workspace
         workspace-default …"). Notes (task-32536) and conversations
         (task-32107) already link on use; media now takes the same path
-        through the shared seam (``Workspaces/link_on_use.py``): a block a
-        LINK can resolve (``not_in_active_workspace``, ``cross_workspace``)
-        is resolved by linking the item into the active workspace, then
-        staging, with a receipt ("Linked to Local Default · staged in
-        Console") and an Undo in the Reader. Blocks a link cannot resolve
-        (no active workspace) keep refusing with their own sentence. An item
-        already in the workspace stages as before with the "Already linked"
-        receipt. The notes rule holds: Console's availability is read BEFORE
-        the write, and a membership this press added is unlinked again if
-        Console then refuses the hand-off.
+        through the shared seam's ONE decision (``decide_link_on_use``,
+        fix round 1 I-2): a block a LINK can resolve -- or an item the
+        depth state never sampled (I-1: the sample holds the first 50 local
+        media) -- is resolved by linking the item into the active workspace,
+        then staging, with a receipt ("Linked to Local Default · staged in
+        Console") and an Undo in the Reader; only a sampled row whose block a
+        link cannot resolve refuses, with its own sentence; no active
+        workspace is the global scope (task-15120) and stages as-is; a server
+        detail stages as-is. An item already in the workspace stages with the
+        "Already linked" receipt. The notes rule holds: Console's availability
+        is read BEFORE the write, and a membership this press added is
+        unlinked again if Console refuses the hand-off -- which
+        ``open_chat_with_handoff`` now reports (fix round 1, M-1), so the
+        receipt never claims "staged" for a refused stage.
         """
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_media_handoff_payload()
@@ -36768,68 +36773,58 @@ class LibraryScreen(BaseAppScreen):
             say("Console handoff is unavailable for Library Media.")
             return
         item_id = str(payload.source_id or "")
-        # Single-item action: same per-item gate as the conversation
-        # handoff (TASK-15423) -- but a linkable block is now resolved, not
-        # reported.
-        item_eligible, item_reason = library_item_context_handoff(
-            workspace_state,
-            item_type=payload.item_type,
-            item_id=item_id,
-        )
-        row = next(
-            (
-                candidate
-                for candidate in workspace_state.source_rows
-                if candidate.item_type == payload.item_type
-                and candidate.item_id == item_id
-            ),
-            None,
-        )
-        linkable = row is not None and bool(
-            linkable_ineligibility_label(row.reason_code)
-        )
-        if not item_eligible and not linkable:
-            say(item_reason)
-            return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        link = link_item_to_active_workspace(
+        decision = decide_link_on_use(
+            workspace_state.source_rows,
             registry,
             item_type=payload.item_type,
             item_id=item_id,
             title=payload.title,
+            local=not self._media_state.reader_session.external_detail,
         )
-        if link.blocked_reason and not item_eligible:
-            say(link.blocked_reason)
+        if decision.kind == "refuse":
+            say(decision.copy)
             return
-        if link.written:
+        link = decision.result
+        if link is not None and link.written:
             # The cached eligibility that sent us here is stale now; without
             # this the rail and the next press would still call the item
             # blocked.
             self._invalidate_library_workspace_depth_state()
         try:
-            open_chat_with_handoff(payload, action_label="Use in Console")
+            staged = open_chat_with_handoff(payload, action_label="Use in Console")
         except Exception:
             logger.opt(exception=True).warning("Library media Console handoff failed.")
-            if link.written and not unlink_item_from_workspace(
-                registry,
-                link.workspace_id,
-                item_type=payload.item_type,
-                item_id=item_id,
-            ):
-                say(
-                    "Can't use this media in Console — Console could not take "
-                    f"it, and the media stayed linked to {link.workspace_name}. "
-                    "Next: try again."
-                )
-                return
-            if link.written:
-                self._invalidate_library_workspace_depth_state()
-            say(
+            staged = False
+            failure = (
                 "Can't use this media in Console — Console could not take it. "
                 "Next: try again."
             )
+        else:
+            # ``None`` is a caller that does not report (a test double, an
+            # older seam): treat it as staged, as before; only an explicit
+            # ``False`` is a refusal -- and that one has already notified.
+            failure = ""
+        if staged is False:
+            if link is not None and link.written:
+                outcome = unlink_item_from_workspace(
+                    registry,
+                    link.workspace_id,
+                    item_type=payload.item_type,
+                    item_id=item_id,
+                )
+                self._invalidate_library_workspace_depth_state()
+                if outcome is UnlinkOutcome.FAILED:
+                    say(
+                        "Can't use this media in Console — Console could not take "
+                        f"it, and the media stayed linked to {link.workspace_name}. "
+                        "Next: try again."
+                    )
+                    return
+            if failure:
+                say(failure)
             return
-        if link.linked:
+        if link is not None:
             self._set_library_media_link_receipt(
                 workspace_id=link.workspace_id,
                 workspace_name=link.workspace_name,
@@ -36883,9 +36878,13 @@ class LibraryScreen(BaseAppScreen):
         The exact inverse of the link in ``_open_selected_media_handoff``:
         the RECEIPT's workspace by id (never the active one), the receipt
         cleared, the cached eligibility invalidated, the Reader re-synced.
-        Refused silently when the Reader is not showing the receipt -- a
-        stale Undo after a workspace switch could only remove a membership
-        of a workspace that is no longer active (task-32107 fix round 1).
+
+        Fix round 1: a press that lands after the workspace moved elsewhere
+        (switched from Console, say) must not remove a membership of a
+        workspace that is no longer active -- it says so once and re-syncs
+        the Reader so the dead control disappears (M-3); and a membership
+        that is already gone is the outcome the user wanted, so the receipt
+        clears instead of looping on "could not be undone" (M-4).
 
         Args:
             event: The Undo button press.
@@ -36894,30 +36893,37 @@ class LibraryScreen(BaseAppScreen):
         receipt = self._media_state.link_receipt
         payload = self._selected_media_handoff_payload()
         open_item_id = str(payload.source_id or "") if payload is not None else ""
+        notify = getattr(self.app_instance, "notify", None)
+
+        def say(message: str) -> None:
+            if callable(notify):
+                notify(message, severity="warning", markup=False)
+
         if receipt is None or not open_item_id:
+            self._sync_library_media_viewer_or_recompose()
             return
         _line, undo_offered = (
             self._media_controller._library_media_visible_link_receipt(open_item_id)
         )
         if not undo_offered:
+            say(
+                "This link was made in a workspace that is no longer active, "
+                "so it can't be undone from here."
+            )
+            self._sync_library_media_viewer_or_recompose()
             return
-        notify = getattr(self.app_instance, "notify", None)
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:
-            if callable(notify):
-                notify(
-                    "Workspaces are unavailable, so this link cannot be undone.",
-                    severity="warning",
-                )
+            say("Workspaces are unavailable, so this link cannot be undone.")
             return
-        if not unlink_item_from_workspace(
+        outcome = unlink_item_from_workspace(
             registry,
             receipt.workspace_id,
             item_type="media",
             item_id=receipt.item_id,
-        ):
-            if callable(notify):
-                notify("This link could not be undone. Try again.", severity="warning")
+        )
+        if outcome is UnlinkOutcome.FAILED:
+            say("This link could not be undone. Try again.")
             return
         self._media_state.link_receipt = None
         self._invalidate_library_workspace_depth_state()

@@ -14,7 +14,7 @@
 │ │ Browse                    ▾    │     │    Export…     Trash     Select                      │     │                                                      │ │
 │ │  ▸ Media (1) — your files      │     │    Review these                                      │     │ The interview covers the quarterly roadmap, the      │ │
 │ │    Conversations (0)           │     │ █▸ roadmap-interview                                 │     │ hiring plan and the two launches scheduled for       │ │
-│ │    Notes (0)                   │     │ █    plaintext · updated 21m · loaded                │     │ spring. Jordan asked about the research budget;      │ │
+│ │    Notes (0)                   │     │ █    plaintext · updated 9h · loaded                 │     │ spring. Jordan asked about the research budget;      │ │
 │ │    Prompts (0) — reuse         │     │                                                      │     │ Morgan confirmed the thesis workstream keeps its     │ │
 │ │    Skills (1) — AI add-ons     │<--- │                                                      │     │ allocation.                                          │ │
 │ │    Collections (0)             │     │                                                      │     │                                                      │ │
