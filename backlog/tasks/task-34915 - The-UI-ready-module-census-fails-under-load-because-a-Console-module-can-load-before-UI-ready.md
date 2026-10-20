@@ -29,20 +29,20 @@ The UI-ready module census pins how many app modules are loaded when the app rep
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
-2026-10-20 UTC. No code change was needed: the race this task describes went away on 2026-10-16, when PR #3023 (merge 14e13bb82c, commit 3e618d7119) made the Console compose import config_sync. ContextSpendMixin._build_console_cost_state imports it while building the cost chip, so the module is resident at UI ready on every run instead of only when the control-bar sync wins the race.
+2026-10-20 UTC. No code change was needed: the race this task describes went away on 2026-10-16 with PR #3023 (merge 14e13bb82c). Its commit 3e618d7119 created UI/Console_Modules/context_spend.py, whose _build_console_cost_state imports config_sync. ChatScreen.compose_content calls that builder while composing the cost chip, and the builder reaches the import whenever a native Console session and chat store exist at compose (it returns earlier otherwise). The census boot has both (config_sync was resident in every census measured), so it loads at compose on every census run instead of only when the control-bar sync wins the race. A boot with no native session at compose could still load it later, through the control-bar sync; the census does not measure that boot.
 
-AC #1: 15 of 15 local warm-boot censuses on 2026-10-19 gave the same count (1030 on dev then), including runs under a 4-way CPU load. In CI, the Perf Guard census printed 1031/1031 on all 11 runs from #3167's merge (2026-10-20 04:10Z) to 13:31Z: 4 push runs on dev and 7 pull_request runs on 4 branches. #3167 added one module, UI.Navigation.surface_swap_guard, which took the count from 1030 to the pin.
+AC #1, locally on dev 1bbc145ffc (2026-10-20, scratchpad census_probe.py, which calls the test's own _boot_and_census): 10 of 10 warm-boot censuses counted 1031 with config_sync resident, 5 idle and 5 under a 4-way CPU load (four `yes > /dev/null`). In CI, every Perf Guard run created after #3167's merge (2026-10-20 04:10Z) up to 13:31Z that completed printed `ui-ready-census: 1031/1031 modules`: 15 of 15, which are 5 push runs on dev (the first on #3167's merge commit 8136af6f6f) and 10 pull_request runs on 5 branches. Two cancelled runs printed nothing and are not counted. CI runners' load is unknown; the local loaded runs cover that case. #3167 added one module, UI.Navigation.surface_swap_guard, which took the count from 1030 to the pin.
 
 AC #2: the pin has no headroom (1031 of 1031). Negative control on dev 1bbc145ffc: an empty module imported from config_sync made the census 1032 and failed the test ("1032 tldw_chatbook modules resident at _ui_ready (ratchet limit 1031)"). Reverted, the census passes again.
 
-AC #3: decision is to keep config_sync resident at UI ready. Its marginal import cost with the app loaded is 0.046 ms median. The cost chip needs it at compose, so deferring it would only move the import into the first sync. The pin stays at 1031 (count == pin), so it needs no change.
+AC #3: decision is to keep config_sync resident at UI ready. Its marginal import cost on dev 1bbc145ffc, with tldw_chatbook.app already imported, is 0.033 ms median (max 1.466 ms) over 15 re-imports (scratchpad import_cost.py: pop the module from sys.modules, time importlib.import_module). The cost chip needs it at compose, so deferring it would only move the import into the first sync. The pin stays at 1031 (count == pin), so it needs no change.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 
-The census is deterministic since PR #3023 made the Console compose load config_sync; CI showed 1031/1031 on 11 of 11 runs after #3167, a negative control fails at 1032, and config_sync stays resident (0.046 ms).
+The census is deterministic since PR #3023 made the Console compose load config_sync. After #3167, CI showed 1031/1031 on 15 of 15 completed runs and locally on 10 of 10, half under load. A negative control fails at 1032, and config_sync stays resident (0.033 ms).
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
