@@ -343,7 +343,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # flat-search native-drain regression, appended without moving earlier entries.
 # TASK-34982 raised it by 1, to 327: the poll-timer-stop row-removal pins,
 # appended last (a bare transcript host; well under 1 s).
-MINIMUM_FILES = 327
+# TASK-34751 (2026-10-19) raised it by 2, to 329: Study's literal-text pins
+# (a markup-shaped workspace name in the scope banner; type-to-search over
+# markup-shaped deck and quiz names) and its quit-mid-rebuild pin, appended
+# last.
+MINIMUM_FILES = 329
 
 
 def read_census(path: Path) -> list[str]:

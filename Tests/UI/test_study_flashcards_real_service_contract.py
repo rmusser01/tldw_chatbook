@@ -203,6 +203,69 @@ def _is_blank(value: Any) -> bool:
     return value in {None, "", False} or str(value).startswith("Select.")
 
 
+def _study_workers_pending(app) -> bool:
+    """True while a Study worker (e.g. a ``#card-list`` rebuild) is queued or running.
+
+    ``create_deck`` selects the new deck, and that ``Select.Changed`` makes
+    ``StudyWindow.handle_deck_select_changed`` rebuild ``#card-list`` again in
+    a "study-refresh-cards" worker -- on top of ``create_deck``'s own rebuild.
+    The two queue on one lock (TASK-33007), so the worker's rebuild can run
+    after ``create_deck()`` returns, and even after a following
+    ``create_card()``'s rebuild.
+    """
+    return any(
+        str(worker.group).startswith("study-") and not worker.is_finished
+        for worker in app.workers
+    )
+
+
+async def _wait_for_study_workers(pilot, app, *, what: str) -> None:
+    """Wait until no Study worker is pending -- across two settled pauses.
+
+    The worker this waits for may not exist yet when the wait starts: the
+    deck switch's ``Select.Changed`` is posted on the ``Select`` and bubbles
+    to ``StudyWindow`` before its handler starts the rebuild worker. So the
+    check runs only after a pause (the queues drain), and "idle" must hold
+    again after a second pause before it counts.
+    """
+    deadline = time.monotonic() + _WAIT_SECONDS
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        if not _study_workers_pending(app):
+            await pilot.pause()
+            if not _study_workers_pending(app):
+                return
+        else:
+            await pilot.pause(0.02)
+    raise AssertionError(f"timed out after {_WAIT_SECONDS:.0f}s waiting for {what}")
+
+
+async def _open_flashcards(app, pilot):
+    """Open Study ▸ Flashcards; return its controller once its first load is done.
+
+    Not as soon as the view shows: its ``initialize_view`` worker is still
+    loading decks then, and a deck created alongside it set the picker's
+    value before the picker had composed (``NoMatches: '#label'``).
+    """
+    await _wait_until(pilot, lambda: _study_screen_up(app), what="the Study screen")
+    await pilot.click("#view-flashcards-btn")
+    await _wait_until(
+        pilot, lambda: _flashcards_view_up(app), what="the Flashcards view"
+    )
+    await _wait_for_study_workers(pilot, app, what="the Flashcards view's first load")
+    return app.screen.query_one(StudyWindow).flashcards_controller
+
+
+async def _create_deck(app, pilot, controller, name: str) -> str:
+    """Create a deck through the controller; return its id once it is selected."""
+    app.screen.query_one("#new-deck-name-input", Input).value = name
+    await controller.create_deck()
+    await _wait_for_study_workers(pilot, app, what="the deck switch")
+    deck_id = controller._selected_deck_id()
+    assert deck_id is not None, "the created deck was not selected"
+    return deck_id
+
+
 def _card_list_labels(list_view: ListView) -> list[str]:
     labels: list[str] = []
     for item in list_view.children:
@@ -253,11 +316,11 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         assert db.get_deck(deck_id)["name"] == "Cell biology"
 
         card_list = app.screen.query_one("#card-list", ListView)
-        # Select.Changed may still be rebuilding rows after the direct refresh.
-        await _wait_until(
-            pilot,
-            lambda: _card_list_labels(card_list) == ["No cards in this deck."],
-            what="the empty card list to render",
+        # Select.Changed may still be rebuilding rows after the direct refresh:
+        # read the list once that rebuild has finished too, not the first time
+        # it happens to match (TASK-34751).
+        await _wait_for_study_workers(
+            pilot, app, what="the deck switch's card-list rebuild to finish"
         )
         assert _card_list_labels(card_list) == ["No cards in this deck."]
 
@@ -265,6 +328,11 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         app.screen.query_one("#card-back", TextArea).text = "The protein factory."
         app.screen.query_one("#card-tags", Input).value = "cells organelles"
         await controller.create_card()
+        # The row read below must be the settled list's: a deck-switch rebuild
+        # still queued on the card-list lock replaces every row, so a row read
+        # before it never paints (CI-shaped: 3 of 7 loaded local runs timed
+        # out on "the card row to be painted", 2026-10-19).
+        await _wait_for_study_workers(pilot, app, what="the card-list rebuilds")
         await _wait_until(
             pilot,
             lambda: any(

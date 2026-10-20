@@ -1381,3 +1381,25 @@ all three id-resolving directories (`tasks/`, `completed/`,
 `archive/tasks/` — archiving does not free an id) and prints N ids starting
 at max+30. If allocating by hand, the same lead applies: max across ALL three
 directories, plus 30.
+
+## A flaky gated test gets fixed inside every PR it blocks — search dev by the code, not the task id (PR #3064 vs #3057, 2026-10-19)
+
+**Incident.** `test_real_service_create_deck_select_deck_and_add_card_in_local_mode`
+(UI PR lane) flaked on loaded runners and blocked unrelated PRs in the merge
+queue. Two sessions fixed it independently. PR #3057 — a *Settings* model-config
+PR, TASK-33007 — carried `fix(study): one #card-list rebuild at a time, and the
+gated test waits for the settled list` (2026-10-09 21:54 PDT), then more Study
+literal-text commits, and merged 2026-10-16. PR #3064 (TASK-34751) was opened
+the next day with its own single-writer rule for the same list. Neither task id
+names the other, so the "search for in-flight work by task id" check above found
+nothing. The overlap surfaced only on 2026-10-19: rebased onto dev, #3064 kept
+only its backlog commit (its three fix commits did not survive the replay), and
+the review fixes queued for that branch referred to code that no longer existed.
+
+**What to do.** When the test you are fixing is a gate that blocks other
+people's PRs, assume they are fixing it too. Before designing, and again before
+resuming an interrupted branch, search dev by the code: `git log origin/dev
+-S'<symbol you change>' -- <file>` and `git log origin/dev --oneline --
+<test file>`. After a rebase, compare `git log --oneline origin/dev..HEAD`
+with the pre-rebase list; a commit missing from it was dropped against what dev
+already carries, and the PR's scope has changed.

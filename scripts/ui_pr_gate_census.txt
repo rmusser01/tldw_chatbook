@@ -578,3 +578,11 @@ Tests/UI/test_console_browser_quit_fence.py
 Tests/UI/test_console_view_worker_groups.py::test_host_drain_retains_finite_presentation_worker[console-flat-conversation-search]
 # TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
 Tests/UI/test_console_transcript_poll_stop_removal.py
+# TASK-34751: Study paints a markup-shaped workspace name in its scope banner,
+# and typing finds a markup-shaped deck/quiz name in the open pickers
+# (2 tests, 13.5 s pytest unloaded).
+Tests/UI/test_study_user_text_literal.py
+# TASK-34751: a card-list rebuild resuming while the app quits ends quietly,
+# not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
+# unit cases that build no app).
+Tests/UI/test_study_flashcards_quit_mid_rebuild.py
