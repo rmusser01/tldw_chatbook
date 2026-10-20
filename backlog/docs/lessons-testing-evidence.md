@@ -21579,3 +21579,36 @@ field of a snapshot builder costs the builder. Pin the fix structurally (spy
 every entry point into the builder on the live controller, inner ones too, and
 assert no call with the panel's module on the stack), not with a wall-clock
 threshold.
+
+## A UI-ready census red at zero headroom can be dev's own race: diff the module lists before moving code
+
+**TASK-33620.15.1, 2026-10-19.** After a rebase the census read 1032 against
+its 1031 limit, and its "NEW modules" list named `UI.Console_Modules.config_sync`,
+which the branch imports. That list is a diff against the pinned snapshot, not
+against dev. The branch's import was moved into an already-resident module,
+and the census still read 1032. A scratch boot that dumped the warm
+`_ui_ready` module list for both arms then showed three things:
+- `config_sync` was resident on dev too, imported by `context_spend` while
+  composing the Console.
+- The sets were identical except for `Chat.console_change_review_read`.
+- That module is imported by the first sync's transcript step, which races
+  `_ui_ready` by seconds under load. Dev itself read 1032 in 4 of 10 boots
+  at load 80-100, and the branch in 7 of 9. Boots took 27-56 s to
+  `_ui_ready`, so that skew cannot be told apart from load.
+The move was reverted. (The import did end up module-level in
+`chat_screen.py`, for the second trap's reason below; the census cannot see
+that, because dev already holds `config_sync` resident.) A second trap
+surfaced in the same round. A
+function-local relative import at the top of
+`ChatScreen._sync_native_console_chat_ui` broke
+`Tests/Performance/test_console_tab_sync_source_ownership.py`, which compiles
+that method from source into a namespace with no `__name__` (`KeyError:
+"'__name__' not in globals"`).
+
+**What to do.**
+- Before changing code for a census red, dump the flag-time module list on
+  both arms and diff them. Two boots per arm are enough to see a race.
+- A one-module difference that flips between boots of the same arm is
+  timing, not your import.
+- Methods of `chat_screen.py` are compiled from source by several tests.
+  Give a hook a module-level name, not a function-local relative import.
