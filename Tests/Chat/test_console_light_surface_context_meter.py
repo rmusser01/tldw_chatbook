@@ -550,6 +550,72 @@ def test_the_meter_and_the_summary_follow_the_one_named_set(
     assert summary_titles == _summary_titles_for(sent)
 
 
+@pytest.mark.parametrize(
+    ("member", "title", "gate"),
+    [
+        ("read_file", "Read file", "read_file_enabled"),
+        ("web_deep_search", "Deep web research", "web_deep_search_enabled"),
+    ],
+    ids=["gated-builtin", "local-opt-in"],
+)
+@pytest.mark.parametrize("gate_on", [False, True], ids=["gate-off", "gate-on"])
+def test_a_widened_safe_set_is_sent_counted_and_named_alike(
+    tmp_path, monkeypatch, member, title, gate, gate_on
+):
+    """Review round 2 (R2-3): the F7 parity held only for narrowing. The
+    Summary treated ``ask_user`` as the safe set's only conditional member,
+    so a gated tool added to the set was named as on with its gate off --
+    while the send, which obeys the gate, did not carry it. Widening the set
+    now keeps the send, the meter and the Summary in step either way."""
+    from tldw_chatbook.Agents import plain_chat_tool_surface as surface
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    monkeypatch.setattr(
+        surface, "LIGHT_SURFACE_TOOL_NAMES", (*surface.LIGHT_SURFACE_TOOL_NAMES, member)
+    )
+    monkeypatch.setattr(
+        surface,
+        "LIGHT_SURFACE_TOOL_TITLES",
+        {**surface.LIGHT_SURFACE_TOOL_TITLES, member: title},
+    )
+    if gate_on:
+        assert save_settings_to_cli_config({"tools": {gate: True}})
+
+    sent, metered, summary_titles = _three_readings(tmp_path)
+
+    assert (member in sent) is gate_on, sorted(sent)
+    assert metered == sent
+    assert summary_titles == _summary_titles_for(sent)
+
+
+@pytest.mark.parametrize(
+    ("attr", "name"),
+    [
+        ("LIGHT_SURFACE_TOOL_NAMES", "unspecced_local_tool"),
+        ("LIGHT_SURFACE_LOCAL_OPT_INS", "unspecced_opt_in"),
+    ],
+    ids=["safe-set", "opt-ins"],
+)
+def test_a_light_tool_nothing_can_describe_fails_loudly(monkeypatch, attr, name):
+    """Review round 2 (R2-3): the meter's local table and the Summary's gate
+    table silently skipped a name they did not know, so a tool added to the
+    named set would be sent but neither counted nor named, and nothing
+    failed. Both now refuse it."""
+    from tldw_chatbook.Agents import plain_chat_tool_surface as surface
+
+    monkeypatch.setattr(surface, attr, (*getattr(surface, attr), name))
+    monkeypatch.setattr(
+        surface,
+        "LIGHT_SURFACE_TOOL_TITLES",
+        {**surface.LIGHT_SURFACE_TOOL_TITLES, name: name},
+    )
+
+    with pytest.raises((KeyError, ValueError), match=name):
+        surface.light_surface_tool_schemas()
+    with pytest.raises((KeyError, ValueError), match=name):
+        surface.summarize_tool_surface({})
+
+
 # -- the MCP hub's tool kill switch -------------------------------------------
 
 
