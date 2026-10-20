@@ -162,14 +162,17 @@ class ProviderDetectionStep(SetupStep):
             timer.stop()
 
     def _quiet_recheck(self) -> None:
-        """One quiet loopback scan, only while nothing has been found."""
+        """One quiet loopback scan while the step shows; it only adds rows.
+
+        Review v3r1, G6-BV3-04: it ran only while nothing had been found, so a
+        server started mid-setup beside one already listed never appeared.
+        """
         if (
             not getattr(self, "_discovery_visible", False)
-            or getattr(self, "_found_servers", ())
             or self._local_discovery_state == "in_progress"
         ):
             return
-        self._start_discovery()
+        self._start_discovery(quiet=True)
 
     def _render_no_server_state(self, servers: Sequence[object]) -> None:
         """'Nothing answered' while it is the relevant news (provider-14)."""
@@ -248,8 +251,15 @@ class ProviderDetectionStep(SetupStep):
     def _on_use_later(self, event: Button.Pressed) -> None:
         """E3: pick the engine now; Model starts with the model typed in."""
         event.stop()
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
         setattr(self.wizard, "first_run_model_hint", (LATER_ENGINE, LATER_MODEL))
         self.select_provider(LATER_ENGINE)
+        engine = provider_display_name(LATER_ENGINE)  # G6-BV3-06: say it took
+        self._set_status(
+            f"{engine} with {LATER_MODEL} is set — press Next, and start {engine} "
+            "before your first chat."
+        )
 
     def _set_status(self, text: str) -> None:
         """The step's one status line (review cross-cutting-07, provider-16).
@@ -431,7 +441,7 @@ class ProviderDetectionStep(SetupStep):
         if str(status.render()).startswith("Checking"):
             self._set_status("")
 
-    def _start_discovery(self, *, user_requested: bool = False) -> None:
+    def _start_discovery(self, *, user_requested: bool = False, quiet: bool = False) -> None:
         self._local_discovery_generation += 1
         generation = self._local_discovery_generation
         provider_key = self.selected_provider_key
@@ -442,14 +452,23 @@ class ProviderDetectionStep(SetupStep):
         run_wizard_worker(
             self,
             partial(
-                self._discover_servers, generation, provider_key, user_requested=user_requested
+                self._discover_servers,
+                generation,
+                provider_key,
+                user_requested=user_requested,
+                quiet=quiet,
             ),
             exclusive=True,
             group="setup-provider-local-discovery",
         )
 
     async def _discover_servers(
-        self, generation: int, provider_key: str, *, user_requested: bool = False
+        self,
+        generation: int,
+        provider_key: str,
+        *,
+        user_requested: bool = False,
+        quiet: bool = False,
     ) -> None:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         state = "complete"
@@ -471,8 +490,11 @@ class ProviderDetectionStep(SetupStep):
         if not self.is_attached or not listed:
             return
         # TASK-34100.6 (review provider-02): every scan updates the list's
-        # sticky 'Ready on this machine' rows, whatever is selected.
+        # sticky 'Ready on this machine' rows, whatever is selected; a quiet
+        # re-check only adds (G6-BV3-04: a slow answer never drops a row).
         self._found_ever_scanned = True
+        if quiet:
+            servers = (*getattr(self, "_found_servers", ()), *servers)
         self._show_found_servers(servers)
         self._render_no_server_state(servers)
         if (
