@@ -69,11 +69,11 @@ ADR required: no; existing ADR-018; ADR-116 remains Proposed context.
 **Files:** modify `tldw_chatbook/UI/Screens/settings_screen.py`; create `Tests/UI/test_settings_remaining_input_event_origin.py`; update `Docs/Architecture/app-shell.md` and measured size expectations only if needed.
 **Interfaces:** five AGENT_BUDGET_FIELDS, tool_result_display_chars, sidechat_model, sidechat_prompt_template keep current draft/validation/writer APIs.
 ADR required: no; Settings ADR-033 and ADR-161.
-- [ ] Add mounted private-profile tests matching the audit: only paste threshold 120 staged, first eight backing values changed, then changed again; expect draft exactly `{'paste_collapse_threshold': 120}` and every untouched display follows the second refresh. Add queued-stale/genuine typing, mount/return and compact/wide real-writer Save/Revert coverage.
-- [ ] Record expected draft pollution/stale display failures before product changes.
-- [ ] Use native publication prevention for programmatic assignments and correct stale/no-op event handling for initialization; remove obsolete temporary sync flags. Preserve invalid text and the first genuine edit after refresh, including a previous display value.
-- [ ] Run new regressions, affected budget/side-chat tests and existing paste/parallel origin regressions; test Input identity/focus/selection, size/import guards and scoped static checks.
-- [ ] Update owner documentation, self-review and commit owned files; do not extract another section or alter runtime budgets.
+- [x] Add mounted private-profile tests matching the audit: only paste threshold 120 staged, first eight backing values changed, then changed again; expect draft exactly `{'paste_collapse_threshold': 120}` and every untouched display follows the second refresh. Add queued-stale/genuine typing, mount/return and compact/wide real-writer Save/Revert coverage.
+- [x] Record expected draft pollution/stale display failures before product changes.
+- [x] Use native publication prevention for programmatic assignments and correct stale/no-op event handling for initialization; remove obsolete temporary sync flags. Preserve invalid text and the first genuine edit after refresh, including a previous display value.
+- [x] Run new regressions, affected budget/side-chat tests and existing paste/parallel origin regressions; test Input identity/focus/selection, size/import guards and scoped static checks.
+- [x] Update owner documentation, self-review and commit owned files; do not extract another section or alter runtime budgets.
 
 ### Task 4: TASK-35868 - Watchlists Rule draft preservation
 

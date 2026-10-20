@@ -1,7 +1,7 @@
 ---
 id: TASK-35867
 title: Keep remaining Console input refreshes out of user drafts
-status: In Progress
+status: Done
 created_date: 2026-10-20 19:24
 labels:
 - settings
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-20 20:23
+updated_date: 2026-10-20 21:08
 ---
 
 ## Description
@@ -41,11 +41,11 @@ Reason: No new ADR is expected: the screen keeps draft, validation and Save/Reve
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Value-changing sync of all five budget fields, tool_result_display_chars, sidechat_model and sidechat_prompt_template adds no untouched draft values/originals or new staged-result message and preserves unrelated dirty or invalid drafts.
-- [ ] #2 Repeated refreshes show the latest backing values for untouched fields; the first genuine edit afterward, including a value equal to a prior display, is still staged.
-- [ ] #3 Mount/category return, Save and confirmed Revert do not turn initialization or stale queued messages into edits, and do not discard legitimate queued user edits.
-- [ ] #4 Ordinary updates preserve the mounted Input instances, active focus, cursor and selection without recomposing the enclosing detail pane.
-- [ ] #5 Existing budget ceilings/normalization, display limits, side-chat strings, real-writer Save/Revert and validation behavior remain intact; compact/wide private-profile tests cover refresh, actual typing and persistence.
+- [x] #1 Value-changing sync of all five budget fields, tool_result_display_chars, sidechat_model and sidechat_prompt_template adds no untouched draft values/originals or new staged-result message and preserves unrelated dirty or invalid drafts.
+- [x] #2 Repeated refreshes show the latest backing values for untouched fields; the first genuine edit afterward, including a value equal to a prior display, is still staged.
+- [x] #3 Mount/category return, Save and confirmed Revert do not turn initialization or stale queued messages into edits, and do not discard legitimate queued user edits.
+- [x] #4 Ordinary updates preserve the mounted Input instances, active focus, cursor and selection without recomposing the enclosing detail pane.
+- [x] #5 Existing budget ceilings/normalization, display limits, side-chat strings, real-writer Save/Revert and validation behavior remain intact; compact/wide private-profile tests cover refresh, actual typing and persistence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,3 +63,15 @@ Reason: Preserve the current Settings draft, validation and Save/Revert writer o
 
 Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 3).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+The eight remaining Console Inputs now suppress programmatic Changed publication with native prevention and retain genuine pending publications in weak per-Input value queues. Stale initialization and rapid A-to-B-to-A messages cannot erase a newer pending edit. Existing draft/stage/validation/normalization/Save/Revert writers remain unchanged; mounted controls preserve identity, focus, cursor and selection. Updated settings_screen.py, new mounted regression module, app-shell architecture, exact size ratchet (35,733 to 35,732) and incident-based Windows UTF-8 lesson.
+
+Evidence: commit 8989b69f0f. RED reproduces all-eight draft pollution, pre-delivery edit loss and equal-valued initialization interleaving. Final-source GREEN: 5 new compact/wide/queue/real-writer cases, 42 affected controls, 13 import/size guards and 1 real-runtime ceiling control (61 distinct targeted passes). Source/unchanged AST comparison, changed-method formatter/new-test Ruff/scoped syntax and whitespace checks pass. Whole-file inherited 12 E721/1 F401 and formatting differences remain unchanged. No broad filters/full suite/timeout increases.
+
+Superpowers independent review: spec compliant, quality Approved, no introduced findings. Limits: 1 legacy display-validation node stops in unchanged raw_source_selection_changed setup; an existing parallel writer 5s poll failed under concurrent load then passed its exact unmodified retry. Both outcomes retained. Category return adds 23 unrelated legacy values, all equal originals/non-dirty; exact 8 intended values/originals and dirty keys verified. These are recorded observations, not evidence of new dirty edits or bad Save.
+
+ADR required: no; existing 033-settings-commit-models-three-honestly-labeled.md and 161-component-pattern-library.md apply. Implementation/integration plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md. Windows default read encoding incident was caught before commit, rebuilt from exact UTF-8 BASE, excluded intermediate tests and added a lessons-testing-evidence entry.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

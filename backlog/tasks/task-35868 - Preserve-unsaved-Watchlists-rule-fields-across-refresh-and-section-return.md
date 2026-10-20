@@ -1,7 +1,7 @@
 ---
 id: TASK-35868
 title: Preserve unsaved Watchlists rule fields across refresh and section return
-status: To Do
+status: In Progress
 created_date: 2026-10-20 19:25
 labels:
 - watchlists
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-20 21:08
 ---
 
 ## Description
@@ -44,3 +47,19 @@ Reason: No new ADR is expected for a Watchlists-local view-state correction with
 - [ ] #4 Explicit Save and Cancel retire only the appropriate draft; validation failure retains it, and existing condition-guidance, backend eligibility and mutation behavior remain intact.
 - [ ] #5 Mounted tests type real changes before both triggers, cover New/Edit and Save/Cancel, and retain the completed visibility/seeding/guidance regressions.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/042-watchlists-reader-first-ia.md; backlog/decisions/161-component-pattern-library.md
+Reason: Retain raw Rule draft as ephemeral Watchlists-local view state under existing pane/screen ownership; no storage or sync-policy change.
+
+- Add New/Edit tests that actually type changed fields before a changed Rules snapshot; establish settled focus/cursor/selection first. Include raw invalid threshold text and original target identity. Add a mounted screen Rules -> another section -> Rules return plus Save/Cancel/validation cases.
+- Record expected value/identity/section-return failures on original code.
+- Update only list presentation on list changes; retain raw form draft at the existing narrow owner and carry it across section reconstruction. Preserve condition guidance and selection/initial-seeding contracts.
+- Run new tests plus existing Rules pane/scoped-rebuild/seeding tests and measured size/import/static guards; record exact evidence.
+- Update docs, self-review and commit owned files; no storage/sync policy or broad workbench rewrite.
+
+Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 4).
+<!-- SECTION:PLAN:END -->
