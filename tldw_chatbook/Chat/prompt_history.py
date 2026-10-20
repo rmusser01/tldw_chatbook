@@ -39,9 +39,22 @@ _DEFAULT_PATH_MEMO: tuple[tuple, Path] | None = None
 
 
 def _default_path_inputs() -> tuple:
-    """What the default path depends on, cheaply: no lock, no file access."""
+    """What the default path depends on, cheaply: no lock, no file access.
+
+    The config module and its installed mapping are compared by identity,
+    the rest by value (``_same_inputs``).
+    """
     config = sys.modules["tldw_chatbook.config"]
-    return (config, config.current_config_identity(), os.environ.get("HOME"))
+    return (
+        config,
+        getattr(config, "_CONFIG_CACHE", None),
+        config.current_config_identity(),
+        os.environ.get("HOME"),
+    )
+
+
+def _same_inputs(kept: tuple, current: tuple) -> bool:
+    return kept[0] is current[0] and kept[1] is current[1] and kept[2:] == current[2:]
 
 
 def default_prompt_history_path() -> Path:
@@ -51,27 +64,31 @@ def default_prompt_history_path() -> Path:
     loop (its source selection, twice per append), and each resolution ran
     guarded config operations (storage admission, companion guard, pause
     probe): about 10 ms each. The result is kept while its inputs hold: the
-    installed config module, its identity (generation and effective path) and
-    ``HOME``, which the default data root follows. Inputs are read before and
-    after the resolution, and the result is kept only if they did not move.
+    config module, the mapping it has installed, its identity (generation and
+    effective path) and ``HOME``, which the default data root follows. Inputs
+    are read before and after the resolution, and the result is kept only if
+    they did not move. The installed mapping is in the key because a reload
+    (an external edit, a forced reload) installs a new mapping without a new
+    generation; ``get_user_data_dir``'s own memo keys on it for that reason.
 
-    The identity does not see an external edit (a reload installs a new
-    config without a new generation). That is safe here: a bound history's
-    state check (``raw_participants._participant_state``) compares its path
-    with the live config's mapping when the file job is created and during
-    its IO, and refuses a mismatch, so a kept path is refused, never written
-    to, as origin/dev refuses it.
+    A path kept across a change these inputs do not see (the data directory
+    removed or re-permissioned on disk) is still checked where it is used: a
+    bound history's state check (``raw_participants._participant_state``)
+    compares it with the live config's mapping when the file job is created
+    and during its IO, and the file job's guarded IO re-checks the directory
+    (a removed one is recreated, a group-writable one refused with
+    ``PrivatePathError``, as on origin/dev).
     """
     global _DEFAULT_PATH_MEMO
     from ..config import get_user_data_dir
 
     inputs = _default_path_inputs()
     memo = _DEFAULT_PATH_MEMO
-    if memo is not None and memo[0][0] is inputs[0] and memo[0][1:] == inputs[1:]:
+    if memo is not None and _same_inputs(memo[0], inputs):
         return memo[1]
     path = get_user_data_dir() / "prompt_history.jsonl"
     after = _default_path_inputs()
-    if after[0] is inputs[0] and after[1:] == inputs[1:]:
+    if _same_inputs(inputs, after):
         _DEFAULT_PATH_MEMO = (inputs, path)
     return path
 

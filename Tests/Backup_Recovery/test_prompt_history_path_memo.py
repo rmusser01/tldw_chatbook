@@ -130,3 +130,35 @@ async def test_a_profile_change_the_identity_misses_is_still_refused(
 
     assert _inputs(history) == ["first prompt"]
     assert history.persistence_error == "RecoveryRequired"
+
+
+@pytest.mark.asyncio
+async def test_a_history_opened_after_an_external_edit_binds_the_live_path(
+    local_root, monkeypatch
+):
+    """A reload installs a new config without moving the identity.
+
+    A history opened afterwards must bind the live profile's path, as on
+    origin/dev, and append there. Red when the kept path outlives the
+    installed config: the new history bound the old profile's path and its
+    first append was refused (``RecoveryRequired``).
+    """
+    config = install_config_source(monkeypatch)
+    history = PromptHistory(prompt_history.default_prompt_history_path())
+    assert await history.append("first prompt")
+    identity = config.current_config_identity()
+    monkeypatch.setattr(
+        config,
+        "_CONFIG_CACHE",
+        {**config._CONFIG_CACHE, "general": {"users_name": "bd10rs_other"}},
+    )
+    assert config.current_config_identity() == identity
+    live = config.get_user_data_dir() / "prompt_history.jsonl"
+    assert live != history.path
+
+    reopened = PromptHistory(prompt_history.default_prompt_history_path())
+
+    assert reopened.path == live
+    assert await reopened.append("after the edit")
+    assert _inputs(reopened) == ["after the edit"]
+    assert _inputs(history) == ["first prompt"]
