@@ -4319,6 +4319,20 @@ parent trips private-path validation), and export it in the shell so the
 child cannot inherit the real one. Afterwards, diff the real user data dir
 by mtime to confirm nothing leaked.
 
+**Recurred, S1 live verification (2026-10-20).** A HOME made with `mktemp -d`
+was still refused. The app opened on Backup & Restore with "Recovery required:
+configuration_unavailable", wrote nothing under the scratch HOME, and never
+reached `issue_code` (the issue_code wrapper above logged nothing).
+`mktemp -d` returns `/var/folders/...`, and on macOS `/var` is a symlink to
+`/private/var`. Passing the resolved path instead
+(`os.path.realpath(tempfile.mkdtemp())`, `/private/var/folders/...`) started the
+app normally, with config and data under the scratch HOME. The likely
+mechanism, read from the code but not traced: `launcher.startup_preflight`
+reads the config through `_read_recovery_file`, whose parent walk opens with
+`O_NOFOLLOW`, so the symlinked `/var` raises before a missing file can read as
+missing. **Rule addition:** export HOME as the realpath of the `mktemp -d`
+directory.
+
 PR3141 connected recovery qualification also exposed two false test waits: waiting on all App workers raised WorkerCancelled for normal exclusive console-sync replacement, and matching a child Static title returned while its recovery-card ancestor was still hidden. Wait on the actual recovery worker and the card display predicate, retaining the original10s/4s bounds and all provider/persistence/screenshot assertions; the corrected three-action journey passed31.80s.
 
 ## Canvas UAT needs independent startup, terminal-paint and status-history evidence (TASK-35520–35522, 2026-10-18)

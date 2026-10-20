@@ -94,4 +94,11 @@ With Find empty, Switch model (Alt+M) and Chat settings' model picker (its pick 
 **Review round 3** (range c000a4d55e..1a7dd20ef5, "Yes" with two wording nits and one timing note; fixed by the coordinator): the [past-the-bound] docstring and the round-2 paragraph say the default is past the 100 the probe reads (the stub lists m120 121st of 150), not one the server never listed; console.md's listing paragraph says the default follows this chat's model on its own provider. Shard group index 4 (the S1 entries the lane's --shard 4 10 deals, including the probe function), re-timed 3 of 3 serially in the lane's install set: 29.6-30.8 s junit, 31.2-32.7 s session, inside the census comment's ranges (one review run on a loaded machine had read 34.7 s session).
 
 **Review round 4** (aeffadac66): clean, one cosmetic note (a short line in the guide's paragraph), reflowed with no word changed. The review over 1ca320e4bb..aeffadac66 took four rounds: round 1 the code (correct; three doc fixes), rounds 2-3 the guide's wording at the listing bound and for ADR-020, round 4 clean. Still open for the PR, not this task: D-b in the PR body, and the plan's live verification, run after S1 is rebased onto dev with #3169.
+
+**Live verification** (feat/s1-saved-models ac98be4a65 on dev 1bbc145ffc, 2026-10-20, sandboxed scratch profile, 211x44 and 235x52).
+- **The chat.** Its current pair was Custom / stub-chat, through `chat_defaults`. No message was sent, which keeps to the owner's no-chat-send rule; the plan's sent message was only a way to give the chat that pair.
+- **The default.** llama.cpp's saved default was `fake-beta`, from its provider table and last in its saved list.
+- **Switch model before the probe answered** (stub A held 2 s): `fake-beta`, `m-one`, `m-two`, "… 1 more".
+- **After it answered** (listing `fake-alpha`, `fake-gamma`, `fake-delta`, `fake-beta`): `fake-beta`, `fake-alpha`, `fake-gamma`, "… 1 more". The same holds at 235x52.
+- **The stubs** saw only loopback GETs, and stub C no POST.
 <!-- SECTION:NOTES:END -->
