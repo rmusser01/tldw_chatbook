@@ -77,36 +77,11 @@ def _ready(switcher: ConsoleModelPopover, provider: str) -> tuple[list, str | No
     return [row.model for row in rows if row.kind == "pair"], more
 
 
-@private_profile_test
-@pytest.mark.parametrize(
-    "case",
-    ["first", "new-chat-default", "behind-current", "is-current", "under-recent"],
-)
-async def test_the_saved_default_leads_its_group_or_follows_the_current_model(
-    request, case
+async def _anthropic_group(
+    *, config=CONFIG_WITH_DEFAULT, draft=("llama_cpp", "model-a"), recent=None
 ):
-    """AC#1: with Find empty, the provider's saved default for new chats
-    (P8's resolver: ``chat_defaults`` for its own provider, else the
-    provider's table) leads its group, though it is saved last of five; it is
-    second behind this chat's model when that leads the group; nothing moves
-    when it is this chat's model; and a pair already listed under RECENT is
-    not listed again (TASK-35012's position rule)."""
-    config = deepcopy(CONFIG_WITH_DEFAULT)
-    draft = ("llama_cpp", "model-a")
-    recent = None
-    if case == "new-chat-default":
-        # The table names list[0]; new chats on Anthropic start with DEFAULT.
-        config["api_settings"]["anthropic"]["model"] = ANTHROPIC[0]
-        config["chat_defaults"] = {"provider": "anthropic", "model": DEFAULT}
-    elif case == "behind-current":
-        draft = ("anthropic", "claude-opus-4-1")
-    elif case == "is-current":
-        draft = ("anthropic", DEFAULT)
-    elif case == "under-recent":
-        recent = (
-            _Use("openrouter", "openai/gpt-y", timedelta(hours=1)),  # PREVIOUS
-            _Use("anthropic", DEFAULT, timedelta(hours=2)),
-        )
+    """Anthropic's READY PROVIDERS models and "… N more" line, the painted
+    list, and RECENT's pairs, as Alt+M opens with Find empty."""
     app = SwitcherHarness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(
@@ -121,22 +96,56 @@ async def test_the_saved_default_leads_its_group_or_follows_the_current_model(
             ),
         )
         models, more = _ready(switcher, "anthropic")
-        lines = list_lines(app, switcher)
         recent_rows = [(row.provider, row.model) for row in _group(switcher, "RECENT")]
+        return models, more, list_lines(app, switcher), recent_rows
 
-    if case in {"first", "new-chat-default"}:
-        assert models == [DEFAULT, *ANTHROPIC[:2]], models
-        assert more == "… 2 more Anthropic models", more
-    elif case == "behind-current":
-        assert models == ["claude-opus-4-1", DEFAULT, ANTHROPIC[0]], models
-        assert CURRENT_MARK in line_with(lines, " claude-opus-4-1 ")
-    elif case == "is-current":
-        assert models == [DEFAULT, *ANTHROPIC[:2]], models
-        assert CURRENT_MARK in line_with(lines, f" {DEFAULT} ")
+
+@private_profile_test
+@pytest.mark.parametrize("source", ["provider-table", "new-chat-default"])
+async def test_the_saved_default_leads_its_group_though_saved_last(request, source):
+    """AC#1: with Find empty, the provider's saved default for new chats leads
+    its group, though it is saved last of five. It is P8's resolver's model:
+    the provider's table, or ``chat_defaults`` on its own provider, which
+    outranks the table (here the table names the list's first model)."""
+    config = deepcopy(CONFIG_WITH_DEFAULT)
+    if source == "new-chat-default":
+        config["api_settings"]["anthropic"]["model"] = ANTHROPIC[0]
+        config["chat_defaults"] = {"provider": "anthropic", "model": DEFAULT}
+    models, more, _lines, _recent = await _anthropic_group(config=config)
+
+    assert models == [DEFAULT, *ANTHROPIC[:2]], models
+    assert more == "… 2 more Anthropic models", more
+
+
+@private_profile_test
+@pytest.mark.parametrize("current", ["another-model", "the-default"])
+async def test_the_saved_default_follows_this_chats_model_or_is_it(request, current):
+    """AC#1: when this chat's model is the provider's, it leads the group
+    (ADR-020) and the default is second; when the default is this chat's
+    model, nothing moves."""
+    model = "claude-opus-4-1" if current == "another-model" else DEFAULT
+    models, _more, lines, _recent = await _anthropic_group(draft=("anthropic", model))
+
+    if current == "another-model":
+        assert models == [model, DEFAULT, ANTHROPIC[0]], models
     else:
-        assert recent_rows == [("anthropic", DEFAULT)], recent_rows
-        assert models == ANTHROPIC[:3], models
-        assert more == "… 1 more Anthropic model", more
+        assert models == [DEFAULT, *ANTHROPIC[:2]], models
+    assert CURRENT_MARK in line_with(lines, f" {model} ")
+
+
+@private_profile_test
+async def test_a_saved_default_listed_under_recent_is_not_listed_again(request):
+    """AC#1, AC#2: a pair already listed under RECENT is not repeated, so
+    its provider's group keeps the rest in list order."""
+    recent = (
+        _Use("openrouter", "openai/gpt-y", timedelta(hours=1)),  # PREVIOUS
+        _Use("anthropic", DEFAULT, timedelta(hours=2)),
+    )
+    models, more, _lines, recent_rows = await _anthropic_group(recent=recent)
+
+    assert recent_rows == [("anthropic", DEFAULT)], recent_rows
+    assert models == ANTHROPIC[:3], models
+    assert more == "… 1 more Anthropic model", more
 
 
 @private_profile_test
