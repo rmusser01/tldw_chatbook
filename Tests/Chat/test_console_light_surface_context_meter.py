@@ -33,9 +33,10 @@ class _Captured(Exception):
     """Stops the preflight once ``prepare`` has seen the tool rows."""
 
 
-def _preflight_tools(bridge, resolution, session_id="s") -> list[dict]:
+def _preflight_tools(bridge, resolution, session_id="s", messages=None) -> list[dict]:
     """Drive the real capacity preflight up to ``prepare`` and return the
-    ``tools=`` rows it would account."""
+    ``tools=`` rows it would account for ``messages`` (default: one short
+    user message)."""
     names = inspect.signature(ConsoleCompactionPreflight).parameters
     kwargs = {name: (lambda: None) for name in names}
     kwargs["read_controller__agent_bridge"] = lambda: bridge
@@ -51,7 +52,8 @@ def _preflight_tools(bridge, resolution, session_id="s") -> list[dict]:
             session_id=session_id,
             owner=SimpleNamespace(context_policy_overrides=None),
             resolution=resolution,
-            provider_messages=[{"role": "user", "content": "Reply with just: hi"}],
+            provider_messages=messages
+            or [{"role": "user", "content": "Reply with just: hi"}],
             prepare=prepare,
             agent_tools_enabled=True,
             assessment_sink=lambda *_args: None,
@@ -608,3 +610,134 @@ def test_the_meter_counts_the_agent_surface_while_the_conversations_children_run
     rows = _row_names(_preflight_tools(bridge, roomy, session_id=session.id))
     assert "spawn_subagent" in rows, sorted(rows)
     assert _row_names(_preflight_tools(bridge, roomy, session_id="other")) == LIGHT
+
+
+# -- review round 2: the meter sizes the tools against the request itself ----
+
+
+def _gpt4_8k():
+    """gpt-4's shape: native tools, a verified 8,192-token window and 4,096
+    tokens reserved for the reply (the live V2-1 model)."""
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+
+    return _test_resolution(
+        provider="OpenAI",
+        execution_key="openai",
+        model="gpt-4",
+        max_tokens=4096,
+        context_window=ContextWindowResolution(8_192, "model catalog", True),
+    )
+
+
+def _words(count: int) -> str:
+    return " ".join(["word"] * count)
+
+
+@pytest.mark.parametrize(
+    ("full", "system_words", "user_words", "shape"),
+    [
+        (True, 0, 5, "direct"),
+        (True, 0, 600, "discovery"),
+        (True, 0, 1500, "inbox-only"),
+        (False, 0, 5, "light"),
+        (False, 0, 3700, "none"),
+        (False, 3700, 5, "none"),
+    ],
+    ids=[
+        "full-short",
+        "full-medium",
+        "full-long",
+        "light-short",
+        "light-long-message",
+        "light-long-session-prompt",
+    ],
+)
+def test_the_preflight_counts_what_the_send_carries_for_this_conversation(
+    tmp_path, full, system_words, user_words, shape
+):
+    """Review round 2 (V2-1, major; R2-1): the meter re-planned the tools
+    against a one-row stand-in request, so it counted the surface that fits
+    an EMPTY conversation. Live on gpt-4 (8k) with Full agent tools on, it
+    counted 3,351 tokens of discovery tools and held a four-message chat for
+    compaction, while the send -- planned against the real conversation --
+    carried only ``read_agent_messages`` (OpenAI reported 510 input tokens).
+    The preflight now hands the request it is assessing to the preview, so
+    for every conversation size the rows it counts are the rows the send
+    carries."""
+    if full:
+        assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [["hi"], ["hi"]]
+    )
+    if full:
+        _send(bridge, session, assistant_id, _roomy_native())
+    session_prompt = _words(system_words) if system_words else ""
+    request = [{"role": "user", "content": _words(user_words)}]
+    system = [{"role": "system", "content": session_prompt}] if session_prompt else []
+
+    metered = _row_names(
+        _preflight_tools(
+            bridge, _gpt4_8k(), session_id=session.id, messages=[*system, *request]
+        )
+    )
+    # A light send composes the real ``ask_user`` schema, as production does
+    # (the shared harness's local stand-in has a one-word schema, which fits
+    # where the real one does not). A full send keeps the harness provider
+    # the remembered full surface was composed from.
+    light_provider = {} if full else {"local_provider": _AskUserProvider()}
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        _gpt4_8k(),
+        agent_messages=request,
+        session_system_prompt=session_prompt,
+        **light_provider,
+    )
+    sent = _native_names(gateway, gateway.calls - 1)
+
+    assert metered == sent, (sorted(metered), sorted(sent))
+    if shape == "direct":
+        assert "spawn_subagent" in sent and "find_tools" not in sent, sorted(sent)
+    elif shape == "discovery":
+        assert "find_tools" in sent, sorted(sent)
+    elif shape == "inbox-only":
+        assert sent == {"read_agent_messages"}, sorted(sent)
+    elif shape == "light":
+        assert sent == LIGHT, sorted(sent)
+    else:
+        assert sent == set(), sorted(sent)
+
+
+def test_a_first_message_that_fits_without_the_tools_is_not_refused(tmp_path):
+    """Review round 2 (R2-1): sized against the stand-in, the light set
+    (about 780 fenced tokens on a verified 8,192-token llama.cpp window)
+    joined a long first message as mandatory input, so the capacity check
+    refused it before commit ("This request cannot fit the selected model
+    ... reduce mandatory context"). The send's own planner drops the tools
+    for that message, and the request fits without them: it must go out."""
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
+    resolution = _test_resolution(
+        model="qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        max_tokens=4096,
+        context_window=ContextWindowResolution(8_192, "server metadata", True),
+    )
+    controller = ConsoleChatController(store=bridge._store, provider_gateway=None)
+    controller._agent_bridge = bridge
+    verdicts = []
+
+    controller._assess_request_capacity_only(
+        session_id=session.id,
+        owner=SimpleNamespace(context_policy_overrides=None),
+        resolution=resolution,
+        provider_messages=[{"role": "user", "content": _words(3400)}],
+        prepare=ConsoleProviderGateway(environ={}).prepare_chat_request,
+        agent_tools_enabled=True,
+        assessment_sink=lambda hold, decision, alert: verdicts.append(alert),
+    )
+
+    assert verdicts == [None]

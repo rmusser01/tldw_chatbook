@@ -121,6 +121,23 @@ def light_surface_configured() -> bool:
         return True
 
 
+def light_surface_prompts(session_system_prompt: str | None) -> tuple[str, str]:
+    """The light surface's ``(plain, direct)`` system prompts for one send.
+
+    The plain prompt is the session's own, or the neutral one-liner, and goes
+    out when no tool does. The direct prompt adds the "answer directly" line
+    and goes out with the light tools: live, gpt-4.1-nano called a tool for
+    "Reply with just: hi" without it. The send's planner and the meter's
+    re-plan both build them here, so they size the same request.
+    """
+    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
+    from tldw_chatbook.Internal_Prompts import get_internal_prompt
+
+    plain = (session_system_prompt or "").strip() or PLAIN_CHAT_SYSTEM_PROMPT
+    hint = get_internal_prompt("agents.console_light_surface_hint")
+    return plain, f"{plain}\n\n{hint}"
+
+
 def light_surface_budget(budget: Any) -> Any:
     """Return ``budget`` with sub-agents switched off.
 
