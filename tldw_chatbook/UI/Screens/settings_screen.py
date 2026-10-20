@@ -207,6 +207,7 @@ from ...Chat.provider_catalog import (
 )
 from ...config import (
     ConfigMutationResult,
+    refresh_runtime_config_from_cli_config,
     resolve_provider_api_key,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
@@ -1225,8 +1226,10 @@ MODEL_DISCOVERY_IDLE_COPY = (
     "No models discovered yet. Discover models lists what the configured "
     "endpoint serves."
 )
-MODEL_DISCOVERY_CAPABILITY_WARNING = (
-    "Capabilities unknown until saved or verified; text chat is assumed."
+#: Whole-S1 review: the file loaded, but the caches the lists come from did not.
+RELOAD_LISTS_NOT_REFRESHED = (
+    "Config reload: loaded, but the saved model lists may not have been refreshed; "
+    "reload again. Details are in Logs (F3)."
 )
 MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY = (
     "Multiple provider entries match this provider. Rename or remove duplicates before "
@@ -4009,8 +4012,9 @@ class SettingsScreen(BaseAppScreen):
         self._model_picker_overlay_provider = ""
         self._model_discovery_revision = 0
         self._model_discovery_clears_in_flight = 0
-        # Save selected is serialised, never cancelled (TASK-19559's rule).
+        # Add to model list is serialised, never cancelled (TASK-19559's rule).
         self._discovered_models_save_lock = asyncio.Lock()
+        self._discovered_pick: tuple[str, str] | None = None  # TASK-35011
         self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
         self._model_catalog_save_status = ""
         self._model_catalog_save_failed = False
@@ -4491,11 +4495,14 @@ class SettingsScreen(BaseAppScreen):
                     else None
                 ),
             }
+        from ..Settings_Modules import saved_model_list
         from ..Settings_Modules import settings_quit_guard as quit_guard
 
         # C-N1: a quit from another screen asks about these (quit_guard), named
         # after every capture, the snapshot preferences' too (cf3r1-N1).
         quit_guard.keep_snapshot_preferences(self, state)
+        if (pick := saved_model_list.kept_pick(self)) is not None:
+            state["discovered_pick"] = pick  # TASK-35011: kept with its draft
         titles = quit_guard.unsaved_settings_titles(self)
         state[quit_guard.KEPT_UNSAVED_TITLES] = titles
         return state
@@ -4578,9 +4585,11 @@ class SettingsScreen(BaseAppScreen):
             except (TypeError, ValueError):
                 self._speech_tts_draft_snapshot = None
 
+        from ..Settings_Modules import saved_model_list
         from ..Settings_Modules import settings_quit_guard as quit_guard
 
         quit_guard.restore_snapshot_preferences(self, state)
+        saved_model_list.restore_pick(self, state)
         continuation = state.get("provider_return_continuation")
         if not isinstance(continuation, Mapping) or set(continuation) != {
             "target",
@@ -13097,11 +13106,8 @@ class SettingsScreen(BaseAppScreen):
                 None,
             )
 
-        validation_result = (
-            f"Config validation: valid - {redact_secret_text(validation.message)}\n{source}"
-            if validation.valid
-            else f"Config validation: invalid - {redact_secret_text(validation.message)}\n{source}"
-        )
+        word = "valid" if validation.valid else "invalid"
+        validation_result = f"Config validation: {word} - {redact_secret_text(validation.message)}\n{source}"
         if not validation.valid:
             return (
                 validation_result,
@@ -13118,7 +13124,9 @@ class SettingsScreen(BaseAppScreen):
                 None,
             )
         if isinstance(loaded, dict):
-            return validation_result, f"Config reload: loaded\n{source}", loaded
+            refreshed = refresh_runtime_config_from_cli_config().caches_reloaded  # TASK-35010: an in-place edit, read here off the UI thread
+            line = "Config reload: loaded" if refreshed else RELOAD_LISTS_NOT_REFRESHED
+            return validation_result, f"{line}\n{source}", loaded
         return (
             validation_result,
             f"Config reload: failed - loaded config was not a table\n{source}",
@@ -13132,7 +13140,7 @@ class SettingsScreen(BaseAppScreen):
         loaded_config: dict | None,
     ) -> None:
         if loaded_config is not None:
-            self.app_instance.app_config = loaded_config
+            self._adopt_config(loaded_config)
         self._diagnostics_validation_result = validation_result
         self._diagnostics_reload_result = reload_result
         self._set_static_text(
@@ -13173,17 +13181,14 @@ class SettingsScreen(BaseAppScreen):
         adapter = SettingsConfigAdapter()
         try:
             validation = adapter.validate_config_file(self._config_path())
+            loaded = adapter.load(force_reload=True) if validation.valid else None
         except Exception as exc:
             return f"Config reload: failed - {redact_secret_text(str(exc))}"
         if not validation.valid:
             return f"Config reload: failed - {redact_secret_text(validation.message)}"
-        try:
-            loaded = adapter.load(force_reload=True)
-        except Exception as exc:
-            return f"Config reload: failed - {redact_secret_text(str(exc))}"
         if isinstance(loaded, dict):
-            self.app_instance.app_config = loaded
-            return "Config reload: loaded"
+            refreshed = self._adopt_config(loaded, force=True)
+            return "Config reload: loaded" if refreshed else RELOAD_LISTS_NOT_REFRESHED
         return "Config reload: failed - loaded config was not a table"
 
     def _raw_config_model(self) -> "AdvancedConfigSettings":
@@ -13191,14 +13196,25 @@ class SettingsScreen(BaseAppScreen):
 
         if self._advanced_config_settings is None:
             self._advanced_config_settings = AdvancedConfigSettings(
-                self._raw_config_changed,
-                lambda loaded: setattr(self.app_instance, "app_config", loaded),
+                self._raw_config_changed, self._adopt_config
             )
         self._advanced_config_settings.changed = self._raw_config_changed
-        self._advanced_config_settings.applied = (
-            lambda loaded, owner=self.app_instance: setattr(owner, "app_config", loaded)
-        )
+        self._advanced_config_settings.applied = self._adopt_config
         return self._advanced_config_settings
+
+    def _adopt_config(self, loaded: dict, *, force: bool = False) -> bool:
+        """Install a config and its lists in place, so no picker rebuilds (TASK-35010);
+        ``force`` re-reads the file; False when that could not refresh the lists."""
+        from ...LLM_Provider_Catalog.model_discovery_persistence import (
+            refresh_providers_models,
+        )
+
+        self.app_instance.app_config = loaded
+        refreshed = refresh_providers_models(self.app_instance, force=force)
+        if self.is_attached:  # a popped screen stays is_mounted
+            self._sync_model_picker(self._provider_widget_value() or None, reload=True)
+            self._refresh_advanced()
+        return refreshed
 
     def _raw_config_changed(self) -> None:
         if not self.is_mounted:
@@ -14223,7 +14239,7 @@ class SettingsScreen(BaseAppScreen):
             else:
                 model = (
                     resolve_remembered_provider_model(
-                        self._app_config_mapping(), provider
+                        self._app_config_mapping(), provider, skip_samples=True
                     )
                     or ""
                 )
@@ -15595,7 +15611,7 @@ class SettingsScreen(BaseAppScreen):
 
         Returns:
             True when discovery marks it persisted or config already lists it,
-            so Save selected would add nothing for it.
+            so Add to model list would add nothing for it.
         """
         model_id = str(getattr(model, "model_id", "") or "").strip()
         return bool(getattr(model, "persisted", False)) or model_id in saved_ids
@@ -15603,7 +15619,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_model_default(self, provider: str) -> str:
         try:
             configured_model = resolve_remembered_provider_model(
-                self._app_config_mapping(), provider
+                self._app_config_mapping(), provider, skip_samples=True
             )
         except ValueError:
             configured_model = None
@@ -16433,11 +16449,11 @@ class SettingsScreen(BaseAppScreen):
         return options
 
     def _reset_provider_model_discovery_state(
-        self,
-        status: str = MODEL_DISCOVERY_IDLE_COPY,
+        self, status: str = MODEL_DISCOVERY_IDLE_COPY, *, forget_pick: bool = False
     ) -> None:
         # A monotonic revision rejects late work even after an A -> B -> A edit.
         self._model_discovery_revision += 1
+        self._discovered_pick = None if forget_pick else self._discovered_pick
         self._model_discovery_status = status
         self._model_discovery_models = ()
         self._model_discovery_selected_model_ids = set()
@@ -16503,27 +16519,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._refresh_advanced()
-
-    def _append_saved_discovered_models(
-        self,
-        provider_list_key: str | None,
-        model_ids: tuple[str, ...],
-    ) -> None:
-        if not provider_list_key or not model_ids:
-            return
-        providers_models = getattr(self.app_instance, "providers_models", None)
-        if not isinstance(providers_models, dict):
-            providers_models = {}
-            self.app_instance.providers_models = providers_models
-        current = providers_models.get(provider_list_key, [])
-        if not isinstance(current, list):
-            current = list(current) if isinstance(current, tuple) else []
-        seen = {model for model in current if isinstance(model, str)}
-        for model_id in model_ids:
-            if model_id not in seen:
-                current.append(model_id)
-                seen.add(model_id)
-        providers_models[provider_list_key] = current
 
     @work(exclusive=True, group="settings-model-discovery")
     async def _discover_provider_models_worker(self) -> None:
@@ -16668,7 +16663,7 @@ class SettingsScreen(BaseAppScreen):
 
         Args:
             provider: When given, re-scope the picker to this provider.
-            reload: Re-read the provider's lists, e.g. after Save selected
+            reload: Re-read the provider's lists, e.g. after Add to model list
                 added ids to them.
         """
         # Imported here: the picker module stays off the Settings route's
@@ -16712,21 +16707,6 @@ class SettingsScreen(BaseAppScreen):
                 return candidate
         return ""
 
-    def _activate_saved_model_if_field_empty(
-        self, saved_model_ids: tuple[str, ...]
-    ) -> None:
-        """Populate the empty Model field with a just-saved model (TASK-369)."""
-        try:
-            model_input = self.query_one("#settings-model-value", Input)
-        except QueryError:
-            return
-        next_value = self._model_to_activate_after_save(
-            model_input.value, saved_model_ids
-        )
-        if next_value and next_value != model_input.value:
-            # Not quiet: Input.Changed stages the model draft.
-            self._set_model_field_value(next_value, quiet=False)
-
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
         provider_key = provider_config_key(provider)
@@ -16750,7 +16730,7 @@ class SettingsScreen(BaseAppScreen):
             selected_model_ids = sorted(self._model_discovery_selected_model_ids)
         if not selected_model_ids:
             # Capture fix 3 round 1, finding 4: the line is the one report.
-            self._model_discovery_status = "Select discovered models to save."
+            self._model_discovery_status = "Select discovered models to add."
             self._refresh_model_discovery_widgets()
             return
 
@@ -16772,29 +16752,9 @@ class SettingsScreen(BaseAppScreen):
             logger.warning(
                 f"Provider model discovery persistence failed: {type(exc).__name__}"
             )
-            # The step follows what is on screen now: Discover, a Clear that
-            # worked or a provider change since the press drop the checked
-            # rows; a Clear that failed keeps them. A Clear still running may
-            # yet drop them, so it counts as dropping them.
-            same_provider = (
-                provider_config_key(self._provider_widget_value()) == provider_key
-            )
-            if (
-                same_provider
-                and not self._model_discovery_clears_in_flight
-                and set(selected_model_ids) <= self._model_discovery_selected_model_ids
-            ):
-                retry = "Try Save again"
-            elif same_provider:
-                retry = (
-                    "Select them again (Discover first if they are no longer "
-                    "listed), then press Save selected"
-                )
-            else:
-                retry = (
-                    f"Switch back to {self._provider_display_label(provider)}, "
-                    "Discover and select them again, then press Save selected"
-                )
+            from ..Settings_Modules.saved_model_list import retry_step
+
+            retry = retry_step(self, provider, selected_model_ids)
             failure = failure_status_text(
                 "Could not save the discovered models",
                 exc,
@@ -16814,14 +16774,14 @@ class SettingsScreen(BaseAppScreen):
             if str(model_id).strip()
         )
         if status == "saved":
-            provider_list_key = getattr(result, "provider_list_key", None)
-            self._append_saved_discovered_models(provider_list_key, saved_model_ids)
-            count, label = len(saved_model_ids), self._provider_display_label(provider)
-            receipt = (
-                f"Saved {count} discovered model{'' if count == 1 else 's'} to {label}."
-                if count
-                else f"The selected models are already saved for {label}."
+            from ...LLM_Provider_Catalog.model_discovery_persistence import (
+                refresh_providers_models,
             )
+            from ..Settings_Modules.saved_model_list import add_receipt, fill_default
+
+            # TASK-35010: the lists follow the file the save just wrote.
+            refresh_providers_models(self.app_instance)
+            label = self._provider_display_label(provider)
             # The save belongs to its original provider even if the form moved.
             # Discover or Clear since the press own the status line, so the
             # receipt is a toast (its one report); the saved ids still group
@@ -16829,16 +16789,17 @@ class SettingsScreen(BaseAppScreen):
             if revision != self._model_discovery_revision:
                 if provider_config_key(self._provider_widget_value()) == provider_key:
                     self._sync_model_picker(provider, reload=True)
+                receipt = add_receipt(label, saved_model_ids)
                 self.app.notify(receipt, severity="information", markup=False)
                 return
             # TASK-369: recognition over recall — offer the saved model for
             # activation instead of leaving an empty Model field the user must
             # retype from memory of a name the cleared discovery list no longer
             # shows.
-            self._activate_saved_model_if_field_empty(saved_model_ids)
+            filled = fill_default(self, saved_model_ids)
             # The saved ids now group as saved in the Default model picker.
             self._sync_model_picker(provider, reload=True)
-            self._model_discovery_status = receipt
+            self._model_discovery_status = add_receipt(label, saved_model_ids, filled)
             self._refresh_model_discovery_widgets()
             return
 
@@ -16853,7 +16814,7 @@ class SettingsScreen(BaseAppScreen):
     def _report_discovered_models_save_failure(
         self, text: str, revision: int, provider: str
     ) -> None:
-        """Say once why Save selected saved nothing: on its line, or (once
+        """Say once why Add to model list added nothing: on its line, or (once
         Discover, Clear or a provider change own that line) in a warning
         toast that names the provider the save was for."""
         if revision != self._model_discovery_revision:
@@ -18081,8 +18042,10 @@ class SettingsScreen(BaseAppScreen):
         return rows + save_row
 
     def _provider_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        from ..Settings_Modules.saved_model_list import SAVE_ROW_COPY
+
         rows = self._provider_field_guidance_rows_base()
-        save_copy = (
+        save_copy = SAVE_ROW_COPY.get(self._active_settings_field_id or "") or (
             INSTANT_APPLY_BEHAVIOR_COPY
             if self._active_settings_field_id
             in {
@@ -18204,9 +18167,9 @@ class SettingsScreen(BaseAppScreen):
             from ..Settings_Modules.providers_models_card import endpoint_field_guide
 
             return endpoint_field_guide(provider, endpoint_key)
-        from ..Settings_Modules.providers_models_card import connect_field_guide
+        from ..Settings_Modules.providers_models_card import card_field_guide
 
-        if (guide := connect_field_guide(self, field_id)) is not None:
+        if (guide := card_field_guide(self, field_id)) is not None:
             return guide
         if field_id == "settings-provider-api-mode":
             purpose = (
@@ -24579,7 +24542,7 @@ class SettingsScreen(BaseAppScreen):
             provider_value
         ):
             # The discovery listing is the provider's the form just left.
-            self._reset_provider_model_discovery_state()
+            self._reset_provider_model_discovery_state(forget_pick=True)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
         self._focus_navigation_provider_field(field or self._navigation_field or "")
@@ -30557,7 +30520,7 @@ class SettingsScreen(BaseAppScreen):
             )
         model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
-        self._reset_provider_model_discovery_state()
+        self._reset_provider_model_discovery_state(forget_pick=True)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -30678,14 +30641,16 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         """Stage a chosen model as the default for new chats (AC#3, C4).
 
-        Any listed id replaces a default that is already set; the saved
-        model list is untouched (ADR-002: Save selected persists ids).
+        Any listed id replaces a default that is already set; a discovered
+        one also joins the saved list on s (TASK-35011, ADR-002 amendment).
 
         Args:
             event: The picker's choice.
         """
+        from ..Settings_Modules.saved_model_list import note_pick
+
         event.stop()
-        self._set_model_field_value(event.model_id, quiet=False)
+        note_pick(self, event.model_id)
 
     def on_model_search_picker_model_value_changed(
         self, event: "ModelSearchPicker.ModelValueChanged"
@@ -30695,8 +30660,10 @@ class SettingsScreen(BaseAppScreen):
         Args:
             event: The picker's Custom ID edit, or its rollback.
         """
+        from ..Settings_Modules.saved_model_list import note_pick
+
         event.stop()
-        self._set_model_field_value(event.model_id or "", quiet=False)
+        note_pick(self, event.model_id or "", custom=event.custom)
 
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
@@ -30822,7 +30789,7 @@ class SettingsScreen(BaseAppScreen):
         ):
             return
         self._stage_provider_value("endpoint", event.value.strip())
-        self._reset_provider_model_discovery_state()
+        self._reset_provider_model_discovery_state(forget_pick=True)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -30930,7 +30897,7 @@ class SettingsScreen(BaseAppScreen):
         ):
             return
         self._stage_provider_value("credential_env_var", event.value.strip())
-        self._reset_provider_model_discovery_state()
+        self._reset_provider_model_discovery_state(forget_pick=True)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -30971,7 +30938,7 @@ class SettingsScreen(BaseAppScreen):
             draft.originals.pop("api_key", None)
             if not draft.is_dirty:
                 self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
-        self._reset_provider_model_discovery_state()
+        self._reset_provider_model_discovery_state(forget_pick=True)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -31041,7 +31008,7 @@ class SettingsScreen(BaseAppScreen):
         )
         if api_key_input is not None:
             self._set_provider_api_key_input_value(api_key_input, "")
-        self._reset_provider_model_discovery_state()
+        self._reset_provider_model_discovery_state(forget_pick=True)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -33632,6 +33599,9 @@ class SettingsScreen(BaseAppScreen):
                 for section, keys in delete_keys.items()
                 if keys
             }
+            from ..Settings_Modules.saved_model_list import LIST_CHANGED_COPY, join_pick
+
+            join = join_pick(self, provider, model, section_values)
             evidence_store = self._provider_evidence_store()
             save_lease = (
                 evidence_store.begin_save(tested_identity)
@@ -33645,6 +33615,7 @@ class SettingsScreen(BaseAppScreen):
                     model=model,
                     section_values=section_values,
                     delete_keys=normalized_delete_keys,
+                    locked_snapshot_precondition=join.precondition,
                 )
             except ValueError:
                 mutation_result = ConfigMutationResult(
@@ -33684,6 +33655,7 @@ class SettingsScreen(BaseAppScreen):
                     section_values,
                     normalized_delete_keys,
                 )
+                join.applied(self, provider)
                 if (
                     next_model_capabilities is not None
                     or delete_model_capabilities_entry
@@ -33743,8 +33715,10 @@ class SettingsScreen(BaseAppScreen):
                 if self._provider_return_outcome is not None:
                     self.call_after_refresh(self._focus_provider_return_continuation)
                 self.app.notify(
-                    f"Provider and model settings saved: {PROVIDER_SAVE_SCOPE_COPY}",
+                    f"Provider and model settings saved: {PROVIDER_SAVE_SCOPE_COPY}"
+                    f"{join.receipt}",
                     severity="information",
+                    markup=False,  # the receipt names a model id
                 )
             else:
                 if mutation_result.file_replaced:
@@ -33753,6 +33727,8 @@ class SettingsScreen(BaseAppScreen):
                         "but the app could not reload it. Draft retained; restart "
                         "before retrying."
                     )
+                elif mutation_result.conflict:  # only join's check refuses here
+                    self._provider_save_result = LIST_CHANGED_COPY
                 else:
                     self._provider_save_result = (
                         "Provider settings not fully applied: the file was not "
@@ -34311,7 +34287,7 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_evidence_store().invalidate()
                 self._mark_provider_test_result_stale()
                 # A listing discovered from the discarded draft goes with it.
-                self._reset_provider_model_discovery_state()
+                self._reset_provider_model_discovery_state(forget_pick=True)
             self._update_provider_dynamic_widgets()
             self._update_draft_status_widgets(category)
         else:

@@ -375,6 +375,22 @@ not evidence that a callback cannot finish. The regression tests in
 `Tests/UI/test_console_context_window_modal.py` hold the old work across the
 navigation boundary before releasing it.
 
+**Recurred, TASK-35010 review, 2026-10-20.** A guard written as `if
+self.is_mounted:` to skip a closed Settings screen never skipped: in Textual
+8.2.8 `_is_mounted` is set on mount and never cleared, so popping a screen
+unmounts and detaches it but leaves `is_mounted` True. The guard was copied
+from `SettingsScreen._raw_config_changed`, whose `is_mounted` check only skips a
+screen not yet mounted (its unmount detaches that callback): a convention in
+the same file had answered a different question, "mounted yet?", not "left the
+stack?". For "has this screen left the stack": a screen that is not installed
+(not a `reusable` route, like Settings) is removed on pop, so `is_attached`
+answers it; an installed screen (the `reusable` routes Home, Chat and Library
+in screen_registry.py) stays attached after a pop, so check
+`screen in app.screen_stack` there. Pin it with a test that
+pops the screen first
+(`test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists`
+failed with `is_mounted`).
+
 ## A process's No route to host can be an app privacy denial
 
 **TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
@@ -4302,6 +4318,26 @@ fresh `mktemp -d` directory (never a `/tmp/...` literal path — the sticky
 parent trips private-path validation), and export it in the shell so the
 child cannot inherit the real one. Afterwards, diff the real user data dir
 by mtime to confirm nothing leaked.
+
+**Recurred, S1 live verification (2026-10-20).** A HOME made with `mktemp -d`
+was still refused. The app opened on Backup & Restore with "Recovery required:
+configuration_unavailable", wrote nothing under the scratch HOME, and never
+reached `issue_code` (the issue_code wrapper above logged nothing).
+`mktemp -d` returns `/var/folders/...`, and on macOS `/var` is a symlink to
+`/private/var`. Passing the resolved path instead
+(`os.path.realpath(tempfile.mkdtemp())`, `/private/var/folders/...`) started the
+app normally, with config and data under the scratch HOME. The mechanism is
+not identified. It is not the private-path walk: that follows root-owned
+platform symlinks, and `Utils/private_paths.py::_trusted_symlink` names
+`/var -> private/var` as one. `launcher.startup_preflight` turns any other
+`OSError` (a missing file reads as no config) or `ValueError`/`RuntimeError`
+from `_read_recovery_file` (storage
+admission's `RecoveryRequired` included) into the fixed
+`configuration_unavailable` without calling `issue_code`, which is why the
+wrapper saw nothing. Storage admission's lexical-versus-resolved path checks are
+candidates, untraced. To find it, wrap `_read_recovery_file` inside
+`startup_preflight` the same way, and record the exception. **Rule addition:**
+export HOME as the realpath of the `mktemp -d` directory.
 
 PR3141 connected recovery qualification also exposed two false test waits: waiting on all App workers raised WorkerCancelled for normal exclusive console-sync replacement, and matching a child Static title returned while its recovery-card ancestor was still hidden. Wait on the actual recovery worker and the card display predicate, retaining the original10s/4s bounds and all provider/persistence/screenshot assertions; the corrected three-action journey passed31.80s.
 

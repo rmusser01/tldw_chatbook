@@ -251,7 +251,15 @@ _BUDGETS: dict[str, int] = {
     # TASK-33005.15's PR review: one write covers every Overview row (-1): 35,771.
     # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint is -1: 35,770.
     # Rebased onto dev 88fe3108e5, whose task-35150 Tools & MCP category is +1: 35,771.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35771,
+    # TASK-35010: the saved lists are re-read from the file, not appended to in
+    # memory, so the 20-line in-memory append goes (-4 net): 35,766.
+    # Its review: Config reload's file re-read moves to the worker (-1): 35,765.
+    # TASK-35011: Save selected's receipts, retry steps and empty-Model fill
+    # move to Settings_Modules/saved_model_list.py with the new pick-joins-
+    # on-s logic, and the duplicate capability line goes (-19): 35,746.
+    # Rebased onto dev 1bbc145ffc, where #3169 merged at 35,771 (+1 over
+    # S1's base of 35,770): 35,747.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35747,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -288,7 +296,9 @@ _BUDGETS: dict[str, int] = {
     # Capture fix A2 round 2 (2026-10-13): its checkboxes say their state in
     # the glyph, a check or a blank (StateCheckbox, +1): 2,407.
     # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 2,468.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2468,
+    # TASK-35011: the Saved model list block and its title summaries move to
+    # saved_model_list.py (-100): 2,365.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2365,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -297,6 +307,15 @@ _BUDGETS: dict[str, int] = {
     # Capture fix A2 round 2 (2026-10-13): Permission summaries' Provider
     # list, holding a saved spelling or naming one it lacks (+34): 794.
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 794,
+    # TASK-35011 (S1 T2): the Saved model list block, its receipts and the
+    # discovered pick that joins the list on s, pinned at birth (the
+    # TASK-33007.8 precedent). No PR lane runs this row's node: NO-2 (b),
+    # PR #3036 touches derived-artifacts.yml. Its review round 1: a pick the
+    # combined save would refuse (a sample id, an unwritable saved id) saves
+    # the default alone, and the lists refresh whenever a pick was pending:
+    # 505. Round 2: a key the save would refuse is named in its receipt: 516.
+    # Round 3: a model id it cannot write is named, not the key: 518.
+    "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 518,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

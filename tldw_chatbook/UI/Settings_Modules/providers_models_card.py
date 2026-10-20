@@ -36,7 +36,6 @@ from textual.widgets import (
     Input,
     OptionList,
     Select,
-    SelectionList,
     Static,
 )
 
@@ -80,7 +79,6 @@ from ..Screens.settings_screen import (
     API_URL_PROVIDER_KEYS,
     CONFIG_KEY_ROW_LABEL,
     INSTANT_APPLY_BEHAVIOR_COPY,
-    MODEL_DISCOVERY_CAPABILITY_WARNING,
     OPENAI_RECONNECT_REVIEW_ID,
     PROVIDER_MANUAL_SELECT_VALUE,
     PROVIDER_TEST_GUIDANCE,
@@ -101,6 +99,13 @@ from ..Screens.settings_screen import (
 )
 from .provider_return import continuation_copy, fitted_chat_title, return_outcome
 from .readiness_lines import readiness_label
+from .saved_model_list import (
+    SAVED_NOT_LISTED_ID,
+    compose_saved_model_list,
+    saved_list_guide,
+    saved_models_not_listed,
+    saved_models_summary,
+)
 from .settings_field_rows import BUILT_IN, EDITED, compose_model_defaults, format_value
 
 if TYPE_CHECKING:
@@ -201,7 +206,6 @@ SAMPLING_ROUTE_COPY = "Global fallbacks are in Console Behavior."
 ADVANCED_DISCLOSURE_CLASS = "settings-advanced-disclosure"
 CONTEXT_WINDOW_DISCLOSURE_ID = "settings-advanced-context-window"
 SAVED_MODELS_DISCLOSURE_ID = "settings-advanced-saved-models"
-SAVED_NOT_LISTED_ID = "settings-saved-models-not-listed"
 CATALOG_REFRESH_DISCLOSURE_ID = "settings-advanced-catalog-refresh"
 CUSTOM_ENDPOINTS_DISCLOSURE_ID = "settings-advanced-custom-endpoints"
 #: task-34384 (dev), ported into Advanced when Phase 7 was rebased onto it.
@@ -603,10 +607,11 @@ def auth_source_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, st
     )
 
 
-def connect_field_guide(
+def card_field_guide(
     screen: SettingsScreen, field_id: str | None
 ) -> tuple[tuple[str, str], ...] | None:
-    """The Inspector's guide for Sign in with and the restored-connection review.
+    """The Inspector's guide for card controls the screen has no branch for:
+    Sign in with, the restored-connection review and the Saved model list controls.
 
     Capture fixes 3 and 7: with either focused the guide read "None — Tab to
     a setting"; Sign in with's long copy left its row for here.
@@ -641,7 +646,7 @@ def connect_field_guide(
             ("Saved as", "a review record per restored backup; not config.toml"),
             ("Validation", "save or discard provider changes first"),
         )
-    return None
+    return saved_list_guide(field_id)
 
 
 def sync_openai_reconnect_row(screen: SettingsScreen, provider: str) -> None:
@@ -1151,58 +1156,6 @@ def context_window_summary(screen: SettingsScreen) -> str:
     if state.has_configured_override:
         return f"{tokens:,} tokens · override set"
     return f"{tokens:,} tokens · detected, no override"
-
-
-def saved_models_summary(screen: SettingsScreen) -> str:
-    """Count the provider's saved models against the discovered ones.
-
-    Args:
-        screen: The Settings screen that owns the discovery state.
-
-    Returns:
-        E.g. "12 saved in config · 41 discovered, 29 not saved · 2 selected".
-    """
-    saved_ids = set(screen._provider_saved_model_ids(screen._provider_widget_value()))
-    parts = [f"{len(saved_ids)} saved in config"]
-    rows = [
-        model
-        for model in screen._model_discovery_models
-        if str(getattr(model, "model_id", "") or "").strip()
-    ]
-    if not rows:
-        parts.append("none discovered")
-        return " · ".join(parts)
-    unsaved = sum(
-        not screen._discovered_model_is_saved(model, saved_ids) for model in rows
-    )
-    parts.append(f"{len(rows)} discovered, {unsaved} not saved")
-    if screen._model_discovery_selected_model_ids:
-        parts.append(f"{len(screen._model_discovery_selected_model_ids)} selected")
-    return " · ".join(parts)
-
-
-def saved_models_not_listed(screen: SettingsScreen) -> str:
-    """Name the saved models the open list does not show (capture round 2, 5).
-
-    The list holds discovered models only, so a saved model the server does
-    not serve appeared only in the picker, under "Saved fallback".
-
-    Args:
-        screen: The Settings screen that owns the discovery state.
-
-    Returns:
-        "Saved: a, b" before a discovery, "Saved, not served now: b" after
-        one, or "" when there is nothing more to name.
-    """
-    saved = screen._provider_saved_model_ids(screen._provider_widget_value())
-    if not screen._model_discovery_models:
-        return f"Saved: {', '.join(saved)}" if saved else ""
-    served = {
-        str(getattr(model, "model_id", "") or "").strip()
-        for model in screen._model_discovery_models
-    }
-    rest = [model for model in saved if model not in served]
-    return f"Saved, not served now: {', '.join(rest)}" if rest else ""
 
 
 def catalog_refresh_summary(screen: SettingsScreen) -> str:
@@ -2071,60 +2024,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                     classes="settings-row-help",
                 )
         with advanced_disclosure(screen, SAVED_MODELS_DISCLOSURE_ID):
-            status = Static(
-                screen._model_discovery_status,
-                id="settings-model-discovery-status",
-                classes="settings-status-row",
-                markup=False,  # it can name a provider key or quote the server
-            )
-            status.display = bool(screen._model_discovery_status)  # "" after a find
-            yield status
-            yield Static(
-                MODEL_DISCOVERY_CAPABILITY_WARNING,
-                id="settings-model-discovery-capability-warning",
-                classes="settings-status-row",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Button(
-                    "Discover models",
-                    id="settings-discover-provider-models",
-                    disabled=not screen._model_discovery_available(provider),
-                    tooltip=(
-                        "Query the configured OpenAI-compatible provider endpoint "
-                        "for available models."
-                    ),
-                )
-                yield Button(
-                    "Save selected",
-                    id="settings-save-discovered-provider-models",
-                    disabled=not screen._model_discovery_models,
-                    tooltip="Append selected discovered model IDs to the local provider list.",
-                )
-                yield Button(
-                    "Clear",
-                    id="settings-clear-discovered-provider-models",
-                    disabled=not screen._model_discovery_models,
-                    tooltip="Clear runtime-discovered models for this provider.",
-                )
-            discovered_list = SelectionList(
-                *screen._model_discovery_selection_options(),
-                id="settings-discovered-models-list",
-                classes="settings-discovered-models-list",
-                disabled=not screen._model_discovery_models,
-            )
-            # Without its box an empty list is zero rows tall; the status
-            # line above says why (capture finding 8: it alone says so).
-            discovered_list.display = bool(screen._model_discovery_models)
-            yield discovered_list
-            not_listed = saved_models_not_listed(screen)
-            line = Static(
-                not_listed,
-                id=SAVED_NOT_LISTED_ID,
-                classes="settings-status-row",
-                markup=False,  # model ids may hold "[" and "]"
-            )
-            line.display = bool(not_listed)
-            yield line
+            yield from compose_saved_model_list(screen, provider)
         # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
         # inline from the saved config (the Connect block pattern) and
         # persist immediately on change via the screen's handlers.

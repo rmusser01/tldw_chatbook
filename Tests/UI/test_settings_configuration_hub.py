@@ -396,7 +396,9 @@ def _assert_public_text_present(
 def _capture_provider_settings_mutations(monkeypatch):
     calls = []
 
-    def apply_mutation(section_values, *, delete_keys=None):
+    # TASK-35011: the real writer also takes the locked-snapshot check an s
+    # that adds a discovered pick passes; this fake applies regardless.
+    def apply_mutation(section_values, *, delete_keys=None, **_preconditions):
         calls.append((section_values, delete_keys or {}))
         return ConfigMutationResult(True, True, None)
 
@@ -11550,7 +11552,8 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_discovery_controls_render_for_eligible_provider():
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_settings_provider_model_discovery_controls_render_for_eligible_provider(request):
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11589,14 +11592,17 @@ async def test_settings_provider_model_discovery_controls_render_for_eligible_pr
         )
         assert _visible_text(screen).count("discovered yet") == 1
         assert "No discovered models yet" not in _visible_text(screen)
+        # TASK-35011 (C-M2), rewritten on purpose: saving never resolves
+        # capabilities, so the line no longer says it does.
         assert (
-            "Capabilities unknown until saved or verified; text chat is assumed."
+            "Capabilities unknown for models no catalog lists; text chat is assumed."
             in _visible_text(screen)
         )
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_discovery_saves_selected_runtime_models():
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_settings_provider_model_discovery_saves_selected_runtime_models(request):
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11660,8 +11666,9 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
             screen,
             pilot,
             # Capture fix 3, finding 6, rewritten on purpose: the receipt names
-            # the provider, not its config key, and counts without "(s)".
-            "Saved 1 discovered model to OpenAI.",
+            # the provider, not its config key; TASK-35011 (C4), again: and
+            # the models it added.
+            "Added gpt-4o-mini to OpenAI's model list.",
         )
 
     assert scope.discover_calls == [
@@ -11685,7 +11692,9 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
             "model_ids": ["gpt-4o-mini"],
         },
     ]
-    assert app.providers_models["openai"] == ["gpt-4.1", "gpt-4o-mini"]
+    # TASK-35010, rewritten on purpose: after Save selected the saved lists
+    # are the file's; this fake persist writes nothing to it.
+    assert app.providers_models == config_module.get_cli_providers_and_models()
 
 
 @pytest.mark.asyncio
@@ -11772,7 +11781,8 @@ async def test_model_discovery_crash_status_is_plain_language_without_raw_except
 
 
 @pytest.mark.asyncio
-async def test_discovered_model_save_crash_status_is_plain_language():
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_discovered_model_save_crash_status_is_plain_language(request):
     """TASK-23108: same contract for the persistence path."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11787,7 +11797,7 @@ async def test_discovered_model_save_crash_status_is_plain_language():
     status = screen._model_discovery_status
     assert "disk sadness" not in status
     assert status.startswith("Could not save the discovered models (OSError).")
-    assert "Try Save again" in status
+    assert "Press Add to model list again" in status  # TASK-35011
     assert "Logs (F3)" in status
 
 

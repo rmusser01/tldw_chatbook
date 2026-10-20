@@ -432,7 +432,17 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Study's literal-text pins (a markup-shaped workspace name in the scope
 # banner; type-to-search over markup-shaped deck and quiz names) and its
 # quit-mid-rebuild pin, appended last, after TASK-34982's entry: 363.
-MINIMUM_FILES = 363
+# TASK-35010 (S1 T1) adds its saved-lists file: 361.
+# TASK-35011 (S1 T2, 2026-10-20) adds its pick-joins-the-list file: 362.
+# Its review round 1 (2026-10-20) lists both S1 files as one node per test
+# function (12 + 15) instead of two whole files, so no shard takes either
+# file whole: 387.
+# TASK-35012 (S1 T3, 2026-10-20) appends its nine test functions after
+# T2's, one node id each, so nine of the S1 block's ten shard groups gain
+# one function each: 396.
+# Rebased onto dev 1bbc145ffc, where #3169 merged at 363 (three entries
+# over S1's base of 360): S1's 36 nodes end at 399.
+MINIMUM_FILES = 399
 
 
 def read_census(path: Path) -> list[str]:

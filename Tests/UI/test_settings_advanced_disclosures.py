@@ -899,21 +899,33 @@ async def test_custom_id_keeps_its_edge_on_one_row(request, size):
 @pytest.mark.parametrize(
     ("saved", "receipt"),
     [
-        (("gpt-new-1",), "Saved 1 discovered model to OpenAI."),
-        (("gpt-new-1", "gpt-new-2"), "Saved 2 discovered models to OpenAI."),
-        ((), "The selected models are already saved for OpenAI."),
+        (("gpt-new-1",), "Added gpt-new-1 to OpenAI's model list."),
+        (
+            ("gpt-new-1", "gpt-new-2"),
+            "Added gpt-new-1 and gpt-new-2 to OpenAI's model list.",
+        ),
+        (
+            (),
+            (
+                "The selected models are already in OpenAI's model list. To make "
+                "one the default, choose it in Default model."
+            ),
+        ),
     ],
 )
 @private_profile_test
-async def test_save_selected_names_the_provider_in_its_receipt(
+async def test_add_to_model_list_names_the_provider_in_its_receipt(
     request, monkeypatch, saved, receipt
 ):
     """Capture fix 3, finding 6: Save selected's line printed the config key
     and "model(s)", "Saved 1 discovered model(s) to openai.". It names the
-    provider by its display name and counts in words, as the discovery toast
-    does. Round 1, finding 4: the line is the one report; the toast
-    "Discovered models saved." came with it, even for a save that wrote
-    nothing."""
+    provider by its display name, as the discovery toast does. Round 1,
+    finding 4: the line is the one report; the toast "Discovered models
+    saved." came with it, even for a save that wrote nothing.
+
+    TASK-35011 (C4 residual), rewritten on purpose in the Add to model list
+    vocabulary: it names the models added, or says they were already listed
+    and how a model becomes the default."""
     app = _app(discovered=_DISCOVERED)
     app.llm_provider_catalog_scope_service.persistence_result = PersistenceResult(
         provider="openai",
@@ -948,13 +960,13 @@ async def test_save_selected_names_the_provider_in_its_receipt(
 @pytest.mark.parametrize(
     ("selected", "line"),
     [
-        ((), "Select discovered models to save."),
+        ((), "Select discovered models to add."),
         (("gpt-new-1",), "Config is not writable."),
     ],
     ids=["nothing-selected", "refused"],
 )
 @private_profile_test
-async def test_save_selected_that_saves_nothing_reports_on_its_line_only(
+async def test_add_to_model_list_that_adds_nothing_reports_on_its_line_only(
     request, monkeypatch, selected, line
 ):
     """Capture fix 3 round 1, finding 4: with nothing selected, or a save the

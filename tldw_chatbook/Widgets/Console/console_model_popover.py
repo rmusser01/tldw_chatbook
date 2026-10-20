@@ -83,6 +83,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS, temperature_range
+from tldw_chatbook.config import SHIPPED_SAMPLE_MODEL_IDS
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -679,6 +680,7 @@ class ConsoleModelPopover(
         self._readiness_pending: set[str] = set()
         self._first_readiness_done = False
         self._saved: dict[str, tuple[str, ...]] = {}
+        self._saved_defaults: dict[str, str | None] = {}
         self._catalogs: dict[str, tuple[str, ...]] = {}
         self._catalog_state: dict[str, str] = {}
         self._context_labels: dict[tuple[str, str], str] = {}
@@ -1018,6 +1020,18 @@ class ConsoleModelPopover(
         # Catalogs first: the returned provider is "loading" at the rebuild,
         # so it neither highlights its NEEDS SETUP row nor clears the wait line.
         self._load_ready_catalogs(tuple(resolved))
+        # NO-1 (TASK-35010): a server read with no model has listed models
+        # since (its probe settled): read it again with the first one, as
+        # _load_catalogs does for a catalog, so a running one is listed.
+        listed = tuple(
+            key
+            for key in resolved
+            if targets[key] is None
+            and _only_needs_a_model(self._readiness.get(key))
+            and self._representative_model(key)
+        )
+        if listed and self.is_attached:
+            self._request_readiness(listed, refresh=True)
         self._rebuild_rows()
         self._sync_find_placeholder()
         self._offer_probes(resolved)
@@ -1028,7 +1042,10 @@ class ConsoleModelPopover(
             key: self._representative_model(key)
             for key, readiness in resolved.items()
             if key not in self._probes_offered
-            and readiness.blocker in _PROBED_BLOCKERS
+            and (
+                readiness.blocker in _PROBED_BLOCKERS
+                or self._untouched_server_without_a_model(key, readiness)
+            )
         }
         if self._connection_prober is None or not targets or not self.is_attached:
             return
@@ -1037,6 +1054,22 @@ class ConsoleModelPopover(
             self._connection_prober(targets, self.refresh_readiness),
             group="console-switcher-probes",
             exit_on_error=False,
+        )
+
+    def _untouched_server_without_a_model(
+        self, key: str, readiness: ConsoleSettingsReadiness
+    ) -> bool:
+        """A local server the user never set up, waiting only on a model.
+
+        TASK-35010 NO-1: vLLM's shipped list is empty and llama.cpp's,
+        koboldcpp's, Oobabooga's and llamafile's hold "None", so readiness
+        says model_missing before any endpoint result. The probe still finds
+        a running one (its listing supplies the model) or a refused one.
+        """
+        return (
+            readiness.blocker == "model_missing"
+            and key in URL_BASED_PROVIDER_KEYS
+            and provider_left_at_shipped_default(self._app_config, key)
         )
 
     def refresh_readiness(self, provider: str) -> None:
@@ -1231,6 +1264,19 @@ class ConsoleModelPopover(
         # ``_reopened`` is "" for every other opener: no key is that.
         return bool(key) and key == self._reopened and self._query == self._opened_query
 
+    def _saved_default(self, key: str) -> str | None:
+        """The model new chats on provider ``key`` start with (P8's resolver),
+        once per open; None for a shipped sample id (TASK-35012)."""
+        if key not in self._saved_defaults:
+            config = resolve_effective_chat_configuration(
+                self._app_config, provider=key
+            )
+            model = normalize_model_id(config.model)
+            self._saved_defaults[key] = (
+                None if model in SHIPPED_SAMPLE_MODEL_IDS else model
+            )
+        return self._saved_defaults[key]
+
     def _returned_saved_model(self, key: str) -> str | None:
         """The model saved for provider ``key`` when a return from Settings
         reopened the list on it, while Find is as it opened; else None."""
@@ -1424,6 +1470,13 @@ class ConsoleModelPopover(
                         returned = self._catalog_status_rows(key, False)
                     continue
                 visible = [model for model in models if (key, model) not in shown]
+                default = self._saved_default(key)
+                if default in visible:
+                    # TASK-35012: the saved default leads, behind a current
+                    # model that leads; typed Find keeps the list's order.
+                    visible.remove(default)
+                    lead = bool(visible) and self._is_current(key, visible[0])
+                    visible.insert(int(lead), default)
                 ready_rows.extend(
                     self._pair_row("pair", key, model)
                     for model in visible[:TOP_MODELS_PER_PROVIDER]
@@ -1522,7 +1575,11 @@ class ConsoleModelPopover(
             (
                 (
                     readiness.endpoint_category == "connection_refused"
-                    and _retries_in_place(readiness)
+                    and (
+                        _retries_in_place(readiness)
+                        # NO-1: its missing model outranks the refusal.
+                        or self._untouched_server_without_a_model(key, readiness)
+                    )
                 )
                 # Capture finding 11: one no probe can check is Ready from
                 # the template alone; listing nothing, it is as unset.

@@ -830,10 +830,17 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **RECENT**, your recently used pairs, with **● CURRENT** on this chat's
   pair and when each was last used.
 - **READY PROVIDERS**, the first three models of each provider with no known
-  blocker, then an "… N more" row (Enter on it puts the provider's name in
-  Find, and what you type next is added after it). A provider with its key
-  saved and no model chosen is listed here too once its cached catalog lists
-  a model: it is checked again with the first one.
+  blocker, never repeating a pair PREVIOUS or RECENT already lists: this
+  chat's model first when it is that provider's and RECENT does not list it,
+  then that provider's saved default for new chats, when its rows include it,
+  then the rest in list order. An "… N more" row counts the others (Enter on
+  it puts the provider's name in Find, and what you type next is added after
+  it).
+  Chat settings' model picker orders each provider's rows the same way, with
+  its draft's model in place of this chat's. Find's matches are ranked by
+  what you type; the saved default does not move them. A provider with its
+  key saved and no model chosen is listed here too once its cached catalog
+  lists a model: it is checked again with the first one.
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key, endpoint or model
@@ -853,6 +860,9 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   `localhost:8080`) that is not this chat's, the default's or a recent
   chat's provider. They are checked like any other local server, so one
   that is running reads "Ready · reachable" under READY PROVIDERS instead.
+  An untouched local server with no model chosen (vLLM, llama.cpp,
+  koboldcpp, Oobabooga, llamafile) is checked too: when it is running, it
+  lists the models it serves, and when it refuses, it is named here.
   Change a provider's settings or use it, and its refusal is a NEEDS SETUP
   row again. MLX-LM is a server too, but no model listing can check it, so
   while it is still at its shipped settings, unused and listing no models,
@@ -879,8 +889,13 @@ status at once, under the open list. Once a server's model listing has
 answered (this check, or **Test connection** of the same connection), that
 server's rows are the models it listed (in Chat settings, with the models a
 listing there found), and saved or cached models it did not list are no
-longer offered. On llama.cpp, which sends to an endpoint set only on this
-chat, a pick keeps this chat's endpoint, so while a llama.cpp chat runs on a
+longer offered; this chat's own model stays listed even when the server did
+not list it. The provider's saved default for new chats still leads those
+rows when it is one of them, after this chat's model on its own provider,
+unless RECENT lists it; a pair PREVIOUS or RECENT lists is not repeated
+there.
+On llama.cpp, which sends to an endpoint set only on this chat, a pick keeps
+this chat's endpoint, so while a llama.cpp chat runs on a
 server other than the configured one, llama.cpp's readiness words and its
 rows are this chat's endpoint's, not the configured server's: a configured
 server that is down does not put llama.cpp under NEEDS SETUP, and its
@@ -896,7 +911,9 @@ covers both servers: that endpoint for the rows, and the configured one,
 which new chats use and **Ctrl+N** checks. Pick mode, which has no
 **Ctrl+N**, checks only that endpoint. A listing is read up to 100 models, and
 one that reaches 100 may be cut short, so then the saved and cached models
-stay after the listed ones; this chat's own model stays listed first.
+stay after the listed ones, except the provider's saved default, which moves
+ahead of them all; this chat's own model, unless RECENT lists it, still
+comes first.
 Until then (not checked yet, refused or timed out) the rows are the saved
 and cached models. A server on a carrier-grade NAT address
 (100.64.0.0/10, as some VPNs use) counts as public and is not checked. Cloud providers, a server on a public address or host name, and

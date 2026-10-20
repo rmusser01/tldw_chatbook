@@ -20,10 +20,12 @@ from weakref import ReferenceType, ref
 
 from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
+    SHIPPED_SAMPLE_MODEL_IDS,
     AtomicConfigSnapshot,
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
     is_valid_provider_api_key,
+    normalize_provider_config_key,
 )
 from ..provider_registry import ALL_RECORDS
 from .provider_endpoint_contract import (
@@ -783,10 +785,24 @@ def project_provider_setup_expected_state(
 def resolve_remembered_provider_model(
     app_config: object,
     provider: object,
+    *,
+    skip_samples: bool = False,
 ) -> str | None:
-    """Resolve a provider's remembered model without cross-provider borrowing."""
+    """Resolve a provider's remembered model without cross-provider borrowing.
+
+    Args:
+        app_config: The configuration to read.
+        provider: The provider whose model is wanted.
+        skip_samples: Treat a template sample id
+            (``SHIPPED_SAMPLE_MODEL_IDS``) as no remembered model. Only
+            Settings' default choice passes it (TASK-35010); sends keep the
+            table's model.
+    """
 
     ownership = _ownership_for(provider)
+    if skip_samples:
+        model = resolve_remembered_provider_model(app_config, provider)
+        return None if model in SHIPPED_SAMPLE_MODEL_IDS else model
     if not isinstance(app_config, Mapping):
         return None
     chat_defaults = app_config.get("chat_defaults")
@@ -1560,6 +1576,14 @@ def _validate_combined_provider_settings_mutation(
                 or not isinstance(values[model], Mapping)
             ):
                 raise error
+        elif section == "providers":
+            # TASK-35011: a discovered pick joins its own provider's saved
+            # list, by the check Settings' join runs before adding it.
+            list_key, models = next(iter(values.items()))
+            if len(values) != 1 or not saved_model_list_admits(
+                list_key, models, model, ownership.provider_key
+            ):
+                raise error
         elif extra_keys:
             if setup_mutation is None and section in {
                 "chat_defaults",
@@ -1860,6 +1884,38 @@ def _configured_section_key(
         if configured_ownership.provider_key == ownership.provider_key:
             return str(configured_provider)
     return ownership.config_section
+
+
+def saved_model_list_admits(
+    list_key: object, models: object, model: str, owner: str
+) -> bool:
+    """Say whether a combined save may write ``models`` under ``list_key``.
+
+    The one check the combined validator and Settings' join both run
+    (TASK-35011), so a list Settings adds is one the save accepts, and a
+    list it may not write leaves the default to save alone.
+
+    Args:
+        list_key: The ``[providers]`` key to write: a config key that
+            normalizes to ``owner`` (the owner by ``provider_config_key``,
+            since ``_ownership_for`` cannot spell the template's Custom_2).
+        models: The saved list to write: it holds ``model``, and every id
+            passes the safe-model check.
+        model: The model the save makes the default.
+        owner: The save's canonical provider key.
+
+    Returns:
+        True when the combined save's validator admits the list.
+    """
+    return (
+        bool(model)
+        and type(list_key) is str
+        and _CONFIG_KEY_PATTERN.fullmatch(list_key) is not None
+        and normalize_provider_config_key(list_key) == owner
+        and type(models) is list
+        and model in models
+        and all(_safe_model(item) is not None for item in models)
+    )
 
 
 def _safe_model(value: object) -> str | None:

@@ -198,6 +198,7 @@ SETTINGS_SNAPSHOT_KEYS = frozenset(
         "hooks_snapshot",  # the saved hooks' review; their edits are a draft
         "mcp_hub_view_state",  # Tools & MCP hub pane's view state (ADR-240)
         "provider_return_continuation",
+        "discovered_pick",  # TASK-35011: the pick s adds to the saved list
         # Drafts: retained work while unsaved.
         "settings_drafts",
         "speech_tts_panel_draft",
@@ -235,6 +236,13 @@ def _settings_snapshot_dirty(state: dict) -> bool:
         )
     ):
         raise TypeError("unknown retained provider return")
+    pick = state.get("discovered_pick")
+    if pick is not None and (
+        type(pick) is not tuple
+        or len(pick) != 2
+        or any(type(part) is not str for part in pick)
+    ):
+        raise TypeError("unknown retained discovered pick")
     dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
     dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
     if "web_search_session" in state:

@@ -27,6 +27,7 @@ from Tests.UI.test_settings_discovery_listing_dropped import (
     _discover,
 )
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from tldw_chatbook.config import get_cli_providers_and_models
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     PersistenceResult,
 )
@@ -170,11 +171,14 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
     )
 
     assert scope.saved == (_SERVED,)
-    assert _SERVED in app.providers_models["OpenAI"]
+    # TASK-35010, rewritten on purpose: the saved lists follow the file once
+    # the save lands; this held fake writes nothing to it.
+    assert app.providers_models == get_cli_providers_and_models()
     # Capture fix 3 round 1, finding 4, rewritten on purpose: the line
     # belongs to the Discover or Clear pressed since, so the toast is the
     # one report and says what the line would have said.
-    receipt = ("Saved 1 discovered model to OpenAI.", "information")
+    # TASK-35011 (C4 residual), rewritten on purpose: it names the model.
+    receipt = (f"Added {_SERVED} to OpenAI's model list.", "information")
     assert toasts.count(receipt) == 1, toasts
     assert ("openai", True) in reloads, reloads
 
@@ -222,9 +226,10 @@ async def test_save_selected_refused_after_discover_or_clear_still_reports(
 
 
 _CLEAR = "#settings-clear-discovered-provider-models"
+# TASK-35011 (A2), rewritten on purpose: the steps name Add to model list.
 _RESELECT = (
     "Select them again (Discover first if they are no longer listed), then press "
-    "Save selected"
+    "Add to model list"
 )
 
 
@@ -235,13 +240,19 @@ _RESELECT = (
     [
         pytest.param(_INTERRUPTS[0], "ok", _RESELECT, [], id="discover"),
         pytest.param(_CLEAR, "ok", _RESELECT, [], id="clear"),
-        pytest.param(_CLEAR, "fails", "Try Save again", [_SERVED], id="failed-clear"),
+        pytest.param(
+            _CLEAR,
+            "fails",
+            "Press Add to model list again",
+            [_SERVED],
+            id="failed-clear",
+        ),
         pytest.param(_CLEAR, "held", _RESELECT, [], id="held-clear"),
         pytest.param(
             _SWITCH_PROVIDER,
             "ok",
             "Switch back to OpenAI, Discover and select them again, then press "
-            "Save selected",
+            "Add to model list",
             [],
             id="provider-change",
         ),
