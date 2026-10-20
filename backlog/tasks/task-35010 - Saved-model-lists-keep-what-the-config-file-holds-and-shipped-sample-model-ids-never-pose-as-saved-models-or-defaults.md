@@ -1,10 +1,11 @@
 ---
 id: TASK-35010
 title: Saved model lists keep what the config file holds, and shipped sample model ids never pose as saved models or defaults
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-14 17:10
+updated_date: 2026-10-20 04:17
 labels:
 - settings
 - providers
