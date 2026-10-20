@@ -79,7 +79,7 @@ def _newly_saved_model_ids(
     return tuple(saved)
 
 
-def refresh_providers_models(app: object, *, force: bool = False) -> None:
+def refresh_providers_models(app: object, *, force: bool = False) -> bool:
     """Make ``app.providers_models`` the config file's saved lists, in place.
 
     The Default model picker keeps the dict it was composed with, so the
@@ -91,11 +91,16 @@ def refresh_providers_models(app: object, *, force: bool = False) -> None:
         force: Republish the config caches from the file first. Config
             reload needs it: an in-place edit keeps the file's identity, so
             the settings cache still matches it.
+
+    Returns:
+        False when ``force``'s republish failed: the lists are then the
+        caches' old ones, and a reload must not say they were refreshed.
     """
     from tldw_chatbook import config
 
-    if force:
-        config.refresh_runtime_config_from_cli_config()
+    refreshed = (
+        not force or config.refresh_runtime_config_from_cli_config().caches_reloaded
+    )
     fresh = config.get_cli_providers_and_models()
     current = getattr(app, "providers_models", None)
     if isinstance(current, dict):
@@ -103,6 +108,7 @@ def refresh_providers_models(app: object, *, force: bool = False) -> None:
         current.update(fresh)
     else:
         app.providers_models = fresh
+    return refreshed
 
 
 def _persist_under_config_lock(

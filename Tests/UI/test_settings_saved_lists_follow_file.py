@@ -303,14 +303,33 @@ async def test_a_late_advanced_config_save_after_settings_closed_updates_only_th
 
 @private_profile_test
 @pytest.mark.parametrize("site", ("reload", "validate_and_reload"))
-async def test_config_reload_reads_an_in_place_edit_into_the_saved_lists(request, site):
+async def test_config_reload_reads_an_in_place_edit_into_the_saved_lists(
+    request, monkeypatch, site
+):
     """AC#4: both Config reload sites (Diagnostics' Reload, and its
     validate-and-reload worker) re-read the file, even after an in-place
     edit the config cache did not see; the picker and the Saved model list
-    count follow."""
+    count follow. Whole-S1 review: when that re-read cannot republish the
+    caches, the lists are still the old ones, so the reload line says they
+    were not refreshed instead of "loaded" (only the republish is stubbed)."""
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens import settings_screen
+
     _llama_cpp_profile("m-one", "m-two")
     app = _booted_app()
     host = _SettingsCssHarness(app, "settings")
+
+    async def reload(screen) -> str:
+        if site == "reload":
+            screen._run_diagnostics_reload()
+        else:
+            screen._diagnostics_validation_and_reload_worker()
+            await host.workers.wait_for_complete()
+        await _settle(host, pilot)
+        return screen._diagnostics_reload_result
+
+    def refused():
+        return config.LiteralConfigMutationResult(False, False, None, "cache_reload")
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
@@ -318,18 +337,29 @@ async def test_config_reload_reads_an_in_place_edit_into_the_saved_lists(request
         _edit_in_place(
             lambda data: data["providers"].update(Llama_cpp=["None", "m-one", "m-four"])
         )
-        if site == "reload":
-            screen._run_diagnostics_reload()
-        else:
-            screen._diagnostics_validation_and_reload_worker()
-            await host.workers.wait_for_complete()
-        await _settle(host, pilot)
+        loaded = await reload(screen)
         rows = await _picker_rows(host, pilot, screen)
         title = _saved_count_title(screen)
+        lists = list(app.providers_models["Llama_cpp"])
 
-    assert app.providers_models["Llama_cpp"] == ["None", "m-one", "m-four"]
+        _edit_in_place(
+            lambda data: data["providers"].update(Llama_cpp=["None", "m-five"])
+        )
+        for module in (config, settings_screen):
+            monkeypatch.setattr(
+                module, "refresh_runtime_config_from_cli_config", refused
+            )
+        stale = await reload(screen)
+
+    assert lists == ["None", "m-one", "m-four"]
     assert "m-four" in rows and "m-two" not in rows, rows
     assert "2 saved in config" in title, title
+    assert loaded.startswith("Config reload: loaded"), loaded
+    assert stale.startswith(
+        "Config reload: loaded, but the saved model lists were not refreshed; "
+        "reload again. Details are in Logs (F3)."
+    ), stale
+    assert app.providers_models["Llama_cpp"] == ["None", "m-one", "m-four"]
 
 
 # --- Case 4: the startup refresh's write-through ---------------------------

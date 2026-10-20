@@ -1226,6 +1226,11 @@ MODEL_DISCOVERY_IDLE_COPY = (
     "No models discovered yet. Discover models lists what the configured "
     "endpoint serves."
 )
+#: Whole-S1 review: the file loaded, but the caches the lists come from did not.
+RELOAD_LISTS_NOT_REFRESHED = (
+    "Config reload: loaded, but the saved model lists were not refreshed; "
+    "reload again. Details are in Logs (F3)."
+)
 MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY = (
     "Multiple provider entries match this provider. Rename or remove duplicates before "
     "saving discovered models."
@@ -13101,11 +13106,8 @@ class SettingsScreen(BaseAppScreen):
                 None,
             )
 
-        validation_result = (
-            f"Config validation: valid - {redact_secret_text(validation.message)}\n{source}"
-            if validation.valid
-            else f"Config validation: invalid - {redact_secret_text(validation.message)}\n{source}"
-        )
+        word = "valid" if validation.valid else "invalid"
+        validation_result = f"Config validation: {word} - {redact_secret_text(validation.message)}\n{source}"
         if not validation.valid:
             return (
                 validation_result,
@@ -13122,8 +13124,9 @@ class SettingsScreen(BaseAppScreen):
                 None,
             )
         if isinstance(loaded, dict):
-            refresh_runtime_config_from_cli_config()  # TASK-35010: an in-place edit, read here off the UI thread
-            return validation_result, f"Config reload: loaded\n{source}", loaded
+            refreshed = refresh_runtime_config_from_cli_config().caches_reloaded  # TASK-35010: an in-place edit, read here off the UI thread
+            line = "Config reload: loaded" if refreshed else RELOAD_LISTS_NOT_REFRESHED
+            return validation_result, f"{line}\n{source}", loaded
         return (
             validation_result,
             f"Config reload: failed - loaded config was not a table\n{source}",
@@ -13178,17 +13181,14 @@ class SettingsScreen(BaseAppScreen):
         adapter = SettingsConfigAdapter()
         try:
             validation = adapter.validate_config_file(self._config_path())
+            loaded = adapter.load(force_reload=True) if validation.valid else None
         except Exception as exc:
             return f"Config reload: failed - {redact_secret_text(str(exc))}"
         if not validation.valid:
             return f"Config reload: failed - {redact_secret_text(validation.message)}"
-        try:
-            loaded = adapter.load(force_reload=True)
-        except Exception as exc:
-            return f"Config reload: failed - {redact_secret_text(str(exc))}"
         if isinstance(loaded, dict):
-            self._adopt_config(loaded, force=True)
-            return "Config reload: loaded"
+            refreshed = self._adopt_config(loaded, force=True)
+            return "Config reload: loaded" if refreshed else RELOAD_LISTS_NOT_REFRESHED
         return "Config reload: failed - loaded config was not a table"
 
     def _raw_config_model(self) -> "AdvancedConfigSettings":
@@ -13202,18 +13202,19 @@ class SettingsScreen(BaseAppScreen):
         self._advanced_config_settings.applied = self._adopt_config
         return self._advanced_config_settings
 
-    def _adopt_config(self, loaded: dict, *, force: bool = False) -> None:
-        """Install a config and its model lists in place, so the Default model picker
-        and Saved model list need no rebuild (TASK-35010); ``force`` re-reads the file."""
+    def _adopt_config(self, loaded: dict, *, force: bool = False) -> bool:
+        """Install a config and its lists in place, so no picker rebuilds (TASK-35010);
+        ``force`` re-reads the file; False when that could not refresh the lists."""
         from ...LLM_Provider_Catalog.model_discovery_persistence import (
             refresh_providers_models,
         )
 
         self.app_instance.app_config = loaded
-        refresh_providers_models(self.app_instance, force=force)
+        refreshed = refresh_providers_models(self.app_instance, force=force)
         if self.is_attached:  # a popped screen stays is_mounted
             self._sync_model_picker(self._provider_widget_value() or None, reload=True)
             self._refresh_advanced()
+        return refreshed
 
     def _raw_config_changed(self) -> None:
         if not self.is_mounted:
@@ -33600,7 +33601,6 @@ class SettingsScreen(BaseAppScreen):
             }
             from ..Settings_Modules.saved_model_list import LIST_CHANGED_COPY, join_pick
 
-            # TASK-35011: a discovered pick joins its saved list in this write.
             join = join_pick(self, provider, model, section_values)
             evidence_store = self._provider_evidence_store()
             save_lease = (
