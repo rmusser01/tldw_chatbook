@@ -83,6 +83,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS, temperature_range
+from tldw_chatbook.config import SHIPPED_SAMPLE_MODEL_IDS
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -679,6 +680,7 @@ class ConsoleModelPopover(
         self._readiness_pending: set[str] = set()
         self._first_readiness_done = False
         self._saved: dict[str, tuple[str, ...]] = {}
+        self._saved_defaults: dict[str, str | None] = {}
         self._catalogs: dict[str, tuple[str, ...]] = {}
         self._catalog_state: dict[str, str] = {}
         self._context_labels: dict[tuple[str, str], str] = {}
@@ -1262,6 +1264,19 @@ class ConsoleModelPopover(
         # ``_reopened`` is "" for every other opener: no key is that.
         return bool(key) and key == self._reopened and self._query == self._opened_query
 
+    def _saved_default(self, key: str) -> str | None:
+        """The model new chats on provider ``key`` start with (P8's resolver),
+        once per open; None for a shipped sample id (TASK-35012)."""
+        if key not in self._saved_defaults:
+            config = resolve_effective_chat_configuration(
+                self._app_config, provider=key
+            )
+            model = normalize_model_id(config.model)
+            self._saved_defaults[key] = (
+                None if model in SHIPPED_SAMPLE_MODEL_IDS else model
+            )
+        return self._saved_defaults[key]
+
     def _returned_saved_model(self, key: str) -> str | None:
         """The model saved for provider ``key`` when a return from Settings
         reopened the list on it, while Find is as it opened; else None."""
@@ -1455,6 +1470,13 @@ class ConsoleModelPopover(
                         returned = self._catalog_status_rows(key, False)
                     continue
                 visible = [model for model in models if (key, model) not in shown]
+                default = self._saved_default(key)
+                if default in visible:
+                    # TASK-35012: the saved default leads, behind a current
+                    # model that leads; typed Find keeps the list's order.
+                    visible.remove(default)
+                    lead = bool(visible) and self._is_current(key, visible[0])
+                    visible.insert(int(lead), default)
                 ready_rows.extend(
                     self._pair_row("pair", key, model)
                     for model in visible[:TOP_MODELS_PER_PROVIDER]
