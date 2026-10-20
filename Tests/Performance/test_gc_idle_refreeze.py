@@ -472,12 +472,12 @@ def test_only_real_growth_of_the_frozen_set_makes_a_compaction_due() -> None:
 def test_growth_a_refreeze_did_not_count_still_makes_a_compaction_due() -> None:
     """The frozen set is measured, never estimated from what re-freezes counted.
 
-    Live (2026-10-19, round 6), the frozen set grew 372K objects over 15
-    run-phase re-freezes against a 244K budget, and no compaction ran: each
-    re-freeze counts the old generation after its collection, and other
-    threads can allocate between that count and the freeze. A running total
-    of those counts never reached the budget, so the permanent generation was
-    never walked.
+    Each re-freeze counts the old generation after its collection, and other
+    threads can allocate between that count and the freeze, so a running
+    total of those counts is no upper bound: a refreezer that walked only
+    once the total reached the budget could miss a due compaction. (The live
+    peaks once blamed on this, 372K against a 244K budget, recurred after the
+    walk was added and are the bound's own last-re-freeze term; ADR-198.)
     """
     clock = Clock()
     ops, owner = Ops(frozen=800_000, added=5_000, uncounted=40_000), Owner()

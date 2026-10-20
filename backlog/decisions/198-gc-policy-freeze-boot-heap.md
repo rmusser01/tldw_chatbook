@@ -164,23 +164,32 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    here to the frozen set.
 
    The measure is the generation's real size, not a count of what each
-   re-freeze added. Live, a send's re-freeze froze about 70K objects for
+   re-freeze added. Live, a send's re-freeze froze 70-130K objects for
    about 20K of real growth: reference counting frees most of the rest out
    of the permanent generation, because the next paint replaces them.
    Counting additions instead triggered a compaction every third send.
 
-   Sizing the generation means walking it, which took 40-60 ms at about 850K
-   objects under load. So re-freezes keep a running upper bound (the last
-   walked size plus what each re-freeze froze), and the generation is walked
-   only when that bound reaches the budget.
+   Sizing the generation means walking it. The generation is walked once
+   after each re-freeze, at the next maintenance, so the budget reads the
+   frozen set after the next run has freed what it replaced. The walk takes
+   about 5 ms of CPU per 1.3M objects, and it runs only at idle. A first
+   version walked only when a running total of what re-freezes counted
+   reached the budget. That total is not a true upper bound, because other
+   threads can allocate between a re-freeze's count and its freeze.
 
    No re-freeze runs while a compaction is due. The permanent generation
    therefore never outgrows its size after the last compaction by more than
-   that budget plus one re-freeze, and the next compaction reclaims whatever
-   in it has become garbage, including boot-era garbage the earlier freezes
-   kept. (Garbage can also form inside the post-compaction set -- a
-   transcript frozen live, then switched away -- so the bound is on the
-   frozen set's size, not on the garbage in the growth alone.)
+   that budget plus one re-freeze, and a send's re-freeze is large. On
+   2026-10-20 the frozen set peaked 396K objects above its post-compaction
+   size against a 272K budget, because the re-freeze before the compaction
+   froze at least 123K; the compaction then reclaimed 273K. The first
+   version peaked the same way on 2026-10-19 (372K against 244K, at least
+   128K in the last re-freeze). Both rounds show the bound holding, not a
+   missed compaction. The next compaction reclaims whatever in it has
+   become garbage, including boot-era garbage the earlier freezes kept.
+   (Garbage can also form inside the post-compaction set -- a transcript
+   frozen live, then switched away -- so the bound is on the frozen set's
+   size, not on the garbage in the growth alone.)
 
    **Switched-away transcripts compact at once (2026-10-19).** The budget
    alone let them pile up. Live, across 24 chat switches and 12 runs, the
@@ -198,6 +207,17 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    about one transcript of garbage. The note survives a request dropped by a
    send. Rows replaced before any freeze are ordinary garbage, which the
    re-freeze's own full collection reclaims, so rapid switching owes nothing.
+
+   **A freeze follows only a collection that ran (2026-10-19).** CPython's
+   `gc.collect()` returns 0 at once, collecting nothing, while another pass
+   is in progress, and a worker thread's pass can hand the GIL to the UI
+   loop from its finalizers or callbacks. In one live run, a compaction met
+   such a pass. It froze the heap again, garbage included, and was booked
+   as done, so that run's frozen garbage outlived it. A re-freeze or
+   compaction now requires the generation-2 pass count to move (five tries,
+   2 ms apart, so the other pass can finish). Otherwise the maintenance
+   reports `busy`. A re-freeze then freezes nothing. A compaction freezes
+   the heap again, so the automatic passes do not rescan it, and stays owed.
 4. **Unchanged.** Thresholds stay at CPython's defaults. The collector is
    never disabled. The policy is off under pytest (`PYTEST_CURRENT_TEST`), as
    the screen pre-import is; `TLDW_IDLE_HEAP_REFREEZE` overrides it either way.
@@ -210,7 +230,11 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
   transcript a freeze caught, and otherwise about once per 25% growth of the
   frozen set. A user who switches chats often pays one compaction per
   switch at idle, where origin/dev paid a generation-2 pass per switch that
-  could land anywhere, a send window included.
+  could land anywhere, a send window included. Live on 2026-10-19 (about
+  800K objects, load average 40-65), a switch's compaction took 263-375 ms of
+  UI-loop CPU. Origin/dev's automatic generation-2 passes in the same round
+  took a median of 192 ms and at most 264 ms. Dev's passes can land in a
+  send window; the compactions ran only at idle.
 - The "boot-era garbage becomes permanent" consequence above is now temporary:
   the first compaction reclaims it.
 - Re-freezing ends CPython's habit, noted in the measured result above, of
@@ -244,7 +268,9 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
   that a compaction reclaims it, and that the frozen set stays bounded over
   24 switches; a stranded note compacts at the next maintenance and frees
   the real Console transcript's switched-away rows (negative control: without
-  it they survive), and survives a dropped request.
+  it they survive), and survives a dropped request. Run while another
+  collection is in progress, a re-freeze freezes nothing, and a compaction
+  freezes the heap again and stays owed.
 - `Tests/UI/test_console_idle_heap_refreeze.py` (amendment): on the mounted
   Console, a re-freeze is requested when a conversation is painted and when a
   run settles, and the busy check holds on every loop turn from Enter to the

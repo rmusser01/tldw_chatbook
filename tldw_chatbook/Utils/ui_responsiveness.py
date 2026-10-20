@@ -568,14 +568,14 @@ class IdleHeapRefreezer:
     the budget says, meeting about one transcript of garbage.
 
     Growth is measured, not estimated: the permanent generation is walked
-    once after each re-freeze, at the next maintenance (a few ms per million
-    objects). Live (2026-10-19), a running total of what re-freezes counted
-    missed what other threads allocated between each count and its freeze:
-    the frozen set grew 372K objects against a 244K budget and no compaction
-    ran. Frozen objects freed by reference counting (most replaced render
-    strips: live, ~70K frozen per send for ~20K of real growth) leave it by
-    themselves, so only real growth makes a compaction due. The collector is
-    never disabled and its thresholds are never touched.
+    once after each re-freeze, at the next maintenance (a few ms of CPU per
+    million objects). A running total of what re-freezes counted is no upper
+    bound, because other threads can allocate between a count and its
+    freeze. Frozen objects freed by reference counting (most replaced render
+    strips: live, 70-130K frozen per send for ~20K of real growth) leave it
+    by themselves, so only real growth makes a compaction due, and the set
+    can peak above the budget by the last re-freeze before one runs. The
+    collector is never disabled and its thresholds are never touched.
 
     CPython skips ``gc.collect()`` while another thread's pass is in
     progress. A maintenance that meets one (after a few short retries) reports

@@ -153,6 +153,50 @@ runs that predated TASK-35710's fix, the TASK-35443 trap below.)
 
 **What to do.** When a test stands in for a production timer, use the same Textual call, and print `asyncio.current_task().get_name()` inside the callback once to confirm which task the work runs in. While a widget's pump is deliberately held, poll with `asyncio.sleep`, not `pilot.pause()`.
 
+## gc.collect() can return having collected nothing: check that the pass ran (TASK-33620.15.3, 2026-10-19)
+
+**Incident.** In a live memory run of the idle heap re-freeze, the
+switch-phase compactions behaved as designed. Then the frozen set grew by
+100K objects after a run-phase compaction, where it should have dropped.
+The probe joined each compaction with the collections inside it, and this
+one showed 0 ms of collection CPU and 0 objects collected. It had started
+while the probe's own `gc.collect()` was running on another thread. CPython
+returns 0 from `gc.collect()` at once while any pass is in progress, and a
+pass hands the GIL to other threads from its callbacks and finalizers. The
+compaction froze the heap again, garbage included, and booked itself as
+done. Every unit test was green: none ran a collection while another was in
+progress. A related trap appeared while writing the test for it: on 3.12,
+`gc.get_freeze_count()` reads about 375 right after `gc.unfreeze()` plus a
+collection, because each collection parks immortal objects in the permanent
+generation. An `== 0` assertion is wrong there.
+
+**What to do.** When code relies on `gc.collect()` having run, read
+`gc.get_stats()[2]["collections"]` before and after it. To test the skip
+deterministically, call the code from a `gc.callbacks` start hook, where a
+pass is already in progress. When asserting on the frozen set, compare it
+with its value before the step, never with 0.
+
+## A red-then-green fake proves the fix, not the diagnosis (TASK-33620.15.3, 2026-10-20)
+
+**Incident.** In a live memory round of the idle heap re-freeze, the frozen
+set peaked 372K objects above its post-compaction size against a 244K
+compaction budget. This was read as a missed compaction and blamed on the
+budget's running estimate. The fix (7bc7eb88c3) walked the frozen set after
+every re-freeze, and its unit test used a fake re-freeze that froze more than
+it counted. The test failed before the fix and passed after it. The next live
+round, on the fix, peaked at 396K against a 272K budget. The budget is
+checked at the next idle point, after the next run has freed about 100K
+frozen objects it replaced. The peak comes right after a re-freeze. ADR-198
+already bounded the set at "budget plus one re-freeze", and the last re-freeze
+before each compaction had frozen at least 123-128K objects. Both rounds were
+inside the bound.
+
+**What to do.** Before fixing an overshoot, compute the bound's own terms from
+the same log: what the decision read, and what the last step added. A fake
+built from your hypothesis fails before the fix whether or not that
+hypothesis caused the live symptom. Re-run the live round on the fix before
+writing the cause into an ADR.
+
 ## A bounded leak can still be a latency regression: time the reclaim itself (TASK-33620.15.3, 2026-10-19)
 
 **Incident.** The idle heap re-freeze strands frozen garbage by design and
