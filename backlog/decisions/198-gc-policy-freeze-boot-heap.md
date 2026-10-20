@@ -174,9 +174,13 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    walked size plus what each re-freeze froze), and the generation is walked
    only when that bound reaches the budget.
 
-   No re-freeze runs while a compaction is due. Frozen garbage therefore never
-   exceeds that budget plus one re-freeze, and a compaction also reclaims any
-   boot-era garbage the earlier freezes kept.
+   No re-freeze runs while a compaction is due. The permanent generation
+   therefore never outgrows its size after the last compaction by more than
+   that budget plus one re-freeze, and the next compaction reclaims whatever
+   in it has become garbage, including boot-era garbage the earlier freezes
+   kept. (Garbage can also form inside the post-compaction set -- a
+   transcript frozen live, then switched away -- so the bound is on the
+   frozen set's size, not on the garbage in the growth alone.)
 4. **Unchanged.** Thresholds stay at CPython's defaults. The collector is
    never disabled. The policy is off under pytest (`PYTEST_CURRENT_TEST`), as
    the screen pre-import is; `TLDW_IDLE_HEAP_REFREEZE` overrides it either way.

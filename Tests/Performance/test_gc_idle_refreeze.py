@@ -443,6 +443,7 @@ async def test_twenty_switches_keep_the_frozen_generation_bounded() -> None:
     """
     gc.unfreeze()
     gc.collect()
+    thresholds = gc.get_threshold()
     app = TranscriptApp()
     try:
         async with app.run_test() as pilot:
@@ -483,6 +484,9 @@ async def test_twenty_switches_keep_the_frozen_generation_bounded() -> None:
             assert final.maintain("run_settled") == "compact"
             assert alive(dropped) == 0
             assert alive(shown) == len(shown)
+            # ADR-198: neither path disables the collector or tunes it.
+            assert gc.isenabled()
+            assert gc.get_threshold() == thresholds
     finally:
         gc.unfreeze()
 

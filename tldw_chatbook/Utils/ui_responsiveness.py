@@ -485,7 +485,9 @@ class IdleHeapRefreezer:
     compaction (and by at least ``min_growth``), the next idle moment of
     ``compaction_quiet_seconds`` compacts instead: unfreeze, collect the whole
     heap, freeze the survivors. No re-freeze runs while a compaction is due,
-    so frozen garbage never exceeds that budget plus one re-freeze.
+    so the permanent generation never outgrows its size after the last
+    compaction by more than that budget plus one re-freeze, and the next
+    compaction reclaims whatever in it has become garbage.
 
     Growth is tracked cheaply and checked exactly: re-freezes add what they
     froze to an upper bound, and only when that bound reaches the budget is
@@ -630,10 +632,13 @@ class IdleHeapRefreezer:
                 return
             self._request = None
             self.maintain(reason)
-        except Exception:
+        except Exception as error:
             self._request = None
+            # The type only: a traceback could carry screen state into the log.
             logging.getLogger(__name__).warning(
-                "Idle heap re-freeze skipped (%s)", reason, exc_info=True
+                "Idle heap re-freeze skipped (%s; exception_type=%s)",
+                reason,
+                type(error).__name__,
             )
 
 
