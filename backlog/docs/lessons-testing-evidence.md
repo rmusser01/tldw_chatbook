@@ -1,6 +1,6 @@
 # Lessons: what counts as evidence a change works
 
-## The local RecoveryRequired wall is real in CI for a gated test that reads config (TASK-34982, 2026-10-19)
+## A plain gated Tests/UI test that reads config fails in CI too (TASK-34982, 2026-10-19)
 
 **Incident.** Locally every plain (non-private-profile) Tests/UI test errored at setup with `RecoveryRequired: raw_source_selection_changed`, and the working assumption was that CI ran the same files cleanly. A new gated test drove a real `ConsoleTranscript.refresh_messages()`, whose row reconcile reads config (`get_cli_setting`). In UI Fast Lane (7) it failed with that same error twice, and the merge queue evicted the PR. The test's three neighbours, which read no config, passed.
 
