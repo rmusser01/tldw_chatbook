@@ -43,6 +43,7 @@ _HELD_NOTICES: list[tuple[str, str]] = []
 _MAX_HELD_NOTICES = 200
 _held_sink_ids: list[int] = []
 _held_stdlib_handler: logging.Handler | None = None
+_exit_flush_registered = False
 
 
 def _hold(name: str, message: str) -> None:
@@ -74,19 +75,43 @@ def _show_warning_held(message, category, filename, lineno, file=None, line=None
         pass
 
 
+def _flush_unreplayed_notices() -> None:
+    """At exit, print held notices that never reached the log to stderr.
+
+    Review F10 (TASK-34100.13): only the app's logging setup replays the held
+    notices. ``tldw-cli recovery``, a refused startup unlock or a crash before
+    the TUI never configure it, and their warnings -- which reached stderr
+    before notices were held -- would otherwise be lost.
+    """
+    held = list(_HELD_NOTICES)
+    _HELD_NOTICES.clear()
+    for name, message in held:
+        try:
+            print(f"{name}: {message}", file=sys.stderr)
+        except Exception:
+            return
+
+
 def quiet_startup_stderr() -> None:
     """Keep the pre-TUI terminal clear unless verbosity is opted into.
 
     Errors still reach stderr. Warnings -- loguru's, the standard library's
     and Python's ``warnings`` -- are held for the log file instead
-    (``replay_startup_notices``).
+    (``replay_startup_notices``); if the process exits before that replay
+    (a recovery subcommand, a refused unlock, an early crash), they are
+    printed to stderr at exit instead of dropped.
 
     Returns:
         None. Idempotent; safe to call before any tldw_chatbook import.
     """
-    global _held_stdlib_handler
+    global _held_stdlib_handler, _exit_flush_registered
     if os.environ.get(VERBOSE_STARTUP_ENV_VAR, "").strip():
         return
+    if not _exit_flush_registered:
+        import atexit
+
+        atexit.register(_flush_unreplayed_notices)
+        _exit_flush_registered = True
     try:
         from loguru import logger
 
