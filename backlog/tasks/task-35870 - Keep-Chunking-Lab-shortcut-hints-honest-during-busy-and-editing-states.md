@@ -1,7 +1,7 @@
 ---
 id: TASK-35870
 title: Keep Chunking Lab shortcut hints honest during busy and editing states
-status: To Do
+status: In Progress
 created_date: 2026-10-20 19:25
 labels:
 - chunking-lab
@@ -10,6 +10,9 @@ labels:
 priority: low
 documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-20 21:59
 ---
 
 ## Description
@@ -43,3 +46,19 @@ Reason: No new ADR is expected: retain the existing Lab route, coordinator, reco
 - [ ] #3 Button, keyboard and direct-action paths preserve current execution/recovery validation and useful refusal guidance; printable r/p/s still type in text controls and safe Escape behavior is unchanged.
 - [ ] #4 Mounted Lab tests cover busy and recovery-guard transitions, editor focus, candidate availability, and compact/wide F1/footer behavior without relaxing runtime or recovery limits.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/118-chunking-lab-local-execution-and-recovery.md; backlog/decisions/152-roleplay-mode-keys-single-letters-nav-layer-reserved.md
+Reason: Correct current local action/help projection, preserving the Lab coordinator, recovery and worker contracts.
+
+- Add actual mounted Lab tests for focus-stable idle -> busy -> idle, guarded/recovery/leaving and candidate readiness changes, plus Input/TextArea/Select focus and compact/wide F1. Use existing deterministic local coordinator/runner fixtures, not provider/network calls.
+- Record expected misleading hints/help failures on original code.
+- Share a small surface-local action-support projection between controls/footer/help, refresh on state and focus changes, and preserve useful refusal paths and printable typing.
+- Run new tests and affected Lab screen/recovery/results tests plus relevant static/import guards; record exact evidence.
+- Update docs, self-review and commit owned files; leave completed TASK-31645 and stale pre-renumber TASK-31428 unchanged.
+
+Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 6).
+<!-- SECTION:PLAN:END -->

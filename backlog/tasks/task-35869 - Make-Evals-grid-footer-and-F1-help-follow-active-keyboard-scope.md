@@ -1,7 +1,7 @@
 ---
 id: TASK-35869
 title: Make Evals grid footer and F1 help follow active keyboard scope
-status: In Progress
+status: Done
 created_date: 2026-10-20 19:25
 labels:
 - evals
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-20 21:29
+updated_date: 2026-10-20 21:59
 ---
 
 ## Description
@@ -41,11 +41,11 @@ Reason: No new ADR is expected for truthful presentation of existing widget-owne
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Footer grid hints reflect actual reachability for grid/table controls, Catalog rail, Inspector and focused text entry, and update on focus, selection and readiness changes.
-- [ ] #2 F1 exposes supported grid commands with an honest current scope or explicit focus requirement, including narrow layouts, without contradicting the footer.
-- [ ] #3 Lens, baseline, sort and export still dispatch in their intended grid context; printable characters remain text inside editors and no global binding is added.
-- [ ] #4 Availability/help projection adds no configuration or database reads to key dispatch or ordinary focus changes and does not duplicate category/action lists.
-- [ ] #5 A mounted Evals test exercises real run-group selection, F6/Tab focus changes, command dispatch and compact/wide footer/F1 behavior; existing base-help tests remain valid.
+- [x] #1 Footer grid hints reflect actual reachability for grid/table controls, Catalog rail, Inspector and focused text entry, and update on focus, selection and readiness changes.
+- [x] #2 F1 exposes supported grid commands with an honest current scope or explicit focus requirement, including narrow layouts, without contradicting the footer.
+- [x] #3 Lens, baseline, sort and export still dispatch in their intended grid context; printable characters remain text inside editors and no global binding is added.
+- [x] #4 Availability/help projection adds no configuration or database reads to key dispatch or ordinary focus changes and does not duplicate category/action lists.
+- [x] #5 A mounted Evals test exercises real run-group selection, F6/Tab focus changes, command dispatch and compact/wide footer/F1 behavior; existing base-help tests remain valid.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,6 +60,17 @@ Reason: Project truthful scope for existing widget-owned Evals actions, preservi
 - Derive supported grid hints from mounted/focused/readiness context; cache only existing selection classification if needed to avoid focus-time DB calls. Project the same facts into F1 with honest scope requirements, preserving widget binding ownership.
 - Run new tests and affected existing Evals help/grid/export checks plus relevant static/performance guards; record exact evidence.
 - Update docs, self-review and commit owned files; no global registry or new shell binding.
+- Restore the already advertised F6 pane walk using an Evals-local handler reached by the existing global delegate; no new binding/router, skip unavailable compact panes.
 
 Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 5).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Evals footer and F1 now share the mounted ResultsGrid binding vocabulary, readiness and actual active-binding reachability. Widget ownership remains; outgoing selections cannot supply stale hints. Added the missing Evals-local F6 delegate using the existing focus helper and mounted editor targets. No new global binding, category registry or focus-time DB/config read; existing empty/error guidance/direct guards remain. Updated Evals architecture and user guide.
+
+Evidence: e40cbe6d10; final strengthened four mounted SQLite compact/wide focus/help/readiness/command/export/editor cases pass, six existing help/export cases pass, four static/import guards pass. Final import557/558 modules and420339/425347 LOC; no budget increase. Ruff new tests/grid, fatal lint, formatter and whitespace pass; controller independently confirms exact BASE/current same inherited screen F401. Eight legacy grid cases fail in unchanged constructor recovery setup before Evals mounts and remain unqualified. Warnings remain visible. No full suite run.
+
+Superpowers independent spec/quality review Approved, no blocking findings. Original-code RED is recorded contemporaneously; numbered pytest74/75 raw child directories were retired by normal retention before final reinspection. Named final receipts were independently inspected; qualification and incident-based receipt-retention lesson retained. ADR required:no; existing031/152 apply. Detailed six-task qualification:Docs/superpowers/qa/2026-10-20-textual-book-followup-fixes.md.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

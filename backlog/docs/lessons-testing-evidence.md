@@ -20993,3 +20993,8 @@ For a single-line `Input` using these default bindings, explicitly select and
 replace its seed, then assert the actual text and settled focus before triggering
 the behavior under test. Do not infer another text widget's bindings or change
 screen keybindings to accommodate a test.
+
+
+## Copy numbered pytest receipts before subsequent runs retire them (TASK-35869)
+
+During the Textual follow-up gate on 2026-10-20, the Evals report referenced original-code child receipts under pytest-74/75. By final review the normal numbered-temp rotation retained pytest-82/83/84, so the controller could independently inspect named final logs and reproduce baseline lint, but could not reinspect those early raw RED logs. Contemporaneous reports remain evidence, with this qualification disclosed. Copy the needed RED/GREEN receipt to a named artifact outside the rotating pytest directory before later targeted runs; do not disable retention, bypass private-temp permissions, or replay product tests only to recreate an aged-out log.

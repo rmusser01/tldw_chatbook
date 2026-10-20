@@ -93,11 +93,12 @@ ADR required: no; exact `033-application-session-state-ownership.md`, ADR-042 an
 **Files:** modify `tldw_chatbook/UI/Screens/evals_screen.py` and only necessary ResultsGrid integration in `UI/Evals/results_grid.py`; create `Tests/UI/test_evals_grid_shortcuts.py`; update Evals architecture/user documentation.
 **Interfaces:** l/b/s/e remain ResultsGrid-owned actions; existing ShortcutContext and WorkbenchHelpState projections consume one truthful context without new reads on focus/key dispatch.
 ADR required: no; exact keyboard ADR-031 and ADR-152.
-- [ ] Add mounted actual-Evals tests selecting a real run group, moving focus via F6/Tab among grid/rail/inspector/text controls and exercising the real grid actions. Cover compact/wide footer/F1 and action dispatch/typing.
-- [ ] Record expected stale hints/missing-help failures on original code.
-- [ ] Derive supported grid hints from mounted/focused/readiness context; cache only existing selection classification if needed to avoid focus-time DB calls. Project the same facts into F1 with honest scope requirements, preserving widget binding ownership.
-- [ ] Run new tests and affected existing Evals help/grid/export checks plus relevant static/performance guards; record exact evidence.
-- [ ] Update docs, self-review and commit owned files; no global registry or new shell binding.
+- [x] Add mounted actual-Evals tests selecting a real run group, moving focus via F6/Tab among grid/rail/inspector/text controls and exercising the real grid actions. Cover compact/wide footer/F1 and action dispatch/typing.
+- [x] Record expected stale hints/missing-help failures on original code.
+- [x] Restore the already advertised F6 pane walk through an Evals-local action_focus_next_workbench_pane handler reached by the existing global delegate; skip unavailable compact panes, preserve Tab/text behavior and add no binding or shared router.
+- [x] Derive supported grid hints from mounted/focused/readiness context; cache only existing selection classification if needed to avoid focus-time DB calls. Project the same facts into F1 with honest scope requirements, preserving widget binding ownership.
+- [x] Run new tests and affected existing Evals help/grid/export checks plus relevant static/performance guards; record exact evidence.
+- [x] Update docs, self-review and commit owned files; no global registry or new shell binding.
 
 ### Task 6: TASK-35870 - Chunking Lab action/help state
 
