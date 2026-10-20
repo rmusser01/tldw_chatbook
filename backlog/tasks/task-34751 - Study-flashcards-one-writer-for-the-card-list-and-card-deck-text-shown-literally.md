@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 16:28'
-updated_date: '2026-10-19 17:30'
+updated_date: '2026-10-19 22:58'
 labels:
   - study
   - ui
@@ -75,7 +75,7 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 - Architecture tests (`test_study_handler_service_keywords`, `test_backwards_select_option_guard`, `test_tier2_evals_media_study_guards`): all pass on both.
 - New files on the branch: `test_study_user_text_literal.py` 2/2 in 27.9 s of pytest at load 66; `test_study_flashcards_quit_mid_rebuild.py` 1/1 in 25.3 s at load 70.
 
-**Census.** Both new files are in `scripts/ui_pr_gate_census.txt`. `MINIMUM_FILES` goes from dev's 326 to 328.
+**Census.** Both new files are in `scripts/ui_pr_gate_census.txt`. `MINIMUM_FILES` goes from dev's 327 to 329 (dev 8136af6f6f; it was 326 to 328 before the last rebase).
 
 **Live** (2026-10-19 17:28-17:39, `launch.sh` at 160x45, isolated profile, null keyring; evidence in `uxrev/evidence/bd5/R64/final/`):
 - Created a deck named `r64f Bio [/b] [new] deck`. The picker and the toast showed it literally.
@@ -106,6 +106,17 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 
 **Docs.** Study has no User Guide page, and the visible change is a crash fix, so no guide edit was made. A new lesson in `backlog/docs/lessons-backlog-hygiene.md` covers this overlap: a flaky gated test gets fixed inside every PR it blocks, so search dev by code, not by task id.
 
+**Merge evidence (2026-10-19 22:05-22:58, rebased onto dev 8136af6f6f, which had moved 73 files; host load 40-86 on 14 cores).** The census conflict was resolved as dev's floor plus this branch's two files (327 -> 329), keeping both dated comments. Branch and a detached dev worktree, one file per command under the plain pytest command:
+- New tests RED on dev 8136af6f6f with the stated causes: the quit test fails with `WorkerFailed: MountError("Can't mount widget(s) before ListView(id='card-list', classes='flashcard-list') is mounted")`, and so do both detached guard cases (dev re-raises the `NoMatches` while Flashcards is shown, and does not catch `MountError` at all); the banner test fails with `MarkupError: closing tag '[/b]' does not match any open tag`. The picker test and both attached negative-control cases pass on dev, as they pin dev's behaviour.
+- New tests GREEN on the branch: quit file 5/5, literal file 2/2, contract file 2/2 (dev's contract file also 2/2 in this run).
+- Mutation re-checked: with the guard returning on an attached `MountError`, both attached cases fail with "DID NOT RAISE" (restored by Edit, scratch worktree removed).
+- Existing files, reds identical by test id: `test_study_screen.py` 11, `test_study_dashboard.py` 7 + 1 error, `test_study_quizzes_screen.py` 15, `test_mount_io_off_pump.py` 10, all `RecoveryRequired: raw_source_selection_changed`; the three Architecture files pass on both.
+- `test_study_flashcards_screen.py`: 29 identical `RecoveryRequired` reds. The move-target test failed once more on the branch (Move still disabled after one pause); it then passed in 2 more whole-file runs on each side and 6/6 alone on each side. Filed as TASK-35790 (not gated).
+- `test_study_controls_geometry.py`: 6 bodies pass on both; `[size0]` ended as the TASK-35663 teardown ERROR on the branch twice and on dev once (dev passed once at lower load). Added to TASK-35663.
+- `test_boot_css_byte_budget.py` passes. `test_ui_ready_module_census.py` fails identically on dev and the branch (1032 resident modules against a limit of 1031, the same 22 new and 12 shed modules, none of them Study); this branch adds no module and no CSS.
+- No module-size ratchet row covers `flashcards_handler.py` or `Study_Window.py`. `./scripts/preflight.sh` passes (329 gated entries, floor 329).
+- Live, on the rebased head (evidence `uxrev/evidence/bd5/R64/rebased/`): a deck named `r64rb Bio [/b] [new] deck` shows literally in the picker; a card `What does [/b] do? r64rb` lists literally with `[new]`; Refresh twice then Ctrl+Q exits with 0 matching lines in the 297-line profile log. A smoke check only, as above.
+
 **Files:**
 - `tldw_chatbook/UI/Study_Modules/flashcards_handler.py`
 - `tldw_chatbook/UI/Study_Window.py`
@@ -115,5 +126,5 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 - `scripts/ui_pr_gate_census.txt`
 - `scripts/check_ui_pr_gate_census.py`
 - `backlog/docs/lessons-backlog-hygiene.md`
-- `backlog/tasks/task-34752`, `task-34753`, `task-34755`, `task-35663`
+- `backlog/tasks/task-34752`, `task-34753`, `task-34755`, `task-35663`, `task-35790`
 <!-- SECTION:NOTES:END -->
