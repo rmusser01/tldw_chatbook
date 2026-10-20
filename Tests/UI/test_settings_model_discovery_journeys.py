@@ -5,6 +5,7 @@ import asyncio
 import pytest
 from textual.widgets import Button, Input, OptionList, Select, SelectionList, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_configuration_hub import (
     FakeSettingsModelDiscoveryScope,
@@ -131,7 +132,10 @@ async def _picker_rows(host, pilot, screen) -> list[str]:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
-async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, size):
+@private_profile_test
+async def test_discovery_keyboard_selection_survives_rebuild_and_save(
+    request, theme, size
+):
     app, scope = _app_scope()
     host = ProviderSettingsHarness(app, "settings")
     host.theme = theme
@@ -229,8 +233,9 @@ async def test_late_discovery_cannot_publish_into_a_changed_form(change, failure
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
 @pytest.mark.parametrize("change", ["provider", "endpoint_roundtrip"])
+@private_profile_test
 async def test_late_save_keeps_receipt_and_activation_out_of_a_changed_form(
-    failure, change
+    request, failure, change
 ):
     app, scope = _app_scope(gate="save")
     host = ProviderSettingsHarness(app, "settings")
@@ -270,7 +275,8 @@ async def test_late_save_keeps_receipt_and_activation_out_of_a_changed_form(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["discover", "save", "clear"])
-async def test_discovery_operations_report_failure_and_allow_retry(operation):
+@private_profile_test
+async def test_discovery_operations_report_failure_and_allow_retry(request, operation):
     app, scope = _app_scope(model="existing-active-model")
     host = ProviderSettingsHarness(app, "settings")
     async with host.run_test(size=(80, 24)) as pilot:
