@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## The local RecoveryRequired wall is real in CI for a gated test that reads config (TASK-34982, 2026-10-19)
+
+**Incident.** Locally every plain (non-private-profile) Tests/UI test errored at setup with `RecoveryRequired: raw_source_selection_changed`, and the working assumption was that CI ran the same files cleanly. A new gated test drove a real `ConsoleTranscript.refresh_messages()`, whose row reconcile reads config (`get_cli_setting`). In UI Fast Lane (7) it failed with that same error twice, and the merge queue evicted the PR. The test's three neighbours, which read no config, passed.
+
+**What to do.** A gated Tests/UI test that reaches any config read runs under `@private_profile_test` (it takes `request`), like the other Console tests in the census. That also makes it run under pytest locally, so the red/green check needs no standalone runner.
+
 ## set_timer and set_interval run their callbacks in different tasks (TASK-34982, 2026-10-18)
 
 **Incident.** A test meant to stop the Console poll's timer in the middle of a row removal passed on the unfixed code twice. Both versions drove the paint with `app.set_timer(...)`, and in Textual 8.2.8 `set_timer` wraps its callback in `call_next`, so the paint ran on the app's own pump and stopping the timer cancelled nothing. In the first, the removal was not even the timer's: `set_messages` had already queued its own refresh on the transcript's pump, which removed the row first. The poll uses `set_interval`, which runs the callback inside the timer's own task; only then did the test fail on dev. A `pilot.pause()` while the row's Unmount was held also hung the test for 30 s, because Pilot waits for a callback from every mounted pump.

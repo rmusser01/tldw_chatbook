@@ -15,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -135,9 +136,12 @@ class _TranscriptHost(App):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_stopping_the_paint_timer_mid_removal_still_removes_the_row(
-    monkeypatch,
+    request: pytest.FixtureRequest, monkeypatch
 ) -> None:
+    # A private profile: the transcript's refresh reads config, which a plain
+    # gated Tests/UI test may not (RecoveryRequired in the PR lanes).
     app = _TranscriptHost()
     entered, release = asyncio.Event(), asyncio.Event()
     async with app.run_test() as pilot:

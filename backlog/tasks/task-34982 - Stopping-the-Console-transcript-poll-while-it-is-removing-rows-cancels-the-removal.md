@@ -4,7 +4,7 @@ title: Stopping the Console transcript poll while it is removing rows cancels th
   removal
 status: Done
 created_date: 2026-10-12 05:26
-updated_date: '2026-10-19 05:42'
+updated_date: '2026-10-20 00:34'
 assignee:
 - '@claude'
 labels:
@@ -46,7 +46,7 @@ It is used at the awaited removals the poll's sync reaches. They were found with
 
 Evidence:
 - Tests/UI/test_console_transcript_poll_stop_removal.py, new and in the UI PR gate (census floor 326 -> 327). The transcript test pins the _reconcile_rows site end to end; the three helper tests pin the contract every site relies on. The transcript test runs the paint as the poll does (set_messages, then await refresh_messages, inside a set_interval callback), holds the removed row's Unmount, stops the timer, then releases it. On dev it fails with 'the stopped paint left its removed row mounted' and then a CancelledError from _message_loop_exit at run_test shutdown, the signature of TASK-35587's CI failure; with the fix the row is removed, its task is not cancelled, and the next refresh mounts exactly the current rows (AC #2). The helper tests: a held removal still completes when its caller is cancelled; a widget awaiting its own removal from its own pump completes (it deadlocks, and the test times out, without the direct-await edge); a removal failing after its caller was cancelled is logged (nothing is logged without the done-callback). Each was red against the helper with that part removed.
-- Plain Tests/UI files cannot run locally (the RecoveryRequired wall), so the four tests were run through a standalone runner under the scratch profile: the transcript test red on dev, and all four green on the final head.
+- Plain Tests/UI files cannot run locally (the RecoveryRequired wall), so the four tests were run through a standalone runner under the scratch profile: the transcript test red on dev, and all four green on the final head. In CI's UI Fast Lane the transcript test then failed the same way (RecoveryRequired: raw_source_selection_changed; the queue evicted this PR on 2026-10-19 after two failures), because it reads config while plain gated Tests/UI tests may not. It now runs under @private_profile_test, which also runs it under pytest locally: red with the _reconcile_rows shield reverted, green with it.
 - The UI census's 68 Console files, run whole on this branch and on dev 69771c1811 (xdist -n 8; most failures are the local wall). The first run gave 114 failed and 1314 passed here, 113 and 1315 on dev, the same set but for three. test_workspace_command_opens_same_manager_in_registered_scope failed on dev only. test_a_probe_settling_mid_poll_still_reaches_the_console (readiness text not yet refreshed) and test_console_r_resends_a_refused_echo_as_one_message (timed out waiting for the resend button, a flake listed under TASK-34789) failed here only, and both passed 3 of 3 serially on each tree. After review round 1 (three more sites, the direct-await and logging edges) the branch run gave 112 failed and 1316 passed, every failure also failing on dev.
 - Tests/CI: 998 passed, 1 skipped. Preflight passes. Diagnostic inventory: one added call, the WARNING above; reviewed with --statements: it interpolates only an exception type name (no user content, secret, path or URL); regenerated.
 
