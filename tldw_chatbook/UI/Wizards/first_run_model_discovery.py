@@ -457,9 +457,23 @@ def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
         # ponytail: a check settled before the step's first layout (the app
         # mid-batch) finds no size and does not scroll; checks are network
         # round trips, so retry on the step's Resize only if that is seen.
-        owner.call_after_refresh(
-            lambda: auth.is_attached and auth.scroll_visible(animate=False)
-        )
+        owner.call_after_refresh(_reveal_auth_unless_browsing, owner, auth)
+
+
+def _reveal_auth_unless_browsing(owner: Any, auth: Any) -> None:
+    """Scroll Authentication into view, unless the user is browsing the list.
+
+    Review v3r1, G6-BV3-01: browsing selects, so every browsed keyed row's
+    keyless 401 scrolled the list away from the row being browsed. An
+    explicit pick moves focus to the key, inside this section, so the line
+    still shows when the user acts.
+    """
+    if not auth.is_attached:
+        return
+    keep = getattr(owner, "keep_browsed_row_in_view", None)
+    if callable(keep) and keep():
+        return
+    auth.scroll_visible(animate=False)
 
 
 def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") -> None:
