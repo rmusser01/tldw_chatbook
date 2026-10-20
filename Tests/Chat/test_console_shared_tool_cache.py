@@ -1,6 +1,7 @@
 """Actual stock reuse retains its checked cold observation and native lifetime."""
 import asyncio
 import builtins
+import dis
 import inspect
 import io
 import os
@@ -30,6 +31,15 @@ class _StockProbe(_MaximumProbe):
         super().__init__(case.source, case.permissions)
         self.service = case.service
         self.fingerprint_code = inspect.unwrap(UnifiedMCPControlPlaneService.run_catalog_fingerprint).__code__
+        # A coroutine's frame raises a "call" event again at each resume after
+        # an await, and the fingerprint yields between its two store reads
+        # (TASK-33620.15.5). Count calls, not resumes: only an entry at the
+        # code's start (its first RESUME, oparg 0).
+        self.fingerprint_entry = next(
+            ins.offset
+            for ins in dis.get_instructions(self.fingerprint_code)
+            if ins.opname == "RESUME" and ins.arg == 0
+        )
         self.adoption_code = MCPToolProvider.adopt_console_preparation.__code__
         self.native_calls = 0
         self.admissions = 0
@@ -44,7 +54,11 @@ class _StockProbe(_MaximumProbe):
         if event == "call":
             if frame.f_code is self.admission_code:
                 self.admissions += 1
-            if frame.f_code is self.fingerprint_code and frame.f_locals.get("self") is self.service:
+            if (
+                frame.f_code is self.fingerprint_code
+                and frame.f_lasti == self.fingerprint_entry
+                and frame.f_locals.get("self") is self.service
+            ):
                 self.fingerprints += 1
             if frame.f_code is self.adoption_code:
                 self.adoptions += 1
