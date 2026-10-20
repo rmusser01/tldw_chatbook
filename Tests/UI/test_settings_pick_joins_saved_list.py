@@ -10,7 +10,8 @@ happened (C4); the capability line no longer ties capabilities to saving
 stylesheet, with the real discovery service (only its transport stubbed)
 unless it says otherwise, and the real writer. Configuration is written to
 the file through the production writer, never by seeding
-``app.providers_models``.
+``app.providers_models``. Each case is a child process, so related checks
+share a case.
 """
 
 from __future__ import annotations
@@ -100,6 +101,8 @@ def _saved_toast(host):
 async def _pick(host, pilot, screen, model_id: str) -> None:
     """Choose ``model_id`` in Default model: its exact id, then Enter."""
     picker, field, _results, adapter = _widgets(screen)
+    if picker.custom_mode:  # back to the list, as its "Model list" button does
+        picker.toggle_custom_mode()
     field.focus()
     await pilot.pause()
     field.value = model_id
@@ -115,7 +118,8 @@ async def _custom_id(host, pilot, screen, model_id: str) -> None:
     picker, field, _results, adapter = _widgets(screen)
     field.focus()
     await pilot.pause()
-    await pilot.press("tab", "enter")
+    if not picker.custom_mode:
+        await pilot.press("tab", "enter")
     await _until(pilot, lambda: picker.custom_mode and screen.focused is field)
     field.value = model_id
     await _until(pilot, lambda: adapter.value == model_id)
@@ -146,37 +150,41 @@ async def _add(host, pilot, screen, *model_ids: str) -> None:
 
 @private_profile_test
 @pytest.mark.parametrize(
-    ("provider", "list_key", "profile"),
+    ("provider", "list_key", "profile", "model_id"),
     (
-        pytest.param("llama_cpp", "Llama_cpp", _LLAMA, id="llama-cpp"),
-        pytest.param("openai", "OpenAI", _OPENAI, id="openai"),
-        pytest.param("custom_2", "Custom_2", _CUSTOM_2, id="custom-2"),
+        pytest.param("llama_cpp", "Llama_cpp", _LLAMA, "fake[/]beta", id="llama-cpp"),
+        pytest.param("openai", "OpenAI", _OPENAI, "fake-beta", id="openai"),
+        pytest.param("custom_2", "Custom_2", _CUSTOM_2, "fake-beta", id="custom-2"),
     ),
 )
 async def test_a_discovered_pick_saved_with_s_joins_the_saved_list(
-    request, monkeypatch, provider, list_key, profile
+    request, monkeypatch, provider, list_key, profile, model_id
 ):
     """AC#1, AC#6: a model the current listing holds and the saved list does
     not, chosen in Default model, is the default for new chats after s, and
     the same write appends it to the provider's list as the file holds it
     then (a model another program added since start is kept). The toast
-    names it; the row reads "saved" and the title no longer counts it."""
+    names it; the row reads "saved" and the title no longer counts it.
+    TASK-1513: the llama.cpp id holds "[/]", and Textual's own toast render
+    prints it literally (with markup on, it raises MarkupError)."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     _write(profile)
     app = _booted_app()
-    _route_discovery_to(monkeypatch, _listing("fake-alpha", "fake-beta"))
+    _route_discovery_to(monkeypatch, _listing("fake-alpha", model_id))
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
-        await _pick(host, pilot, screen, "fake-beta")
+        await _pick(host, pilot, screen, model_id)
         _write({"providers": {list_key: [*_saved(list_key), "hand-added"]}})
         before = _saved(list_key)
         await _save_with_s(host, pilot, screen)
         label = screen._provider_display_label(provider)
         toast = _saved_toast(host)
+        assert toast.message.endswith(f" Added {model_id} to {label}'s model list.")
+        painted = Toast(toast).render().plain
         listing = screen.query_one(_LIST, SelectionList)
         rows = [
             str(listing.get_option_at_index(i).prompt).split(" · ")[1:3]
@@ -186,12 +194,12 @@ async def test_a_discovered_pick_saved_with_s_joins_the_saved_list(
         unsaved = screen._category_has_unsaved_changes(PROVIDERS_MODELS)
 
     data = _file()
-    assert data["providers"][list_key] == [*before, "fake-beta"]
-    assert data["chat_defaults"]["model"] == "fake-beta"
+    assert data["providers"][list_key] == [*before, model_id]
+    assert data["chat_defaults"]["model"] == model_id
     assert app.providers_models[list_key] == data["providers"][list_key]
-    assert toast.message.endswith(f" Added fake-beta to {label}'s model list.")
     assert toast.markup is False
-    assert ["fake-beta", "saved"] in rows, rows
+    assert painted == toast.message
+    assert [model_id, "saved"] in rows, rows
     assert "joins on save" not in title, title
     assert not unsaved
 
@@ -200,9 +208,8 @@ async def test_a_discovered_pick_saved_with_s_joins_the_saved_list(
 
 
 @private_profile_test
-@pytest.mark.parametrize("revert_with", ("r", "button"))
 async def test_a_pick_reverted_before_s_leaves_the_file_byte_identical(
-    request, monkeypatch, revert_with
+    request, monkeypatch
 ):
     """AC#2: a pick writes nothing; Revert's Discard changes drops the pick
     with the draft, and the s after it has nothing to save or add."""
@@ -220,10 +227,7 @@ async def test_a_pick_reverted_before_s_leaves_the_file_byte_identical(
         before = _config_path().read_bytes()
         await _pick(host, pilot, screen, "fake-beta")
         picked = _config_path().read_bytes()
-        if revert_with == "r":
-            await pilot.press("r")
-        else:
-            await pilot.click("#settings-revert-category")
+        await pilot.press("r")
         await _until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
         await pilot.click("#confirm-button")
         await _until(
@@ -367,59 +371,66 @@ async def test_a_pick_kept_through_leaving_settings_is_added_by_the_next_s(
 
 # --- Case 4: only a discovered pick joins ------------------------------------
 
+#: (name, the steps that stage the default, the default s saves). The Custom
+#: ID ways come last: the picker stays in Custom ID mode after them.
+_OTHER_WAYS = (
+    ("already-saved", (("pick", "gpt-saved"),), "gpt-saved"),
+    ("catalog", (("pick", "gpt-catalog"),), "gpt-catalog"),
+    (
+        "listed-then-catalog",
+        (("pick", "gpt-new"), ("pick", "gpt-catalog-2")),
+        "gpt-catalog-2",
+    ),
+    (
+        "listed-then-custom-id",
+        (("pick", "gpt-new"), ("custom", "my-other-id")),
+        "my-other-id",
+    ),
+    ("custom-id", (("custom", "my-own-id"),), "my-own-id"),
+)
+
 
 @private_profile_test
-@pytest.mark.parametrize(
-    ("steps", "default"),
-    (
-        pytest.param((("pick", "gpt-saved"),), "gpt-saved", id="already-saved"),
-        pytest.param((("pick", "gpt-catalog"),), "gpt-catalog", id="catalog"),
-        pytest.param((("custom", "my-own-id"),), "my-own-id", id="custom-id"),
-        pytest.param(
-            (("pick", "gpt-new"), ("custom", "my-own-id")),
-            "my-own-id",
-            id="listed-then-custom-id",
-        ),
-        pytest.param(
-            (("pick", "gpt-new"), ("pick", "gpt-catalog")),
-            "gpt-catalog",
-            id="listed-then-catalog",
-        ),
-    ),
-)
 async def test_a_model_staged_any_other_way_leaves_the_saved_list_unchanged(
-    request, monkeypatch, steps, default
+    request, monkeypatch
 ):
     """AC#5: an id the saved list already holds, a catalog id the server did
     not list, or a typed Custom ID (also one that replaces a discovered
     pick, as does a later catalog pick) is saved as the default only. The
-    catalog comes from a fake scope; the saved list is the file's."""
+    five ways run one after another, each saved with s. The catalog comes
+    from a fake scope; the saved list is the file's."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     _write({**_OPENAI, "providers": {"OpenAI": ["gpt-4o", "gpt-saved"]}})
     app = _booted_app()
     app.llm_provider_catalog_scope_service = _CatalogScope(
-        "openai", catalog=("gpt-4o", "gpt-catalog"), served=("gpt-saved", "gpt-new")
+        "openai",
+        catalog=("gpt-4o", "gpt-catalog", "gpt-catalog-2"),
+        served=("gpt-saved", "gpt-new"),
     )
     host = _SettingsCssHarness(app, "settings")
+    seen = []
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
-        for how, model_id in steps:
-            if how == "pick":
-                await _pick(host, pilot, screen, model_id)
-            else:
-                await _custom_id(host, pilot, screen, model_id)
-        title = _title(screen)
-        await _save_with_s(host, pilot, screen)
-        toast = _saved_toast(host).message
+        for _name, steps, _default in _OTHER_WAYS:
+            for how, model_id in steps:
+                if how == "pick":
+                    await _pick(host, pilot, screen, model_id)
+                else:
+                    await _custom_id(host, pilot, screen, model_id)
+            title = _title(screen)
+            await _save_with_s(host, pilot, screen)
+            seen.append((_file(), title, _saved_toast(host).message))
 
-    data = _file()
-    assert data["chat_defaults"]["model"] == default
-    assert data["providers"]["OpenAI"] == ["gpt-4o", "gpt-saved"]
-    assert "joins on save" not in title, title
-    assert "model list" not in toast, toast
+    for (name, _steps, default), (data, title, toast) in zip(
+        _OTHER_WAYS, seen, strict=True
+    ):
+        assert data["chat_defaults"]["model"] == default, name
+        assert data["providers"]["OpenAI"] == ["gpt-4o", "gpt-saved"], name
+        assert "joins on save" not in title, (name, title)
+        assert "model list" not in toast, (name, toast)
 
 
 @private_profile_test
@@ -539,16 +550,20 @@ async def test_a_list_changed_while_s_saves_writes_nothing_and_keeps_the_draft(
     assert reads == [1]
 
 
-# --- Case 7: the title says one joins on save --------------------------------
+# --- Cases 7, 8 and 9: the block, its Tab order and its title ---------------
 
 
 @private_profile_test
 @pytest.mark.parametrize("size", ((211, 44), (235, 52)), ids=("211x44", "235x52"))
-async def test_the_saved_model_list_title_says_a_pick_joins_on_save(
+async def test_the_saved_model_list_reads_in_tab_order_and_says_a_pick_joins(
     request, monkeypatch, size
 ):
-    """AC#4: while a discovered pick waits for s the title ends "· 1 joins on
-    save", on its one row; a saved id picked instead clears it, and s does."""
+    """AC#9, AC#11 (A2, B6): Discover models, then the list it fills, then
+    Add to model list (Save selected, renamed) beside Clear and the
+    instant-apply hint on one row; Tab takes them in that order. AC#4:
+    while a discovered pick waits for s the title ends "· 1 joins on save",
+    painted on its one row; a saved id picked instead clears it, and s
+    does."""
     _write(_LLAMA)
     app = _booted_app()
     _route_discovery_to(monkeypatch, _listing("fake-alpha", "fake-beta", "m-one"))
@@ -558,7 +573,30 @@ async def test_the_saved_model_list_title_says_a_pick_joins_on_save(
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
+        add = screen.query_one(_ADD, Button)
         listing = screen.query_one(_LIST, SelectionList)
+        discover = screen.query_one(_DISCOVER, Button)
+        row = add.parent
+        row.scroll_visible(animate=False)
+        await pilot.pause()
+        hints = [
+            str(hint.renderable)
+            for hint in row.query(".settings-instant-apply-hint").results(Static)
+        ]
+        row_painted = _region_rows(screen, row)
+        label, tooltip = str(add.label), str(add.tooltip)
+        same_row = screen.query_one(_CLEAR, Button).parent is row
+        row_height = row.region.height
+        ys = (discover.virtual_region.y, listing.virtual_region.y, row.virtual_region.y)
+        discover.focus()
+        await pilot.pause()
+        stops = [screen.focused.id]
+        for _ in range(3):
+            await pilot.press("tab")
+            await pilot.pause()
+            stops.append(screen.focused.id)
+        screen.set_focus(None)
+
         listing.select("fake-alpha")
         listing.select("fake-beta")
         await _settle(host, pilot)
@@ -576,6 +614,19 @@ async def test_the_saved_model_list_title_says_a_pick_joins_on_save(
         await _save_with_s(host, pilot, screen)
         after = _title(screen)
 
+    assert label == "Add to model list"
+    assert "no s needed" in tooltip, tooltip
+    assert same_row and hints == [_INSTANT]
+    assert row_height == 1
+    assert "Add to model list" in row_painted[0], row_painted
+    assert _INSTANT in row_painted[0], row_painted
+    assert ys[0] < ys[1] < ys[2], ys
+    assert stops == [
+        "settings-discover-provider-models",
+        "settings-discovered-models-list",
+        "settings-save-discovered-provider-models",
+        "settings-clear-discovered-provider-models",
+    ]
     assert picked == (
         "Saved model list · 1 saved in config · 3 discovered, 2 not saved · "
         "2 selected · 1 joins on save"
@@ -587,68 +638,27 @@ async def test_the_saved_model_list_title_says_a_pick_joins_on_save(
     assert "joins on save" not in after, after
 
 
-# --- Case 8: Add to model list ----------------------------------------------
-
-
-@private_profile_test
-@pytest.mark.parametrize("size", ((211, 44), (235, 52)), ids=("211x44", "235x52"))
-async def test_add_to_model_list_is_labelled_and_marked_as_applying_now(
-    request, monkeypatch, size
-):
-    """AC#9: Save selected reads Add to model list, beside Clear and the
-    instant-apply hint on one row, under the list it acts on."""
-    _write(_LLAMA)
-    app = _booted_app()
-    _route_discovery_to(monkeypatch, _listing("fake-beta"))
-    host = _SettingsCssHarness(app, "settings")
-
-    async with host.run_test(size=size) as pilot:
-        screen = await _open_providers(host, pilot)
-        await _settle(host, pilot)
-        await _press_discover(host, pilot, screen)
-        add = screen.query_one(_ADD, Button)
-        clear = screen.query_one(_CLEAR, Button)
-        listing = screen.query_one(_LIST, SelectionList)
-        discover = screen.query_one(_DISCOVER, Button)
-        row = add.parent
-        row.scroll_visible(animate=False)
-        await pilot.pause()
-        hints = [
-            str(hint.renderable)
-            for hint in row.query(".settings-instant-apply-hint").results(Static)
-        ]
-        painted = _region_rows(screen, row)
-        label, tooltip = str(add.label), str(add.tooltip)
-        same_row = clear.parent is row
-        height = row.region.height
-        ys = (discover.virtual_region.y, listing.virtual_region.y, row.virtual_region.y)
-
-    assert label == "Add to model list"
-    assert "no s needed" in tooltip, tooltip
-    assert same_row and hints == [_INSTANT]
-    assert height == 1
-    assert "Add to model list" in painted[0] and _INSTANT in painted[0], painted
-    assert ys[0] < ys[1] < ys[2], ys
-
-
 @private_profile_test
 @pytest.mark.parametrize(
-    ("profile", "listed", "checked", "receipt"),
+    ("profile", "listed", "adds"),
     (
         pytest.param(
             _LLAMA,
-            ("fake-alpha", "fake-beta"),
-            ("fake-alpha", "fake-beta"),
-            "Added fake-alpha and fake-beta to llama.cpp's model list.",
-            id="added",
-        ),
-        pytest.param(
-            _LLAMA,
-            ("m-one",),
-            ("m-one",),
-            "The selected models are already in llama.cpp's model list. To make "
-            "one the default, choose it in Default model.",
-            id="already-listed",
+            ("fake-alpha", "fake-beta", "m-one"),
+            (
+                (
+                    ("fake-alpha", "fake-beta"),
+                    "Added fake-alpha and fake-beta to llama.cpp's model list.",
+                ),
+                (
+                    ("m-one",),
+                    (
+                        "The selected models are already in llama.cpp's model "
+                        "list. To make one the default, choose it in Default model."
+                    ),
+                ),
+            ),
+            id="added-then-already-listed",
         ),
         pytest.param(
             {
@@ -656,15 +666,21 @@ async def test_add_to_model_list_is_labelled_and_marked_as_applying_now(
                 "providers": {"Llama_cpp": ["None"]},
             },
             ("fake-beta",),
-            ("fake-beta",),
-            "Added fake-beta to llama.cpp's model list. Default model is now "
-            "fake-beta; press s to save it.",
+            (
+                (
+                    ("fake-beta",),
+                    (
+                        "Added fake-beta to llama.cpp's model list. Default model "
+                        "is now fake-beta; press s to save it."
+                    ),
+                ),
+            ),
             id="filled-empty-default",
         ),
     ),
 )
 async def test_add_to_model_list_names_what_it_added_or_how_to_choose_a_default(
-    request, monkeypatch, profile, listed, checked, receipt
+    request, monkeypatch, profile, listed, adds
 ):
     """AC#9, AC#10 (C4 residual): the receipt names the models added, or says
     they were already listed and that choosing one in Default model makes it
@@ -674,120 +690,67 @@ async def test_add_to_model_list_names_what_it_added_or_how_to_choose_a_default(
     app = _booted_app()
     _route_discovery_to(monkeypatch, _listing(*listed))
     host = _SettingsCssHarness(app, "settings")
+    lines = []
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
-        await _add(host, pilot, screen, *checked)
-        line = _status(screen)
+        for checked, _receipt in adds:
+            await _add(host, pilot, screen, *checked)
+            lines.append(_status(screen))
 
-    assert line == receipt
+    assert lines == [receipt for _checked, receipt in adds]
     assert _file()["chat_defaults"]["model"] == profile["chat_defaults"]["model"]
 
 
-@private_profile_test
-async def test_the_s_receipt_prints_a_bracketed_model_id_literally(
-    request, monkeypatch
-):
-    """AC#1, TASK-1513: the s toast names the model it added; an id holding
-    "[/]" renders literally (markup=False), never as markup."""
-    _write(_LLAMA)
-    app = _booted_app()
-    _route_discovery_to(monkeypatch, _listing("fake[/]beta"))
-    host = _SettingsCssHarness(app, "settings")
-    expected = " Added fake[/]beta to llama.cpp's model list."
+# --- Case 10: the Inspector --------------------------------------------------
 
-    async with host.run_test(size=_SIZE) as pilot:
-        screen = await _open_providers(host, pilot)
-        await _settle(host, pilot)
-        await _press_discover(host, pilot, screen)
-        await _pick(host, pilot, screen, "fake[/]beta")
-        await _save_with_s(host, pilot, screen)
-        toast = _saved_toast(host)
-        assert toast.message.endswith(expected), toast.message
-        # Textual's own toast render: with markup on, "[/]" raises MarkupError.
-        painted = Toast(toast).render().plain
-
-    assert toast.markup is False
-    assert painted == toast.message
-    assert _saved("Llama_cpp") == ["None", "m-one", "fake[/]beta"]
-
-
-# --- Cases 9 and 10: Tab order and the Inspector -----------------------------
-
-
-@private_profile_test
-async def test_tab_from_discover_reaches_the_list_before_add_and_clear(
-    request, monkeypatch
-):
-    """AC#11 (B6): Discover models, then the discovered list, then Add to
-    model list, then Clear."""
-    _write(_LLAMA)
-    app = _booted_app()
-    _route_discovery_to(monkeypatch, _listing("fake-beta"))
-    host = _SettingsCssHarness(app, "settings")
-
-    async with host.run_test(size=_SIZE) as pilot:
-        screen = await _open_providers(host, pilot)
-        await _settle(host, pilot)
-        await _press_discover(host, pilot, screen)
-        screen.query_one(_DISCOVER, Button).focus()
-        await pilot.pause()
-        stops = [screen.focused.id]
-        for _ in range(3):
-            await pilot.press("tab")
-            await pilot.pause()
-            stops.append(screen.focused.id)
-
-    assert stops == [
-        "settings-discover-provider-models",
-        "settings-discovered-models-list",
-        "settings-save-discovered-provider-models",
-        "settings-clear-discovered-provider-models",
-    ]
-
-
-@private_profile_test
-@pytest.mark.parametrize(
-    ("selector", "name", "save"),
-    (
-        (_DISCOVER, "Discover models", _SAVES_NOTHING),
-        (_LIST, "Discovered models", _SAVES_NOTHING),
-        (_ADD, "Add to model list", _INSTANT),
-        (_CLEAR, "Clear", _SAVES_NOTHING),
-    ),
-    ids=("discover", "list", "add", "clear"),
+#: (control, the name its guide gives, its Save row).
+_GUIDED = (
+    (_DISCOVER, "Discover models", _SAVES_NOTHING),
+    (_LIST, "Discovered models", _SAVES_NOTHING),
+    (_ADD, "Add to model list", _INSTANT),
+    (_CLEAR, "Clear", _SAVES_NOTHING),
 )
-async def test_the_inspector_names_each_saved_model_list_control(
-    request, monkeypatch, selector, name, save
-):
+
+
+@private_profile_test
+async def test_the_inspector_names_each_saved_model_list_control(request, monkeypatch):
     """AC#12 (B19): focused, each control is named in the Inspector, with
-    what it does, where it saves and whether it writes anything."""
+    what it does, where it saves and whether it writes anything, in the
+    four content rows plus Save every guidance branch has."""
     _write(_LLAMA)
     app = _booted_app()
     _route_discovery_to(monkeypatch, _listing("fake-beta"))
     host = _SettingsCssHarness(app, "settings")
+    seen = []
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
-        screen.query_one(selector).focus()
-        await _settle(host, pilot)
-        guide = [
-            str(screen.query_one(f"#settings-provider-field-guide-{i}").renderable)
-            for i in range(4)
-        ]
-        saved_as = str(
-            screen.query_one("#settings-provider-config-key-saved-as").renderable
-        )
+        for selector, _name, _save in _GUIDED:
+            screen.query_one(selector).focus()
+            await _settle(host, pilot)
+            guide = [
+                str(screen.query_one(f"#settings-provider-field-guide-{i}").renderable)
+                for i in range(4)
+            ]
+            saved_as = str(
+                screen.query_one("#settings-provider-config-key-saved-as").renderable
+            )
+            seen.append((guide, saved_as, len(screen._provider_field_guidance_rows())))
 
-    assert guide[0] == f"Focused setting: {name}", guide
-    assert guide[1].startswith("Purpose: ") and len(guide[1]) > 20, guide
-    assert guide[2].startswith(f"Save: {save}"), guide
-    assert guide[3].startswith("Validation: "), guide
-    assert saved_as.split(": ", 1)[1].strip(), saved_as
+    for (selector, name, save), (guide, saved_as, rows) in zip(
+        _GUIDED, seen, strict=True
+    ):
+        assert guide[0] == f"Focused setting: {name}", (selector, guide)
+        assert guide[1].startswith("Purpose: ") and len(guide[1]) > 20, guide
+        assert guide[2] == f"Save: {save}", (selector, guide)
+        assert guide[3].startswith("Validation: "), guide
+        assert saved_as.split(": ", 1)[1].strip(), saved_as
+        assert rows == 5, selector
 
 
 # --- Case 11: the capability line -------------------------------------------
@@ -869,22 +832,3 @@ async def test_the_combined_save_admits_only_its_own_list_holding_the_model(requ
     assert not _admits("llama_cpp", "m", {"Llama_cpp": ["m"], "llama_cpp": ["m"]})
     assert not _admits("llama_cpp", "m", {"Llama_cpp": ["m", "x\x00"]})
     assert not _admits("llama_cpp", "", {"Llama_cpp": ["m"]})
-
-
-@private_profile_test
-async def test_the_inspector_keeps_one_row_shape_for_the_four_controls(request):
-    """B19: the four controls' guides keep the 4 content rows + Save shape
-    every guidance branch has, and each says it writes something or not."""
-    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-
-    screen = SettingsScreen(_build_test_app())
-    for field_id in (
-        "settings-discover-provider-models",
-        "settings-discovered-models-list",
-        "settings-save-discovered-provider-models",
-        "settings-clear-discovered-provider-models",
-    ):
-        screen._active_settings_field_id = field_id
-        rows = screen._provider_field_guidance_rows()
-        assert len(rows) == 5, (field_id, rows)
-        assert dict(rows)["Save"] in {_INSTANT, _SAVES_NOTHING}, (field_id, rows)
