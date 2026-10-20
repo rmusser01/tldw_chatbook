@@ -170,14 +170,57 @@ def test_the_environment_reduces_the_splash_motion() -> None:
     assert options is not None and options["reduced_motion"] is True
 
 
-def test_loaded_settings_carry_the_environment_motion_override(monkeypatch) -> None:
+def test_the_environment_motion_override_is_never_saved_by_settings(monkeypatch) -> None:
+    """Review F5 (TASK-34100.13): the override was folded into load_settings'
+    ``[appearance]``, the table Settings ▸ Appearance loads and writes back
+    whole -- so saving any Appearance change (density, say) under
+    TLDW_REDUCE_MOTION persisted reduce_motion = true. It is applied where
+    motion is read instead, so the loaded settings stay what is saved."""
+    from tldw_chatbook.UI.Screens.settings_appearance_defaults import (
+        build_appearance_save_sections,
+        load_appearance_defaults,
+    )
     from tldw_chatbook.config import load_settings
 
     monkeypatch.setenv("TLDW_REDUCE_MOTION", "1")
-    settings = load_settings(force_reload=True)
-    assert settings["appearance"]["reduce_motion"] is True
-    monkeypatch.delenv("TLDW_REDUCE_MOTION")
-    load_settings(force_reload=True)
+    try:
+        settings = load_settings(force_reload=True)
+        assert settings["appearance"].get("reduce_motion", False) is False
+        values = load_appearance_defaults(settings)
+        sections = build_appearance_save_sections(settings, values)
+        assert sections["appearance"]["reduce_motion"] is False
+    finally:
+        monkeypatch.delenv("TLDW_REDUCE_MOTION")
+        load_settings(force_reload=True)
+
+
+@pytest.mark.parametrize(
+    ("environ", "saved", "expected"),
+    [
+        ({"NO_MOTION": "1"}, False, True),
+        ({}, True, True),
+        ({}, "false", False),
+        ({"TLDW_REDUCE_MOTION": "0"}, False, False),
+    ],
+)
+def test_motion_is_reduced_by_the_saved_setting_or_the_environment(
+    environ, saved, expected
+) -> None:
+    reduced = startup_logging.motion_reduced({"reduce_motion": saved}, environ)
+    assert reduced is expected
+
+
+def test_character_expressions_hold_still_under_the_environment_override(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Chat.character_expression_playback import (
+        expression_motion_enabled,
+    )
+
+    config = {"appearance": {"reduce_motion": False}}
+    assert expression_motion_enabled(config, react=True, manual=False) is True
+    monkeypatch.setenv("NO_MOTION", "1")
+    assert expression_motion_enabled(config, react=True, manual=False) is False
 
 
 # -- AC#10: dependency warnings stay off the pre-TUI terminal ------------------
@@ -300,3 +343,16 @@ def test_configuring_the_app_log_replays_the_held_notices() -> None:
         result.stdout[-2000:]
     )
     assert "doesn't match a supported version" not in result.stderr
+
+
+def test_buddy_holds_still_under_the_environment_override(monkeypatch) -> None:
+    """Buddy read reduced motion from the env-folded settings; with the fold
+    gone (review F5) it checks the environment where it reads motion."""
+    from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+
+    monkeypatch.delenv("NO_MOTION", raising=False)
+    monkeypatch.delenv("TLDW_REDUCE_MOTION", raising=False)
+    controller = PersonaBuddyController(reduced_motion=lambda: False)
+    assert controller._current_reduced_motion() is False
+    monkeypatch.setenv("TLDW_REDUCE_MOTION", "1")
+    assert controller._current_reduced_motion() is True

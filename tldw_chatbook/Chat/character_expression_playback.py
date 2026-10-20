@@ -14,6 +14,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Utils.Utils import coerce_bool_flag
+from tldw_chatbook.Utils.startup_logging import motion_reduced
 
 if TYPE_CHECKING:
     from tldw_chatbook.Character_Chat.portrait_performance import (
@@ -200,7 +201,8 @@ def expression_motion_enabled(
         and normalize_expression_mode(appearance.get("character_expression_mode"))
         == "dynamic"
         and coerce_bool_flag(appearance.get("animations_enabled"), True)
-        and not coerce_bool_flag(appearance.get("reduce_motion"), False)
+        # TASK-34100.13: the saved setting, or TLDW_REDUCE_MOTION / NO_MOTION.
+        and not motion_reduced(appearance)
     )
 
 
