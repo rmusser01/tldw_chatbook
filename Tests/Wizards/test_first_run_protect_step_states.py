@@ -193,8 +193,22 @@ def _pinned_error(wizard) -> str:
 
 
 def _progress_box(wizard, step_id: str) -> str:
-    return str(
-        wizard.query_one(f"#setup-progress-{step_id} .step-number", Static).render()
+    """The tracker glyph for ``step_id``, or "" while the tracker recomposes.
+
+    ``SetupWizardProgress.set_items`` rebuilds the tracker with
+    ``refresh(recompose=True)``, so a read that lands between the old boxes'
+    removal and the new ones' mount finds no box (seen under load).
+    """
+    boxes = wizard.query(f"#setup-progress-{step_id} .step-number")
+    return str(boxes.first(Static).render()) if boxes else ""
+
+
+async def _until_progress_box(pilot, wizard, step_id: str, glyph: str) -> None:
+    """Wait for the recomposed tracker to show ``glyph`` for ``step_id``."""
+    await _until(
+        pilot,
+        lambda: _progress_box(wizard, step_id) == glyph,
+        what=f"the {step_id} tracker box to read {glyph!r}",
     )
 
 
@@ -234,8 +248,7 @@ async def test_keyless_profile_reads_nothing_to_protect_without_the_pitch(
         # The tracker shows '–', not ✓, for a step that had nothing to do.
         await pilot.press("ctrl+n")
         await _at_summary(pilot, app, container)
-        box = wizard.query_one(f"#setup-progress-{STEP_PROTECT} .step-number", Static)
-        assert str(box.render()) == "–"
+        await _until_progress_box(pilot, wizard, STEP_PROTECT, "–")
 
 
 @pytest.mark.asyncio
@@ -335,7 +348,7 @@ async def test_stored_plaintext_keys_name_each_provider_and_the_file(monkeypatch
         await _at_summary(pilot, app, container)
         # Review round 1 (R1-F7): kept as plain text (which Summary flags) is
         # not the ✓ that reads "your keys are protected".
-        assert _progress_box(wizard, STEP_PROTECT) == "–"
+        await _until_progress_box(pilot, wizard, STEP_PROTECT, "–")
 
 
 @pytest.mark.asyncio
