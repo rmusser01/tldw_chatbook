@@ -21,6 +21,8 @@ TASK-33620.15.7 stopped a Console run's 0.2 s poll ticks from requesting whole-s
 The largest same-size requesters at send start were the status line (6), the Inspector "More" control (6), the workspace context tray (6), the workspace details tray (4), the workspace status pair (4), the Inspector rail handle (4), the run inspector (4), the Send disabled-reason strip (3), and each of the Inspector rail's bounded sections and their viewports (3 each). At reply end, after the Character section (TASK-35970), they were the workspace context tray (6), the rail handle (4), the workspace details tray (4), the status pair (4) and the status line (3-4).
 
 Each one needs checking: either its size can change in that transition (and the request is right), or it should repaint without a layout.
+
+The same remainder keeps TASK-33620.15.7's AC#3 ("full reflows per send window drop by at least half") from holding reliably. Live and paired at 160x45 (36-turn chat, Anthropic claude-haiku-4-5, 16 sends per arm), the branch measured 13 reflows per send window in both rounds, while dev measured 27.5 in the first round and 20.5 in the round on that task's final head: -53%, then -37%, and -46% pooled.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
