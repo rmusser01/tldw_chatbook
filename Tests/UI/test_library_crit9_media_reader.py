@@ -193,8 +193,11 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
     # the dirty-form veto, so the chip says "cancel" and the guide quotes it.
     confirm_fake, _calls, _shell, _find = _escape_fake(region="reader")
     confirm_fake._media_state.confirming_delete = True
-    assert LibraryScreen._library_media_escape_label(confirm_fake) == "cancel"
-    assert "`esc cancel`" in guide
+    confirm_label = LibraryScreen._library_media_escape_label(confirm_fake)
+    assert confirm_label == "cancel"
+    # The guide quotes the chip EXACTLY as the footer paints it (fix round 3).
+    assert f"**`esc {confirm_label}`** over" in guide
+    assert "has five readings" in guide
 
     # The contradicting claims are gone.
     assert "Escape never leaves the Reader at all" not in guide

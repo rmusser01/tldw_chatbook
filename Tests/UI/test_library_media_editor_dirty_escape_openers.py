@@ -203,3 +203,72 @@ async def test_below_64_columns_a_refusal_brings_the_dirty_form_back_on_stage(
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
         _dirty_form_is_on_screen(screen, host)
         assert screen.query("#library-media-analysis-cancel")
+
+
+async def test_a_refusal_in_trash_leaves_trash_as_it_is(monkeypatch):
+    """R3-1: a dirty form, then Trash, then a nav-bar click and a Notes rail
+    press. The reveal flips the view only from "list": in Trash the view
+    stays "trash", the Trash canvas and its footer agree (``esc back to
+    list``), Escape-back and the r/x Trash keys stay live, each refusal says
+    why once, and the text is intact. The Media rail press from Trash stays
+    in Trash too -- the state Trash owns is still the live state."""
+    host, app, _service = _host()
+    toasts = _record_toasts(monkeypatch, app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _dirty_analysis(screen, pilot)
+        screen.query_one("#library-media-trash-open", Button).press()
+        await _wait_for_condition(
+            pilot, lambda: screen._media_state.view == "trash", message="Trash never opened"
+        )
+        await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
+
+        # The Trash list is empty in this fixture, so the r/x gates read
+        # whatever an empty Trash reads; a refusal must leave them exactly so.
+        trash_keys = tuple(
+            screen.check_action(action, ())
+            for action in ("library_media_trash_restore", "library_media_trash_delete")
+        )
+
+        def trash_is_consistent() -> None:
+            assert screen._media_state.view == "trash"
+            assert screen.query("#library-media-trash-canvas")
+            assert ("esc", "back to list") in screen._footer_shortcut_registration[1], (
+                screen._footer_shortcut_registration
+            )
+            assert screen.check_action("library_media_trash_back", ()) is True
+            assert tuple(
+                screen.check_action(action, ())
+                for action in ("library_media_trash_restore", "library_media_trash_delete")
+            ) == trash_keys
+            assert screen._media_state.analysis_draft == "Key points"
+            assert screen._media_state.editing_analysis is True
+            # Entering Trash is a whole-screen recompose, so the TextArea is
+            # a fresh instance; the kept TEXT is the fact.
+            mounted = screen.query_one("#library-media-analysis-edit-text", TextArea)
+            assert mounted.text == "Key points"
+
+        trash_is_consistent()
+
+        # The nav-bar click's path: the app's navigation handler awaits this
+        # flush before switching screens (this harness hosts the Library
+        # screen directly, so the bar itself is not on a screen stack).
+        assert await screen.flush_pending_work(destination="Console") is False
+        for _ in range(6):
+            await pilot.pause()
+        assert toasts == [LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY], toasts
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        trash_is_consistent()
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        for _ in range(6):
+            await pilot.pause()
+        assert toasts == [LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY] * 2, toasts
+        trash_is_consistent()
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        for _ in range(6):
+            await pilot.pause()
+        assert len(toasts) == 2, toasts
+        trash_is_consistent()

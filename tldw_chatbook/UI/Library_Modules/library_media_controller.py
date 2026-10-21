@@ -3182,6 +3182,11 @@ class LibraryMediaController:
 
     async def _open_library_external_media_detail(self, media_id: str) -> None:
         """Open one server detail without selecting or adding a local Items row."""
+        # TASK-34000.22 fix round 3: the same one-line refusal as every other
+        # Reader opener -- this one clears both forms below too.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self._cancel_library_media_selection_settlement()
         self._library_media_reader_session = enter_external_detail(
             self._library_media_reader_session, media_id, f"Server media {media_id}"
@@ -3386,7 +3391,13 @@ class LibraryMediaController:
         if not form:
             return
         changed = False
-        if self._library_media_view != "viewer":
+        # Fix round 3 (R3-1): flip ONLY from "list" -- the case R2-4 was for.
+        # Never set a view without that view's own enter/exit path: from
+        # "trash" the form is mounted beside the Trash list at every width
+        # Trash can be entered from, "‹ Media" returns to it, and a bare
+        # flip would leave the Trash canvas mounted under a viewer footer
+        # with its r/x keys dead and its repaints skipped.
+        if self._library_media_view == "list":
             self._library_media_view = "viewer"
             self._restore_library_media_reader_width_on_open()
             changed = True

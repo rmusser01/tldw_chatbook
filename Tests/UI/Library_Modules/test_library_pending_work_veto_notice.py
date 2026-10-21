@@ -159,3 +159,44 @@ def test_unsaved_names_name_a_dirty_media_form(dirty_form, expected):
     from tldw_chatbook.UI.Library_Modules.library_pending_work import _unsaved_names
 
     assert _unsaved_names(_screen_with_only_a_media_draft(dirty_form)) == expected
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.22 fix round 3: the navigation-sources barrier carries the veto
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_navigation_sources_flush_refuses_a_dirty_media_form_out_loud():
+    """``_flush_library_navigation_sources`` -- the barrier every navigation
+    INTO Library crosses -- refuses while a Media authoring form holds unsaved
+    text, and says so once, after the note/prompt/skill barriers all admit."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Library_Modules.library_inspection_admission import (
+        _flush_library_navigation_sources,
+    )
+
+    spoken: list[str] = []
+
+    async def permitted():
+        return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED, "")
+
+    async def allowed():
+        return True
+
+    screen = SimpleNamespace(
+        _prompts_state=SimpleNamespace(mutation_in_flight=False),
+        _flush_library_note_save=permitted,
+        _flush_library_prompt_save=allowed,
+        _flush_library_skill_save=allowed,
+        _library_media_editor_dirty=lambda: "analysis",
+        _notify_media_editor_dirty_veto=lambda: spoken.append("media"),
+    )
+
+    assert await _flush_library_navigation_sources(screen, is_current=lambda: True) is False
+    assert spoken == ["media"]
+
+    screen._library_media_editor_dirty = lambda: ""
+    assert await _flush_library_navigation_sources(screen, is_current=lambda: True) is True
+    assert spoken == ["media"]

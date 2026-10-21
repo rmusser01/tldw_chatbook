@@ -426,7 +426,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-21, TASK-34000.22 fix round 2 (same owner decision): 5227 ->
     # 5254 (+27): the viewer opener's refusal, the central guard moved ahead
     # of the select preamble, and ``_reveal_library_media_dirty_form``.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5254,
+    # 2026-10-21, TASK-34000.22 fix round 3 (same owner decision): 5254 ->
+    # 5265 (+11): the reveal flips only from "list" (comment) and the
+    # external-detail opener's one-line refusal.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5265,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

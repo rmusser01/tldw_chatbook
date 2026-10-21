@@ -841,9 +841,10 @@ loads immediately.
 **Escape** closes transient Reader state first — the Find bar, then the More
 strip — and then steps out of the Reader to the Items list; the footer chip
 always names the next step it will take. The chip is the authority, and it
-has four readings: **`esc close`** over anything transient (the Find bar, the
-More strip, an open type/sort strip, an armed delete or edit),
-**`esc focus Items`** from the open document, **`esc focus Library`** from the
+has five readings: **`esc close`** over anything transient (the Find bar, the
+More strip, an open type/sort strip, an open edit form), **`esc cancel`** over
+an armed "Move to trash" confirm, **`esc focus Items`** from the open document,
+**`esc focus Library`** from the
 Items row, and **`esc back`** wherever the next pane out is collapsed rather
 than on screen — the Items row at 100x30 and narrower, and the rail row in any
 layout the Reader still has a real exit from. In the three-pane layout the rail
@@ -857,7 +858,8 @@ the form and says so ("Unsaved analysis — Save or Discard changes first." /
 reads `esc save or discard first` instead of `esc close`. Save keeps the
 text; the form's Cancel reads **Discard changes** and is the one way to drop
 it while keeping the item (Ctrl+Q's "Discard and quit" and deleting the item
-drop it too, each after its own question). Switching Reader tabs keeps what
+from the Items list -- Select ▸ Delete selected -- drop it too, each after its
+own question). Switching Reader tabs keeps what
 you typed, and "‹ Back", another Items row (clicked, or reached with
 Up/Down), a rail row, Export…, a review set, Use in Console, Move to trash
 and the nav bar all refuse the same way until you save or discard; Ctrl+Q
@@ -868,7 +870,6 @@ stays, even when the filter hides its row or matches nothing, and Clear
 brings the list back around it. An untouched form still closes on one
 Escape or Cancel, and over an armed "Move to trash" confirm the chip reads
 `esc cancel` and Escape cancels the confirm first.
-
 
 Stepping out of the Reader moves focus, not the document: in the three-pane
 layout (verified at 235x52) the Items pane is already showing the list, so

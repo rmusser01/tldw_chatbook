@@ -1325,8 +1325,12 @@ class LibraryScreen(BaseAppScreen):
     #: generic, honest label rather than three sub-state-specific ones --
     #: one word is accurate for all three without tripling the constant
     #: count for a wording-only difference. task-31272: that word is
-    #: "close", the same one the find bar and the More menu use, so the
-    #: Reader's whole Escape vocabulary is four words (see
+    #: "close", the same one the find bar and the More menu use.
+    #: TASK-34000.22 (fix round 2): two readings are spliced over it by
+    #: ``_library_route_shortcuts_for_current_state`` -- "cancel" over an
+    #: armed delete confirm (Escape cancels it first) and "save or discard
+    #: first" while an authoring form holds unsaved text -- so the Reader's
+    #: whole Escape vocabulary is six words (see
     #: ``_library_media_escape_label``).
     LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS = (
         ("/", "focus search"),
@@ -23599,8 +23603,8 @@ class LibraryScreen(BaseAppScreen):
         # TASK-34000.22: opening a row (this one included) resets both
         # authoring forms, so a form holding unsaved text refuses the press
         # and says why. The click already moved focus onto the row; the
-        # queued ``DescendantFocus`` that follows is refused quietly in
-        # ``on_descendant_focus`` so this one click speaks once.
+        # queued ``DescendantFocus`` that follows reaches the select seam,
+        # whose own guard refuses it quietly, so this one click speaks once.
         if self._library_media_editor_dirty():
             self._notify_media_editor_dirty_veto()
             return
