@@ -207,6 +207,13 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    about one transcript of garbage. The note survives a request dropped by a
    send. Rows replaced before any freeze are ordinary garbage, which the
    re-freeze's own full collection reclaims, so rapid switching owes nothing.
+   A new chat gaining its conversation id on its first send (the painted key
+   goes from (session, none) to (session, id)) is not a switch: the
+   transcript matches rows by message id, so none are replaced, and the
+   epoch recorded when the new chat was first shown carries over (review
+   follow-up, 2026-10-20: live, a fresh session's first send owed a 316 ms
+   compaction only because the screen pre-import froze the heap while the
+   empty chat was shown).
 
    **A freeze follows only a collection that ran (2026-10-19).** CPython's
    `gc.collect()` returns 0 at once, collecting nothing, while another pass
@@ -275,4 +282,5 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
   Console, a re-freeze is requested when a conversation is painted and when a
   run settles, and the busy check holds on every loop turn from Enter to the
   provider call; the paint policy notes stranded garbage only when a freeze
-  ran while the outgoing conversation was shown.
+  ran while the outgoing conversation was shown, and never when a new chat
+  gains its conversation id.
