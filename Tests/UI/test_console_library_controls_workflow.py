@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import pytest
 from textual import events
-
-# The harness mounts the real ChatScreen/config chain; per-test env redirect
-# trips the config-participant admission (sibling strip suites' opt-in).
-pytestmark = pytest.mark.bootstrap_profile
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
+from textual.command import CommandPalette
 from textual.keys import _character_to_key
 from textual.widgets import RadioButton, Static
 
@@ -29,12 +26,14 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.UI.Workbench import WorkbenchActionRequested
+from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_LIBRARY_ACCESS,
+    ConsoleComposerMenuModal,
     build_composer_menu_entries,
 )
 from tldw_chatbook.Widgets.Console.console_library_access_modal import (
@@ -52,6 +51,10 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
 )
 
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _snapshot(
     auto: ConsoleAutoRetrieve,
@@ -66,8 +69,11 @@ class _ChipApp(ConsolidatedCSSApp):
         self.snapshot = snapshot
 
     def compose(self) -> ComposeResult:
+        # The id the Console composes it with (chat_screen.py), which the
+        # test below queries by.
         yield ConsoleStatusChips(
-            ConsoleControlState.from_values(library_policy=self.snapshot)
+            ConsoleControlState.from_values(library_policy=self.snapshot),
+            id="console-status-chips",
         )
 
 
@@ -115,7 +121,7 @@ async def test_four_policy_states_render_exactly_and_open_independent_axes(
         # same two-axis editor the modal assertions below exercise.
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
         line = strip.query_one("#console-status-text", ConsoleStatusText)
-        assert "Library" not in line.renderable.plain
+        assert "Library" not in str(line.render())
         assert (
             ConsoleControlState.from_values(library_policy=snapshot).rag_label
             == label
@@ -369,3 +375,66 @@ async def test_a_burst_of_segment_activations_opens_one_dialog(
         await _settle(pilot)
         reopened = _dialogs_over(host, console)
         assert [type(screen) for screen in reopened] == [type(dialogs[0])]
+
+
+# ---------------------------------------------------------------------------
+# Single, deliberate opens still work (TASK-34720 review follow-up).
+#
+# The one-dialog rule refuses a request that finds anything over the Console.
+# The routes below reach an opener from another screen -- a menu's dismiss
+# callback, a palette command -- and work only because Textual pops that
+# screen before it runs the follow-up. These pin that ordering: if it ever
+# changed, the rule would silently swallow every open from these routes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_one_click_on_the_composer_menus_library_access_opens_the_dialog() -> (
+    None
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-composer-menu")
+
+        await pilot.click("#console-composer-menu")
+        await _settle(pilot, rounds=4)
+        assert isinstance(host.screen_stack[-1], ConsoleComposerMenuModal)
+
+        await pilot.click(f"#console-composer-menu-{ACTION_LIBRARY_ACCESS}")
+        await _settle(pilot, rounds=4)
+
+        dialogs = _dialogs_over(host, console)
+        assert [type(screen) for screen in dialogs] == [ConsoleLibraryAccessModal]
+
+
+class _PaletteConsoleHarness(ConsoleHarness):
+    """The Console harness with the Console's palette commands registered."""
+
+    COMMANDS = App.COMMANDS | {ConsoleCommandProvider}
+
+
+@pytest.mark.asyncio
+async def test_the_palettes_edit_system_prompt_command_opens_the_editor() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _PaletteConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-text")
+
+        await pilot.press("ctrl+p")
+        await _settle(pilot, rounds=4)
+        assert isinstance(host.screen_stack[-1], CommandPalette)
+        for character in "edit system prompt":
+            await pilot.press(character)
+        await _settle(pilot, rounds=10)
+        await pilot.press("enter")
+        await _settle(pilot)
+
+        dialogs = _dialogs_over(host, console)
+        assert [type(screen) for screen in dialogs] == [ConsoleSystemPromptModal]
