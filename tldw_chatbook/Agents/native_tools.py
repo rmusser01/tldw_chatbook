@@ -69,6 +69,16 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "custom-openai-api",
         "custom-openai-api-2",
         "custom-hosted",
+        # chat_with_llama / chat_with_vllm forward tools and tool_choice
+        # through the same _chat_with_openai_compatible_local_server
+        # handler as the custom execution family (raw OpenAI-shaped
+        # response, role:"tool" history accepted). Live-gated against an
+        # OpenAI-compatible local backend (llama.cpp-server class) that
+        # emits choices[0].message.tool_calls and continues cleanly from
+        # a role:"tool" result message; verified end-to-end with agent
+        # file tools (list_directory root_alias round-trip).
+        "llama_cpp",
+        "vllm",
         # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
         # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
         # back to OpenAI shape — live-gated against the real API 2026-07-17

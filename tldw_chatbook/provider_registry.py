@@ -1595,6 +1595,11 @@ LLAMA_CPP = ProviderRecord(
     key="llama_cpp", config_key="Llama_cpp", display_name="llama.cpp", classification=_LOCAL,
     api_key_env_var="LLAMA_CPP_API_KEY",
     api_key_env_candidates=("LLAMA_CPP_API_KEY",),
+    # chat_with_llama forwards tools/tool_choice through the shared
+    # _chat_with_openai_compatible_local_server handler (raw OpenAI-shaped
+    # response, role:"tool" history accepted); live-gated against a
+    # llama.cpp-server-class OpenAI-compatible backend emitting tool_calls.
+    native_tools=True,
 )
 KOBOLDCPP = ProviderRecord(
     key="koboldcpp", config_key="koboldcpp", display_name="Koboldcpp", classification=_LOCAL,
@@ -1613,6 +1618,11 @@ VLLM = ProviderRecord(
     key="vllm", config_key="vLLM", display_name="vLLM", classification=_LOCAL,
     api_key_env_var="VLLM_API_KEY",
     api_key_env_candidates=("VLLM_API_KEY",),
+    # chat_with_vllm forwards tools/tool_choice through the shared
+    # _chat_with_openai_compatible_local_server handler (raw OpenAI-shaped
+    # response, role:"tool" history accepted); live-gated against a
+    # vLLM-class OpenAI-compatible backend emitting tool_calls.
+    native_tools=True,
 )
 OLLAMA = ProviderRecord(
     key="ollama", config_key="Ollama", display_name="Ollama", classification=_LOCAL,
