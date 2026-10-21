@@ -21482,9 +21482,11 @@ Serialize baseline reversals and shared scans. Private test profiles isolate sto
 
 **Incident.** The Console Environment panel held the UI loop 590-1359 ms on
 every Inspect-rail open and 53-516 ms at each run completion (live, haiku,
-isolated profiles). Its controller's docstring named the work as "git status
-plus a cached backlog scan" on a worker, which was true and irrelevant: sampled
-stacks put 611 of 620 samples in the panel's ROOT ACCESSOR, which asked
+isolated profiles). The completion nudge's docstring
+(`ChatScreen._run_coalesced_console_agent_fleet_sync`) named the work "git
+status plus a cached backlog scan" and said a closed rail "costs nothing".
+The first was true and irrelevant, the second false: sampled stacks put 611 of
+620 samples in the panel's ROOT ACCESSOR, which asked
 `resolve_turn_execution_context` for a whole turn configuration (RAG profile
 depth through storage admission, the MCP definition maximum, skills, project
 authority) and kept only `.workspace_roots` -- one 1-12 ms consent read. The
@@ -21495,6 +21497,7 @@ guard, so a closed rail still paid up to 1.0 s per 10 s tick.
 calls before the work it is named for: a nested-wrapper probe (each seam timed
 on the main thread, outermost call sampled every 1 ms) found this in one live
 round. Read what an accessor *computes*, not what it returns; a getter for one
-field of a snapshot builder costs the builder. Pin the fix structurally (spy the
-builder on the live controller and assert no call with the panel's module on
-the stack), not with a wall-clock threshold.
+field of a snapshot builder costs the builder. Pin the fix structurally (spy
+every entry point into the builder on the live controller, inner ones too, and
+assert no call with the panel's module on the stack), not with a wall-clock
+threshold.
