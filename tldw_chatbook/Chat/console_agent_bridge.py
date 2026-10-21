@@ -4876,6 +4876,11 @@ def _advertised_path_root_aliases(
     ):
         if provider is None or not offered & names:
             continue
+        if provider is local_provider and "fs_search_index" in offered & names:
+            ordinary = (offered & names) - {"fs_search_index"}
+            if not ordinary:
+                aliases.update(provider.project_index_aliases())
+                continue
         provider_aliases = provider.path_root_aliases()
         if provider_aliases is None:
             alias_free = True
@@ -5157,7 +5162,12 @@ def build_console_first_request_plan(
             virtual_cli_provider=virtual_cli_provider,
         ),
         workspace_read_tools=set(allowed_tools)
-        & {"fs_list", "fs_glob", "fs_grep", "fs_read"},
+        & {"fs_list", "fs_glob", "fs_grep", "fs_read", "fs_search_index"},
+        project_index_aliases=(
+            local_provider.project_index_aliases()
+            if local_provider is not None and "fs_search_index" in allowed_tools
+            else ()
+        ),
         scratch_relative_tools=_advertised_scratch_relative_tools(
             allowed_tools, builtin_names
         ),

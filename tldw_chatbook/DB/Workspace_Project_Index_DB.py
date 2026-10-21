@@ -804,24 +804,31 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 return ()
             policy = ProjectIndexPolicy(*json.loads(row["policy"]))
 
+            prefixes = policy.include_prefixes
+            all_prefixes = not prefixes or "" in prefixes
+            prefix_heads = tuple(prefix + "/" for prefix in prefixes)
+            # Normalize once with the running stdlib's suffix semantics (including
+            # trailing-dot behavior), without constructing a Path for every hit.
+            suffixes = frozenset(
+                suffix
+                for suffix in policy.text_suffixes
+                if Path("x" + suffix).suffix.casefold() == suffix
+            )
+
             def allowed(path):
-                prefixes = policy.include_prefixes
-                return int(
-                    _path_allowed(path, authority.exclusions)
-                    and (
-                        not prefixes
-                        or any(
-                            not prefix
-                            or path == prefix
-                            or path.startswith(prefix + "/")
-                            for prefix in prefixes
-                        )
-                    )
-                    and (
-                        not policy.text_suffixes
-                        or Path(path).suffix.casefold() in policy.text_suffixes
-                    )
-                )
+                if not _path_allowed(path, authority.exclusions):
+                    return 0
+                if (
+                    not all_prefixes
+                    and path not in prefixes
+                    and not path.startswith(prefix_heads)
+                ):
+                    return 0
+                if not policy.text_suffixes:
+                    return 1
+                name = path.rsplit("/", 1)[-1]
+                stem, dot, tail = name.rpartition(".")
+                return int(bool(stem) and (dot + tail).casefold() in suffixes)
 
             conn.create_function(
                 "index_path_allowed",

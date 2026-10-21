@@ -34,6 +34,7 @@ from typing import (
 )
 
 from uuid import uuid4
+from types import MappingProxyType
 
 from loguru import logger
 
@@ -346,6 +347,7 @@ _PATH_AUTHORITY_LOCAL_NAMES = frozenset(
         "fs_patch",
         "fs_glob",
         "fs_grep",
+        "fs_search_index",
         "git_status",
         "git_diff",
         "git_log",
@@ -799,8 +801,13 @@ class LocalToolProvider:
         ]
         | None = None,
         admitted_roots: Sequence[RunAdmittedWorkspaceRoot] | None = None,
+        project_index_service: Any = None,
+        project_index_scopes: Mapping[str, Any] | None = None,
     ) -> None:
         self._root = workspace_root
+        self._project_index_service = project_index_service
+        self._project_index_scopes = MappingProxyType(dict(project_index_scopes or {}))
+        self._index_call_stamps: dict[tuple[str, str], tuple[str, str]] = {}
         ordered_roots = (
             None
             if admitted_roots is None
@@ -885,6 +892,9 @@ class LocalToolProvider:
                     )
                 except Exception:  # noqa: BLE001 - a raced root is revoked
                     continue
+                index_spec = self._project_index_spec(authority, executor)
+                if index_spec is not None:
+                    authority_specs.append(index_spec)
                 self._path_specs_by_alias[alias] = {
                     spec.name: spec
                     for spec in authority_specs
@@ -911,6 +921,12 @@ class LocalToolProvider:
                     if spec.name not in _PATH_AUTHORITY_LOCAL_NAMES
                 ]
             else:
+                # Optional capabilities are unioned across eligible aliases.
+                if not any(s.name == "fs_search_index" for s in representative_specs):
+                    for alias_specs in self._path_specs_by_alias.values():
+                        if "fs_search_index" in alias_specs:
+                            representative_specs.append(alias_specs["fs_search_index"])
+                            break
                 aliases = list(self._admitted_roots)
                 require_alias = len(aliases) > 1
                 any_write = any(
@@ -929,7 +945,13 @@ class LocalToolProvider:
                     parameters = copy.deepcopy(spec.parameters)
                     parameters.setdefault("properties", {})["root_alias"] = {
                         "type": "string",
-                        "enum": aliases,
+                        "enum": (
+                            [
+                                alias
+                                for alias in aliases
+                                if spec.name in self._path_specs_by_alias[alias]
+                            ]
+                        ),
                         "description": (
                             "Stable workspace-folder binding alias for this run."
                         ),
@@ -1081,6 +1103,231 @@ class LocalToolProvider:
                 return
             self._path_specs_by_alias.pop(authority.alias, None)
 
+    def _project_index_spec(self, authority, executor):
+        """Compose only exact local run scopes; this performs no index I/O."""
+        from tldw_chatbook.Chat.console_project_instructions import (
+            fingerprint_canonical_locator,
+        )
+        from tldw_chatbook.Workspaces.project_index.models import (
+            ProjectIndexScope,
+            locator_fingerprint,
+            root_identity_fingerprint,
+        )
+
+        scope = self._project_index_scopes.get(authority.alias)
+        if (
+            self._project_index_service is None
+            or type(scope) is not ProjectIndexScope
+            or is_remote(authority.root)
+        ):
+            return None
+        chain = getattr(executor, "local_authority_chain", None)
+        if chain is None:
+            return None
+        root = local_root_path(authority.root, site="project index composition")
+        identities = tuple(
+            (str(path), item.device, item.inode, item.mode)
+            for path, item in reversed(
+                tuple(zip((root, *root.parents), chain.identities))
+            )
+        )
+        key = scope.key
+        if (
+            key.workspace_id != authority.workspace_id
+            or key.binding_id != authority.binding_id
+            or key.locator_fingerprint != locator_fingerprint(root)
+            or key.root_identity_fingerprint != root_identity_fingerprint(chain)
+            or authority.root_identity != identities
+            or authority.locator_fingerprint != fingerprint_canonical_locator(str(root))
+        ):
+            return None
+
+        def search(args):
+            from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+            from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+            from tldw_chatbook.Workspaces.project_index.models import (
+                ProjectIndexAuthority,
+                ProjectIndexSearchAuthority,
+                ProjectIndexRetirementUnproven,
+            )
+            from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
+
+            if (
+                type(args) is not dict  # noqa: E721 - strict boundary object
+                or set(args) - {"query", "limit"}
+                or not isinstance(args.get("query"), str)
+                or not args["query"].strip()
+                or len(args["query"]) > 2048
+                or type(args.get("limit", 10)) is not int  # noqa: E721 - reject bool
+                or not 1 <= args.get("limit", 10) <= 10
+            ):
+                raise LocalToolError("Invalid project index query or limit")
+
+            def exclusions():
+                # Exact marked paths remain exclusions even when deleted or
+                # changed from files to directories. Subtree includes the leaf.
+                paths = (
+                    authority.exclusions_provider()
+                    if authority.exclusions_provider
+                    else ()
+                )
+                return tuple(
+                    SensitiveExclusion(
+                        "subtree", Path(path).relative_to(root).as_posix()
+                    )
+                    for path in paths
+                )
+
+            floor = exclusions()
+
+            def guard():
+                return self._authority_is_valid(authority, write=False)
+
+            def read(candidate):
+                if not guard():
+                    return None
+                current_floor = tuple(set(floor + exclusions()))
+                scanner = ProjectScanner()
+                try:
+                    captured = scanner.capture_file(
+                        ProjectIndexAuthority(key, root, chain, current_floor, 0),
+                        candidate.relative_path,
+                        stop=threading.Event(),
+                    )
+                finally:
+                    if not scanner.retired:
+                        raise ProjectIndexRetirementUnproven(
+                            "index_reader_retirement_unproven"
+                        )
+                return captured if guard() else None
+
+            result = self._project_index_service.search(
+                ProjectIndexSearchAuthority(
+                    scope, root, chain, floor, 0, guard, executor, read
+                ),
+                args["query"],
+                limit=args.get("limit", 10),
+            )
+            return json.dumps(asdict(result), ensure_ascii=False, separators=(",", ":"))
+
+        return LocalToolSpec(
+            name="fs_search_index",
+            description="Search an explicitly enabled workspace folder keyword index. Returns live-validated file evidence; stale files require explicit Refresh.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 2048},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 10,
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            handler=search,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+        )
+
+    def project_index_aliases(self) -> tuple[str, ...]:
+        """Aliases with a compatible index spec in this frozen run."""
+        return tuple(
+            alias
+            for alias, specs in self._path_specs_by_alias.items()
+            if "fs_search_index" in specs
+        )
+
+    def _effective_local_state(self, hub):
+        state = self._resolve_state(hub)
+        if hub.name != "fs_search_index":
+            return state, False
+        read = self._resolve_state(self.hub_tool_for("fs_read"))
+        if state.state == "deny" or read.state == "deny":
+            return (state if state.state == "deny" else read), False
+        if read.state == "ask":
+            return read, True
+        if read.state != "allow":
+            raise ValueError("read_state_unavailable")
+        return state, False
+
+    def apply_index_read_decisions(self, run_id, rows, decisions):
+        """Stamp exact reviewed calls only; derived read consent never persists."""
+        with self._stamps_lock:
+            for row in rows:
+                if (
+                    row.llm_name != "fs_search_index"
+                    or not row.call_id
+                    or row.options != ("approve_once", "deny")
+                ):
+                    continue
+                decision = decisions.get(row.call_id, "timeout")
+                if approval_key_unanswered(decisions, row.call_id):
+                    decision = "timeout"
+                if decision in {"approve_once", "approve_session", "always_allow"}:
+                    decision = "approve_once"
+                self._index_call_stamps[(run_id, row.call_id)] = (
+                    decision,
+                    json.dumps(row.arguments, sort_keys=True),
+                )
+
+    def _index_read_verdict(self, name, args, run_id):
+        call_id = current_tool_call_id()
+        with self._stamps_lock:
+            stamp = (
+                self._index_call_stamps.pop((run_id, call_id), None)
+                if call_id
+                else None
+            )
+        decision = "timeout"
+        if stamp is not None and stamp[1] == json.dumps(args, sort_keys=True):
+            decision = stamp[0]
+        elif self._approval_callback is not None:
+            row, failed = self._resolve_pending_gate(
+                name,
+                args,
+                self.hub_tool_for(name),
+                call_id=call_id or "",
+            )
+            if failed:
+                return _LocalGateDecision(
+                    verdict="gate_error",
+                    approval_consumed=False,
+                    refusal_reason=LocalToolInvocationReason.PERMISSION_UNRESOLVED,
+                )
+            if row is not None:
+                try:
+                    decisions = self._approval_callback([row]) or {}
+                    decision = (
+                        decisions.get(call_id, "timeout")
+                        if call_id
+                        else decisions.get(name, "timeout")
+                    )
+                    if approval_key_unanswered(decisions, call_id or name):
+                        decision = "timeout"
+                except Exception:
+                    decision = "timeout"
+        # Both exact batch and actual single-call fallback normalize broad
+        # UI responses before any persistence; name/session stamps are ignored.
+        if decision in {"approve_once", "approve_session", "always_allow"}:
+            try:
+                state, _ = self._effective_local_state(self.hub_tool_for(name))
+                if state.state in {"allow", "ask"}:
+                    return _LocalGateDecision(
+                        verdict="allow",
+                        approval_consumed=True,
+                        approval_decision="approved",
+                    )
+            except Exception:
+                pass
+        return _LocalGateDecision(
+            verdict="deny" if decision == "deny" else "timeout",
+            approval_consumed=False,
+            refusal_reason=LocalToolInvocationReason.APPROVAL_REFUSED,
+        )
+
     def _select_admitted_root(
         self, name: str, args: Mapping[str, Any]
     ) -> tuple[RunAdmittedWorkspaceRoot | None, Mapping[str, Any]]:
@@ -1091,6 +1338,8 @@ class LocalToolProvider:
             with self._agent_roots_lock:
                 agent_root = self._agent_roots.get(current_run_id())
             if agent_root is not None:
+                if name == "fs_search_index":
+                    raise ValueError("Project index unavailable for this run root")
                 clean_args = dict(args) if type(args) is dict else args
                 if isinstance(clean_args, dict):
                     clean_args.pop("root_alias", None)
@@ -1111,6 +1360,10 @@ class LocalToolProvider:
             return next(iter(self._admitted_roots.values())), clean_args
         if not isinstance(alias, str) or alias not in self._admitted_roots:
             raise ValueError("root_alias does not name a root admitted for this run")
+        if name == "fs_search_index" and name not in self._path_specs_by_alias.get(
+            alias, {}
+        ):
+            raise ValueError("Project index unavailable for this run root")
         return self._admitted_roots[alias], clean_args
 
     @staticmethod
@@ -1517,7 +1770,7 @@ class LocalToolProvider:
             if refused(relative, is_directory=True):
                 raise refuse(relative)
             return (ToolPathTarget(path=base / relative, kind="directory"),)
-        if name in {"fs_glob", "fs_grep"}:
+        if name in {"fs_glob", "fs_grep", "fs_search_index"}:
             # Lexical scope only: pattern matching happens worker-side.
             return (ToolPathTarget(path=base, kind="directory"),)
         raw_diff = raw_args.get("diff")
@@ -1612,7 +1865,7 @@ class LocalToolProvider:
                 args["path"], root, intent="list", context=context
             )
             return (ToolPathTarget(path=path, kind="directory"),)
-        if name in {"fs_glob", "fs_grep"}:
+        if name in {"fs_glob", "fs_grep", "fs_search_index"}:
             return (ToolPathTarget(path=root, kind="directory"),)
         if name == "fs_patch":
             from tldw_chatbook.Tools.patch_tool_impls import (
@@ -1680,6 +1933,11 @@ class LocalToolProvider:
             decisions: ``{tool_name: verdict}`` for this turn.
         """
         with self._stamps_lock:
+            self._index_call_stamps = {
+                key: value
+                for key, value in self._index_call_stamps.items()
+                if key[0] != run_id
+            }
             self._stamps = {
                 key: value for key, value in self._stamps.items() if key[0] != run_id
             }
@@ -1717,6 +1975,11 @@ class LocalToolProvider:
             run_id: The run whose slice is cleared, then restored.
         """
         with self._stamps_lock:
+            self._index_call_stamps = {
+                key: value
+                for key, value in self._index_call_stamps.items()
+                if key[0] != run_id
+            }
             saved = {
                 key: value for key, value in self._stamps.items() if key[0] == run_id
             }
@@ -1727,6 +1990,11 @@ class LocalToolProvider:
             yield
         finally:
             with self._stamps_lock:
+                self._index_call_stamps = {
+                    key: value
+                    for key, value in self._index_call_stamps.items()
+                    if key[0] != run_id
+                }
                 self._stamps = {
                     key: value
                     for key, value in self._stamps.items()
@@ -2007,7 +2275,7 @@ class LocalToolProvider:
         if exempt_spec is not None and exempt_spec.gate_exempt:
             return None, False
         try:
-            state = self._resolve_state(hub)
+            state, index_read_floor = self._effective_local_state(hub)
         except Exception:  # noqa: BLE001 — fail closed to "let invoke handle it"
             logger.warning("Local tool approval-state resolution failed")
             return None, True
@@ -2015,7 +2283,7 @@ class LocalToolProvider:
             return None, False
         # Finding I1 parity: a live session approval makes invoke() execute
         # without a stamp, so asking again here would be a pure re-prompt.
-        if self._is_session_approved_safe(hub):
+        if not index_read_floor and self._is_session_approved_safe(hub):
             return None, False
         reason = (
             "config_changed"
@@ -2060,7 +2328,7 @@ class LocalToolProvider:
             # TASK-32956: an ALWAYS_ASK_TOOLS card offers no standing grant.
             options=(
                 ("approve_once", "deny")
-                if (hub.server_key, hub.name) in ALWAYS_ASK_TOOLS
+                if index_read_floor or (hub.server_key, hub.name) in ALWAYS_ASK_TOOLS
                 else ("approve_once", "approve_session", "always_allow", "deny")
             ),
         )
@@ -3356,7 +3624,7 @@ class LocalToolProvider:
             return _LocalGateDecision(verdict="allow", approval_consumed=False)
         hub = self.hub_tool_for(name)
         try:
-            state = self._resolve_state(hub)
+            state, index_read_floor = self._effective_local_state(hub)
         except Exception:  # noqa: BLE001 — fail closed on a resolution failure
             logger.warning("Local tool state resolution failed")
             # Fix Round H, Item 1: a distinct verdict from "deny" -- the
@@ -3377,6 +3645,8 @@ class LocalToolProvider:
                 refusal_reason=LocalToolInvocationReason.PERMISSION_OFF,
                 approval_decision="denied",
             )
+        if index_read_floor:
+            return self._index_read_verdict(name, args, run_id)
         # ask: per-turn stamp wins; then a live session approval; then the
         # single-call fallback; then fail closed.
         detail = self._stamp_detail(run_id, name)

@@ -443,3 +443,119 @@ def test_scanner_admission_requires_exact_enabled_building_claim(tmp_path, misma
         assert not store.admit_job(candidate)
     finally:
         store.close()
+
+
+def test_lexical_policy_filter_matches_path_suffix_runtime_oracle(tmp_path):
+    """Canonical metadata keeps Path.suffix semantics on every supported runtime."""
+    from hashlib import sha256
+    from pathlib import Path
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import prepare_scan_page
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+    from tldw_chatbook.Workspaces.project_index.models import (
+        FileCapture,
+        ScanEntry,
+        ScanPage,
+    )
+
+    names = (
+        "plain",
+        ".hidden",
+        ".txt",
+        "..txt",
+        "...txt",
+        "name.txt",
+        "name.TXT",
+        "name.tar.gz",
+        "name.",
+        "name..",
+        "name..txt",
+        "café.Λ",
+        "name.ß",
+        "file.PY",
+        ".hidden.py",
+        "name...",
+        "...",
+    )
+    paths = tuple(
+        prefix + name
+        for prefix in ("", "src/", "src/nested/", "src-peer/")
+        for name in names
+    )
+    text = "oracle marker"
+    captures = tuple(
+        FileCapture(
+            path, "logical", 1, len(text), sha256(text.encode()).hexdigest(), text
+        )
+        for path in paths
+    )
+    entries = tuple(
+        ScanEntry(c.relative_path, "file", c.identity, c.mtime_ns, c.size_bytes)
+        for c in captures
+    )
+    store = open_index_store(tmp_path)
+    key = make_index_key(tmp_path)
+    try:
+        scope = store.configure(
+            key,
+            ProjectIndexPolicy((), ()),
+            enabled=True,
+            expected_scope=store.load_status(key).scope,
+        )
+        claim = store.claim_job(
+            scope,
+            owner_token="oracle",
+            authority_revision=1,
+            expected_job_revision=store.load_status(key).job_revision,
+        )
+        assert store.commit_scan_page(
+            scope,
+            claim.job_id,
+            prepare_scan_page(ScanPage("", "root", entries, captures, True, 1)),
+            expected_job_revision=claim.job_revision,
+            authority_revision=1,
+        )
+        floor = (
+            SensitiveExclusion("subtree", "src/nested"),
+            SensitiveExclusion("file", ".txt"),
+        )
+        for prefixes in ((), ("",), ("src",), ("src/nested", "src-peer")):
+            for suffixes in (
+                (),
+                (".txt",),
+                (".",),
+                ("..txt",),
+                (".tar.gz", ".gz"),
+                (".λ", ".ss"),
+                (".PY",),
+            ):
+                policy = ProjectIndexPolicy(prefixes, suffixes)
+                scope = store.configure(key, policy, enabled=True, expected_scope=scope)
+                result = store.lexical_candidates(
+                    search_authority(tmp_path, scope, floor), "oracle", limit=100
+                )
+                expected = {
+                    path
+                    for path in paths
+                    if not path.startswith("src/nested/")
+                    and path != ".txt"
+                    and (
+                        not policy.include_prefixes
+                        or any(
+                            not prefix
+                            or path == prefix
+                            or path.startswith(prefix + "/")
+                            for prefix in policy.include_prefixes
+                        )
+                    )
+                    and (
+                        not policy.text_suffixes
+                        or Path(path).suffix.casefold() in policy.text_suffixes
+                    )
+                }
+                assert {candidate.relative_path for candidate in result} == expected, (
+                    policy,
+                    expected,
+                    result,
+                )
+    finally:
+        store.close_native()

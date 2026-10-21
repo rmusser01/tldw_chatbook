@@ -5501,6 +5501,7 @@ def build_local_review_hook(
         provider.apply_batch_decisions(
             run_id, read_global__stamp_answer_provenance()(stamps, pending, decisions)
         )
+        provider.apply_index_read_decisions(run_id, pending, decisions)
         reviewed_call_ids = {row.call_id for row in pending if row.call_id}
         provider.apply_promotion_decisions(
             run_id,

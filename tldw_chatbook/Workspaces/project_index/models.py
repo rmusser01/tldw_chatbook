@@ -288,6 +288,10 @@ class IndexCandidate:
     rank: int
 
 
+class ProjectIndexRetirementUnproven(RuntimeError):
+    """Code-owned Capture failure: its native reader has not proven retirement."""
+
+
 ProjectIndexLiveReader = Callable[[IndexCandidate], FileCapture | None]
 
 

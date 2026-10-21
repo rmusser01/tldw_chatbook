@@ -15489,6 +15489,17 @@ class ConsoleChatController:
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
             )
+        index_service, index_scopes = await asyncio.to_thread(
+            self._prepare_project_index_scopes, tuple(admitted_roots)
+        )
+        index_kwargs = (
+            {
+                "project_index_service": index_service,
+                "project_index_scopes": index_scopes,
+            }
+            if index_scopes
+            else {}
+        )
         local_provider, local_review_hook = self._compose_local_provider(
             session_id=session_id,
             turn_context=turn_context,
@@ -15500,8 +15511,40 @@ class ConsoleChatController:
             project_root_guard=project_authority_guard,
             admitted_roots=admitted_roots,
             local_kill_switch=local_kill_switch,
+            **index_kwargs,
         )
         return mcp_provider, builtin_gate, local_provider, local_review_hook
+
+    def _prepare_project_index_scopes(self, admitted_roots):
+        """Read compatible immutable scopes off-loop after exact run capture."""
+        from types import MappingProxyType
+        from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
+        from tldw_chatbook.Workspaces.project_index.runtime import (
+            get_project_index_service,
+            project_index_key,
+        )
+
+        scopes = {}
+        service = None
+        for authority in admitted_roots:
+            if is_remote(authority.root):
+                continue
+            try:
+                if not authority.guard(False):
+                    continue
+                root = local_root_path(
+                    authority.root, site="project index scope preparation"
+                )
+                key = project_index_key(
+                    self.app, authority.workspace_id, authority.binding_id, root
+                )
+                service = get_project_index_service(self.app)
+                status = service.status(key)
+                if status.state in {"Ready", "Partial"}:
+                    scopes[authority.alias] = status.scope
+            except Exception:  # unavailable optional capability grants no authority
+                logger.debug("Project index unavailable for this run binding")
+        return service, MappingProxyType(scopes)
 
     def _compose_local_provider(
         self,
@@ -15514,6 +15557,8 @@ class ConsoleChatController:
         project_root_guard: Callable[[], bool] | None = None,
         admitted_roots: Sequence[Any] | None = None,
         local_kill_switch: "LocalKillSwitchRead | None" = None,
+        project_index_service: Any = None,
+        project_index_scopes: Mapping[str, Any] | None = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -15772,6 +15817,8 @@ class ConsoleChatController:
             watchlists_service=watchlists_service,
             watchlists_command_service=watchlists_command_service,
             admitted_roots=admitted_roots,
+            project_index_service=project_index_service,
+            project_index_scopes=project_index_scopes,
             **self._todo_wiring(session_id),
             **self._ask_user_wiring(session_id),
             **self._character_wiring(session_id),

@@ -351,6 +351,7 @@ def workspace_context_note(
     path_tool_aliases: Iterable[str] | None = None,
     scratch_relative_tools: Iterable[str] = (),
     workspace_read_tools: Iterable[str] = (),
+    project_index_aliases: Iterable[str] = (),
 ) -> str:
     """Build the agent system-prompt workspace note.
 
@@ -526,6 +527,13 @@ def workspace_context_note(
         "fs_read",
     }.intersection(workspace_read_tools):
         lines.extend((_NOTE_PROJECT_EXPLORATION, _NOTE_PROJECT_FOLLOW_UP))
+    index_aliases = sorted(set(project_index_aliases).intersection(aliases or ()))
+    if root_lines and index_aliases:
+        lines.append(
+            "Keyword search via fs_search_index is available for root_alias: "
+            + ", ".join(index_aliases)
+            + ". Results are live-validated file evidence; stale coverage requires explicit Refresh."
+        )
     scratch_tools = sorted({str(tool) for tool in scratch_relative_tools})
     if scratch_tools:
         lines.append(

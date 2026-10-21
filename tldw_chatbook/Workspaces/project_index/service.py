@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager, nullcontext, ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+import json
 import os
 import re
 import stat
@@ -15,6 +16,7 @@ from uuid import uuid4
 from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     prepare_scan_page,
     WorkspaceProjectIndexDB,
+    _path_allowed,
 )
 from .lifetime import BindingLifetime, LifetimeBusy
 from .models import (
@@ -26,6 +28,10 @@ from .models import (
     ProjectIndexPolicy,
     ProjectIndexScope,
     ProjectIndexStatus,
+    ProjectIndexSearchAuthority,
+    ProjectIndexHit,
+    ProjectSearchResult,
+    ProjectIndexRetirementUnproven,
 )
 
 
@@ -41,6 +47,14 @@ class _Run:
     native_retired: bool = False
     pin: object | None = None
     lease: BindingLifetime | None = None
+
+
+@dataclass(eq=False)
+class _SearchRun:
+    key: ProjectIndexKey
+    done: threading.Event
+    pin: object | None = None
+    retirement_unproven: bool = False
 
 
 def binding_bytes(directory: Path) -> int:
@@ -87,6 +101,8 @@ class ProjectIndexService:
         self._lock = threading.RLock()
         self._runs: dict[str, _Run] = {}
         self._closed = False
+        self._searches: set[_SearchRun] = set()
+        self._search_slots = threading.BoundedSemaphore(2)
 
     @contextmanager
     def _store(self, key):
@@ -173,6 +189,169 @@ class ProjectIndexService:
                     finally:
                         lease.close()
             return replace(result, cache_bytes=binding_bytes(self._binding_root(store)))
+
+    @contextmanager
+    def _search_store(self, key):
+        # At most two Capture operations; failed native retirement keeps its
+        # operation admission and slot until the application is recovered.
+        with self._lock:
+            if self._closed or any(
+                run.key == key and run.retirement_unproven for run in self._searches
+            ):
+                raise RuntimeError("project_index_search_unavailable")
+            if not self._search_slots.acquire(blocking=False):
+                raise RuntimeError("project_index_search_busy")
+            run = _SearchRun(key, threading.Event())
+            self._searches.add(run)
+        try:
+            run.pin = self._retain(key)
+            with self._bind(run.pin):
+                store = self._factory(key)
+                try:
+                    store.status_cache_bytes = binding_bytes(self._binding_root(store))
+                    yield store
+                finally:
+                    try:
+                        store.close_native()
+                    except BaseException as error:
+                        raise ProjectIndexRetirementUnproven(
+                            "index_store_retirement_unproven"
+                        ) from error
+        except ProjectIndexRetirementUnproven:
+            run.retirement_unproven = True
+            raise
+        finally:
+            if not run.retirement_unproven:
+                if run.pin is not None:
+                    run.pin.close()
+                with self._lock:
+                    self._searches.discard(run)
+                self._search_slots.release()
+            run.done.set()
+
+    def search(
+        self, authority: ProjectIndexSearchAuthority, query: str, *, limit: int = 10
+    ) -> ProjectSearchResult:
+        """Return bounded evidence from live bytes under this run's authority.
+
+        Args:
+            authority: Code-issued run root, exclusion floor and pinned reader.
+            query: Nonblank keyword query, at most 2048 characters.
+            limit: Strict integer result limit from one through ten.
+
+        Returns:
+            Live file evidence, or an unavailable/partial result. Coverage is
+            deliberately absent: management counters are not run-scoped.
+        """
+        if type(authority) is not ProjectIndexSearchAuthority:
+            raise ValueError("invalid_search_authority")
+        if not isinstance(query, str) or not query.strip() or len(query) > 2048:
+            raise ValueError("invalid_query")
+        if type(limit) is not int or not 1 <= limit <= 10:  # noqa: E721 - reject bool
+            raise ValueError("invalid_limit")
+        unavailable = ProjectSearchResult("unavailable", (), None, False)
+        if not authority.guard():
+            return unavailable
+        with self._search_store(authority.scope.key) as store:
+            with self._fence(authority.scope.key) as live:
+                if (
+                    live is None
+                    or live.root != authority.root
+                    or live.chain != authority.chain
+                ):
+                    return unavailable
+                status = store.load_status(authority.scope.key)
+                if status.scope != authority.scope or status.state not in {
+                    "Ready",
+                    "Partial",
+                }:
+                    return unavailable
+                admitted = replace(
+                    authority,
+                    exclusions=tuple(set(authority.exclusions + live.exclusions)),
+                    authority_revision=live.authority_revision,
+                )
+                candidates = store.lexical_candidates(admitted, query, limit=100)
+            hits = []
+            stale = False
+            for candidate in candidates:
+                if not authority.guard():
+                    return unavailable
+                # No worker read while holding a registry transaction. The
+                # witness is checked again before accepting any disclosure.
+                with self._fence(authority.scope.key) as current:
+                    current_status = store.load_status(authority.scope.key)
+                    if (
+                        current != live
+                        or current_status.scope != status.scope
+                        or current_status.state not in {"Ready", "Partial"}
+                        or current_status.manifest_revision != status.manifest_revision
+                        or not _path_allowed(
+                            candidate.relative_path, admitted.exclusions
+                        )
+                    ):
+                        return unavailable
+                capture = authority.live_reader(candidate)
+                if not authority.guard():
+                    return unavailable
+                if (
+                    capture is None
+                    or capture.relative_path != candidate.relative_path
+                    or capture.identity != candidate.file_identity
+                    or capture.content_sha256 != candidate.content_sha256
+                ):
+                    stale = True
+                    continue
+                lines = capture.text.splitlines()
+                excerpt = "\n".join(
+                    lines[candidate.line_start - 1 : candidate.line_end]
+                )
+                # A single long line may exceed the wire budget; retain its
+                # honest line location while bounding the evidence text.
+                excerpt = excerpt.encode("utf-8")[:12000].decode(
+                    "utf-8", errors="ignore"
+                )
+                hit = ProjectIndexHit(
+                    candidate.relative_path,
+                    candidate.line_start,
+                    min(candidate.line_end, candidate.line_start + excerpt.count("\n")),
+                    excerpt,
+                )
+                proposed = ProjectSearchResult(
+                    "partial" if stale or status.state == "Partial" else "ready",
+                    tuple(hits + [hit]),
+                    None,
+                    stale,
+                )
+                if (
+                    len(
+                        json.dumps(
+                            asdict(proposed), ensure_ascii=False, separators=(",", ":")
+                        ).encode()
+                    )
+                    > 16384
+                ):
+                    break
+                hits.append(hit)
+                if len(hits) >= limit:
+                    break
+            if not authority.guard():
+                return unavailable
+            with self._fence(authority.scope.key) as current:
+                final = store.load_status(authority.scope.key)
+                if (
+                    current != live
+                    or final.scope != status.scope
+                    or final.manifest_revision != status.manifest_revision
+                    or final.state not in {"Ready", "Partial"}
+                ):
+                    return unavailable
+                return ProjectSearchResult(
+                    "partial" if stale or final.state == "Partial" else "ready",
+                    tuple(hits),
+                    None,
+                    stale,
+                )
 
     def enable(
         self,
@@ -630,15 +809,20 @@ class ProjectIndexService:
         with self._lock:
             self._closed = True
             runs = tuple(self._runs.values())
+            searches = tuple(self._searches)
             for run in runs:
                 run.stop.set()
 
         async def drain():
+            for search in searches:
+                await asyncio.to_thread(search.done.wait)
             for run in runs:
                 if run.supervisor is not None:
                     await asyncio.to_thread(run.supervisor.join)
                 if not run.native_retired:
                     raise RuntimeError("index_retirement_unproven") from run.error
+            if any(search.retirement_unproven for search in searches):
+                raise ProjectIndexRetirementUnproven("index_reader_retirement_unproven")
 
         task = asyncio.create_task(drain())
         cancelled = False

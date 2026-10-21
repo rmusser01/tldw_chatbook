@@ -415,3 +415,19 @@ def test_windows_pin_refuses_junction_root(tmp_path: Path) -> None:
         workspace_root_pin._windows_close_handle(handle)
     with pytest.raises(WorkspaceRootPinError, match="unsafe workspace root metadata"):
         workspace_root_pin._pin_windows(root, expected)
+
+
+def test_executor_local_chain_snapshot_is_immutable_and_performs_no_recapture(
+    tmp_path, monkeypatch
+):
+    from dataclasses import FrozenInstanceError
+    from tldw_chatbook.Tools import workspace_tool_executor as module
+
+    executor = module.WorkspaceToolExecutor(tmp_path)
+    expected = capture_directory_chain(tmp_path)
+    monkeypatch.setattr(
+        module, "capture_directory_chain", lambda _: pytest.fail("snapshot recaptured")
+    )
+    assert executor.local_authority_chain == expected
+    with pytest.raises(FrozenInstanceError):
+        executor.local_authority_chain.canonical_root = tmp_path / "other"
