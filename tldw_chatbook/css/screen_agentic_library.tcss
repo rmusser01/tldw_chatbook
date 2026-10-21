@@ -1,10 +1,10 @@
 /* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss
+ * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss + features/_library_notes_panels.tcss + features/_library_artifacts.tcss
  * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
  * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss and re-run build_css.py.
+ * first paint. Edit features/_library.tcss + features/_library_panels.tcss + features/_library_notes_panels.tcss + features/_library_artifacts.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -3328,7 +3328,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    button's `.display` was True (the separator in the viewer's DEFAULT_CSS
    lost its width the same way). */
 #library-media-viewer #library-media-link-receipt {
-    width: 1fr;
+    width: $ds-width-fill;
     height: $ds-home-control-button-height;
     color: $ds-text-muted;
     text-overflow: ellipsis;
@@ -4342,7 +4342,12 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     height: auto;
     text-style: bold;
 }
-
+/* Library Notes panels: the workbench's row wrappers, New note, and lasting sync
+   (roots, status, review and history rows). Carved verbatim from the tail of
+   _library_panels.tcss on 2026-10-20 (ADR-161 spec 3.5's 2,000-line ceiling,
+   TASK-24451: "split the sheet by vocabulary"); it is listed directly after
+   that sheet in CSS_MODULES and the library split, so cascade order is
+   unchanged. */
 /* Presentation-only row wrappers keep the established wide stacked
    workbench. Compact rules below switch only these wrappers to rows. */
 #library-notes-filter-row,

@@ -123,6 +123,7 @@ def test_agentic_terminal_tcss_module_is_implemented_and_imported():
             "features/_console_panels.tcss",
             "features/_library.tcss",
             "features/_library_panels.tcss",
+            "features/_library_notes_panels.tcss",
             "features/_settings.tcss",
             "features/_home.tcss",
             "layout/_destination.tcss",

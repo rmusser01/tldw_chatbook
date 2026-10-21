@@ -10949,6 +10949,8 @@ ResponseRulesModal .rr-actions Button {
     text-style: bold;
 }
 
+/* ===== MODULE: features/_library_notes_panels.tcss ===== */
+
 #notes-sync-authority,
 #notes-sync-roots-authority,
 .library-notes-lasting-status {

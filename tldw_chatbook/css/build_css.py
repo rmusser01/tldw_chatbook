@@ -271,6 +271,7 @@ CSS_MODULES = [
     "features/_console_response_rules.tcss",
     "features/_library.tcss",
     "features/_library_panels.tcss",
+    "features/_library_notes_panels.tcss",
     "features/_library_artifacts.tcss",
     "components/_settings_personal_context.tcss",
     "features/_settings.tcss",
@@ -471,6 +472,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         modules=(
             "features/_library.tcss",
             "features/_library_panels.tcss",
+            "features/_library_notes_panels.tcss",
             "features/_library_artifacts.tcss",
         ),
         sheets={"library": "screen_agentic_library.tcss"},
