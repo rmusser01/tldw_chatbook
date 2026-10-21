@@ -157,7 +157,7 @@ frame for an otherwise eligible 1 MiB file. Root locators and file bodies travel
 only on pipes.
 Parent `ProjectScanner.scan(authority: ProjectIndexAuthority, scope: ProjectIndexScope,
 job_id: str, frontier: Iterator[str], emit: Callable[[ScanPage], bool],
-stop: threading.Event, *, admit_unit: Callable[[str], ProjectIndexAuthority | None]) -> ScanRunResult`
+stop: threading.Event, *, admit_unit: Callable[[str], ProjectIndexAuthority | None], policy: ProjectIndexPolicy) -> ScanRunResult`
 retains and retires one process tree. The parent calls `admit_unit(directory)`
 before every bounded directory/page request, including continuation pages. K3
 supplies this callback using its current authority fence and the job's narrowing
