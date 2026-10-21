@@ -18,6 +18,8 @@ from inspect import getattr_static
 from types import FunctionType, MethodType, ModuleType
 from typing import Any
 
+from tldw_chatbook import config as _tldw_config
+
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
 from ...Chat.console_chat_controller import _is_empty_transcript_row
 from ...Chat.console_chat_models import (
@@ -862,9 +864,41 @@ def _native_config_locks_held() -> bool:
     nested presentation read there is live, matches the rest of that pass, and
     cannot wait on another thread.
     """
-    from tldw_chatbook import config
+    return (
+        _tldw_config._settings_rebuild_lock()._is_owned()
+        and _tldw_config._config_file_lock()._is_owned()
+    )
 
-    return config._settings_rebuild_lock()._is_owned() and config._config_file_lock()._is_owned()
+
+def retry_after_config_rebuild(function: Callable) -> Callable:
+    """Retry a screen refresh shortly while a config rebuild holds a cold cache.
+
+    TASK-35836: refreshes the Console mount schedules (the identity surfaces a
+    roleplay refresh syncs, the width rail rules) read config live on the UI
+    loop. While ``config_read_would_wait()`` the call runs 0.2 s later instead,
+    once per refresh; the latest call's arguments win.
+    """
+
+    @wraps(function)
+    def wrapped(screen, *args, **kwargs):
+        if not _tldw_config.config_read_would_wait():
+            return function(screen, *args, **kwargs)
+        pending = getattr(screen, "_console_config_retries", None)
+        if pending is None:
+            pending = screen._console_config_retries = {}
+        first = function.__name__ not in pending
+        pending[function.__name__] = (args, kwargs)
+        if first:
+
+            def retry() -> None:
+                retry_args, retry_kwargs = pending.pop(function.__name__)
+                if not (getattr(screen, "_closing", False) or getattr(screen, "_closed", False)):
+                    wrapped(screen, *retry_args, **retry_kwargs)
+
+            screen.set_timer(0.2, retry)
+        return None
+
+    return wrapped
 
 
 def console_readiness_presentation(function: Callable) -> Callable:

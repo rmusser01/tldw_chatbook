@@ -26,6 +26,8 @@ refreshes; that remains the separate lesson below.
 
 **What to do.** When a held-lock test keeps finding the next blocked read, enumerate instead of iterating: record the lock's acquires from the UI thread during the window, with the caches forced cold, and fix the whole list at once. A window only sees the paths that run in it, so also call each refresh entry point (resume, polls, one-shot reconciles) inside it. Then pin with a real hold, and check each fix's revert fails it.
 
+**Follow-up (TASK-35836, 2026-10-21).** A pin holding a real rebuild from the start of the Console mount passed with two of its three fixes reverted. The hold made the full sync defer, and the two refreshes behind it (skill discovery, the roleplay refresh) only ran after release. A real hold stops at the first deferral, so start a separate hold at each fixed read, and keep reverting fixes until every one fails a case.
+
 ## A plain gated Tests/UI test that reads config fails in CI too (TASK-34982, 2026-10-19)
 
 **Incident.** Locally every plain (non-private-profile) Tests/UI test errored at setup with `RecoveryRequired: raw_source_selection_changed`, and the working assumption was that CI ran the same files cleanly. A new gated test drove a real `ConsoleTranscript.refresh_messages()`, whose row reconcile reads config (`get_cli_setting`). In UI Fast Lane (7) it failed with that same error twice, and the merge queue evicted the PR. The test's three neighbours, which read no config, passed.

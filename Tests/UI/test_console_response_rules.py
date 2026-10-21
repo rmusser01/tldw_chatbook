@@ -682,21 +682,193 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
 
 
 async def settle(console):
-    """Wait out the app's own sync and replay, the attach reconcile and skill discovery.
+    """Wait out the app's own sync and replay, and the attach reconcile.
 
     The sync and replay are two of the flags the entry guard checks (nothing
-    awaits between this check and the next sync's entry). Skill discovery,
-    which the mount and the attach reconcile's resume start, still reads
-    config the first time, outside the syncs pinned here (TASK-35836).
+    awaits between this check and the next sync's entry). The attach
+    reconcile's resume is pinned by the recovery-and-resume case; the mount's
+    own refreshes by the test below (TASK-35836).
     """
     async with asyncio.timeout(5):
         while (
             console._console_sync_in_progress
             or getattr(console, "_console_control_bar_replay_whole_sync", False)
             or not console._console_attach_reconciled
-            or any(
-                worker.group == "console-skill-discovery" and not worker.is_finished
-                for worker in console.workers
-            )
         ):
             await asyncio.sleep(0.01)
+
+
+_MOUNT_REBUILD_STARTS = {
+    "mount": "on_mount",
+    "view-start": "_start_console_view_after_reconciliation",
+    "roleplay": "_dispatch_active_console_roleplay_refresh",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start", list(_MOUNT_REBUILD_STARTS))
+async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
+    tmp_path, monkeypatch, start
+):
+    """TASK-35836: the refreshes a Console mount schedules never wait for a rebuild.
+
+    A config rebuild starts as the mount reaches one step and holds the config
+    while the refreshes after it run: ``on_mount`` itself (the width rail rules
+    of its first resize), the attach reconcile's view start (skill discovery),
+    or the first roleplay refresh (the identity surfaces). Each read config on
+    the UI loop before this task; a rebuild from the start of the mount defers
+    the full sync, and with it the later two, so they get their own start.
+    The watchdog records where the UI thread was waiting. After release, every
+    deferred refresh finishes.
+    """
+    import functools
+    import itertools
+    import sys
+    import threading
+    import traceback
+
+    from Tests.UI.test_destination_shells import _build_test_app
+    from tldw_chatbook import config
+    from tldw_chatbook.config import save_setting_to_cli_config
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    app = _build_test_app()
+    app.chachanotes_db = CharactersRAGDB(tmp_path / "console-mount.sqlite", "mount-ui")
+    _configure_native_ready_console(app, model="test-model")
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    hold, held, release = threading.Event(), threading.Event(), threading.Event()
+    blocked = []
+
+    def hold_rebuild():
+        hold.wait(10)
+        with config._settings_rebuild_lock():
+            config._invalidate_config_caches()
+            held.set()
+            release.wait(10)
+
+    def expire():
+        frame = sys._current_frames()[threading.main_thread().ident]
+        blocked.extend(traceback.format_stack(frame))
+        release.set()
+
+    step = getattr(ChatScreen, _MOUNT_REBUILD_STARTS[start])
+
+    @functools.wraps(step)  # Textual reads a handler's signature to pass its event
+    def rebuild_then_step(self, *args, **kwargs):
+        if not hold.is_set():
+            hold.set()
+            assert held.wait(3)
+            watchdog.start()
+        return step(self, *args, **kwargs)
+
+    holder = threading.Thread(target=hold_rebuild)
+    # 5 s, not 2: from on_mount the rest of startup runs inside the hold, and a
+    # loaded runner can take seconds; a UI thread that waits stays blocked
+    # until this fires, since the test cannot run to release it.
+    watchdog = threading.Timer(5, expire)
+    monkeypatch.setattr(ChatScreen, _MOUNT_REBUILD_STARTS[start], rebuild_then_step)
+    fetches = []  # when skill discovery fetched its context: before, in or after the hold
+    service = app.skills_scope_service
+    get_context = service.get_context
+
+    async def observed_get_context(*args, **kwargs):
+        fetches.append("after" if release.is_set() else "hold" if held.is_set() else "before")
+        return await get_context(*args, **kwargs)
+
+    monkeypatch.setattr(service, "get_context", observed_get_context)
+    holder.start()
+    try:
+        async with ConsoleHarness(app).run_test(size=(120, 35)) as pilot:
+            console = pilot.app.screen_stack[-1]
+            async with asyncio.timeout(5):
+                while not held.is_set():
+                    await asyncio.sleep(0.01)
+            # The step's refresh must defer under the hold: a decorator retry,
+            # or skill discovery waiting without having fetched.
+            expected = {
+                "mount": "_adapt_console_workspace_to_width",
+                "roleplay": "_sync_console_identity_surfaces",
+            }.get(start)
+            deferred, discovery_waited = set(), False
+            deadline = asyncio.get_running_loop().time() + 2
+            for tick in itertools.count():  # >= 0.75 s: the mount's timers, workers, polls
+                deferred.update(getattr(console, "_console_config_retries", None) or ())
+                discovery_waited = discovery_waited or any(
+                    worker.group == "console-skill-discovery" and not worker.is_finished
+                    for worker in console.workers
+                )
+                seen = (expected is None or expected in deferred) and (
+                    discovery_waited or start != "view-start"
+                )
+                if (tick >= 15 and seen) or asyncio.get_running_loop().time() > deadline:
+                    break
+                await asyncio.sleep(0.05)
+            waited = release.is_set()
+            release.set()
+            holder.join(3)
+            assert not waited, "the Console mount waited for the config rebuild:\n" + "".join(
+                blocked[-14:]
+            )
+            assert expected is None or expected in deferred, deferred
+            assert discovery_waited or start != "view-start"
+            assert "hold" not in fetches, "skill discovery fetched in the hold"
+            # Deferred, not dropped: every retry runs, and discovery fetches
+            # unless it already had before the hold began.
+            async with asyncio.timeout(5):
+                while (
+                    getattr(console, "_console_config_retries", None)
+                    or not console._console_attach_reconciled
+                    or not {"before", "after"} & set(fetches)
+                    or any(
+                        worker.group == "console-skill-discovery" and not worker.is_finished
+                        for worker in console.workers
+                    )
+                ):
+                    await asyncio.sleep(0.02)
+            assert console._last_console_workspace_width_band is not None
+            await console._console_runtime().dispose()
+    finally:
+        hold.set()
+        watchdog.cancel()
+        release.set()
+        holder.join(3)
+    assert not holder.is_alive()
+
+
+def test_a_deferred_refresh_runs_once_with_its_latest_call(monkeypatch):
+    """TASK-35836: retry_after_config_rebuild defers, then runs; it never drops."""
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        retry_after_config_rebuild,
+    )
+
+    would_wait = [True]
+    monkeypatch.setattr(config, "config_read_would_wait", lambda: would_wait[0])
+    timers, calls = [], []
+
+    class Screen:
+        def set_timer(self, delay, callback):
+            timers.append((delay, callback))
+
+    @retry_after_config_rebuild
+    def refresh(screen, value):
+        calls.append(value)
+
+    screen = Screen()
+    refresh(screen, "first")
+    refresh(screen, "latest")
+    assert calls == [] and [delay for delay, _ in timers] == [0.2]
+    timers.pop()[1]()  # the rebuild still holds: retried again, nothing ran
+    assert calls == [] and len(timers) == 1
+    would_wait[0] = False
+    timers.pop()[1]()
+    assert calls == ["latest"] and not timers and not screen._console_config_retries
+    refresh(screen, "now")
+    assert calls == ["latest", "now"]
+    screen._closing = True  # a torn-down screen's retry renders nothing
+    would_wait[0] = True
+    refresh(screen, "late")
+    timers.pop()[1]()
+    assert calls == ["latest", "now"]
