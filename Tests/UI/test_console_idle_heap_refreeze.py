@@ -153,6 +153,82 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
     assert timeline.index("refreeze:run_settled") > provider
 
 
+class BusyScreen:
+    """Only what the busy check reads, every part idle until a case sets one."""
+
+    def __init__(self) -> None:
+        self._closing = False
+        self._closed = False
+        self.app_instance = None
+        self.app = SimpleNamespace(screen=self)
+        self._console_send_flight = SimpleNamespace(tasks=set(), deferred=None)
+        self._console_pending_send = None
+        self._console_transcript_sync_timer = None
+        self.poll_needed = False
+
+    def _console_transcript_poll_needed(self) -> bool:
+        return self.poll_needed
+
+
+def _closing(screen: BusyScreen) -> None:
+    screen._closing = True
+
+
+def _covered(screen: BusyScreen) -> None:
+    screen.app.screen = object()  # a modal or another screen on top
+
+
+def _pressed(screen: BusyScreen) -> None:
+    screen._console_send_flight.tasks.add(object())
+
+
+def _deferred(screen: BusyScreen) -> None:
+    screen._console_send_flight.deferred = object()
+
+
+def _pending(screen: BusyScreen) -> None:
+    screen._console_pending_send = object()
+
+
+def _polling(screen: BusyScreen) -> None:
+    screen._console_transcript_sync_timer = object()
+
+
+def _live_before_the_poll(screen: BusyScreen) -> None:
+    screen.poll_needed = True
+
+
+@pytest.mark.parametrize(
+    "hold",
+    [
+        _closing,
+        _covered,
+        _pressed,
+        _deferred,
+        _pending,
+        _polling,
+        _live_before_the_poll,
+    ],
+    ids=lambda hold: hold.__name__.strip("_"),
+)
+def test_each_part_of_the_send_window_alone_holds_the_refreeze_off(hold) -> None:
+    """AC#4: every state from Enter to a settled run reads busy on its own.
+
+    The mounted test above walks one send, where several parts overlap, so a
+    part that only one path relies on (a run still live before its transcript
+    poll starts, a fleet wake delivering, a change review pending) could be
+    dropped with that test still green. Each case sets one part alone.
+
+    Args:
+        hold: Sets one part of the busy state on an otherwise idle screen.
+    """
+    idle = BusyScreen()
+    assert not console_transcript._console_heap_busy(idle), "the idle screen read busy"
+    screen = BusyScreen()
+    hold(screen)
+    assert console_transcript._console_heap_busy(screen)
+
+
 class PaintedScreen:
     """Only what the paint policy reads: the (session, conversation) shown."""
 
