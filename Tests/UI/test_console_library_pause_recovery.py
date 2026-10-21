@@ -47,6 +47,10 @@ from Tests.UI.test_console_send_admission_off_pump import _allow_second_turns
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
@@ -299,6 +303,70 @@ async def test_a_card_retry_cancelled_by_a_center_swap_leaves_a_recoverable_paus
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action", ["Retry Library search", "Send once without Library"]
+)
+async def test_a_card_action_interrupted_after_its_send_went_out_fails_that_reply(
+    action,
+):
+    """Pre-merge review (blocking): what the User Guide says about this window.
+
+    Closing the card pauses the send only while Retry is still searching.
+    Once the message has gone out and its reply is streaming, the swap
+    cancels the card's worker and with it the stream: that reply ends as
+    failed, the message stays in the conversation, nothing is listed again,
+    and the next send goes through. The guide claimed a pause here.
+    """
+    gateway = _HeldGateway()
+    host = _build_with(gateway)
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _timed_out_send(host, pilot, library)
+            store = controller.store
+            session_id = store.active_session_id
+            runtime = console._console_runtime()
+            controller._library_preparation_timeout = 60.0
+            library.release.set()
+            console.query_one(_CARD_ACTIONS[action], Button).press()
+            await until(lambda: gateway.stream_calls == 1)
+
+            await console._swap_console_center()  # what opening the terminal does
+
+            await until(
+                lambda: (
+                    controller.run_state_for(session_id).status
+                    is ConsoleRunStatus.FAILED
+                )
+            )
+            assert store.preparation_for_session(session_id) is None or (
+                store.preparation_for_session(session_id).state
+                is not ConsoleTurnPreparationState.PAUSED
+            )
+            await pilot.pause()
+            assert runtime.recoveries_for_session(session_id) == ()
+            assert not _shelf_offers_unsent_turn(console)
+            rows = store.messages_for_session(session_id)
+            assert [
+                row.content for row in rows if row.role is ConsoleMessageRole.USER
+            ] == [FIRST]
+            assert rows[-1].role is ConsoleMessageRole.ASSISTANT
+            assert REPLY not in rows[-1].content
+
+            gateway.release.set()
+            composer.load_draft(SECOND)
+            composer.focus()  # the swap moved focus to the transcript
+            await pilot.pause()
+            press(host, "enter", "\r")
+            await until(lambda: gateway.stream_calls == 2)
+            await until(lambda: REPLY in _screen_text(host))
+            screen = _screen_text(host)
+            assert "Another send is still preparing" not in screen
+            assert "Last send is blocked" not in screen
+
+
+@pytest.mark.asyncio
 async def test_a_recovery_sync_during_a_center_swap_never_fails_the_sync():
     """A sync that lands while the center swap removes the card's region.
 
@@ -406,9 +474,9 @@ async def test_card_cancel_after_a_tab_switch_returns_the_text_to_its_own_chat()
             def cancel_after_a_tab_switch(preparation_id):
                 other = store.create_session(title="Other")
                 other_ids.append(other.id)
-                store.switch_session(other.id)
-                console._console_visible_draft_session_id = other.id
-                composer.load_draft("")
+                # The real switch (#3065): saves the composer to its own chat's
+                # draft and shows the other chat's (empty) draft at once.
+                console._session.switch_and_bind(other.id)
                 return real_cancel(preparation_id)
 
             controller.cancel_library_preparation = cancel_after_a_tab_switch
@@ -452,9 +520,9 @@ async def test_card_cancel_after_a_tab_switch_keeps_a_follow_up_typed_meanwhile(
             def cancel_after_a_tab_switch(preparation_id):
                 other = store.create_session(title="Other")
                 other_ids.append(other.id)
-                store.switch_session(other.id)
-                console._console_visible_draft_session_id = other.id
-                composer.load_draft("")
+                # The real switch (#3065): saves the composer to its own chat's
+                # draft and shows the other chat's (empty) draft at once.
+                console._session.switch_and_bind(other.id)
                 return real_cancel(preparation_id)
 
             controller.cancel_library_preparation = cancel_after_a_tab_switch

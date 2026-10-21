@@ -1011,10 +1011,14 @@ conversation while Cancel runs, the message goes back to its own
 conversation's draft, not to the one on screen; if you had typed something
 new in that draft, your text stays and the message is listed for **Restore**
 instead. If the card is closed while
-it acts — for example you open the Console terminal during a Retry — the
-search stops, the send pauses as **Library search stopped**, and the message
-is listed again with Restore and Discard; the card shows it again when you
-return. Nothing is silently downgraded to an ungrounded send.
+**Retry Library search** is still searching (for example you open the
+Console terminal), the search stops, the send pauses as **Library search
+stopped**, and the message is listed again with Restore and Discard; the
+card shows it again when you return. Once a Retry or **Send once without
+Library** has sent the message and its reply is arriving, closing the card
+ends that reply as failed: your message stays in the conversation, it is not
+listed again, and your next send goes through. Nothing is silently
+downgraded to an ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, at the top of
