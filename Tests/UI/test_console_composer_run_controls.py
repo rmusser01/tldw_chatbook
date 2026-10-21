@@ -110,6 +110,32 @@ async def _mounted(host, pilot):
     return console, composer
 
 
+async def _after_mount_focus_restore(console, pilot) -> None:
+    """Let the mount's own focus restore run before a case clears focus.
+
+    ``ChatScreen.on_mount`` arms ``set_timer(0.2, _restore_console_workbench_focus)``,
+    which may focus the draft when nothing owns focus. A case that clears focus
+    before that timer fires can get the draft refocused right after and read it
+    as "something focused the draft". Measured 2026-10-20 (TASK-33620.15.7), 20
+    interleaved runs each: the nothing-focused typing case failed 5 on dev and
+    12 once that task's cheaper mount made ``_mounted`` return before the timer
+    more often. Waits for the timer itself, whatever it decides.
+    """
+    restore = console._restore_console_workbench_focus
+
+    def pending() -> bool:
+        return any(
+            timer._callback == restore
+            and timer._task is not None
+            and not timer._task.done()
+            for timer in list(console._timers)
+        )
+
+    await _wait_for(pilot, lambda: not pending(), "the mount's focus restore never ran")
+    # A focus() the restore made lands through App.call_later.
+    await pilot.pause()
+
+
 async def _start_held_run(console, composer, pilot):
     """Send one prompt and wait until its run is streaming and stoppable."""
 
@@ -1296,6 +1322,7 @@ async def test_paste_with_nothing_focused_lands_in_a_focused_draft(request):
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
+        await _after_mount_focus_restore(console, pilot)
         composer.load_draft("hello")
         console.set_focus(None)
         await pilot.pause()
@@ -1327,6 +1354,7 @@ async def test_typing_with_nothing_focused_focuses_the_draft_first(request):
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
+        await _after_mount_focus_restore(console, pilot)
         composer.load_draft("hello")
         console.set_focus(None)
         await pilot.pause()
