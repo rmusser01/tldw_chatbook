@@ -14,6 +14,7 @@ Usage (from the repo root, after any PR that legitimately moves a boot cost)::
     .venv/bin/python scripts/update_boot_budget_snapshots.py --only css --only preimport
 
 Guards: ``import-weight`` (~5 s), ``css`` (~2 s), ``preimport`` (~30 s),
+``first-send`` (the pass's first-send warm-up, TASK-33620.15.13; ~5 s),
 ``ui-ready`` (two full headless boots; 1-3 min).
 
 The script REFUSES to pin a snapshot whose measurement is over its ratchet
@@ -40,7 +41,7 @@ PERF_DIR = REPO_ROOT / "Tests" / "Performance"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-GUARDS = ("import-weight", "ui-ready", "css", "preimport")
+GUARDS = ("import-weight", "ui-ready", "css", "preimport", "first-send")
 
 
 def _isolate_config() -> None:
@@ -243,11 +244,57 @@ def update_preimport(force: bool) -> bool:
     return True
 
 
+def update_first_send(force: bool) -> bool:
+    """Pin the pass's first-send warm-up census (TASK-33620.15.13)."""
+    mod = _load_by_path(
+        "tldw_perf_test_screen_preimport_payload_budget",
+        PERF_DIR / "test_screen_preimport_payload_budget.py",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        census = mod._run_census(
+            Path(td), mod._WARMUP_CENSUS_SCRIPT, json.dumps(mod._heavy_modules())
+        )
+    if _refuse_over_budget(
+        "first-send",
+        census["warmup_added_modules"],
+        mod.MAX_FIRST_SEND_WARMUP_ADDED_MODULES,
+        "MAX_FIRST_SEND_WARMUP_ADDED_MODULES",
+        force,
+    ):
+        return False
+    ratchet = _ratchet()
+    payload = {
+        "_comment": (
+            "First-send warm-up payload census (the pre-import pass's first "
+            "step). Written ONLY by scripts/update_boot_budget_snapshots.py "
+            "(ADR-097)."
+        ),
+        "warmup_added_modules": census["warmup_added_modules"],
+        "warmup_added_loc": census["warmup_added_loc"],
+        "listed": census["listed"],
+        "entries": {
+            row["entry"]: {"loc": row["added_loc"], "modules": row["modules"]}
+            for row in census["entries"]
+            if row["modules"]
+        },
+    }
+    _write(
+        ratchet.SNAPSHOT_DIR / ratchet.SNAPSHOT_FILES["first-send-warmup"],
+        json.dumps(payload, indent=2) + "\n",
+        (
+            f"first-send-warmup snapshot ({census['warmup_added_modules']} "
+            f"modules / {census['warmup_added_loc']:,} LOC)"
+        ),
+    )
+    return True
+
+
 UPDATERS = {
     "import-weight": update_import_weight,
     "ui-ready": update_ui_ready,
     "css": update_css,
     "preimport": update_preimport,
+    "first-send": update_first_send,
 }
 
 
