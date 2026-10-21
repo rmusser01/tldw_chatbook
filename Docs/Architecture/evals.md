@@ -47,6 +47,22 @@ Backup/recovery keeps the `eval.definitions` owner for private YAML, separate fr
 
 Word bench is the third engine: logprob capture against llama.cpp completions, driven by `sample_bench.run_existing_bench`; it shares `eval_models` targets, run groups, and the steering reader.
 
+## Dataset snippet imports and name edits
+
+`UI/Evals/snippet_editor.py::SnippetEditor` retains the dataset heading,
+`DatasetRenameRow` and its live name Input while imports refresh only the
+read-only `_SnippetResults` summary, snippet table and warning strip. The
+existing import service returns the persisted combined snippets; projecting
+those results needs no additional DB read. The table owns scrolling and Import
+remains outside that scroll region.
+
+Name edits stay widget-local and uncommitted, including whitespace or invalid
+names, with their focus, caret and selection intact when import completes.
+Only explicit Rename validates and writes the name; a successful Rename posts
+`DatasetRenamed` for the screen's heading/catalog reload. Cancelled, malformed
+or unreadable imports leave the name edit unchanged. This follows ADR-033's
+narrow state ownership and the existing ADR-150/161 layout contracts.
+
 ## Evals keyboard scope
 
 ResultsGrid owns `l` (lens), `b` (baseline), `s` (sort) and `e` (export).

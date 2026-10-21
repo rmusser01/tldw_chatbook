@@ -1,7 +1,7 @@
 ---
 id: TASK-36037
 title: Preserve unfinished Evals dataset names when snippet imports complete
-status: To Do
+status: In Progress
 created_date: 2026-10-21 16:13
 labels:
 - evals
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-21-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-21 18:54
 ---
 
 ## Description
@@ -43,3 +46,16 @@ Reason: This is routine preservation of existing dataset-editor state within its
 - [ ] #3 When the name field is focused at import completion, its editing focus, exact caret position and selection range are preserved; the update does not move focus to the rail.
 - [ ] #4 Explicit Rename retains existing empty-name/collision validation and updates the stored name, heading and catalog; cancelled or failed imports retain the name draft. Mounted private-profile real-SQLite regressions cover those outcomes through actual import-worker completion.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR paths: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md
+Reason: preserve existing widget-local name state and explicit Rename; no storage, import policy, view-model, provider or application boundary change.
+
+1. Add mounted private-profile regressions using real SQLite and actual import-worker completion. Before product edits, observe loss of the exact draft, focused caret and selection for TXT/CSV/JSON imports, including invalid or whitespace text.
+2. Refresh only read-only imported snippet results, leaving the live name field and its editing state intact. Keep current IDs, summary/groups/warnings, empty state, scroll behavior and reachable Import control.
+3. Verify explicit Rename validation and stored name/heading/catalog updates, cancelled/failed import preservation and ordinary no-draft imports. Update Evals architecture documentation and run targeted controls and scoped static checks.
+4. Obtain independent task review. Controller admits selected regressions into required CI, checks combined integration, then completes notes and criteria from actual evidence.
+<!-- SECTION:PLAN:END -->
