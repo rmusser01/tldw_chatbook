@@ -272,7 +272,8 @@ def _unstarted_send_stage(console) -> str:
         f"in runtime custody={console._console_runtime().has_custodied_turns()}, "
         "acknowledged="
         f"{acknowledgement is not None and acknowledgement.active_for(store.active_session_id)}, "
-        f"Send={str(send.label)!r} disabled={send.disabled} tooltip={send.tooltip!r}, "
+        f"Send={str(send.label)!r} disabled={send.disabled} display={send.display} "
+        f"tooltip={send.tooltip!r}, "
         f"notices={[notice.message for notice in console.app._notifications]!r}"
     )
 
@@ -317,8 +318,13 @@ async def test_console_resend_click_re_runs_a_failed_turn_in_place():
 _CONFIG_LOCK_HOLD_S = 1.0
 
 
-def _hold_config_locks() -> tuple[threading.Thread, threading.Event, threading.Event]:
+async def _hold_config_locks() -> tuple[
+    threading.Thread, threading.Event, threading.Event
+]:
     """Hold both config locks on another thread for ``_CONFIG_LOCK_HOLD_S``.
+
+    Waits for the hold off the event loop: a holder of the locks that needs
+    the loop to release them (a Console worker, say) must not wait on this.
 
     Returns:
         The holder thread, an event set once its hold has ended, and an event
@@ -338,7 +344,9 @@ def _hold_config_locks() -> tuple[threading.Thread, threading.Event, threading.E
 
     holder = threading.Thread(target=hold, name="config-lock-holder", daemon=True)
     holder.start()
-    assert held.wait(10), "the holder never took the config locks"
+    assert await asyncio.to_thread(held.wait, 10), (
+        "the holder never took the config locks"
+    )
     return holder, ended, release
 
 
@@ -366,9 +374,14 @@ async def test_select_llamacpp_console_enables_send_while_another_thread_holds_t
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         send = console.query_one("#console-send-message", Button)
-        assert send.disabled, "no mount-time block for the helper to lift"
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        # Not ``send.disabled``: with an empty draft Send is disabled whether or
+        # not a block exists, and without the block this test passes vacuously.
+        assert composer._send_blocked, (
+            f"no mount-time block for the helper to lift: {send.tooltip!r}"
+        )
         for _ in range(3):
-            holder, hold_ended, release = _hold_config_locks()
+            holder, hold_ended, release = await _hold_config_locks()
             if not hold_ended.is_set():
                 break
             holder.join(10)  # A stalled loop outlived the hold: take it again.
@@ -376,7 +389,6 @@ async def test_select_llamacpp_console_enables_send_while_another_thread_holds_t
             raise AssertionError("the config-lock hold kept lapsing before the helper")
         try:
             await _select_llamacpp_console(console)
-            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             composer.load_draft("hello")
             assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
         finally:
@@ -412,7 +424,11 @@ async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_st
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         send = console.query_one("#console-send-message", Button)
-        assert send.disabled, "no mount-time block for the helper to lift"
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        # The block itself, not ``send.disabled``: see the lock-hold test above.
+        assert composer._send_blocked, (
+            f"no mount-time block for the helper to lift: {send.tooltip!r}"
+        )
         warm = ConsoleReadinessConfigProjection.warm
         late: list[bool] = []
         # The helper runs in this task; the context snapshot warms from workers.
@@ -446,9 +462,7 @@ async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_st
         monkeypatch.setattr(console, "_sync_console_control_bar", recording_sync)
         await _select_llamacpp_console(console)
         syncs = list(helper_syncs)  # only the helper's, not the draft load's
-        console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
-            "hello"
-        )
+        composer.load_draft("hello")
         assert late == [True], (
             "the warm-up never returned current, or no refresh started"
         )
@@ -525,8 +539,11 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
             "hello"
         )
         send = console.query_one("#console-send-message", Button)
-        # press() on a disabled Send posts nothing (TASK-35660).
-        assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
+        # press() on a disabled or undisplayed Send posts nothing (TASK-35660).
+        assert not send.disabled and send.display, (
+            f"Send would drop the press: disabled={send.disabled} "
+            f"display={send.display} tooltip={send.tooltip!r}"
+        )
         send.press()
         try:
             await asyncio.wait_for(entered.wait(), _LOADED_HOST_WAIT_S)

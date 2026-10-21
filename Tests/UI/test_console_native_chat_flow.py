@@ -4861,6 +4861,34 @@ async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
 _CONTROL_BAR_RENDER_TIMEOUT_S = 15.0
 
 
+def _sync_under_config_locks(
+    console: ChatScreen, deadline: float, rail_state: tuple[object, ...]
+) -> bool | None:
+    """Run one control-bar sync holding both config locks, waiting for them
+    no later than ``deadline``.
+
+    The locks are taken on the event-loop thread, in the order
+    ``run_console_config_sync`` takes them, so a thread that keeps them must
+    not stall the loop past the helper's bound.
+
+    Returns:
+        Whether the sync rendered, or None if the locks were not free in time.
+    """
+    taken = []
+    try:
+        for lock in (
+            config_module._settings_rebuild_lock(),
+            config_module._config_file_lock(),
+        ):
+            if not lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+                return None
+            taken.append(lock)
+        return bool(console._sync_console_control_bar(*rail_state))
+    finally:
+        for lock in reversed(taken):
+            lock.release()
+
+
 async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object) -> None:
     """Await the checked display owner, then render before the caller acts.
 
@@ -4873,10 +4901,11 @@ async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object
     display has started the next refresh, makes the sync defer instead
     (TASK-35660), and a late resume can leave the warm-up itself not current.
     So warm and sync again until the sync renders, and fail naming Send's
-    state if it has not within the timeout. The timeout bounds a warm-up that
-    never settles as well. A closing screen or a disposed runtime can never
-    render, so that fails at once. A sync that defers on every attempt costs
-    each caller the whole timeout before it fails.
+    state if it has not within the timeout. The timeout also bounds a warm-up
+    that never settles and the wait for the config locks. A closing screen or
+    a disposed runtime can never render, so that fails at once. A sync that
+    defers on every attempt costs each caller the whole timeout before it
+    fails.
 
     Args:
         console: The mounted ChatScreen to render.
@@ -4884,7 +4913,8 @@ async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object
 
     Raises:
         AssertionError: The owner is closing or disposed, or no sync rendered
-            within ``_CONTROL_BAR_RENDER_TIMEOUT_S``.
+            within ``_CONTROL_BAR_RENDER_TIMEOUT_S`` (the config locks
+            included).
     """
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
         ConsoleReadinessConfigProjection,
@@ -4916,13 +4946,20 @@ async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object
             ), "the Console runtime is disposed"
             last = "the readiness warm-up was not current"
         else:
-            with config_module._settings_rebuild_lock(), config_module._config_file_lock():
-                if console._sync_console_control_bar(*rail_state):
-                    return
+            rendered = _sync_under_config_locks(console, deadline, rail_state)
+            if rendered is None:
+                last = "another thread held the config locks"
+                break
+            if rendered:
+                return
             last = "the control-bar sync deferred"
         if time.monotonic() >= deadline:
             break
         await asyncio.sleep(0.05)
+        # Checked again: a warm-up started with no time left would time out at
+        # once and be named instead of the refusal that used the bound up.
+        if time.monotonic() >= deadline:
+            break
     try:
         send = console.query_one("#console-send-message", Button)
         state = f"Send disabled={send.disabled} tooltip={send.tooltip!r}"
