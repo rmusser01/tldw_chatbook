@@ -51,10 +51,17 @@ def _counts(db) -> tuple[int, int]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resolver", ["not_ready", "raises"])
 async def test_send_without_capture_on_a_provider_that_is_not_ready_keeps_the_committed_pause(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    resolver: str,
 ) -> None:
+    """A not-ready answer and a resolver that raises both keep the pause.
+
+    The two are separate arms of the continuation (pre-merge review: only
+    the not-ready arm was pinned, so its guard could be mutated alone).
+    """
     db, store, controller, _gateway = _controller(tmp_path)
     _force_capture_on(monkeypatch)
     entries = _record_provider_entries(controller, monkeypatch)
@@ -70,6 +77,8 @@ async def test_send_without_capture_on_a_provider_that_is_not_ready_keeps_the_co
     ready_resolver = controller._resolve_for_send_bounded
 
     async def not_ready(_selection):
+        if resolver == "raises":
+            raise RuntimeError("provider resolution failed for this test")
         return SimpleNamespace(ready=False, visible_copy="Provider is not ready.")
 
     controller._resolve_for_send_bounded = not_ready
