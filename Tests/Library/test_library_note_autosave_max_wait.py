@@ -221,3 +221,114 @@ def test_an_explicit_save_ends_the_burst_too() -> None:
     assert library_note_autosave.note_save_starts(state, None)
 
     assert state.autosave_burst is None
+
+
+# -- TASK-34000.9 (review N-06): re-arming at screen resume ------------------
+
+
+class _ResumableScreen(_Screen):
+    """The seams ``resume_library_note_autosave`` reads, with the arm recorded.
+
+    ``on_screen_suspend`` stops and clears the timer for any pushed modal
+    (TASK-31521); the resume must put back exactly what a dirty editor note
+    needs and nothing for every other state.
+    """
+
+    def __init__(
+        self,
+        *,
+        view: str = "editor",
+        dirty: bool = True,
+        saving: bool = False,
+        in_conflict: bool = False,
+        note_id: str = "n1",
+        selected: str = "n1",
+        autosave_state: str = "idle",
+        armed: bool = False,
+        snapshot: bool = True,
+    ) -> None:
+        super().__init__()
+        self._notes_state.view = view
+        self._notes_state.selected_note_id = selected
+        self._notes_state.autosave_state = autosave_state
+        if armed:
+            self._notes_state.autosave_timer = SimpleNamespace(stop=lambda: None)
+        self._library_note_session = SimpleNamespace(
+            snapshot=(
+                SimpleNamespace(
+                    note_id=note_id,
+                    dirty=dirty,
+                    saving=saving,
+                    in_conflict=in_conflict,
+                    body="draft",
+                )
+                if snapshot
+                else None
+            )
+        )
+        self.scheduled = 0
+        self.status_refreshes = 0
+
+    def _schedule_library_note_autosave(self) -> None:
+        self.scheduled += 1
+        self._notes_state.autosave_timer = SimpleNamespace(stop=lambda: None)
+
+    def _update_library_note_meta_static(self, *, content: str) -> None:
+        self.status_refreshes += 1
+
+
+def test_resume_re_arms_a_dirty_editor_note_once_and_repaints_its_status() -> None:
+    screen = _ResumableScreen()
+
+    assert library_note_autosave.resume_library_note_autosave(screen) is True
+
+    assert screen.scheduled == 1
+    assert screen._notes_state.autosave_timer is not None
+    assert screen.status_refreshes == 1, "the promise must be repainted as true"
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        pytest.param({"dirty": False}, id="clean"),
+        pytest.param({"saving": True}, id="saving"),
+        pytest.param({"in_conflict": True}, id="conflict"),
+        pytest.param({"autosave_state": "validation"}, id="vetoed"),
+        pytest.param({"view": "list"}, id="list-view"),
+        pytest.param({"armed": True}, id="already-armed"),
+        pytest.param({"selected": "n2"}, id="another-note-selected"),
+        pytest.param({"snapshot": False}, id="no-session"),
+    ],
+)
+def test_resume_arms_nothing_unless_a_dirty_editor_note_is_waiting(state) -> None:
+    """A vetoed draft cannot succeed without an edit (the next keystroke
+    re-arms it); a clean, saving, conflicted or already-armed note needs no
+    second timer; a list view has no editor to save."""
+    screen = _ResumableScreen(**state)
+    armed_before = screen._notes_state.autosave_timer
+
+    assert library_note_autosave.resume_library_note_autosave(screen) is False
+
+    assert screen.scheduled == 0
+    assert screen._notes_state.autosave_timer is armed_before
+    assert screen.status_refreshes == 0
+
+
+def test_an_autosave_counts_as_scheduled_only_while_armed_or_saving() -> None:
+    """The status line's promise reads this, not ``dirty``."""
+    state = LibraryNotesState()
+    snapshot = SimpleNamespace(saving=False)
+    assert library_note_autosave.autosave_is_scheduled(state, snapshot) is False
+
+    state.autosave_timer = SimpleNamespace(stop=lambda: None)
+    assert library_note_autosave.autosave_is_scheduled(state, snapshot) is True
+
+    state.autosave_timer = None
+    state.autosave_state = "saving"
+    assert library_note_autosave.autosave_is_scheduled(state, snapshot) is True
+
+    state.autosave_state = "idle"
+    assert (
+        library_note_autosave.autosave_is_scheduled(state, SimpleNamespace(saving=True))
+        is True
+    )

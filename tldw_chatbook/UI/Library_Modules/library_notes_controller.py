@@ -1471,6 +1471,8 @@ class LibraryNotesController:
             ("Words", word_copy),
         )
         operation = self._library_notes_operation_for_active_region()
+        from .library_note_autosave import autosave_is_scheduled  # noqa: PLC0415 -- lazy: keeps the autosave policy module off the preimport census
+
         status_channels = resolve_database_note_status_channels(
             conflict=snapshot.in_conflict,
             read_only=self._library_notes_select_mode,
@@ -1506,6 +1508,7 @@ class LibraryNotesController:
             presentation="preview" if self._library_note_preview else "edit",
             compact=self._library_notes_compact,
             validation=self._library_note_autosave_state == "validation",
+            autosave_scheduled=autosave_is_scheduled(self._notes_state, snapshot),
             conflict=snapshot.in_conflict,
             conflict_running=self._library_note_session.conflict_resolution_running,
             confirming_delete=self._library_note_confirming_delete,

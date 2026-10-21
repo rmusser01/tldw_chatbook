@@ -1291,6 +1291,48 @@ async def test_list_status_names_a_held_sync_folder_instead_of_ready(
         assert text == "Library notes · Updating notes…"
 
 
+async def test_the_authority_line_promises_autosave_only_while_one_is_scheduled(
+    widget_pilot,  # noqa: F811
+):
+    """TASK-34000.9 (review N-06): "changes save automatically" read only
+    ``dirty``. A dirty note whose timer a modal had stopped kept the promise
+    for 20 s over a row that never changed. The promise now follows the
+    scheduled flag; a dirty note with nothing armed names the control that
+    saves, and a clean note keeps the future-tense promise (the next
+    keystroke arms it).
+    """
+    clean = _editor_state()
+    dirty = replace(
+        clean,
+        status_line="Unsaved changes",
+        snapshot=replace(clean.snapshot, dirty=True, status_message=""),
+    )
+    unscheduled = replace(dirty, autosave_scheduled=False)
+    async with await widget_pilot(
+        LibraryNotesCanvas, mode="editor", presentation_state=unscheduled
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        authority = canvas.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            "Unsaved changes · Next: Keep editing; press Save to save now."
+        ), text
+        assert "save automatically" not in text, text
+
+        canvas.apply_session_state(replace(dirty, autosave_scheduled=True))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            "Unsaved changes · Next: Keep editing; changes save automatically."
+        ), text
+
+        canvas.apply_session_state(replace(clean, autosave_scheduled=False))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            "Saved · Next: Keep editing; changes save automatically."
+        ), text
+
+
 async def test_editor_status_says_a_held_sync_folder_needs_attention(
     widget_pilot,  # noqa: F811
 ):

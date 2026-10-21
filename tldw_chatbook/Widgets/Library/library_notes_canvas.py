@@ -1044,6 +1044,11 @@ class LibraryNotePresentationState:
     presentation: Literal["edit", "preview"] = "edit"
     compact: bool = False
     validation: bool = False
+    #: TASK-34000.9: whether an autosave is armed or running right now. The
+    #: status line promises "changes save automatically" for a dirty note
+    #: only while this holds; a modal stops the timer, and a dirty note with
+    #: nothing scheduled names Save instead.
+    autosave_scheduled: bool = False
     conflict: bool = False
     conflict_running: bool = False
     confirming_delete: bool = False
@@ -1474,8 +1479,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # The brief's "Start typing" belongs here -- this is the
                 # surface with the empty box on it.
                 next_action = "Start typing."
-            else:
+            elif state.autosave_scheduled or not state.snapshot.dirty:
+                # TASK-34000.9 (N-06): true while a save is armed or running,
+                # and for a clean note (the next keystroke arms it).
                 next_action = "Keep editing; changes save automatically."
+            else:
+                # Dirty with nothing scheduled -- a modal stopped the timer,
+                # or an autosave was refused -- names the control that saves.
+                next_action = "Keep editing; press Save to save now."
             # TASK-34000.2: a held sync folder outranks any healthy wording. A
             # plain "Saved" over "In a synced folder" told a user typing into a
             # wedged folder that the file had it; it has the Notes copy only.

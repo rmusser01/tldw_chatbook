@@ -17,6 +17,14 @@ failed *autosave* never moves focus or switches the pane while an editor
 field has focus. It reports the reason in the save status instead. An
 explicit Save still routes to the field.
 
+TASK-34000.9 (review N-06): the Library route is reusable (TASK-31521), so
+pushing any modal -- F1 help, Move note, the command palette -- suspends the
+screen, and ``on_screen_suspend`` stops the timer so nothing fires against a
+hidden screen. Nothing armed it again at resume, and the status line kept
+promising "changes save automatically" over a row that never changed.
+``resume_library_note_autosave`` re-arms a dirty editor note when the screen
+comes back; ``autosave_is_scheduled`` is what the promise now reads.
+
 Kept out of ``library_screen.py`` (over its size ratchet) and
 ``library_notes_controller.py`` (at its ratchet). The screen imports this
 lazily, so it stays out of the Library preimport census.
@@ -154,6 +162,68 @@ def arm_library_note_autosave(
         screen._notes_controller._fire_library_note_autosave(generation)
 
     state.autosave_timer = screen.set_timer(delay, _fire)
+
+
+def autosave_is_scheduled(
+    state: LibraryNotesState, snapshot: LibraryNoteSessionSnapshot
+) -> bool:
+    """Whether a save of the open note is armed or already running.
+
+    The status line's "changes save automatically" reads this, not
+    ``dirty`` (review N-06): a dirty note whose timer a modal stopped has
+    nothing scheduled, and the promise would be false.
+
+    Args:
+        state: The screen's Notes state, which holds the timer.
+        snapshot: The note session snapshot.
+
+    Returns:
+        True while the debounce timer is armed or a save is in flight.
+    """
+    return (
+        state.autosave_timer is not None
+        or state.autosave_state == "saving"
+        or bool(snapshot.saving)
+    )
+
+
+def resume_library_note_autosave(screen: LibraryScreen) -> bool:
+    """Arm the autosave again when the screen resumes with a dirty editor note.
+
+    ``on_screen_suspend`` stops and clears the timer for every pushed modal
+    (TASK-31521: no timer fires against a hidden screen) and leaves the
+    burst clock running, so a save that was due fires almost at once
+    (``AUTOSAVE_MIN_DELAY_SECONDS``) and a fresh burst waits its normal
+    debounce. ``_schedule_library_note_autosave`` invalidates first, so the
+    re-armed timer is the only one; the status is repainted so the promise
+    it shows is true again.
+
+    Args:
+        screen: The Library screen that just resumed.
+
+    Returns:
+        True when a timer was armed. False when nothing needed one: no
+        editor, no session, another note selected, a clean, saving or
+        conflicted note, a timer already armed, or a draft the last autosave
+        refused (``autosave_state == "validation"`` -- it cannot succeed
+        without an edit, and the next keystroke re-arms it).
+    """
+    state = screen._notes_state
+    snapshot = screen._library_note_session.snapshot
+    if (
+        state.view != "editor"
+        or snapshot is None
+        or snapshot.note_id != state.selected_note_id
+        or not snapshot.dirty
+        or snapshot.saving
+        or snapshot.in_conflict
+        or state.autosave_timer is not None
+        or state.autosave_state == "validation"
+    ):
+        return False
+    screen._schedule_library_note_autosave()
+    screen._update_library_note_meta_static(content=snapshot.body)
+    return True
 
 
 def keep_autosave_veto_in_place(

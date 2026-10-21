@@ -511,7 +511,14 @@ _BUDGETS: dict[str, int] = {
     # consecutive method definitions (`_focus_library_note_caret_for_create`,
     # `_start_library_note_from_media_source`, `_focus_library_note_control`)
     # that the adapt batch left out. Re-set to the exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6386,
+    #
+    # 2026-10-21, TASK-34000.9: 6386 -> 6389 (+3), owner decision (same
+    # 2026-10-04 ruling). ``_library_note_presentation_state`` carries the
+    # new ``autosave_scheduled`` flag (one kwarg line) read through a lazy
+    # import of the autosave policy module (one line plus its blank); the
+    # predicate itself is in ``library_note_autosave.py``. Re-set to the
+    # exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6389,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

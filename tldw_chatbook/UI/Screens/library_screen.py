@@ -9517,6 +9517,12 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
+        from ..Library_Modules import library_note_autosave as autosave
+
+        # TASK-34000.9 (N-06): suspend stopped the autosave timer; a dirty
+        # editor note gets it back here, and only here, when the screen is
+        # visible again (F1 help, Move note, the palette all suspend).
+        autosave.resume_library_note_autosave(self)
         self._artifacts_share_controller.resume()
         self.call_after_refresh(self._artifacts_navigation.resume)
         if self._artifacts_controller is not None:
