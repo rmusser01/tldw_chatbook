@@ -21024,7 +21024,7 @@ During the Textual follow-up gate on 2026-10-20, the Evals report referenced ori
 
 ## Recovery failure tests must reach the real mutation boundary
 
-**PR #3189 / TASK-35900, 2026-10-20.** A test that made the cancellation entry
+**PR #3189 / TASK-35992, 2026-10-20.** A test that made the cancellation entry
 point raise proved recovery retention but missed that stock saved-chat cleanup
 published CANCELLED before SQLite deletion. With the real connection set to
 `PRAGMA query_only=ON`, Discard failed after that publication; retry removed the
@@ -21037,7 +21037,7 @@ and check the next successful operation, not only the immediate exception.
 
 ## Artificial worker holds must survive the UI work they protect
 
-**PR #3189 / TASK-35900, 2026-10-20.** The Windows late chat-create
+**PR #3189 / TASK-35992, 2026-10-20.** The Windows late chat-create
 projection journey stopped at `marshalled.is_set()`. Instrumentation showed
 the source worker's five-second event wait returning false at 9.281 seconds;
 the test reached its explicit release at 16.141 seconds, 11.86 seconds after

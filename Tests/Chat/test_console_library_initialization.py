@@ -1,4 +1,4 @@
-"""Regression coverage for bounded Console Library startup (TASK-35900)."""
+"""Regression coverage for bounded Console Library startup (TASK-35992)."""
 
 import asyncio
 from types import SimpleNamespace

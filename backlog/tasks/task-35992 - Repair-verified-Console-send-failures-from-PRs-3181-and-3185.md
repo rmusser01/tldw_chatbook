@@ -1,11 +1,11 @@
 ---
-id: TASK-35900
+id: TASK-35992
 title: Repair verified Console send failures from PRs 3181 and 3185
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 05:40'
+updated_date: '2026-10-21 06:59'
 labels:
   - console
   - bug
@@ -34,6 +34,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #7 Recovery action storage failures remain nonfatal in the real UI worker, retain the unsent recovery, show content-free retry guidance, and retire the exact transient echo and continuation before recovery removal on retry.
 - [x] #8 Mounted approval projection journeys begin only after the current Console attachment is reconciled and answerable; their original card, count, navigation and decision assertions remain enforced.
 - [x] #9 Windows late chat-create projection journeys keep test-owned worker gates held until explicit release, preserve the close/navigation and sibling-decision assertions, and retire held workers during cleanup within the existing test deadline.
+- [x] #10 The replacement send-repair task has a unique filename/frontmatter ID and consistent live references in the combined dev and PR task tree, with renumbering provenance preserving its original identity.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,7 +47,8 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 5. Add a real-Textual-worker regression for Restore/Discard storage failures, retain recoveries on failure, surface bounded retry guidance, and verify saved-chat SQLite failures leave cancellation retryable without leaking discarded text into later provider history before pre-merge review.
 6. For CI UI10, witness completed and answerable Console attachment before mounting approval journeys, reproduce the incomplete-attachment legacy behavior, and rerun the original assertions.
 7. Instrument the Windows late-projection baseline failure; replace test-owned five-second self-expiry with explicit event release under existing test deadline/finally cleanup, verify close and navigation paths and failure cleanup, then review.
-8. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
+8. Resolve the CI integration collision by renumbering this younger task and all live references, retaining ownership provenance, and verifying uniqueness against the combined dev/PR task tree.
+9. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
 ADR required: no
 ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
@@ -201,3 +203,40 @@ and introduces none; changed-range formatting, diff and task-ID checks pass.
 The source/clear behavior and cleanup evidence satisfy AC9. Combined hosted CI
 remains the integration gate; existing unrelated baseline cases above remain
 separate and are not counted green.
+
+
+## Renumbering provenance
+
+Renumbered from TASK-35900 to TASK-35992 for PR #3189 on 2026-10-21.
+The original send-repair task was created at 02:17 UTC and added in
+`b2e5e95076c8530034a536c34b39ed94ccf0b82a`. The competing Console
+Assistant/Scope burst follow-up was created at 01:23 UTC, added in
+`9162486f63d5dee79ac8515891e5016889a6d197`, and is already on `dev`.
+It retains TASK-35900 under the older/landed-owner rule (TASK-19601 and
+`backlog/docs/lessons-backlog-hygiene.md`). Only this PR's identity moves.
+
+Required run 39550959500 on head 430757403e failed only the two Backlog
+filename/frontmatter uniqueness tests in PR Fast Lane (2 failed, 2818 passed,
+3 skipped). All ten UI shards, Console P0 and other completed gates passed.
+The branch-only uniqueness check missed the peer task added by the CI merge
+with newer `dev`; both exact task files reproduce both failures locally.
+At allocation, 293 distinct ref tips and 52 worktrees had maximum integer
+ID 35962. The replacement uses the documented +30 lead buffer. All live
+Python/doc references move with the filename and frontmatter; historical
+commit IDs and the original task ID remain here as provenance.
+
+ADR required: no. This is task metadata/reference repair with no behavior,
+contract, deadline, test assertion, or dependency changes. Auto-merge was
+disabled and the remote branch pulled with rebase before editing.
+
+
+Verification of the task repair: all three original CI uniqueness functions
+pass against the clean prospective merge's 5,583 live task files after the
+rename; the full guard passes 5,590 live/archive files with Windows-safe paths.
+The older peer TASK-35900 is present unchanged and this PR's old path is absent.
+Targeted pytest: 7 passed, 62 deselected (three uniqueness checks and four
+Console controller/store size checks). Both changed Python files retain
+identical executable ASTs and have zero Ruff diagnostics; changed ranges are
+formatted and diff checks pass. Independent scoped review reports no blocking
+findings. This metadata repair does not require repeating unrelated UI suites;
+new hosted CI remains the final integration gate.

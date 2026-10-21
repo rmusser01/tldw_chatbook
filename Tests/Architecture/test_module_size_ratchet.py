@@ -105,7 +105,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-35190: the rebaser's endpoint choice moved to
     # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
     # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.
-    # TASK-35900: frozen Library preparation delegates to console_library_preparation.
+    # TASK-35992: frozen Library preparation delegates to console_library_preparation.
     "tldw_chatbook/Chat/console_chat_controller.py": 29050,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6453,
