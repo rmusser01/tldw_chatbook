@@ -6909,7 +6909,15 @@ class ConsoleSessionController:
             and self._console_visible_draft_session_id == held.session_id
         )
         cancelled = action == "cancel" and settled
-        refill = cancelled and shown and not composer.draft_text().strip()
+        # A composer send keeps showing its own text until the turn is accepted;
+        # that is no follow-up to protect (as in `own_draft_takes_it_back`), so
+        # Cancel still takes the turn off the shelf with its attachments.
+        typed = composer.draft_text().strip() if shown else ""
+        refill = (
+            cancelled
+            and shown
+            and (not typed or (releasable and typed == held_text.strip()))
+        )
         # Only a shelf-releasable pause has an unsent turn to send back there.
         to_own_draft = (
             releasable

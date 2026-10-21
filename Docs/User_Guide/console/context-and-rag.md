@@ -990,7 +990,8 @@ sent"), the run chip reads **Run: Blocked — Library timeout** (or *error* /
 - **Send once without Library** skips automatic retrieval for only this
   message and sends it; the Auto setting is unchanged.
 - **Cancel send** sends nothing and puts the message back in the composer,
-  attachments included (when the composer is empty).
+  attachments included (when the composer is empty or still shows that
+  message), and takes it off the unsent-turn list.
 
 If Retry or Send once without Library then finds the provider not ready (a
 local server that is down, or a model you switched to meanwhile), the send
@@ -1004,8 +1005,8 @@ message you send in that conversation goes through. Once you act on the card,
 the message leaves that list while the card handles it, so it is never sent
 twice. On a busy machine the list can take a moment to catch up; Restore or
 Discard pressed meanwhile only says the unsent turn is no longer available.
-If Cancel finds text already in the composer, the message goes back on the
-list for **Restore** later. If you switch to another
+If Cancel finds other text in the composer, that text stays and the message
+goes back on the list for **Restore** later. If you switch to another
 conversation while Cancel runs, the message goes back to its own
 conversation's draft, not to the one on screen; if you had typed something
 new in that draft, your text stays and the message is listed for **Restore**

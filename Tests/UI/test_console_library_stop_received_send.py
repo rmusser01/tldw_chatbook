@@ -218,3 +218,101 @@ async def test_the_shelf_releases_a_received_sends_library_pause(
         # Settle before the harness's teardown Stop: it cancels the issuing
         # task of any finite read still in flight (a repaint's, here).
         assert await _until(lambda: not case.controller._preparation_reads, 20)
+
+
+FOLLOW_UP = "A follow-up typed while the card was up"
+
+
+@pytest.mark.parametrize("composer_shows", ["the sent text", "a follow-up"])
+async def test_the_cards_cancel_takes_a_received_sends_turn_off_the_shelf(
+    monkeypatch, composer_shows
+):
+    """Cancel send puts the turn back in the composer and off the shelf.
+
+    Found live (2026-10-20, head rebased onto dev 2d071d6d71): after the
+    card's Cancel send, the shelf still read "Not sent: Library search
+    stopped" with Restore / Discard. The composer keeps showing a sent draft
+    until the turn is accepted, so it was never empty, and the card's Cancel
+    took that for a follow-up to protect: it left the turn on the shelf (with
+    its attachments) instead of returning it. Sending the message again then
+    left a stale shelf entry whose Restore would queue it a second time.
+
+    ``a follow-up`` is the control: a different draft the user typed is kept,
+    and the turn stays on the shelf for Restore.
+    """
+    from tldw_chatbook.Chat import attachment_core
+    from tldw_chatbook.Chat import console_chat_controller as controller_module
+
+    monkeypatch.setattr(attachment_core, "vision_block_reason", lambda *a, **k: None)
+    monkeypatch.setattr(controller_module, "vision_block_reason", lambda *a, **k: None)
+    async with _received_console_case(
+        monkeypatch, f"library-card-cancel-{composer_shows.split()[-1]}", durable=True
+    ) as case:
+        library = _StalledLibrary()
+        case.host.app_instance.library_rag_search_service = library
+        case.store.stage_session_library_policy(
+            case.session.id,
+            ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+        )
+        image = _pending_image("diagram.png", _one_pixel_png())
+        assert case.store.add_pending_attachment(case.session.id, image)
+        case.controller._library_preparation_timeout = 120.0
+        _send(case, "enter")
+        await _held_received_record(case)
+        case.probe.release.set()
+        assert await _until(lambda: library.calls == 1, 20)
+        stop = case.console.query_one("#console-stop-generation", Button)
+        assert await _until(
+            lambda: stop.styles.display == "block" and not stop.disabled, 10
+        )
+        stop.press()
+        assert await _until(lambda: _paused_retrieval(case.controller), 15)
+        assert await _until(lambda: _shelf_offers_unsent_turn(case.console), 20)
+        paused = case.store.preparation_for_session(case.session.id)
+        cancel = case.console.query_one("#console-trace-cancel", Button)
+        assert await _until(lambda: cancel.display and not cancel.disabled, 20)
+        # The precondition on this path: the composer still shows the sent text.
+        assert case.composer.draft_text() == case.draft
+        assert case.store.pending_attachments(case.session.id) == []
+        expected_draft = case.draft
+        if composer_shows == "a follow-up":
+            case.composer.load_draft(FOLLOW_UP)
+            expected_draft = FOLLOW_UP
+
+        cancel.press()
+
+        assert await _until(lambda: not _paused_retrieval(case.controller), 20)
+
+        def on_shelf() -> bool:
+            return any(
+                entry.preparation_id == paused.preparation_id
+                for entry in case.runtime._turn_recoveries.values()
+            )
+
+        if composer_shows == "the sent text":
+            assert await _until(lambda: not on_shelf(), 10), (
+                "the cancelled send is still on the unsent-turn shelf"
+            )
+            assert await _until(lambda: not _shelf_offers_unsent_turn(case.console), 20)
+            pending = case.store.pending_attachments(case.session.id)
+            assert [item.display_name for item in pending] == ["diagram.png"]
+        else:
+            # The turn (and its attachment) waits on the shelf for Restore.
+            assert await _until(lambda: _shelf_offers_unsent_turn(case.console), 20)
+            assert on_shelf()
+            assert case.store.pending_attachments(case.session.id) == []
+        assert case.composer.draft_text() == expected_draft
+        assert case.provider_calls == []
+        transcript = case.console.query_one(ConsoleTranscript)
+        assert await _until(
+            lambda: (
+                len(transcript.query(ConsoleTranscriptMessage)) == 0
+                and not transcript._refresh_lock.locked()
+            ),
+            20,
+        )
+        library.release.set()
+        assert await _until(lambda: not case.controller._preparation_reads, 20)
