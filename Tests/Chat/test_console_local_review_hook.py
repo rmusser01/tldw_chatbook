@@ -2174,3 +2174,84 @@ def test_approval_requested_fires_for_view_detached_round():
         ],
         "session_active": False,
     }
+
+
+@private_profile_test
+async def test_index_fallback_floor_change_never_persists_conditional_response(
+    tmp_path, request
+):
+    from Tests.Agents.test_project_index_tool import provider
+    from Tests.Workspaces.test_project_index_service import Rig
+    from tldw_chatbook.Agents.run_context import use_tool_call_id
+
+    rig = Rig(tmp_path)
+    try:
+        reads = 0
+        persisted, rows = [], []
+
+        def resolve(hub):
+            nonlocal reads
+            if hub.name == "fs_read":
+                reads += 1
+                return ALLOW if reads == 1 else ASK
+            return ASK
+
+        def approve(pending):
+            rows.extend(pending)
+            return {
+                pending[0].call_id: "always_allow",
+                "fs_search_index": "always_allow",
+            }
+
+        p = provider(
+            rig,
+            resolve_state=resolve,
+            approval_callback=approve,
+            persist_approval=lambda *args: persisted.append(args),
+        )
+        with use_tool_call_id("fallback-call"):
+            result = p._verdict_for("fs_search_index", {"query": "marker"}, RUN)
+        assert result.verdict == "allow"
+        assert rows[0].options == ("approve_once", "deny")
+        assert persisted == []
+        assert rows[0].call_id == "fallback-call"
+        assert result.approval_consumed
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_index_ordinary_fallback_preserves_existing_name_key(tmp_path, request):
+    from Tests.Agents.test_project_index_tool import provider
+    from Tests.Workspaces.test_project_index_service import Rig
+    from tldw_chatbook.Agents.run_context import use_tool_call_id
+
+    rig = Rig(tmp_path)
+    try:
+        persisted, rows = [], []
+
+        def approve(pending):
+            rows.extend(pending)
+            row = pending[0]
+            return {row.call_id or row.llm_name: "always_allow"}
+
+        p = provider(
+            rig,
+            resolve_state=lambda hub: ALLOW if hub.name == "fs_read" else ASK,
+            approval_callback=approve,
+            persist_approval=lambda *args: persisted.append(args),
+        )
+        with use_tool_call_id("ordinary-call"):
+            result = p._verdict_for("fs_search_index", {"query": "marker"}, RUN)
+        assert result.verdict == "allow"
+        assert rows[0].call_id == ""
+        assert rows[0].options == (
+            "approve_once",
+            "approve_session",
+            "always_allow",
+            "deny",
+        )
+        assert len(persisted) == 1 and persisted[0][1] == "always_allow"
+        assert not result.approval_consumed
+    finally:
+        await rig.close()

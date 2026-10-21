@@ -335,6 +335,9 @@ async def test_shutdown_retains_lifetime_through_native_db_closure_and_repeated_
         await asyncio.sleep(0.01)
         assert not closer.done()
         assert rig.service._scanner.retired
+        assert rig.service._read_slots.acquire(blocking=False)
+        assert not rig.service._read_slots.acquire(blocking=False)
+        rig.service._read_slots.release()
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await closer
@@ -346,6 +349,10 @@ async def test_shutdown_retains_lifetime_through_native_db_closure_and_repeated_
         )
         lease = BindingLifetime.acquire(group / rig.key.lifetime_name)
         lease.close()
+        assert rig.service._read_slots.acquire(blocking=False)
+        assert rig.service._read_slots.acquire(blocking=False)
+        rig.service._read_slots.release()
+        rig.service._read_slots.release()
     finally:
         release.set()
         if closer is not None and not closer.done():
@@ -1056,6 +1063,10 @@ async def test_failed_writer_dispatch_becomes_explicitly_resumable(
             with pytest.raises(RuntimeError, match="synthetic writer dispatch"):
                 rig.refresh()
         assert rig.service.status(rig.key).state == "Interrupted"
+        assert rig.service._read_slots.acquire(blocking=False)
+        assert rig.service._read_slots.acquire(blocking=False)
+        rig.service._read_slots.release()
+        rig.service._read_slots.release()
     finally:
         await rig.close()
 
@@ -1220,4 +1231,90 @@ async def test_delayed_local_stop_cannot_cancel_replacement_job(
             await asyncio.gather(management, return_exceptions=True)
         if stop_waiter is not None:
             await stop_waiter
+        await rig.close()
+
+
+@private_profile_test
+async def test_two_held_searches_refuse_refresh_until_readers_retire(
+    tmp_path, request, monkeypatch
+):
+    from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ProjectIndexSearchAuthority,
+    )
+
+    rig = Rig(tmp_path)
+    release = threading.Event()
+    entered = threading.Event()
+    counter_lock = threading.Lock()
+    active = peak = 0
+    tasks = []
+
+    def enter():
+        nonlocal active, peak
+        with counter_lock:
+            active += 1
+            peak = max(peak, active)
+            if active == 2:
+                entered.set()
+
+    def leave():
+        nonlocal active
+        with counter_lock:
+            active -= 1
+
+    def read(candidate):
+        enter()
+        try:
+            assert release.wait(20)
+            return None
+        finally:
+            leave()
+
+    original_scan = rig.service._scanner.scan
+
+    def scan(*args, **kwargs):
+        enter()
+        try:
+            return original_scan(*args, **kwargs)
+        finally:
+            leave()
+
+    try:
+        (rig.root / "a.txt").write_text("marker")
+        rig.enable()
+        rig.refresh()
+        status = rig.settle()
+        # Ready publication precedes the owner's last cleanup instructions.
+        for run in rig.service._runs.values():
+            await asyncio.to_thread(run.supervisor.join)
+        monkeypatch.setattr(rig.service._scanner, "scan", scan)
+        auth = ProjectIndexSearchAuthority(
+            status.scope, rig.live.root, rig.live.chain, (), 1, lambda: True, None, read
+        )
+        tasks = [
+            asyncio.create_task(asyncio.to_thread(rig.service.search, auth, "marker"))
+            for _ in range(2)
+        ]
+        assert await asyncio.to_thread(entered.wait, 10)
+        with pytest.raises(LifetimeBusy):
+            rig.refresh()
+        unchanged = rig.service.status(rig.key)
+        assert (unchanged.scope, unchanged.job_revision, unchanged.state) == (
+            status.scope,
+            status.job_revision,
+            status.state,
+        )
+        assert peak == active == 2
+        release.set()
+        await asyncio.gather(*tasks)
+        rig.refresh()
+        rig.settle()
+        await rig.close()
+        assert peak == 2 and active == 0
+        with pytest.raises(RuntimeError, match="closed"):
+            rig.refresh()
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await rig.close()

@@ -47,6 +47,7 @@ class _Run:
     native_retired: bool = False
     pin: object | None = None
     lease: BindingLifetime | None = None
+    read_admission: ExitStack | None = None
 
 
 @dataclass(eq=False)
@@ -102,7 +103,7 @@ class ProjectIndexService:
         self._runs: dict[str, _Run] = {}
         self._closed = False
         self._searches: set[_SearchRun] = set()
-        self._search_slots = threading.BoundedSemaphore(2)
+        self._read_slots = threading.BoundedSemaphore(2)
 
     @contextmanager
     def _store(self, key):
@@ -192,15 +193,16 @@ class ProjectIndexService:
 
     @contextmanager
     def _search_store(self, key):
-        # At most two Capture operations; failed native retirement keeps its
+        # Writer and Capture share two read slots; failed native retirement keeps its
         # operation admission and slot until the application is recovered.
+        if not self._read_slots.acquire(blocking=False):
+            raise RuntimeError("project_index_search_busy")
         with self._lock:
             if self._closed or any(
                 run.key == key and run.retirement_unproven for run in self._searches
             ):
+                self._read_slots.release()
                 raise RuntimeError("project_index_search_unavailable")
-            if not self._search_slots.acquire(blocking=False):
-                raise RuntimeError("project_index_search_busy")
             run = _SearchRun(key, threading.Event())
             self._searches.add(run)
         try:
@@ -226,7 +228,7 @@ class ProjectIndexService:
                     run.pin.close()
                 with self._lock:
                     self._searches.discard(run)
-                self._search_slots.release()
+                self._read_slots.release()
             run.done.set()
 
     def search(
@@ -346,12 +348,24 @@ class ProjectIndexService:
                     or final.state not in {"Ready", "Partial"}
                 ):
                     return unavailable
-                return ProjectSearchResult(
+                result = ProjectSearchResult(
                     "partial" if stale or final.state == "Partial" else "ready",
                     tuple(hits),
                     None,
                     stale,
                 )
+                # A later stale candidate enlarges the final wrapper. Trim
+                # whole hits only, preserving valid JSON and honest evidence.
+                while (
+                    len(
+                        json.dumps(
+                            asdict(result), ensure_ascii=False, separators=(",", ":")
+                        ).encode()
+                    )
+                    > 16384
+                ):
+                    result = replace(result, hits=result.hits[:-1])
+                return result
 
     def enable(
         self,
@@ -549,19 +563,34 @@ class ProjectIndexService:
         return self._start(expected_scope, expected_job_revision, job_id)
 
     def _start(self, scope, revision, resume_id):
-        pin = self._retain(scope.key)
-        try:
-            with self._bind(pin):
-                return self._start_pinned(scope, revision, resume_id, pin)
-        except BaseException:
-            if pin is not None and not any(
-                run.pin is pin for run in self._runs.values()
-            ):
-                pin.close()
-            raise
+        # Nonblocking admission precedes pins, registry fences and service locks.
+        # A busy attempt owns no job and cannot later dispatch deferred work.
+        if not self._read_slots.acquire(blocking=False):
+            raise LifetimeBusy("index_reads_busy")
+        with ExitStack() as read_admission:
+            read_admission.callback(self._read_slots.release)
+            pin = self._retain(scope.key)
+            try:
+                with self._bind(pin):
+                    return self._start_pinned(
+                        scope, revision, resume_id, pin, read_admission
+                    )
+            except BaseException:
+                if pin is not None and not any(
+                    run.pin is pin for run in self._runs.values()
+                ):
+                    pin.close()
+                raise
 
-    def _start_pinned(self, scope, revision, resume_id, pin):
+    def _start_pinned(self, scope, revision, resume_id, pin, read_admission):
         with self._lock:
+            if self._closed:
+                raise RuntimeError("project_index_closed")
+            if any(
+                run.key == scope.key and run.retirement_unproven
+                for run in self._searches
+            ):
+                raise ProjectIndexRetirementUnproven("index_reader_retirement_unproven")
             if any(not run.native_retired for run in self._runs.values()):
                 raise LifetimeBusy("scanner_busy")
             store = self._factory(scope.key)
@@ -569,8 +598,6 @@ class ProjectIndexService:
             run = None
             try:
                 store.status_cache_bytes = binding_bytes(self._binding_root(store))
-                if self._closed:
-                    raise RuntimeError("project_index_closed")
                 lease = self._lifetime(store, scope.key)
                 with self._admitted(store, scope.key) as authority:
                     if authority is None:
@@ -622,7 +649,13 @@ class ProjectIndexService:
                     policy = store.policy(scope)
                 # The management thread's native connection ends before dispatch.
                 store.close_native()
-                run = _Run(claim, threading.Event(), pin=pin, lease=lease)
+                run = _Run(
+                    claim,
+                    threading.Event(),
+                    pin=pin,
+                    lease=lease,
+                    read_admission=read_admission.pop_all(),
+                )
                 self._runs[claim.job_id] = run
                 self._scanner.lifetime = lease
                 run.writer = threading.Thread(
@@ -654,6 +687,7 @@ class ProjectIndexService:
                         run.supervisor = None
                         if pin is not None:
                             pin.close()
+                        run.read_admission.close()
                 raise
 
     def _write(self, run, store, authority, policy, pin):
@@ -795,6 +829,7 @@ class ProjectIndexService:
                     if pin is not None:
                         pin.close()
                     run.native_retired = True
+                    run.read_admission.close()
             except BaseException as error:
                 run.error = error
 

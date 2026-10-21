@@ -5481,9 +5481,17 @@ def build_local_review_hook(
                 return decisions[key]
             return decisions.get(row.llm_name)
 
+        ordinary_pending = [
+            row
+            for row in pending
+            if not (
+                row.llm_name == "fs_search_index"
+                and row.options == ("approve_once", "deny")
+            )
+        ]
         approvals: dict[str, str] = {}
         denied: set[str] = set()
-        for row in pending:
+        for row in ordinary_pending:
             decision = _decision_for(row)
             if decision is None:
                 continue
@@ -5499,7 +5507,8 @@ def build_local_review_hook(
         for name in denied:
             stamps.setdefault(name, "deny")
         provider.apply_batch_decisions(
-            run_id, read_global__stamp_answer_provenance()(stamps, pending, decisions)
+            run_id,
+            read_global__stamp_answer_provenance()(stamps, ordinary_pending, decisions),
         )
         provider.apply_index_read_decisions(run_id, pending, decisions)
         reviewed_call_ids = {row.call_id for row in pending if row.call_id}

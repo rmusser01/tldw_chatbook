@@ -1273,24 +1273,30 @@ class LocalToolProvider:
                     json.dumps(row.arguments, sort_keys=True),
                 )
 
-    def _index_read_verdict(self, name, args, run_id):
+    def _index_read_verdict(self, name, args, run_id, *, row=None):
         call_id = current_tool_call_id()
         with self._stamps_lock:
             stamp = (
-                self._index_call_stamps.pop((run_id, call_id), None)
+                self._index_call_stamps.get((run_id, call_id))
                 if call_id
                 else None
             )
+            if stamp is not None:
+                # Keep consumed provenance until the review scope ends, even
+                # when the current read floor no longer requires a review.
+                self._index_call_stamps[(run_id, call_id)] = ("timeout", stamp[1])
         decision = "timeout"
         if stamp is not None and stamp[1] == json.dumps(args, sort_keys=True):
             decision = stamp[0]
         elif self._approval_callback is not None:
-            row, failed = self._resolve_pending_gate(
-                name,
-                args,
-                self.hub_tool_for(name),
-                call_id=call_id or "",
-            )
+            failed = False
+            if row is None:
+                row, failed = self._resolve_pending_gate(
+                    name,
+                    args,
+                    self.hub_tool_for(name),
+                    call_id=call_id or "",
+                )
             if failed:
                 return _LocalGateDecision(
                     verdict="gate_error",
@@ -3636,8 +3642,6 @@ class LocalToolProvider:
                 approval_consumed=False,
                 refusal_reason=LocalToolInvocationReason.PERMISSION_UNRESOLVED,
             )
-        if state.state == "allow":
-            return _LocalGateDecision(verdict="allow", approval_consumed=False)
         if state.state == "deny":
             return _LocalGateDecision(
                 verdict="deny",
@@ -3645,8 +3649,15 @@ class LocalToolProvider:
                 refusal_reason=LocalToolInvocationReason.PERMISSION_OFF,
                 approval_decision="denied",
             )
-        if index_read_floor:
+        with self._stamps_lock:
+            exact_index_review = (
+                name == "fs_search_index"
+                and (run_id, current_tool_call_id()) in self._index_call_stamps
+            )
+        if index_read_floor or exact_index_review:
             return self._index_read_verdict(name, args, run_id)
+        if state.state == "allow":
+            return _LocalGateDecision(verdict="allow", approval_consumed=False)
         # ask: per-turn stamp wins; then a live session approval; then the
         # single-call fallback; then fail closed.
         detail = self._stamp_detail(run_id, name)
@@ -3712,6 +3723,13 @@ class LocalToolProvider:
                     verdict="timeout",
                     approval_consumed=False,
                     refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
+                )
+            if name == "fs_search_index" and gate.options == ("approve_once", "deny"):
+                return self._index_read_verdict(
+                    name,
+                    args,
+                    run_id,
+                    row=replace(gate, call_id=current_tool_call_id() or ""),
                 )
             try:
                 decisions = self._approval_callback([gate])

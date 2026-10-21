@@ -539,11 +539,18 @@ async def test_search_close_waits_for_reader_despite_repeated_cancellation(
         await asyncio.sleep(0)
         assert not closing.done()
         assert rig.service._searches
+        assert rig.service._read_slots.acquire(blocking=False)
+        assert not rig.service._read_slots.acquire(blocking=False)
+        rig.service._read_slots.release()
         release.set()
         await task
         with pytest.raises(asyncio.CancelledError):
             await closing
         assert not rig.service._searches
+        assert rig.service._read_slots.acquire(blocking=False)
+        assert rig.service._read_slots.acquire(blocking=False)
+        rig.service._read_slots.release()
+        rig.service._read_slots.release()
     finally:
         release.set()
         await rig.close()
@@ -567,8 +574,16 @@ async def test_unproven_native_reader_retains_admission_and_refuses_reuse(
         rig.enable()
         rig.refresh()
         rig.settle()
-        pin = SimpleNamespace(bind=nullcontext, close=lambda: released.append(True))
-        monkeypatch.setattr(rig.service, "_retain", lambda key: pin)
+        issued = []
+
+        def retain(key):
+            token = len(issued)
+            issued.append(token)
+            return SimpleNamespace(
+                bind=nullcontext, close=lambda: released.append(token)
+            )
+
+        monkeypatch.setattr(rig.service, "_retain", retain)
 
         def read(candidate):
             raise ProjectIndexRetirementUnproven("held_native_reader")
@@ -583,15 +598,26 @@ async def test_unproven_native_reader_retains_admission_and_refuses_reuse(
             None,
             read,
         )
+        query_pin = len(issued)
         released.clear()
         with pytest.raises(ProjectIndexRetirementUnproven):
             rig.service.search(auth, "marker")
         assert released == []
         with pytest.raises(RuntimeError, match="unavailable"):
             rig.service.search(auth, "marker")
+        assert rig.service._read_slots.acquire(blocking=False)
+        assert not rig.service._read_slots.acquire(blocking=False)
+        rig.service._read_slots.release()
+        with pytest.raises(ProjectIndexRetirementUnproven):
+            rig.refresh()
         with pytest.raises(ProjectIndexRetirementUnproven):
             await rig.close()
-        assert released == []
+        assert (
+            query_pin not in released
+        ), "the failed query's own admission must remain held"
+        assert set(released) == set(
+            issued[query_pin + 1 :]
+        ), "other operations release their own pins"
     finally:
         # This injected reader owns no native resource; preserve product failure
         # state through assertions, then discard the synthetic pin with the test.
@@ -700,5 +726,122 @@ async def test_runtime_synthesized_ids_keep_search_consent_and_evidence_per_call
             if row["role"] == "system"
         )
         assert not invoke(p, call_id=reviewed[0]).ok
+    finally:
+        await rig.close()
+
+
+@pytest.mark.parametrize(
+    "decision", ["approve_once", "approve_session", "always_allow"]
+)
+@private_profile_test
+async def test_conditional_review_remains_exact_when_read_becomes_allowed(
+    tmp_path, request, decision
+):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    rig = Rig(tmp_path)
+    try:
+        states = {"fs_read": "ask", "fs_search_index": "ask"}
+        persisted = []
+        p = provider(
+            rig,
+            resolve_state=lambda hub: EffectiveToolState(
+                state=states.get(hub.name, "allow"), origin="tool_override"
+            ),
+            persist_approval=lambda *args: persisted.append(args),
+        )
+        args = {"query": "marker"}
+        hook = build_local_review_hook(p, lambda rows: {"approved": decision})
+        hook(
+            [
+                ToolCall(name="fs_search_index", args=args, call_id=c)
+                for c in ("approved", "unanswered")
+            ],
+            "run-1",
+        )
+        states["fs_read"] = "allow"
+
+        def verdict(call_id):
+            with use_tool_call_id(call_id):
+                return p._verdict_for("fs_search_index", args, "run-1").verdict
+
+        assert verdict("approved") == "allow"
+        assert persisted == []
+        assert p._stamp_detail("run-1", "fs_search_index") is None
+        assert verdict("approved") != "allow"
+        assert verdict("unanswered") != "allow"
+        assert verdict("sibling") != "allow"
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_valid_then_stale_exact_serialized_boundary(
+    tmp_path, request, monkeypatch
+):
+    import hashlib
+    from dataclasses import asdict
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+    from tldw_chatbook.Workspaces.project_index.models import (
+        FileCapture,
+        IndexCandidate,
+        ProjectIndexHit,
+        ProjectIndexSearchAuthority,
+        ProjectSearchResult,
+    )
+
+    rig = Rig(tmp_path)
+    try:
+        rig.enable()
+        rig.refresh()
+        scope = rig.settle().scope
+        texts = {"a.txt": "a" * 12000, "b.txt": "b" * 4130}
+        captures = {
+            path: FileCapture(
+                path,
+                path,
+                0,
+                len(text),
+                hashlib.sha256(text.encode()).hexdigest(),
+                text,
+            )
+            for path, text in texts.items()
+        }
+        candidates = tuple(
+            IndexCandidate(path, path, captures[path].content_sha256, 1, 1, i)
+            for i, path in enumerate(texts)
+        ) + (IndexCandidate("c.txt", "c", "stale", 1, 1, 2),)
+        monkeypatch.setattr(
+            WorkspaceProjectIndexDB, "lexical_candidates", lambda *a, **k: candidates
+        )
+
+        def encode(result):
+            return json.dumps(
+                asdict(result), ensure_ascii=False, separators=(",", ":")
+            ).encode()
+
+        ready = ProjectSearchResult(
+            "ready",
+            tuple(ProjectIndexHit(path, 1, 1, text) for path, text in texts.items()),
+            None,
+            False,
+        )
+        assert len(encode(ready)) == 16384
+        seen = []
+
+        def read(candidate):
+            seen.append(candidate.relative_path)
+            return captures.get(candidate.relative_path)
+
+        auth = ProjectIndexSearchAuthority(
+            scope, rig.live.root, rig.live.chain, (), 1, lambda: True, None, read
+        )
+        result = rig.service.search(auth, "marker")
+        payload = encode(result)
+        assert len(payload) <= 16384
+        assert json.loads(payload)["hits"]
+        # The final result must remain valid when a stale candidate follows hits.
+        assert seen == ["a.txt", "b.txt", "c.txt"]
+        assert result.refresh_required and result.status == "partial"
     finally:
         await rig.close()
