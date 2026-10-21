@@ -249,6 +249,26 @@ passes `layout=` nor carries a stated exemption. Two things that census taught:
 
 ---
 
+## `Button.label` repaints but does not re-lay out: a longer label written in place wraps inside the old box (TASK-34000.22, 2026-10-20)
+
+**Incident.** The Media reader's Cancel button is relabelled "Discard
+changes" in place while the form is dirty (`sync_editor_drafts`, no
+recompose, so the field being typed in keeps its cursor). The label
+attribute read "Discard changes", the test's `str(button.label)` check
+passed, and the painted region read `    Discard`: the compact button was
+still the 16-cell box Textual's default `min-width: 16` had given the
+6-character "Cancel", and the 15-character label wrapped to its first word
+inside a 1-row button. `Button.label` is `reactive(...)` with no
+`layout=True` (Textual 8.2.8 `_button.py`), so the write repaints the
+button and leaves its `width: auto` size exactly where it was -- the
+inverse of the `Static.update()` entry above, which lays out when you
+would rather it did not.
+
+**What to do.** After writing a longer `label` to a mounted Button, call
+`button.refresh(layout=True)`. Assert the painted text, not the attribute:
+a region-cropped `render_strips()` read caught this; `button.label` never
+would have.
+
 ## `call_after_refresh` is two message hops, not a layout pass — a refresh-counted wait can never see a widget's first `Resize` (TASK-34000.25, 2026-10-09)
 
 `MessagePump.call_after_refresh` posts `InvokeLater` to itself and then `call_later`s

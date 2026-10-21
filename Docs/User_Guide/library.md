@@ -614,13 +614,17 @@ you're on:
   promising a return to the list — "esc save or discard first" while the
   edit is unsaved, "esc busy, try again" while one of its writes is still
   running — see [Prompts](library/prompts.md).
-- **Editing, deleting, or re-analyzing inside the media viewer** — the
-  media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
-  guard, so a first Escape only discards that one form and returns to the
-  plain read-only viewer (matching that form's own **Cancel** button); a
-  *second* Escape from there returns to the list. The footer's hint
-  changes to "back a step" while one of these forms is open, so it never
-  claims "back to list" a step early.
+- **Editing, deleting, or re-analyzing inside the media viewer** — a first
+  Escape only closes that one form and returns to the plain read-only
+  viewer (matching that form's own **Cancel** button); a *second* Escape
+  from there returns to the list. The footer's hint changes to "esc close"
+  while one of these forms is open, so it never claims "back to list" a
+  step early. The Edit metadata and Edit analysis forms keep unsaved text:
+  while what you typed differs from the saved value, Escape (and Back,
+  another row, a rail row, the nav bar, Ctrl+Q) refuses with "Save or
+  Discard changes first", the chip reads "esc save or discard first", and
+  Cancel reads **Discard changes** — the one way to drop the text (see
+  [Media and conversations](library/media-and-conversations.md)).
 
 Escape and Ctrl+S are also bound inside the skill editor specifically
 (back to list / save) — see [Skills](library/skills.md). Escape also

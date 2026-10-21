@@ -215,6 +215,17 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 LIBRARY_PROMPT_DIRTY_VETO_COPY = (
     "Unsaved Prompt changes — Save or Discard changes first."
 )
+# TASK-34000.22 (ADR-055 Pattern D): the Media reader's two authoring forms
+# refuse every exit (Escape, Back, another row, a rail row, the nav bar)
+# while their typed text differs from the saved value, in the prompt veto's
+# own shape; the copy names the UNSAVED work. Dropped only by the form's own
+# "Discard changes" press (the relabelled Cancel).
+LIBRARY_MEDIA_EDIT_DIRTY_VETO_COPY = (
+    "Unsaved media details — Save or Discard changes first."
+)
+LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY = (
+    "Unsaved analysis — Save or Discard changes first."
+)
 # task-32461: the same veto, refusing a deep link INTO a prompt
 # (``_open_library_item_by_id``, the Search/RAG "Open" and entry-reconcile
 # route) rather than an exit out of one. The controller's ruling: that

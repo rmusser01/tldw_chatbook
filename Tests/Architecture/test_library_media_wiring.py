@@ -88,7 +88,11 @@ from tldw_chatbook.UI.Library_Modules.library_media_state import (
 #: 2026-10-20, TASK-34000.18 fix round 2: 83 -> 84, ``highlight_held_by_reader``
 #: (the order-based hold: the Reader holds the list highlight from an open or
 #: select until the user's next scope change), placed beside ``editing``.
-_EXPECTED_MEDIA_STATE_FIELD_COUNT = 84
+#: 2026-10-20, TASK-34000.22: 84 -> 86, ``edit_draft`` beside ``editing`` and
+#: ``analysis_draft`` beside ``editing_analysis`` (the two authoring forms'
+#: typed text; shims ``_library_media_edit_draft`` /
+#: ``_library_media_analysis_draft``).
+_EXPECTED_MEDIA_STATE_FIELD_COUNT = 86
 
 #: The 2 WIRING attributes the state PR deliberately left on
 #: ``LibraryScreen`` (the ``_conversation_reader_controller``/``_library_
@@ -327,6 +331,8 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_library_media_preview_request_is_current",
     "_library_media_reader_identity",
     "_library_media_reader_target_id",
+    "_library_media_editor_dirty",
+    "_notify_media_editor_dirty_veto",
     "_library_media_request_matches_current_authority",
     "_library_media_semantic_row_is_current",
     "_library_media_successful_focus_is_allowed",
@@ -378,6 +384,8 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_analysis_cancel",
     "handle_library_media_analysis_edit",
     "handle_library_media_analysis_save",
+    "handle_library_media_analysis_text_changed",
+    "handle_library_media_edit_field_changed",
     "handle_library_media_back",
     "handle_library_media_content_mode_raw",
     "handle_library_media_content_mode_rendered",
@@ -680,8 +688,14 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # ``_adopt_library_media_highlight`` (the one writer of the list's
     # resolved highlight into the selection) moved onto the controller so
     # ``_build_library_media_active_child`` can route through it too.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 142, (
-        f"expected 142 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-10-20, TASK-34000.22: 142 -> 146, the two authoring-form draft
+    # recorders (``handle_library_media_edit_field_changed``,
+    # ``handle_library_media_analysis_text_changed``), the one dirty
+    # predicate every exit reads (``_library_media_editor_dirty``) and its
+    # veto toast (``_notify_media_editor_dirty_veto``), each with a one-line
+    # screen delegator.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 146, (
+        f"expected 146 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"

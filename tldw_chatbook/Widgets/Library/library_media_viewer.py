@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from loguru import logger
 from rich.color import Color
@@ -35,6 +35,8 @@ from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaViewerState,
     find_content_matches,
     looks_like_markdown_content,
+    media_analysis_dirty,
+    media_edit_form_dirty,
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -209,6 +211,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         link_receipt: str = "",
         link_undo_offered: bool = False,
         delete_target_title: str = "",
+        edit_draft: Mapping[str, str] | None = None,
+        analysis_draft: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Hold the viewer's compose inputs.
@@ -218,6 +222,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 would move -- the Reader's loaded item, never the list
                 row (TASK-34000.18 AC#3). "" renders the "this item"
                 fallback. See ``library_media_delete_confirm_copy``.
+            edit_draft: The Edit metadata form's typed values, or None
+                (TASK-34000.22). The form composes from the draft when one
+                stands and from ``viewer.edit_fields`` otherwise, so a
+                Reader tab switch, More or Find rebuild keeps the typed
+                text; its Cancel reads "Discard changes" while the draft
+                differs from the saved values (``media_edit_form_dirty``).
+                NOT a compose-compare input: the screen hands it over on
+                every sync (``sync_editor_drafts``), never recomposing for
+                a keystroke.
+            analysis_draft: The analysis form's typed text, or None -- the
+                same contract for ``_compose_analysis_edit_form`` and
+                ``media_analysis_dirty``.
             link_receipt: The workspace-link receipt line the last "Use in
                 Console" press earned ("Linked to Local Default · staged in
                 Console"), or "" when none stands (TASK-34000.24). The
@@ -301,6 +317,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.link_receipt = link_receipt
         self.link_undo_offered = link_undo_offered
         self.delete_target_title = delete_target_title
+        self.edit_draft = edit_draft
+        self.analysis_draft = analysis_draft
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -1233,16 +1251,71 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             "#library-media-viewer-content", LibraryMediaContentBody
         ).sync_mode(mode)
 
+    def _edit_cancel_label(self) -> str:
+        """"Discard changes" while the metadata draft is dirty, else "Cancel"."""
+        return (
+            "Discard changes"
+            if media_edit_form_dirty(self.edit_draft, self.viewer.edit_fields)
+            else "Cancel"
+        )
+
+    def _analysis_cancel_label(self) -> str:
+        """"Discard changes" while the analysis draft is dirty, else "Cancel"."""
+        return (
+            "Discard changes"
+            if media_analysis_dirty(self.analysis_draft, self.viewer.analysis)
+            else "Cancel"
+        )
+
+    def sync_editor_drafts(
+        self, *, edit_draft: Mapping[str, str] | None, analysis_draft: str | None
+    ) -> None:
+        """Adopt the screen's drafts and relabel the two Cancel buttons in place.
+
+        TASK-34000.22: called on EVERY viewer sync, both the unchanged path
+        (a keystroke that flipped the dirty state: nothing recomposes, the
+        mounted button's label is patched) and the changed path (the
+        attributes are set before the recompose, whose compose reads them).
+        The ids never change, so every handler and test keeps its selector;
+        only the word on the button follows the draft (ADR-055 Pattern D:
+        the deliberate Discard is named as such).
+
+        Args:
+            edit_draft: ``LibraryMediaState.edit_draft``.
+            analysis_draft: ``LibraryMediaState.analysis_draft``.
+        """
+        self.edit_draft = edit_draft
+        self.analysis_draft = analysis_draft
+        for selector, label in (
+            ("#library-media-edit-cancel", self._edit_cancel_label()),
+            ("#library-media-analysis-cancel", self._analysis_cancel_label()),
+        ):
+            try:
+                button = self.query_one(selector, Button)
+            except (NoMatches, QueryError):
+                # That form is not mounted -- compose() reads the draft.
+                continue
+            if str(button.label) != label:
+                button.label = label
+                # ``Button.label`` repaints but does not re-lay out, and the
+                # button is ``width: auto`` -- without this the 16-cell box
+                # sized for "Cancel" wraps "Discard changes" to its first
+                # word (measured: "    Discard" painted at 160x45).
+                button.refresh(layout=True)
+
     def _compose_edit_form(self) -> ComposeResult:
-        """Render the metadata edit inputs, prefilled from ``viewer.edit_fields``.
+        """Render the metadata edit inputs, prefilled from the draft or the saved values.
 
         Stacked full-width ``Input`` widgets in a plain ``Vertical`` --
         matching the render-verified pattern already used by the Library
-        Collections create/rename form.
+        Collections create/rename form. TASK-34000.22: ``edit_draft`` wins
+        over ``viewer.edit_fields`` while one stands, so a rebuild of this
+        form never drops typed text.
 
         Returns:
             ComposeResult for the metadata edit form.
         """
+        values = self.edit_draft if self.edit_draft is not None else self.viewer.edit_fields
         with Vertical(id="library-media-edit-form"):
             for label, field, placeholder, field_id in (
                 ("Title", "title", "Title", "library-media-edit-title"),
@@ -1264,13 +1337,17 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     markup=False,
                 )
                 yield Input(
-                    value=self.viewer.edit_fields.get(field, ""),
+                    value=str(values.get(field, "") or ""),
                     placeholder=placeholder,
                     id=field_id,
                 )
             with Horizontal(classes="ds-toolbar"):
                 yield Button("Save", id="library-media-edit-save", compact=True)
-                yield Button("Cancel", id="library-media-edit-cancel", compact=True)
+                yield Button(
+                    self._edit_cancel_label(),
+                    id="library-media-edit-cancel",
+                    compact=True,
+                )
 
     def _compose_analysis(self) -> ComposeResult:
         """Render the Analysis section: read-only text + Edit/Generate, or a form.
@@ -1415,19 +1492,24 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
 
     def _compose_analysis_edit_form(self) -> ComposeResult:
-        """Render the analysis edit ``TextArea`` prefilled with the current analysis.
+        """Render the analysis edit ``TextArea`` prefilled from the draft or the analysis.
 
         ``TextArea`` renders cleanly full-width in a plain ``Vertical``
         (verified when this canvas's rendering approach was chosen), so
         this follows the same stacked, render-safe shape as
-        ``_compose_edit_form``.
+        ``_compose_edit_form``. TASK-34000.22: ``analysis_draft`` wins over
+        ``viewer.analysis`` while one stands.
 
         Returns:
             ComposeResult for the analysis edit form.
         """
         with Vertical(id="library-media-analysis-edit-form"):
             yield TextArea(
-                self.viewer.analysis,
+                (
+                    self.analysis_draft
+                    if self.analysis_draft is not None
+                    else self.viewer.analysis
+                ),
                 id="library-media-analysis-edit-text",
             )
             toolbar = Horizontal(classes="ds-toolbar")
@@ -1440,7 +1522,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Cancel",
+                    self._analysis_cancel_label(),
                     id="library-media-analysis-cancel",
                     classes="library-canvas-action",
                     compact=True,

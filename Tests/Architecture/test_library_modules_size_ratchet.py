@@ -408,7 +408,14 @@ _BUDGETS: dict[str, int] = {
     # +4), the row-select seam sets it (+3), and the list canvas's own
     # presentation resolves the list selection itself (+10) rather than the
     # Reader's target.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5006,
+    # 2026-10-20, TASK-34000.22 (same owner decision; dev was already at
+    # 4812 before this batch, Task 1 took it to 5006): 5006 -> 5185 (+179).
+    # The two authoring forms' draft seams: the baseline reader, the one
+    # dirty predicate every exit reads, the veto toast, the transition-only
+    # resync helper and the five ``Changed`` recorders (+~150 with their
+    # docstrings), the draft seeding/clearing beside every flag write, and
+    # the per-item drop at the reader-row select seam.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5185,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

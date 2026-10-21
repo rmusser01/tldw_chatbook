@@ -455,7 +455,7 @@ import asyncio
 import dataclasses
 import time
 import webbrowser
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -498,8 +498,11 @@ from ...Library.library_media_state import (
     library_media_int_backing_id,
 )
 from ...Library.library_media_viewer_state import (
+    MEDIA_EDIT_FORM_FIELDS,
     build_library_media_highlight_rows,
     build_library_media_viewer_state,
+    media_analysis_dirty,
+    media_edit_form_dirty,
 )
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -534,6 +537,8 @@ from .screen_constants import (
     _ANALYZE_ORIGIN_MEDIA,
     _MEDIA_VIEW_LIST,
     _MEDIA_VIEW_VIEWER,
+    LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY,
+    LIBRARY_MEDIA_EDIT_DIRTY_VETO_COPY,
     LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS,
     LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT,
     LIBRARY_NOTES_SOURCE_DATABASE,
@@ -2220,6 +2225,12 @@ class LibraryMediaController:
             # per-load rule); a reload of the SAME item (retry, re-entry
             # from Console) keeps a receipt that is still true.
             self._library_media_link_receipt = None
+            # TASK-34000.22: the authoring drafts are per item too. A dirty
+            # one never reaches here (every user route refuses first); a
+            # clean one must not be composed over the NEXT item's form,
+            # where it would read as that item's unsaved change.
+            self._library_media_edit_draft = None
+            self._library_media_analysis_draft = None
         self._selected_media_id = canonical_id
         self._library_media_view = "viewer"
         # TASK-34000.18 fix round 2: selected for the Reader -- it holds the
@@ -3142,9 +3153,11 @@ class LibraryMediaController:
         # the viewer and reappear (stale) on the way back.
         self._library_media_type_choices_visible = False
         self._library_media_editing = False
+        self._library_media_edit_draft = None
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
+        self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._sync_library_media_viewer_or_recompose()
@@ -3159,7 +3172,9 @@ class LibraryMediaController:
         self._library_media_composed_detail = None
         self._library_media_highlights = []
         self._library_media_editing = False
+        self._library_media_edit_draft = None
         self._library_media_editing_analysis = False
+        self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._library_media_view = "viewer"
@@ -3263,6 +3278,138 @@ class LibraryMediaController:
             self._selected_media_id,
             self._library_media_view,
         )
+
+    def _library_media_editor_baseline(self) -> tuple[Mapping[str, str], str]:
+        """The saved values the two authoring forms are compared against.
+
+        TASK-34000.22: ``edit_fields`` and ``analysis`` of the Reader's
+        display state for the loaded detail -- the same memoized state the
+        viewer composes from (``_library_media_viewer_state_cached``, one
+        build per detail arrival), so the predicate and the painted form
+        read one baseline.
+
+        Returns:
+            ``(edit_fields, analysis)``; both empty while nothing is loaded.
+        """
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
+        state = self._build_library_media_viewer_display_state(detail)
+        return state.edit_fields, state.analysis
+
+    def _library_media_editor_dirty(self) -> str:
+        """Name the Media authoring form holding unsaved text, or "".
+
+        TASK-34000.22 (ADR-055 Pattern D): the ONE predicate every exit reads
+        -- Escape (``action_library_media_viewer_back``), "‹ Back"
+        (``_exit_library_media_viewer``), another row (press and keyboard
+        walk), a rail row (``_select_library_rail_row_after_source_
+        admission``), the nav bar (``flush_pending_work``) and Ctrl+Q
+        (``library_pending_work._unsaved_names``) -- and what the footer
+        chip, the veto copy and the "Discard changes" label derive from.
+
+        Returns:
+            ``"edit"`` while the metadata form is open and its draft differs
+            from the saved values, ``"analysis"`` for the analysis form, ""
+            when neither is dirty (closed, untouched, or typed back to the
+            saved text). The metadata form is named first so copy can name
+            one form; the forms are both held only across a tab switch.
+        """
+        edit_fields, analysis = self._library_media_editor_baseline()
+        if self._library_media_editing and media_edit_form_dirty(
+            self._library_media_edit_draft, edit_fields
+        ):
+            return "edit"
+        if self._library_media_editing_analysis and media_analysis_dirty(
+            self._library_media_analysis_draft, analysis
+        ):
+            return "analysis"
+        return ""
+
+    def _notify_media_editor_dirty_veto(self) -> None:
+        """Say which Media form refused the exit, in the prompt veto's shape.
+
+        TASK-34000.22: the copy names the UNSAVED work (ADR-055 Pattern D);
+        ``markup=False`` because the sentence is fixed copy next to the
+        user's own typed text in the same Reader (TASK-1513's convention).
+        Silent when no form is dirty.
+        """
+        form = self._library_media_editor_dirty()
+        if not form:
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                LIBRARY_MEDIA_EDIT_DIRTY_VETO_COPY
+                if form == "edit"
+                else LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY,
+                severity="warning",
+                markup=False,
+            )
+
+    def _record_library_media_editor_draft(self, write: Callable[[], None]) -> None:
+        """Apply one draft write, then resync only when the dirty state flipped.
+
+        TASK-34000.22: a keystroke writes state (cheap); the viewer sync --
+        which re-registers the footer chip and relabels Cancel in place --
+        runs only on the clean<->dirty transition, so typing never pays a
+        viewer sync per character and never recomposes the field being
+        typed in (the drafts are not compose-compare inputs).
+        """
+        before = self._library_media_editor_dirty()
+        write()
+        if self._library_media_editor_dirty() != before:
+            self._sync_library_media_viewer_or_recompose()
+
+    @on(Input.Changed, "#library-media-edit-title")
+    @on(Input.Changed, "#library-media-edit-author")
+    @on(Input.Changed, "#library-media-edit-url")
+    @on(Input.Changed, "#library-media-edit-keywords")
+    def handle_library_media_edit_field_changed(self, event: Input.Changed) -> None:
+        """Record a typed metadata value in the draft (TASK-34000.22).
+
+        Args:
+            event: Input change event from one of the four edit fields; its
+                id names the draft key.
+        """
+        field = str(event.input.id or "").removeprefix("library-media-edit-")
+        if field not in MEDIA_EDIT_FORM_FIELDS or not self._library_media_editing:
+            return
+        value = event.value
+
+        def write() -> None:
+            # A draft dropped by a reader-row change (another item) is
+            # re-seeded from THAT item's saved values before the keystroke
+            # lands in it, so the compare never crosses items.
+            draft = dict(
+                self._library_media_edit_draft
+                if self._library_media_edit_draft is not None
+                else self._library_media_editor_baseline()[0]
+            )
+            draft[field] = value
+            self._library_media_edit_draft = draft
+
+        self._record_library_media_editor_draft(write)
+
+    @on(TextArea.Changed, "#library-media-analysis-edit-text")
+    def handle_library_media_analysis_text_changed(
+        self, event: TextArea.Changed
+    ) -> None:
+        """Record the typed analysis in the draft (TASK-34000.22).
+
+        Args:
+            event: Text change event from the analysis edit ``TextArea``.
+        """
+        if not self._library_media_editing_analysis:
+            return
+        text = event.text_area.text
+
+        def write() -> None:
+            self._library_media_analysis_draft = text
+
+        self._record_library_media_editor_draft(write)
 
     def _navigate_to_media(self, media_id: str | int) -> None:
         """Open the Library media viewer for ``media_id``.
@@ -3553,17 +3700,26 @@ class LibraryMediaController:
             self._library_media_reader_session, "info"
         )
         self._library_media_editing = True
+        # TASK-34000.22: the draft starts as the saved values, so a
+        # mount-time ``Changed`` (Textual may deliver one) is a no-op and
+        # ``media_edit_form_dirty`` reads clean until the user types.
+        self._library_media_edit_draft = dict(self._library_media_editor_baseline()[0])
         self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-edit-cancel")
     def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
         """Discard in-progress metadata edits and return to the read-only viewer.
 
+        TASK-34000.22 (ADR-055 Pattern D): this press -- labelled "Discard
+        changes" while the draft is dirty -- is the ONE deliberate act that
+        drops typed metadata; every other exit refuses while it is dirty.
+
         Args:
             event: Button press event emitted by the edit form's "Cancel" action.
         """
         event.stop()
         self._library_media_editing = False
+        self._library_media_edit_draft = None
         self._sync_library_media_viewer_or_recompose()
 
     def _patch_local_media_record(
@@ -3923,11 +4079,13 @@ class LibraryMediaController:
         viewer = LibraryMediaViewer(
             viewer_state,
             editing=self._library_media_editing,
+            edit_draft=self._library_media_edit_draft,
             confirming_delete=self._library_media_confirming_delete,
             highlights=build_library_media_highlight_rows(
                 self._library_media_highlights
             ),
             editing_analysis=self._library_media_editing_analysis,
+            analysis_draft=self._library_media_analysis_draft,
             generating_analysis=self._library_media_generating_analysis,
             # Review I1: gated on the tab that renders it -- see the twin
             # gate in ``_sync_library_media_viewer_state``.
@@ -4170,6 +4328,14 @@ class LibraryMediaController:
             viewer_state.media_id
         )
         delete_target_title = self._library_media_delete_target_title(viewer_state)
+        # TASK-34000.22: the drafts are handed over on BOTH paths and are
+        # not compared -- a keystroke must never recompose the field it
+        # lands in. The unchanged path relabels Cancel in place; the changed
+        # path's compose reads them.
+        viewer.sync_editor_drafts(
+            edit_draft=self._library_media_edit_draft,
+            analysis_draft=self._library_media_analysis_draft,
+        )
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
@@ -4856,11 +5022,17 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = True
+        # TASK-34000.22: seeded from the displayed analysis -- see the
+        # metadata twin in ``handle_library_media_edit``.
+        self._library_media_analysis_draft = self._library_media_editor_baseline()[1]
         self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-cancel")
     def handle_library_media_analysis_cancel(self, event: Button.Pressed) -> None:
         """Discard in-progress analysis edits and return to the read-only view.
+
+        TASK-34000.22 (ADR-055 Pattern D): "Discard changes" while dirty --
+        the one deliberate drop; see ``handle_library_media_edit_cancel``.
 
         Args:
             event: Button press event emitted by the analysis edit form's
@@ -4868,6 +5040,7 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = False
+        self._library_media_analysis_draft = None
         self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-save")
@@ -4890,6 +5063,7 @@ class LibraryMediaController:
         media_id = self._library_media_reader_target_id()
         if not media_id:
             self._library_media_editing_analysis = False
+            self._library_media_analysis_draft = None
             self.refresh(recompose=True)
             return
         try:
@@ -4898,6 +5072,7 @@ class LibraryMediaController:
             ).text
         except (NoMatches, QueryError):
             self._library_media_editing_analysis = False
+            self._library_media_analysis_draft = None
             self.refresh(recompose=True)
             return
         # Validate/sanitize the user-entered analysis at the UI boundary

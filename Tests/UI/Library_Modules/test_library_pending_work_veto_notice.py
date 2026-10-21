@@ -124,3 +124,36 @@ def test_the_formerly_silent_vetoes_say_something_honest():
     assert library_prompt_mutation_veto_notice(destination="").startswith(
         "Can't leave yet — "
     )
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.22: Ctrl+Q's prompt names a dirty Media form
+# ---------------------------------------------------------------------------
+
+
+def _screen_with_only_a_media_draft(dirty_form: str):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        _notes_state=SimpleNamespace(file_notes_workspace=None),
+        _library_note_session=SimpleNamespace(snapshot=None),
+        _prompts_state=SimpleNamespace(dirty=False, original_name=""),
+        _skills_state=SimpleNamespace(dirty=False, original_name=""),
+        _library_media_editor_dirty=lambda: dirty_form,
+    )
+
+
+@pytest.mark.parametrize(
+    ("dirty_form", "expected"),
+    [
+        ("analysis", ["unsaved analysis"]),
+        ("edit", ["unsaved media details"]),
+        ("", []),
+    ],
+)
+def test_unsaved_names_name_a_dirty_media_form(dirty_form, expected):
+    """``confirm_library_quit`` titles its prompt from these names, so a dirty
+    analysis or metadata form is named there exactly as a dirty prompt is."""
+    from tldw_chatbook.UI.Library_Modules.library_pending_work import _unsaved_names
+
+    assert _unsaved_names(_screen_with_only_a_media_draft(dirty_form)) == expected

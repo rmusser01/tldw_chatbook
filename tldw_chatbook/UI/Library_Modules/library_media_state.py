@@ -495,9 +495,23 @@ class LibraryMediaState:
     # AFTER the open is the list moving on (TASK-15457: row 0).
     highlight_held_by_reader: bool = False
     editing: bool = False
+    # TASK-34000.22: the metadata form's typed values (keys ``title``,
+    # ``author``, ``url``, ``keywords``), or None while no draft stands.
+    # Seeded from the saved values when the form opens, written by the
+    # fields' ``Changed`` events, read by the viewer's compose so a Reader
+    # tab switch, More or Find rebuild keeps the typed text, and compared
+    # against the saved values by ``media_edit_form_dirty`` -- the ONE
+    # predicate every exit (Escape, Back, another row, a rail row, the nav
+    # bar, Ctrl+Q) reads. Per item: dropped when the Reader selects another
+    # item, like ``link_receipt``. Cleared on Save, Discard and every
+    # viewer reset that clears ``editing``.
+    edit_draft: dict[str, str] | None = None
     confirming_delete: bool = False
     highlights: list[dict[str, Any]] = field(default_factory=list)
     editing_analysis: bool = False
+    # TASK-34000.22: the analysis form's typed text, the same contract as
+    # ``edit_draft`` for ``editing_analysis`` (``media_analysis_dirty``).
+    analysis_draft: str | None = None
 
     # task-28006: an LLM analysis generation is in flight for the open item.
     generating_analysis: bool = False
