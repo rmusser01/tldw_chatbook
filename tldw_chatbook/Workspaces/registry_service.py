@@ -2646,6 +2646,83 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
 
+    def project_index_authority_adapters(self, current_data_authority: Callable[[], str]):
+        """Bind code-owned profile authority to exact-key readers and short fences.
+
+        Composition supplies a live admitted data/restore generation reader.
+        User input and the process-global selected workspace are never consulted.
+        """
+        from tldw_chatbook.Tools.remote_root_types import LocalRoot
+        from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+        from tldw_chatbook.Utils.sensitive_paths import (
+            SensitiveExclusion,
+            sensitive_exclusions_under,
+        )
+        from .project_index.models import ProjectIndexAuthority, ProjectIndexKey
+
+        @contextmanager
+        def fence(key: ProjectIndexKey):
+            if type(key) is not ProjectIndexKey:
+                raise TypeError("index_key_required")
+            with self.binding_authority_fence(key.binding_id) as row:
+                authority = None
+                try:
+                    if (
+                        row is not None
+                        and row["workspace_id"] == key.workspace_id
+                        and row["binding_kind"] == RuntimeBindingKind.LOCAL_FILESYSTEM.value
+                        and current_data_authority() == key.data_authority_id
+                    ):
+                        binding = _runtime_binding_from_row(row)
+                        root = Path(binding.locator)
+                        chain = capture_directory_chain(root)
+                        if root.absolute() == chain.canonical_root:
+                            exclusions = sensitive_exclusions_under(root) + tuple(
+                                SensitiveExclusion(
+                                    "subtree" if e.kind == "directory" else "file", e.path
+                                )
+                                for e in binding_exclusion_entries(binding)
+                            )
+                            authority = ProjectIndexAuthority(
+                                key,
+                                LocalRoot(root),
+                                chain,
+                                exclusions,
+                                int(row["revision"]),
+                            )
+                except (OSError, ValueError, RuntimeError):
+                    authority = None
+                yield authority
+
+        def reader(key: ProjectIndexKey):
+            with fence(key) as authority:
+                return authority
+
+        return reader, fence
+
+    def binding_authority_revision(self, binding_id: str) -> int:
+        """Read the durable witness, including a detached binding's tombstone."""
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
+
+    @contextmanager
+    def binding_authority_fence(self, binding_id: str):
+        """Serialize bounded index acceptance against other processes' mutations.
+
+        Acquire this registry lock before an index-store transaction. Never hold
+        it for chunking, scanning, worker joins, network calls or cleanup.
+        """
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT b.*,a.revision FROM workspace_runtime_bindings b JOIN workspace_binding_authority a USING(binding_id) JOIN workspace_records w ON w.workspace_id=b.workspace_id WHERE b.binding_id=? AND w.archived=0",
+                (binding_id,),
+            ).fetchone()
+            yield row
+
     def save_runtime_binding(
         self,
         binding: WorkspaceRuntimeBinding,

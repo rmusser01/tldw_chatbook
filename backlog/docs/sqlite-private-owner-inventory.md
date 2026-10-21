@@ -385,3 +385,5 @@ restrictions. Its preparation flag permits only binding state/revision and
 assessment state/JSON updates. This path is selected-import preparation only;
 internal rollback does not disable local rules. The private-call census pins
 this symbol, literal adapter selection, candidate argument, and validation call.
+
+| C98 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._open_connection | db.workspace_project_index | private_file | derived cache read/write | Migrated via `connect_private_sqlite`. Through SQLiteStoreKernel. Exact per-binding opaque namespace; no centralized backup payload. |

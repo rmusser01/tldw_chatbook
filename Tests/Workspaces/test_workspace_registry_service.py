@@ -1218,3 +1218,87 @@ def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
     assert len([w for w in first.list_workspaces() if w.name.casefold() == "é"]) == 1
     first.db.close()
     second.db.close()
+
+
+def test_project_index_authority_witness_survives_remove_recreate_and_move(tmp_path):
+    from dataclasses import replace
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces.models import (
+        WorkspaceRuntimeBinding,
+        RuntimeBindingKind,
+        RuntimeBindingStatus,
+    )
+
+    db = WorkspaceDB(tmp_path / "registry.sqlite")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="one", name="One")
+    registry.create_workspace(workspace_id="two", name="Two")
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="one",
+        binding_id="fixed",
+        binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+        label="Folder",
+        locator=str(tmp_path),
+        status=RuntimeBindingStatus.READY,
+    )
+    registry.save_runtime_binding(binding)
+    first = registry.binding_authority_revision("fixed")
+    registry.save_runtime_binding(replace(binding, workspace_id="two"))
+    moved = registry.binding_authority_revision("fixed")
+    registry.remove_runtime_binding("fixed")
+    removed = registry.binding_authority_revision("fixed")
+    registry.save_runtime_binding(binding)
+    recreated = registry.binding_authority_revision("fixed")
+    assert 0 < first < moved < removed < recreated
+    db.close()
+
+
+def test_index_authority_fence_checks_exact_scope_and_blocks_other_process(tmp_path):
+    from dataclasses import replace
+    import subprocess
+    import sys
+    from Tests.Workspaces.project_index_support import make_index_key
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces.models import (
+        WorkspaceRuntimeBinding,
+        RuntimeBindingKind,
+        RuntimeBindingStatus,
+    )
+
+    db = WorkspaceDB(tmp_path / "registry.sqlite")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="workspace-1", name="One")
+    registry.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="workspace-1",
+            binding_id="binding-1",
+            binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+            label="Folder",
+            locator=str(tmp_path),
+            status=RuntimeBindingStatus.READY,
+        )
+    )
+    key = make_index_key(tmp_path)
+    reader, fence = registry.project_index_authority_adapters(lambda: "authority-1")
+    assert reader(key).key == key
+    assert reader(replace(key, workspace_id="other")) is None
+    assert reader(replace(key, data_authority_id="restored")) is None
+    script = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1],timeout=0); c.execute(\"UPDATE workspace_runtime_bindings SET label='changed' WHERE binding_id='binding-1'\"); c.commit()"
+    with fence(key) as authority:
+        assert authority.authority_revision > 0
+        blocked = subprocess.run(
+            [sys.executable, "-c", script, str(db.db_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert blocked.returncode != 0 and "locked" in blocked.stderr
+    allowed = subprocess.run(
+        [sys.executable, "-c", script, str(db.db_path)], capture_output=True, text=True
+    )
+    assert allowed.returncode == 0, allowed.stderr
+    assert reader(key).authority_revision > authority.authority_revision
+    registry.remove_runtime_binding("binding-1")
+    assert reader(key) is None
+    db.close()

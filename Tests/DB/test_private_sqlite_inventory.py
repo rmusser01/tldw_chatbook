@@ -807,7 +807,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 98) if number not in {8, 9, 10, 75}
+        for number in range(1, 99) if number not in {8, 9, 10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
