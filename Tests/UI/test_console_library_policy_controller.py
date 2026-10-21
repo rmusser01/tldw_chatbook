@@ -125,3 +125,69 @@ async def test_failed_durable_save_restores_the_prior_committed_holder(
     assert session.library_policy_holder.snapshot == prior
     assert session.library_policy_holder.explicitly_staged is False
     assert sync_calls == ["sync"]
+
+
+def _open_access_session() -> SimpleNamespace:
+    return SimpleNamespace(
+        id="durable",
+        ephemeral=False,
+        persisted_conversation_id="conversation-1",
+        library_policy_holder=ConsoleLibraryPolicyHolder(_snapshot()),
+        library_destination_runtime=SimpleNamespace(resolved_destination=None),
+    )
+
+
+def _open_access_controller(
+    session, *, console_on_top: bool, pushed: list, notices: list
+) -> ConsoleLibraryPolicyController:
+    return ConsoleLibraryPolicyController(
+        app_instance=SimpleNamespace(
+            notify=lambda *args, **kwargs: notices.append(args)
+        ),
+        active_session=lambda: session,
+        ensure_store=lambda: _Store(session),
+        direct_library_tools=lambda: True,
+        push_screen=pushed.append,
+        request_control_bar_sync=lambda: None,
+        console_owns_screen_stack=lambda: console_on_top,
+    )
+
+
+@pytest.mark.parametrize(
+    "has_session", [True, False], ids=["active-session", "no-session"]
+)
+def test_open_access_is_refused_silently_while_a_dialog_covers_the_console(
+    has_session: bool,
+) -> None:
+    """TASK-34720: a request that finds the Console covered does nothing.
+
+    It neither pushes a second dialog nor raises the no-conversation toast:
+    the request is one of a burst whose first member's dialog is already up.
+    """
+    session = _open_access_session() if has_session else None
+    pushed: list = []
+    notices: list = []
+
+    _open_access_controller(
+        session, console_on_top=False, pushed=pushed, notices=notices
+    ).open_access()
+
+    assert pushed == []
+    assert notices == []
+
+
+def test_open_access_pushes_one_dialog_from_an_uncovered_console() -> None:
+    """The positive control for the refusal above: same fakes, Console on top."""
+    from tldw_chatbook.Widgets.Console.console_library_access_modal import (
+        ConsoleLibraryAccessModal,
+    )
+
+    pushed: list = []
+    notices: list = []
+
+    _open_access_controller(
+        _open_access_session(), console_on_top=True, pushed=pushed, notices=notices
+    ).open_access()
+
+    assert [type(screen) for screen in pushed] == [ConsoleLibraryAccessModal]
+    assert notices == []
