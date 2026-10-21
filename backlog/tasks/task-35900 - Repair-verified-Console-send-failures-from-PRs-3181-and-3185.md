@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 03:00'
+updated_date: '2026-10-21 05:18'
 labels:
   - console
   - bug
@@ -32,6 +32,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #5 Repeated qualification avoids reparsing unchanged evidence but observes evidence replacement and fresh native qualification on every authority check.
 - [x] #6 Targeted regression tests and changed-file static checks pass; replacement PR and superseded PR closures credit Csavoldi.
 - [x] #7 Recovery action storage failures remain nonfatal in the real UI worker, retain the unsent recovery, show content-free retry guidance, and retire the exact transient echo and continuation before recovery removal on retry.
+- [x] #8 Mounted approval projection journeys begin only after the current Console attachment is reconciled and answerable; their original card, count, navigation and decision assertions remain enforced.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,7 +43,8 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 3. Cache parsed qualification evidence by a verified file generation while keeping native qualification verdicts fresh for every authorization call.
 4. Keep the controller within its existing size ratchet by mechanically delegating the retrieval preparation routine to a focused helper; run targeted suites, lint/format changed Python, review the complete diff, and update subsystem documentation.
 5. Add a real-Textual-worker regression for Restore/Discard storage failures, retain recoveries on failure, surface bounded retry guidance, and verify saved-chat SQLite failures leave cancellation retryable without leaking discarded text into later provider history before pre-merge review.
-6. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
+6. For CI UI10, witness completed and answerable Console attachment before mounting approval journeys, reproduce the incomplete-attachment legacy behavior, and rerun the original assertions.
+7. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
 ADR required: no
 ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
@@ -112,3 +114,44 @@ Across all 16 changed/new Python files, Ruff introduces zero diagnostics (236
 baseline/current diagnostics). New helper/tests are formatted; diff and task-ID
 checks pass. No full test suite was run. Console architecture and the real-write
 failure-injection lesson document the corrected boundary.
+
+
+### CI UI10 attachment readiness
+
+Required run 39536237728 on head 64c681f900 failed only UI Fast Lane (10):
+`test_session_owned_pending_projection_journeys` stopped at the initial legacy
+approval-card mount wait (original line 751), before count/Inspector assertions.
+The seed helper witnessed composer presence without completed attachment.
+Relevant test/host/attachment code is unchanged from base 2d071d6d7145.
+
+Matched actual controller/runtime controls isolate the setup hazard: an unscoped
+legacy approval armed while reconciliation is incomplete is announced headless,
+retains zero payloads and does not mount after reconciliation; completing
+reconciliation before admission mounts the same approval. Both reviewer and
+implementer independently ran these controls successfully. This establishes the
+ordering dependency; the hosted failure did not record its sampled attachment
+state, so that exact scheduling history is not claimed as proven.
+
+The test seed helper now waits, under its existing bounded wait, for the exact
+current screen/runtime view, completed attachment and answerability before the
+seed send. Original card, count, navigation, decision and timeout assertions stay
+intact. No production code or authority policy changes. ADR required: no, this
+repairs the test's precondition under the existing attachment lifecycle.
+
+Verification: the original CI-failing legacy journey passes directly with the
+new helper (1 passed, 102.69s including isolated-process setup). The whole file
+has 12 passed and one failure on this Windows host, at an earlier, different
+`marshalled.is_set()` wait in `_verify_late_chat_create_projection_transition`
+(new line 642/original 633). That exact earlier wait also fails in full-sequence
+diagnostic probes on both untouched base and pre-fix head (531.05s/533.48s).
+It is recorded as a baseline limitation, not counted green; the hosted run passed
+that earlier journey. Initial 180s full-sequence diagnostic attempts timed out
+locally; longer CLI-only budgets enabled the comparisons without changing the
+committed test timeout. No full suite was run.
+
+Independent requesting-code-review assessment found no actionable findings in
+the nine-line test-only change. Changed-file Ruff comparison introduces zero
+diagnostics (16 existing diagnostics unchanged); formatting, diff and task-ID
+checks pass. Auto-merge was disabled and the branch pulled with rebase before
+editing, as required by the queue. Re-arm only on the reviewed new head after
+thread checks; combined CI remains the final merge gate.

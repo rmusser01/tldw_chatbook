@@ -18,6 +18,16 @@ against dev, and the unchanged exact test passed locally. This was a distinct
 signature from TASK-34789's earlier WaitForScreenTimeout reports; it does not
 identify the particular native deferral in that hosted run.
 
+**PR #3189 follow-up, 2026-10-20 local.** UI10 failed at the initial legacy
+approval-card mount wait, before its count assertions. Its seed helper had the
+same composer-only readiness assumption. Matched real-controller/runtime probes
+confirmed that an unscoped approval armed before reconciliation is announced
+headless and is not retained for a later remount; reconcile first and the card
+mounts. The fix witnesses the exact current screen/runtime view, attachment
+completion and answerability before seeding. The hosted log did not capture
+reconciliation state, so this demonstrates the setup hazard rather than proving
+that particular hosted scheduling history.
+
 **What to do.** A post-attachment assertion first witnesses the existing
 attachment-complete state for the current screen, as the neighboring public
 startup journey already does. Retain the idle no-poll and active poll

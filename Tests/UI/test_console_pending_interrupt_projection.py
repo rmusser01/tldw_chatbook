@@ -73,6 +73,15 @@ async def _seed_console(app, pilot):
     await _wait(pilot, lambda: app._initial_screen_pushed)
     console = await _navigate(app, pilot, "chat", expect="ChatScreen")
     await _wait(pilot, lambda: bool(list(console.query("#console-native-composer"))))
+    # A composed screen may still be reconciling; legacy rounds are not replayed.
+    runtime = console._console_runtime()
+    await _wait(
+        pilot,
+        lambda: app.screen is console
+        and runtime.view is console
+        and console._console_attach_reconciled
+        and runtime.has_answerable_view(),
+    )
     controller = console._ensure_console_chat_controller()
     store = console._console_chat_store
     session_id = store.active_session_id
