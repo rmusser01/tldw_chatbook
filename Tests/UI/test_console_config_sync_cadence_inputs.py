@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import weakref
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -94,6 +94,9 @@ class _Agent:
 
     def _console_agent_fleet_token_total(self) -> int:
         return self.tokens
+
+    def historical_reads_held(self):
+        return nullcontext()
 
 
 class _Screen:
@@ -642,3 +645,48 @@ def test_the_cache_ttl_second_counts_down_on_the_cadence_clock(clock):
     clock.now += 0.5  # 300 s left on display becomes 299.
     assert _tick(screen) == 1, "the TTL's displayed second did not project"
     assert _tick(screen) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_input_read_of_the_agent_rail_starts_no_historical_read(tmp_path):
+    """The cadence reads the rail's rows as inputs; the projection reads history.
+
+    Live (2026-10-20, five paired rounds): at run completion the input read
+    started the rail's cold historical read before the tick's projection
+    deferred. That read's publication (the fleet sync, and the Environment
+    refresh the sync nudges, 0.5-0.6 s on the UI loop with the Inspect rail
+    open) then ran ahead of the deferral's replay, so the Agent rail's
+    "done" and the cost chip showed 0.4-0.6 s later than on dev, in every
+    round. The projection itself starts that read, as it did before.
+    """
+    from Tests.UI.test_console_refresh_read_batching import (
+        _agent,
+        _finish,
+        _historical_bridge,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    database = AgentRunsDB(tmp_path / "cadence-history.sqlite", "cadence-history")
+    try:
+        bridge, child = _historical_bridge(database)
+        agent, tasks = _agent(bridge)
+        screen = _Screen()
+        screen._agent = agent
+
+        def reads() -> int:  # Its publication's sync is a worker too.
+            name = "_load_historical_presentation"
+            return sum(task.get_coro().__qualname__.endswith(name) for task in tasks)
+
+        _objects, cold = config_sync._projection_inputs(screen)
+        assert reads() == 0, "the input read started the rail's historical read"
+        # The projection's own read starts it, once.
+        assert agent._console_agent_fleet_rows() == ()
+        assert reads() == 1
+        await _finish(tasks)
+        # Landed: the input read sees it (a change), and starts nothing.
+        _objects, warm = config_sync._projection_inputs(screen)
+        assert warm != cold
+        assert any(row.row_id == child for row in warm[-1][-1])
+        assert reads() == 1
+    finally:
+        database.close()

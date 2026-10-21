@@ -134,7 +134,8 @@ straight from `ConsoleAgentBridge.fleet_snapshot`/`historical_snapshot`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
@@ -985,6 +986,7 @@ class ConsoleAgentController:
         self._console_subagent_counts_read: dict[frozenset[str], dict[str, Any]] = {}
         self._console_subagent_counts_read_owner: tuple[Any, Any] | None = None
         self._console_historical_read: dict[str, Any] | None = None
+        self._historical_reads_held = False  # TASK-33620.15.1 input reads.
         #: TASK-915: sticky suppression of the fleet force-open for the rest
         #: of THIS busy window. Written by the screen's own `_toggle_console_
         #: rail_section`, so it is proxied read-write there.
@@ -2543,6 +2545,21 @@ class ConsoleAgentController:
         )
 
 
+    @contextmanager
+    def historical_reads_held(self) -> Iterator[None]:
+        """Read the rail's presentation without starting a cold historical read.
+
+        For the config-sync cadence's input read (TASK-33620.15.1): the
+        projection after it starts that read, as before the cadence, so the
+        read's publication (the fleet sync and the Environment refresh it
+        nudges) does not run ahead of a deferred projection's replay.
+        """
+        self._historical_reads_held = True
+        try:
+            yield
+        finally:
+            self._historical_reads_held = False
+
     def _presentation_historical_snapshot(
         self, bridge: Any, conversation_id: str
     ) -> Any:
@@ -2560,6 +2577,9 @@ class ConsoleAgentController:
             return bridge.historical_snapshot(conversation_id)
         key = self._historical_presentation_key(bridge, conversation_id)
         state = self._console_historical_read
+        if self._historical_reads_held:
+            current = state is not None and state["key"] == key
+            return (current and state["value"]) or AgentLiveSnapshot()
         if state is None or state["key"] != key:
             state = {"key": key, "value": None, "pending": False}
             self._console_historical_read = state

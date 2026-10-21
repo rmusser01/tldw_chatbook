@@ -309,10 +309,11 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
             )
             run += (_cost_inputs(store, controller, agent, session_id, in_flight),)
     if agent is not None:
-        run += (
-            agent._console_agent_section_lines(),
-            agent._console_agent_fleet_rows(),
-        )
+        with agent.historical_reads_held():  # The projection starts those.
+            run += (
+                agent._console_agent_section_lines(),
+                agent._console_agent_fleet_rows(),
+            )
     objects = (
         getattr(config, "_CONFIG_CACHE", None),
         getattr(config, "_SETTINGS_CACHE", None),
