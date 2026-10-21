@@ -58,7 +58,7 @@ _STAMPED = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)Z (.*)$")
 _FILE_LINE = re.compile(r"(Tests/UI/\S+\.py) ")
 _DOTS_LINE = re.compile(r"^[.FEsxX]+\s")
 _DURATION = re.compile(
-    r"(\d+(?:\.\d+)?)s\s+(?:setup|call|teardown)\s+(Tests/UI/\S+\.py::\S+)"
+    r"(\d+(?:\.\d+)?)s\s+(?:setup|call|teardown)\s+(Tests/UI/\S+\.py::.+)$"
 )
 
 
@@ -120,7 +120,7 @@ def run_seconds(run_dir: Path) -> dict[str, float]:
             stamped = _STAMPED.search(line)
             duration = _DURATION.match(stamped.group(2)) if stamped else None
             if duration:
-                node = duration.group(2)
+                node = duration.group(2).rstrip()
                 seconds[node] = seconds.get(node, 0.0) + float(duration.group(1))
     return seconds
 

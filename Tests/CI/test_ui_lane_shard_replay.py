@@ -296,3 +296,23 @@ def test_a_parameter_entry_does_not_charge_its_sibling_cases():
         },
         2,
     ) == [10.0, 50.0]
+
+
+def test_duration_rows_keep_spaces_inside_parameter_ids(tmp_path):
+    log = "\n".join(
+        [
+            "2026-10-20T00:00:00.0000000Z collected 2 items",
+            "2026-10-20T00:01:00.0000000Z Tests/UI/test_a.py .. [100%]",
+            "2026-10-20T00:01:01.0000000Z 10.00s call Tests/UI/test_a.py::test_rows[small value]",
+            "2026-10-20T00:01:01.0000000Z 50.00s call Tests/UI/test_a.py::test_rows[large value]",
+        ]
+    )
+    (tmp_path / "shard.log").write_text(log, encoding="utf-8")
+    assert replay.shard_loads(
+        [
+            "Tests/UI/test_a.py::test_rows[small value]",
+            "Tests/UI/test_a.py::test_rows[large value]",
+        ],
+        replay.run_seconds(tmp_path),
+        2,
+    ) == [10.0, 50.0]

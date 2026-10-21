@@ -1,5 +1,12 @@
 # Lessons: what counts as evidence a change works
 
+
+## Repeated pytest file names need occurrence timestamps (TASK-35834, 2026-10-20)
+
+**Incident.** PR3182 UI timing analysis found that the replay kept only each file's final timestamp. An a/b/a control charged90s/-30s instead of40s/20s. Corrected occurrence timing and node duration rows brought two exact-census baseline comparisons within33seconds per shard. Comparing an older408-entry run against the later415-entry census initially produced misleading three-minute discrepancies; reading that run's own committed census removed them.
+
+**What to do.** Retain every progress occurrence, all duration phases and each run's exact census. Top-25 reports do not fully time parameterized functions; label the unmeasured remainder and measure hosted job setup separately. Bind evidence hashes to canonical Git blob bytes (LF/UTF8), since Windows checkout newlines and upstream-only comments can change file hashes without changing the selected tests.
+
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
 **Incident.** PR #3176's admission-sensitive job failed the headless-delivery

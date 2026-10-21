@@ -1,7 +1,7 @@
 {
   "task": "TASK-35834",
   "baseline_pr_head": "8e6b1ee4280b62b7330f02f2bbd35b963bcb8e5c",
-  "census_sha256": "15506f2d243ae1e7ed7ab333e81501e578521f11b7be3c616cd264fd480e60f2",
+  "census_sha256": "4c78b9e9c20a869b937080ad60e7d121ba4c1e229e9f97a5bffaf4a512ff6cd0",
   "old_entry_count": 415,
   "new_entry_count": 430,
   "baseline_replays": [
@@ -708,5 +708,46 @@
     "count": 23,
     "unique_exact_coverage": true
   },
-  "hosted_qualification": "pending three post-change PR attempts"
+  "hosted_qualification": "pending three post-change PR attempts",
+  "census_hash_encoding": "SHA256 of canonical LF/UTF8 Git blob; Windows CRLF checkout hash is not used",
+  "rebased_base": "2d071d6d7145184ba41408ec437306cfb188ea57",
+  "rebased_reviewed_task_commit": "3c4d13dfb11d0ea09980478468c4f052a1ced703",
+  "rebased_ci_controls": {
+    "passed": 391,
+    "failed": 0,
+    "seconds": 80.07
+  },
+  "review_round_1": {
+    "range": [
+      "83b61da9b591738a3a8dd28bc492ecdaf62ccb80",
+      "3c4d13dfb11d0ea09980478468c4f052a1ced703"
+    ],
+    "method": "superpowers:requesting-code-review, isolated read-only reviewer",
+    "critical": [],
+    "important": [],
+    "minor": [
+      {
+        "finding": "Duration regex truncates spaced parameter IDs",
+        "disposition": "Confirmed by new failing assertion (30/30 vs10/50); capture full remaining node ID, regression now passes."
+      },
+      {
+        "finding": "Evidence census hash stale after rebase",
+        "disposition": "Updated SHA256 to canonical LF/UTF8 Git blob after upstream census-comment change; selectors unchanged."
+      }
+    ],
+    "declined_to_judge_dispositions": {
+      "three hosted attempts": "Required closure gate, still pending.",
+      "new hosted replay accuracy": "Will compare all13 measured shards at exact qualified census.",
+      "partial historical parameter timings": "Retain explicit limitation; estimates only guide placement.",
+      "earlier six Textual tasks": "Preserve existing whole-branch review; no new product changes in this task.",
+      "broad UI/product/native-security": "No implementation changes here; use targeted native CI contracts and actual required hosted checks.",
+      "live review threads and merge status": "Controller live reviews/comments APIs were empty; no merge authorized."
+    },
+    "independent_checks": "Coverage415->430 with all16functions/23cases; Phase7block92 first fixed and exterior order retained; reproduced13shardcosts within0.004seconds; seven pure replaychecks passed."
+  },
+  "review_fix_tests": {
+    "passed": 26,
+    "failed": 0,
+    "seconds": 1.93
+  }
 }
