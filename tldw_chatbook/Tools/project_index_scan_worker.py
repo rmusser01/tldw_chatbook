@@ -15,6 +15,7 @@ from typing import BinaryIO
 from tldw_chatbook.Tools.local_tool_impls import _is_relative_sensitive_path
 from tldw_chatbook.Tools.project_index_scan_protocol import (
     PAGE_TEXT_BYTES,
+    SOURCE_BUFFER_HEADROOM,
     TEXT_PART_BYTES,
     ScanProtocolError,
     frame,
@@ -368,7 +369,11 @@ def run_project_scan_worker(stdin: BinaryIO, stdout: BinaryIO) -> int:
                                 more=False,
                                 issues=[],
                                 reads=int(capture is not None),
-                                queued=2 * (capture.size_bytes if capture else 0),
+                                queued=(
+                                    capture.size_bytes + SOURCE_BUFFER_HEADROOM
+                                    if capture
+                                    else 0
+                                ),
                             ),
                         )
                     except (OSError, UnsafeCapture):
@@ -512,7 +517,8 @@ def run_project_scan_worker(stdin: BinaryIO, stdout: BinaryIO) -> int:
                         more=more,
                         issues=sorted(issues),
                         reads=active_reads,
-                        queued=sent_bytes + (2 * MAX_FILE_BYTES if active_reads else 0),
+                        queued=sent_bytes
+                        + (SOURCE_BUFFER_HEADROOM if active_reads else 0),
                     ),
                 )
     except (OSError, ValueError, WorkspaceRootPinError):

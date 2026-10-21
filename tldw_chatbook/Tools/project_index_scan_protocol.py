@@ -12,6 +12,8 @@ from typing import BinaryIO
 
 from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
 from tldw_chatbook.Workspaces.project_index.models import (
+    MAX_FILE_BYTES,
+    MAX_QUEUED_BYTES,
     ProjectIndexPolicy,
     ScanEntry,
     relative_path,
@@ -22,8 +24,11 @@ MAX_FRAME_BYTES = 2 * 1024**2
 FRAME_HEADER_BYTES = struct.calcsize("!I")
 MAX_PAYLOAD_BYTES = MAX_FRAME_BYTES - FRAME_HEADER_BYTES
 TEXT_PART_BYTES = 64 * 1024
-# Leave headroom for the current worker body and parent capture validation.
-PAGE_TEXT_BYTES = 2 * 1024**2
+# Retained page plus two full scratch bodies and the sender's distinct UTF-8
+# slice: parent join/validation can overlap the final worker flush. The same
+# reserve also covers the worker decoding the next file while the parent joins.
+SOURCE_BUFFER_HEADROOM = 2 * MAX_FILE_BYTES + TEXT_PART_BYTES
+PAGE_TEXT_BYTES = MAX_QUEUED_BYTES - SOURCE_BUFFER_HEADROOM
 _FIELDS = {
     "Init": {"root", "identities", "policy"},
     "Directory": {"directory", "continuation", "revision", "exclusions", "ack"},

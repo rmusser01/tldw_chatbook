@@ -17,6 +17,8 @@ from tldw_chatbook.STT.executor_process_tree import (
     WorkerContainmentIdentity,
 )
 from tldw_chatbook.Tools.project_index_scan_protocol import (
+    PAGE_TEXT_BYTES,
+    SOURCE_BUFFER_HEADROOM,
     ScanProtocolError,
     authority_fields,
     encode_frame,
@@ -32,7 +34,6 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 from tldw_chatbook.Workspaces.project_index.models import (
     FileCapture,
     MAX_FILE_BYTES,
-    MAX_QUEUED_BYTES,
     ProjectIndexAuthority,
     ProjectIndexPolicy,
     ProjectIndexScope,
@@ -202,11 +203,12 @@ class ProjectScanner:
                 part_bytes += len(value["text"].encode("utf-8"))
                 if (
                     part_bytes > MAX_FILE_BYTES
-                    or retained_bytes + 2 * part_bytes > MAX_QUEUED_BYTES
+                    or retained_bytes + part_bytes > PAGE_TEXT_BYTES
                 ):
                     raise ScanProtocolError("capture_limit")
                 self.max_queued_text_bytes = max(
-                    self.max_queued_text_bytes, retained_bytes + 2 * part_bytes
+                    self.max_queued_text_bytes,
+                    retained_bytes + part_bytes + SOURCE_BUFFER_HEADROOM,
                 )
                 parts.append(value["text"])
                 if value["final"]:

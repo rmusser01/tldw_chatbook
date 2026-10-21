@@ -181,19 +181,23 @@ def test_page_handoff_does_not_retain_previous_directory_text(tmp_path):
 
     def emit(page):
         # slots intentionally disallow weakrefs: inspect reference count instead.
-        seen.append(page.captures[0].text)
+        if page.captures:
+            seen.append(page.captures[0].text)
+        else:
+            assert page.directory_complete
         return True
 
     def admit(directory):
-        if directory == "two":
+        if seen:
             import sys
 
             # one list reference + getrefcount argument only after handoff.
-            references = sys.getrefcount(seen[0])
+            references = sys.getrefcount(seen[-1])
             assert references == 2
         return auth
 
     scanner, result, _ = scan(tmp_path, frontier=["one", "two"], admit=admit, emit=emit)
+    assert len(seen) == 2
     assert result.status == "complete"
     assert scanner.retired
 
@@ -417,7 +421,7 @@ def test_megabyte_captures_apply_backpressure_before_next_read(tmp_path):
     assert result.status == "complete"
     assert sum(len(p.captures) for p in pages) == 7
     assert all(sum(c.size_bytes for c in p.captures) <= 3 * 1024**2 for p in pages)
-    assert scanner.max_queued_text_bytes == 4 * 1024**2
+    assert scanner.max_queued_text_bytes <= 4 * 1024**2
     assert scanner.max_active_reads == 1
 
 
@@ -621,3 +625,134 @@ def test_windows_unreadable_directory_emits_incomplete_receipt(tmp_path):
         subprocess.run(
             ["icacls", str(denied), "/remove:d", user], check=True, capture_output=True
         )
+
+
+@pytest.mark.parametrize("character", ["x", "\U0001f642"])
+@pytest.mark.parametrize("first_size", [1024**2, 1024**2 - 65536])
+def test_live_source_buffers_include_sender_slice_at_parent_join(
+    tmp_path, monkeypatch, character, first_size
+):
+    """Catch missing sender headroom with actual buffers held across real pipes."""
+    import inspect
+    import json
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    module = importlib.import_module("tldw_chatbook.Workspaces.project_index.scanner")
+    scanner = module.ProjectScanner()
+    corpus = tmp_path / "overlap"
+    corpus.mkdir()
+    for name, size in [("a.txt", first_size), ("b.txt", 1024**2)]:
+        (corpus / name).write_bytes(
+            character.encode("utf-8") * (size // len(character.encode("utf-8")))
+        )
+
+    # Only scheduling/instrumentation is substituted: real capture, encoding,
+    # pipe parsing, page admission, process containment and retirement still run.
+    child = """
+import json, sys
+from tldw_chatbook.Tools import project_index_scan_worker as worker
+original_write = worker.write_frame
+def hold_final(stream, value):
+    result = original_write(stream, value)
+    if value['type'] == 'File' and value['final']:
+        sender = sys._getframe(1).f_locals
+        buffers = {id(v): v for v in (sender['capture'].text, sender['part'])}
+        print(json.dumps({'source': sum(len(v.encode('utf-8')) for v in buffers.values()), 'slice': len(sender['part'].encode('utf-8'))}), file=sys.stderr, flush=True)
+        if sys.stdin.buffer.read(1) != b'!':
+            raise RuntimeError('overlap_release_missing')
+    return result
+worker.write_frame = hold_final
+raise SystemExit(worker.run_project_scan_worker(sys.stdin.buffer, sys.stdout.buffer))
+"""
+    real_popen = subprocess.Popen
+    processes = []
+
+    def launch(argv, **kwargs):
+        argv = list(argv)
+        argv[-1] = (
+            "import sys;sys.path.insert(0,"
+            + repr(str(Path(module.__file__).resolve().parents[3]))
+            + ");exec("
+            + repr(child)
+            + ")"
+        )
+        kwargs["stderr"] = subprocess.PIPE
+        process = real_popen(argv, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(module.subprocess, "Popen", launch)
+    lines, start = inspect.getsourcelines(module.ProjectScanner._unit)
+    joined_line = start + next(
+        i for i, line in enumerate(lines) if "parts.clear()" in line
+    )
+    observations = []
+
+    def trace(frame, event, arg):
+        if (
+            frame.f_code is module.ProjectScanner._unit.__code__
+            and event == "line"
+            and frame.f_lineno == joined_line
+        ):
+            local = frame.f_locals
+            buffers = {
+                id(v): v
+                for v in [
+                    *(c.text for c in local["captures"]),
+                    *local["parts"],
+                    local["text"],
+                    local["value"]["text"],
+                ]
+            }
+            worker = json.loads(processes[-1].stderr.readline())
+            observations.append(
+                {
+                    "parent": sum(len(v.encode("utf-8")) for v in buffers.values()),
+                    **worker,
+                }
+            )
+            processes[-1].stdin.write(b"!")
+            processes[-1].stdin.flush()
+        return trace
+
+    previous_trace = sys.gettrace()
+    auth = authority(corpus)
+    try:
+        sys.settrace(trace)
+        result = scanner.scan(
+            auth,
+            ProjectIndexScope(auth.key, 1, 1),
+            "overlap",
+            iter([""]),
+            lambda _: True,
+            threading.Event(),
+            admit_unit=lambda _: auth,
+            policy=ProjectIndexPolicy(("",), (".txt",)),
+        )
+    finally:
+        sys.settrace(previous_trace)
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            process.stderr.close()
+    assert result.status == "complete"
+    assert scanner.retired and scanner.pipes_closed
+    assert len(observations) == 2
+    assert max(v["slice"] for v in observations) == (
+        16384 if character == "x" else 65536
+    )
+    actual_maximum = max(v["parent"] + v["source"] for v in observations)
+    print(
+        {
+            "first_size": first_size,
+            "utf8_width": len(character.encode("utf-8")),
+            "observations": observations,
+            "actual_maximum": actual_maximum,
+            "accounted": scanner.max_queued_text_bytes,
+        }
+    )
+    assert actual_maximum <= 4194304, observations
+    assert actual_maximum <= scanner.max_queued_text_bytes <= 4194304
