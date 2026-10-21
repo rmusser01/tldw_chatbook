@@ -132,11 +132,13 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 
 #: tldw_chatbook modules the first-send warm-up adds beyond app + chat.
 #: New row, owner decision 2026-10-20 ("Measure, then merge", TASK-33620.15.13):
-#: since TASK-33620.15.5 the pass first imports the Console's first-send
+#: since TASK-33620.15.5 the pass also imports the Console's first-send
 #: modules (``Chat/console_first_send_modules.py``) on the same daemon thread,
-#: ahead of the routes, and the route walk above never ran them. A separate
-#: row rather than a raise of MAX_PASS_ADDED_MODULES: the route census stays
-#: comparable with its history, and this one is measured from the same start.
+#: after the last route (TASK-33620.15.14), and the route walk above never ran
+#: them. A separate row rather than a raise of MAX_PASS_ADDED_MODULES: the
+#: route census stays comparable with its history. This one is measured from
+#: the same start (app + chat), so it is an upper bound on what the warm-up
+#: adds once the routes have run.
 #: Pinned at the measurement on 2026-10-20 (origin/dev 2d071d6d71 plus the
 #: warm-up list), modules exactly, no slack. RATCHET (ADR-097): never rises.
 #: No LOC row: a LOC pin with no slack would fail every edit that adds a line
@@ -532,8 +534,10 @@ def _warmup_snapshot_diff(census: dict, ratchet) -> str:
 def test_first_send_warmup_payload_stays_within_budget(tmp_path: Path, ratchet) -> None:
     """The pass's first-send warm-up adds no module and no heavy dependency unseen.
 
-    TASK-33620.15.13: the warm-up runs on the pass's thread before the routes,
-    so its imports are pass payload too. Red when a module is added to
+    TASK-33620.15.13: the warm-up runs on the pass's thread after the last
+    route (TASK-33620.15.14), so its imports are pass payload too. Counted
+    from app + chat, the same start as the route walk: an upper bound on what
+    it adds once the routes have run. Red when a module is added to
     ``FIRST_SEND_MODULES`` or a listed module gains a top-level import of
     another tldw module (the message names it and the entry that pulls it
     in), or when the warm-up newly imports one of the boot guard's heavy

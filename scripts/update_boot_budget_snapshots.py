@@ -265,9 +265,10 @@ def update_first_send(force: bool) -> bool:
     ratchet = _ratchet()
     payload = {
         "_comment": (
-            "First-send warm-up payload census (the pre-import pass's first "
-            "step). Written ONLY by scripts/update_boot_budget_snapshots.py "
-            "(ADR-097)."
+            "First-send warm-up payload census (the pre-import pass's last "
+            "step, after the screen routes), counted from app + chat: an "
+            "upper bound on what the warm-up adds. Written ONLY by "
+            "scripts/update_boot_budget_snapshots.py (ADR-097)."
         ),
         "warmup_added_modules": census["warmup_added_modules"],
         "warmup_added_loc": census["warmup_added_loc"],

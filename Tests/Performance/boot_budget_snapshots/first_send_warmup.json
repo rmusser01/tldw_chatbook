@@ -1,5 +1,5 @@
 {
-  "_comment": "First-send warm-up payload census (the pre-import pass's first step). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
+  "_comment": "First-send warm-up payload census (the pre-import pass's last step, after the screen routes), counted from app + chat: an upper bound on what the warm-up adds. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
   "warmup_added_modules": 94,
   "warmup_added_loc": 61281,
   "listed": [
