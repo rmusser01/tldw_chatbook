@@ -4490,3 +4490,26 @@ two sends with no provider call.
 `pmset -g assertions`). Run pollers and helpers with the venv interpreter, not
 `/usr/bin/python3`. After the round, check `pmset -g log | grep Sleep` for its window,
 and drop any send that spans a sleep or a hung provider call. Do not average it in.
+
+## A small, consistent live gap is a mechanism until a probe says otherwise (TASK-33620.15.1, 2026-10-20)
+
+**Incident.** The config-sync cadence's first live round on dev 2d071d6d71 showed every
+visible-latency row slightly later on the branch (Agent rail "done" median +180 ms, cost
+chip +136 ms, n=5, pane sampled every 0.25 s). It was written up as "not the cadence"
+because the probe showed every projection near the transition ran. The re-measurement
+at lower load made the gap larger and one-sided: "done" +380 ms and the cost chip
++612 ms in 5 of 5 rounds. A probe that recorded who started each cold historical read
+found the cause in two rounds: the cadence's input read called the Agent rail's
+presentation readers, and at run completion `_console_agent_fleet_rows` started the
+rail's cold historical read before the tick's projection deferred. The read's
+publication (the fleet sync, and an Environment refresh it nudges that holds the UI loop
+0.35-0.77 s) then ran ahead of the deferral's replay. On dev the projection's own replay
+started that read, after the chip and the rail had rendered. Holding those reads during
+the input read made the branch sooner than dev in 5 of 5 rounds.
+
+**Practice.** When a change shows a same-sign difference in every round, however small,
+find the ordering before calling it noise: record when each worker starts and from which
+call chain (a probe that walks `sys._getframe` at the worker's creation), and compare
+the arms' timelines around the transition. A function used as a cheap change detector
+must be read for side effects first; a "reader" that starts a worker moves that worker's
+publication to wherever the detector runs.
