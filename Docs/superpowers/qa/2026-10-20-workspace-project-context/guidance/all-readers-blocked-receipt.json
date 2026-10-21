@@ -440,5 +440,6 @@
     "user_data_file_metadata_unchanged": true
   },
   "receipt_schema": "workspace-guidance-qa-v1",
-  "harness_provenance": "Real ChatScreen mounted in separate Host(Textual App), borrowing constructed TldwCli. Direct runtime-owned controller submits exercised production provider/tools. TldwCli lifecycle did not run; snapshots do not qualify normal application UI refresh."
+  "harness_provenance": "Real ChatScreen mounted in separate Host(Textual App), borrowing constructed TldwCli. Direct runtime-owned controller submits exercised production provider/tools. TldwCli lifecycle did not run; snapshots do not qualify normal application UI refresh.",
+  "dispatch_observation_scope": "first_request.messages and request_messages_sha256 refer to observed gateway dispatch-message arrays only. Separately supplied system context was not retained by this observer, so these are not complete model prompts or HTTP/wire requests. G1 automated final-guidance tests qualify guidance independently."
 }

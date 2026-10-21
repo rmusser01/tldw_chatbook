@@ -497,5 +497,6 @@
     "user_data_file_metadata_unchanged": true
   },
   "harness_provenance": "Actual TldwCli application lifecycle/run_test, no separate Host; normal visible Send handler and normal visible Stop. Startup readiness was observed, never set.",
-  "receipt_schema": "workspace-guidance-qa-v1"
+  "receipt_schema": "workspace-guidance-qa-v1",
+  "dispatch_observation_scope": "first_request.messages and request_messages_sha256 refer to observed gateway dispatch-message arrays only. Separately supplied system context was not retained by this observer, so these are not complete model prompts or HTTP/wire requests. G1 automated final-guidance tests qualify guidance independently."
 }
