@@ -13,9 +13,13 @@ duplicate keyword) used to route to the offending field and focus it. That
 was harmless only while autosaves waited for a pause. Mid-burst, the next
 body keys landed in the title, and the next autosave saved them as the title
 (review N-07). ``keep_autosave_veto_in_place`` is that guard: a vetoed or
-failed *autosave* never moves focus or switches the pane while an editor
-field has focus. It reports the reason in the save status instead. An
-explicit Save still routes to the field.
+failed *autosave* never moves focus or switches the pane. It reports the
+reason in the save status instead, and records the vetoed field so the
+editor can outline it with the reason under it (TASK-34000.10: the guard
+first covered only an editor field with focus; a veto landing while the
+user read Info, or sat on a toolbar button, still routed and focused, and
+the max wait makes that reachable mid-task). An explicit Save, and leaving
+the note, still route to the field.
 
 TASK-34000.9 (review N-06): the Library route is reusable (TASK-31521), so
 pushing any modal -- F1 help, Move note, the command palette -- suspends the
@@ -46,16 +50,6 @@ if TYPE_CHECKING:
     from ..Screens.library_screen import LibraryScreen
     from .library_notes_state import LibraryNotesState
 
-#: The note editor's fields. While one of them has focus the user is typing,
-#: and an autosave must not move them.
-_EDITOR_FIELD_IDS = frozenset(
-    {
-        "library-note-title",
-        "library-note-body",
-        "library-note-keywords",
-        "library-note-context-keywords",
-    }
-)
 #: Autosave outcomes that used to route to a field and focus it.
 _REFUSED = frozenset({NoteSaveOutcomeKind.VALIDATION_VETO, NoteSaveOutcomeKind.FAILED})
 #: The shortest delay an autosave timer is ever armed with (final review C1).
@@ -249,28 +243,35 @@ def resume_library_note_autosave(screen: LibraryScreen) -> bool:
 def keep_autosave_veto_in_place(
     screen: LibraryScreen, outcome: NoteSaveOutcome
 ) -> bool:
-    """Present a refused autosave without moving a typing user (review N-07).
+    """Present a refused autosave without moving the user (review N-07).
+
+    Wherever focus is when the veto lands -- an editor field, the Info or
+    Preview region, a toolbar button, the list -- nothing moves and no pane
+    switches (TASK-34000.10). The vetoed field is recorded on the state so
+    the editor outlines it and shows the reason under it; the status line
+    names the way out. The explicit paths (Save, leaving the note) are not
+    this function's and still route to the field.
 
     Args:
         screen: The Library screen whose autosave finished.
         outcome: The autosave's typed outcome.
 
     Returns:
-        True when the outcome was a vetoed or failed autosave of the open note
-        while an editor field has focus, and its status is now shown in place.
-        The caller must then skip the presentation that routes and focuses.
-        False for anything else, which the caller presents as before.
+        True when the outcome was a vetoed or failed autosave of the open
+        note, and its status is now shown in place. The caller must then
+        skip the presentation that routes and focuses. False for anything
+        else, which the caller presents as before.
     """
     if outcome.kind not in _REFUSED:
-        return False
-    focused = screen.focused
-    if focused is None or focused.id not in _EDITOR_FIELD_IDS:
         return False
     snapshot = screen._library_note_session.snapshot
     if snapshot is None or snapshot.note_id != screen._notes_state.selected_note_id:
         return False
     screen._notes_state.autosave_state = (
         "validation" if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO else "error"
+    )
+    screen._notes_state.validation_field = (
+        outcome.veto.field if outcome.veto is not None else ""
     )
     screen._update_library_note_meta_static(content=snapshot.body)
     return True

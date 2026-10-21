@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Keywords contain a case-insensitive duplicate — remove one to save. · Next: Fix    │
+│   a  │ Library notes · Ready                                        │  o  the marked field, or press Save to go to it.                                       │
+│   v  │ Notes (124)                                                  │  t    ‹ Notes   Untitled                                                               │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s                                                                                     │
+│      │ copy or keep a folder synced, choose Add from files.         │      In the Library database only — no file on disk                                    │
+│      │                                                              │     Keywords contain a case-insensitive duplicate — remove one to save. Next: Retry S… │
+│      │ Filter                                                       │         Edit     Preview     Info                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Save     Use in Console                                                        │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     Title                                                                              │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │                                                              │     ▊ Untitled                                                                       ▎ │
+│      │    New     Sort: Newest     Select                           │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │    Add from files…     Export                                │                                                                                        │
+│      │ Folders & placement                                          │     Keywords                                                                           │
+│      │    New folder     Add to folder     Move note                │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    ○ Remove placement                                        │     ▊ ok, x, X                                                                       ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │<---                                                                                    │
+│      │  ▾ Unfiled                                                   │      Keywords contain a case-insensitive duplicate — remove one to save.               │
+│      │    Untitled · Unfiled · now                                  │     Body                                                                               │
+│      │    Groceries · 4m                                            │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    Quotes · 10m                                              │     ▊                                                                                ▎ │
+│ ---> │    Scratch · 10m                                             │     ▊                                                                                ▎ │
+│      │    Untitled · Unfiled · 10m                                  │     ▊                                                                                ▎ │
+│      │    A very long note title that keeps going so we can test …  │     ▊                                                                                ▎ │
+│      │    📚 Reading queue 2026 ✨ · 10m                            │     ▊                                                                                ▎ │
+│      │    Gardening log · 10m                                       │     ▊                                                                                ▎ │
+│      │    Meeting Notes 2026-09-30 · 10m                            │     ▊                                                                                ▎ │
+│      │    Index — start here · 10m                                  │     ▊                                                                                ▎ │
+│      │    Reading list · 10m                                        │     ▊                                                                                ▎ │
+│      │    Ideas inbox · 10m                                         │     ▊                                                                                ▎ │
+│      │                                                              │     ▊                                                                                ▎ │
+│      │                                                              │     ▊                                                                                ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                         0 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

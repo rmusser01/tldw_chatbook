@@ -504,6 +504,11 @@ class LibraryNotesState:
     load_state: str = "idle"
     load_message: str = ""
     autosave_state: str = "idle"
+    #: TASK-34000.10 (N-07): the field a standing validation veto named
+    #: ("title" / "body" / "keywords"), or "". Read only while
+    #: ``autosave_state == "validation"``; the editor outlines that field and
+    #: shows the reason under it. Cleared by the next keystroke.
+    validation_field: str = ""
     autosave_timer: Timer | None = None
     autosave_generation: int = 0
     #: TASK-34000.1: ``((note_id, session_generation, saved_revision),

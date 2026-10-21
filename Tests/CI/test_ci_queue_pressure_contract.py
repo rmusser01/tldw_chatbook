@@ -75,6 +75,10 @@ FAST_LANE_TARGETS = (
     # providers), names both on the line above Run, and the scheduled
     # fallback takes the same pair; pure, about a second.
     "Tests/Library/test_library_rag_answer_provider_resolution.py",
+    # TASK-34000.10: leaving a note's Title or Keywords tidies exactly what
+    # the save would refuse (edge whitespace, a case-insensitive duplicate)
+    # and nothing more; pure, Hypothesis, about two seconds.
+    "Tests/Library/test_library_note_field_tidy.py",
     # TASK-34000.25: the ``[<title>](media://<uuid>)`` source line a note
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).

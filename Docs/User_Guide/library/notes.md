@@ -494,9 +494,15 @@ the dialog closes, so an edit typed just before F1 is still saved within
 the normal delay after you close it. If an autosave is
 refused — a title with a leading or trailing space, unsafe markup, a
 duplicate keyword — or the write fails, the status line says why, and your
-cursor stays in the field you are typing in. Nothing jumps to another field
-or pane mid-sentence; pressing **Save** takes you to the field that needs
-fixing. If the same note was changed somewhere else while you were editing,
+cursor stays where it is, whether that is the field you are typing in, the
+Info pane or a button. Nothing jumps to another field or pane mid-sentence.
+The field that needs fixing is outlined, with the reason directly under it,
+and the status line reads "Fix the marked field, or press Save to go to
+it"; pressing **Save** takes you there. Leaving the Title field tidies a
+leading or trailing space, and leaving Keywords drops a duplicate that
+differs only in case ("x, X" becomes "x"), so an ordinary slip like that
+never leaves the note unsaved; you see the edit in the field, and nothing
+is rewritten at save. If the same note was changed somewhere else while you were editing,
 a banner appears: "This note changed elsewhere — Overwrite saves your text;
 Reload discards it." — pick **Overwrite** or **Reload**.
 

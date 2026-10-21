@@ -107,8 +107,11 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: nothing is watching, whose tree row reads "⚠ Sync stopped" (108 + 1 = 109).
 #: **110**: TASK-34000.25 -- ``create_caret``, where the caret lands once a
 #: just-created note's editor is ready ("title" for every create today,
-#: "body-end" for the Media Reader's Note action) (109 + 1 = 110).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 110
+#: "body-end" for the Media Reader's Note action) (109 + 1 = 110). **111**:
+#: TASK-34000.10 -- ``validation_field``, the field a standing validation
+#: veto named, which the editor outlines with the reason under it
+#: (110 + 1 = 111).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 111
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

@@ -1333,6 +1333,105 @@ async def test_the_authority_line_promises_autosave_only_while_one_is_scheduled(
         ), text
 
 
+_DUPLICATE_VETO = "Keywords contain a case-insensitive duplicate — remove one to save."
+_WHITESPACE_VETO = "Title begins or ends with whitespace — remove it to save."
+_FIELD_HINTS = (
+    "#library-note-title-hint",
+    "#library-note-keywords-hint",
+    "#library-note-context-keywords-hint",
+    "#library-note-body-hint",
+)
+
+
+async def test_a_vetoed_field_is_marked_with_its_reason_under_it(
+    widget_pilot,  # noqa: F811
+):
+    """TASK-34000.10 (review N-07): a veto used to style nothing but the
+    status row. The vetoed field now carries ``library-note-field-invalid``
+    and the coordinator's own message is shown in a hint directly under it;
+    the other hints stay hidden. Both keyword boxes carry the keywords mark
+    (only one is ever displayed), and the authority line names the way out
+    without promising a save that cannot land.
+    """
+    clean = _editor_state()
+    vetoed = replace(
+        clean,
+        status_line=_DUPLICATE_VETO,
+        validation=True,
+        validation_field="keywords",
+        validation_message=_DUPLICATE_VETO,
+        autosave_scheduled=False,
+        snapshot=replace(clean.snapshot, dirty=True, status_message=_DUPLICATE_VETO),
+    )
+    async with await widget_pilot(
+        LibraryNotesCanvas, mode="editor", presentation_state=vetoed
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        # Composed from the state: the mount-time apply never runs
+        # (TASK-34000.25), so a veto standing when the editor composes must
+        # already be marked.
+        for selector in ("#library-note-keywords", "#library-note-context-keywords"):
+            assert canvas.query_one(selector).has_class("library-note-field-invalid"), selector
+        assert not canvas.query_one("#library-note-title").has_class(
+            "library-note-field-invalid"
+        )
+        shown = {
+            selector
+            for selector in _FIELD_HINTS
+            if canvas.query_one(selector, Static).display
+        }
+        assert shown == {
+            "#library-note-keywords-hint",
+            "#library-note-context-keywords-hint",
+        }, shown
+        hint = canvas.query_one("#library-note-keywords-hint", Static)
+        assert getattr(hint.renderable, "plain", str(hint.renderable)) == _DUPLICATE_VETO
+        authority = canvas.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            f"{_DUPLICATE_VETO} · Next: Fix the marked field, or press Save to go to it."
+        ), text
+        assert "save automatically" not in text, text
+
+        # The mark follows the state: a title veto moves it, a keystroke
+        # (validation cleared) removes it, and no hint is left showing.
+        canvas.apply_session_state(
+            replace(
+                vetoed,
+                status_line=_WHITESPACE_VETO,
+                validation_field="title",
+                validation_message=_WHITESPACE_VETO,
+            )
+        )
+        assert canvas.query_one("#library-note-title").has_class(
+            "library-note-field-invalid"
+        )
+        assert not canvas.query_one("#library-note-keywords").has_class(
+            "library-note-field-invalid"
+        )
+        assert canvas.query_one("#library-note-title-hint", Static).display
+        assert not canvas.query_one("#library-note-keywords-hint", Static).display
+
+        canvas.apply_session_state(
+            replace(clean, snapshot=replace(clean.snapshot, dirty=True), autosave_scheduled=True)
+        )
+        for selector in (
+            "#library-note-title",
+            "#library-note-keywords",
+            "#library-note-context-keywords",
+            "#library-note-body",
+        ):
+            assert not canvas.query_one(selector).has_class(
+                "library-note-field-invalid"
+            ), selector
+        assert not any(
+            canvas.query_one(selector, Static).display for selector in _FIELD_HINTS
+        )
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith("Next: Keep editing; changes save automatically."), text
+
+
 async def test_editor_status_says_a_held_sync_folder_needs_attention(
     widget_pilot,  # noqa: F811
 ):

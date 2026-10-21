@@ -21340,6 +21340,7 @@ class LibraryScreen(BaseAppScreen):
         if snapshot is None or snapshot.in_conflict or snapshot.saving:
             return
         self._notes_state.autosave_state = "idle"
+        self._notes_state.validation_field = ""  # TASK-34000.10: a keystroke clears the mark
         self._invalidate_library_note_autosave()
         from ..Library_Modules.library_note_autosave import arm_library_note_autosave
 
@@ -21369,6 +21370,32 @@ class LibraryScreen(BaseAppScreen):
         return self._notes_controller.handle_library_note_context_keywords_changed(
             event
         )
+
+    # TASK-34000.10 (N-07): leaving Title or Keywords tidies the edge
+    # whitespace or the case-insensitive duplicate the save would refuse, as a
+    # visible draft edit through the field's own Changed handler (ADR-027:
+    # nothing is rewritten at save). The policy and its guards live in
+    # ``Library/library_note_field_tidy.py``; imported lazily, like the
+    # autosave policy, to stay off the Library preimport census.
+    @on(Input.Blurred, "#library-note-title")
+    def handle_library_note_title_blurred(self, event: Input.Blurred) -> None:
+        from ...Library.library_note_field_tidy import tidy_library_note_field_on_blur
+
+        tidy_library_note_field_on_blur(self, event)
+
+    @on(Input.Blurred, "#library-note-keywords")
+    def handle_library_note_keywords_blurred(self, event: Input.Blurred) -> None:
+        from ...Library.library_note_field_tidy import tidy_library_note_field_on_blur
+
+        tidy_library_note_field_on_blur(self, event)
+
+    @on(Input.Blurred, "#library-note-context-keywords")
+    def handle_library_note_context_keywords_blurred(
+        self, event: Input.Blurred
+    ) -> None:
+        from ...Library.library_note_field_tidy import tidy_library_note_field_on_blur
+
+        tidy_library_note_field_on_blur(self, event)
 
     @on(Button.Pressed, "#library-note-save")
     def handle_library_note_save(self, event: Button.Pressed) -> None:
@@ -21610,6 +21637,7 @@ class LibraryScreen(BaseAppScreen):
         validation_field = ""
         if outcome.save_outcome is not None and outcome.save_outcome.veto is not None:
             validation_field = outcome.save_outcome.veto.field
+        self._notes_state.validation_field = validation_field  # TASK-34000.10: the mark
         if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO:
             self._route_library_note_validation_field(validation_field)
         self._update_library_note_meta_static(content=snapshot.body)

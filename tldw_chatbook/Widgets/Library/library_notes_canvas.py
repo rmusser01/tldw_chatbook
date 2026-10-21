@@ -797,6 +797,42 @@ _NOTE_EDITOR_INPUT_IDS = frozenset(
 )
 
 
+#: TASK-34000.10 (N-07): the class a vetoed field carries (an error outline,
+#: ``features/_library_notes_panels.tcss``), and the hint Static under each
+#: field that shows the coordinator's reason while that field is vetoed.
+#: ``(field selector, hint selector, veto field name)``; both keyword boxes
+#: take the keywords mark -- only one of them is ever displayed.
+_NOTE_FIELD_INVALID_CLASS = "library-note-field-invalid"
+_NOTE_FIELD_HINT_CLASS = "library-note-field-hint"
+_NOTE_FIELD_MARKS: tuple[tuple[str, str, str], ...] = (
+    ("#library-note-title", "#library-note-title-hint", "title"),
+    ("#library-note-keywords", "#library-note-keywords-hint", "keywords"),
+    (
+        "#library-note-context-keywords",
+        "#library-note-context-keywords-hint",
+        "keywords",
+    ),
+    ("#library-note-body", "#library-note-body-hint", "body"),
+)
+
+
+def _library_note_field_hint(widget_id: str, shown: bool, reason: str) -> Static:
+    """A field's reason-under-it hint, composed hidden unless its veto stands.
+
+    An empty Static still takes its row, so the hint is ``display``-gated,
+    not just cleared (lessons-textual); ``markup=False`` because the reason
+    quotes what the user typed.
+    """
+    hint = Static(
+        reason if shown else "",
+        id=widget_id,
+        classes=_NOTE_FIELD_HINT_CLASS,
+        markup=False,
+    )
+    hint.display = shown
+    return hint
+
+
 #: task-32106 AC#1: shared by every field of the note editor -- see
 #: ``NoteEditorInput`` below for the mechanism and the measurement.
 _NOTE_FIELD_TAB_BINDINGS = [
@@ -1044,6 +1080,12 @@ class LibraryNotePresentationState:
     presentation: Literal["edit", "preview"] = "edit"
     compact: bool = False
     validation: bool = False
+    #: TASK-34000.10 (N-07): the field the standing veto named ("title" /
+    #: "body" / "keywords") and the coordinator's own reason, or "" / "" when
+    #: no veto stands. The field is outlined and the reason shown directly
+    #: under it; both keyword boxes carry the keywords mark (one is displayed).
+    validation_field: str = ""
+    validation_message: str = ""
     #: TASK-34000.9: whether an autosave is armed or running right now. The
     #: status line promises "changes save automatically" for a dirty note
     #: only while this holds; a modal stops the timer, and a dirty note with
@@ -1474,6 +1516,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # have. Name the control that gets the reader back to the
                 # one that does.
                 next_action = "Press Edit to change this note."
+            elif state.validation:
+                # TASK-34000.10 (N-07): a veto stands and nothing is armed (a
+                # refused autosave ends its burst, TASK-34000.9), so neither
+                # promise below is true; name the way out -- the outlined
+                # field, or Save, which routes to it. Above the empty-body
+                # arm: a vetoed title on an empty note needs this, not
+                # "Start typing".
+                next_action = "Fix the marked field, or press Save to go to it."
             elif not state.snapshot.body:
                 # Review F4: "Keep editing" presumes editing has started.
                 # The brief's "Start typing" belongs here -- this is the
@@ -3211,14 +3261,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # ``_apply_editor_surface_gates`` on the last line of
                     # this compose like every other (fix round 2).
                     yield discard_new
+        # TASK-34000.10 (N-07): a veto standing when the editor composes is
+        # marked here, from the state, for the same reason every other
+        # display-gated surface is (the mount-time apply never runs).
+        vetoed_field = presentation_state.validation_field
+        veto_reason = presentation_state.validation_message
         with root(Vertical(id="library-note-editor-region")):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
-                yield NoteEditorInput(
+                title_input = NoteEditorInput(
                     value="" if self.title_placeholder_only else title,
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
                 )
+                title_input.set_class(vetoed_field == "title", _NOTE_FIELD_INVALID_CLASS)
+                yield title_input
+            yield _library_note_field_hint(
+                "library-note-title-hint", vetoed_field == "title", veto_reason
+            )
             # task-32642 AC#3: keywords used to be reachable only by opening
             # Info -- this Input is the twin that lived, permanently
             # undisplayed, inside `#library-note-wide-utilities`. It is the
@@ -3228,13 +3288,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # under the title, where the note's other two fields are.
             with Horizontal(id="library-note-keywords-row"):
                 yield Static("Keywords", id="library-note-keywords-label", markup=False)
-                yield NoteEditorInput(
+                keywords_input = NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-keywords",
                 )
+                keywords_input.set_class(
+                    vetoed_field == "keywords", _NOTE_FIELD_INVALID_CLASS
+                )
+                yield keywords_input
+            yield _library_note_field_hint(
+                "library-note-keywords-hint", vetoed_field == "keywords", veto_reason
+            )
             yield Static("Body", id="library-note-body-label", markup=False)
-            yield NoteEditorTextArea(content, id="library-note-body")
+            body_area = NoteEditorTextArea(content, id="library-note-body")
+            body_area.set_class(vetoed_field == "body", _NOTE_FIELD_INVALID_CLASS)
+            yield body_area
+            yield _library_note_field_hint(
+                "library-note-body-hint", vetoed_field == "body", veto_reason
+            )
 
         with root(VerticalScroll(id="library-note-preview-region", can_focus=True)):
             # task-32142 AC#1: the shared heading row's title Static (above)
@@ -3260,11 +3332,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield Static(
                     "Keywords", id="library-note-context-keywords-label", markup=False
                 )
-                yield NoteEditorInput(
+                context_keywords_input = NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
                 )
+                context_keywords_input.set_class(
+                    vetoed_field == "keywords", _NOTE_FIELD_INVALID_CLASS
+                )
+                yield context_keywords_input
+            yield _library_note_field_hint(
+                "library-note-context-keywords-hint",
+                vetoed_field == "keywords",
+                veto_reason,
+            )
             yield Static(
                 library_note_property_block(
                     presentation_state.properties,
@@ -3930,6 +4011,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             node(selector).disabled = state.destructive_running
         return flags
 
+    def _apply_field_validation_marks(self, state: LibraryNotePresentationState) -> None:
+        """Outline the vetoed field and show its reason under it; clear the rest.
+
+        TASK-34000.10 (N-07): the only veto styling used to be the compact
+        status-row rule on the whole canvas. The mark follows the state on
+        every sync, so a keystroke (which clears the veto) removes it, and
+        a veto on another field moves it. Difference-checked like the other
+        surfaces: ``display`` flips lay the pane out.
+        """
+        for field_selector, hint_selector, field in _NOTE_FIELD_MARKS:
+            vetoed = state.validation_field == field
+            self.query_one(field_selector).set_class(vetoed, _NOTE_FIELD_INVALID_CLASS)
+            hint = self.query_one(hint_selector, Static)
+            reason = state.validation_message if vetoed else ""
+            if self._static_text(hint) != reason:
+                hint.update(reason)
+            if hint.display != vetoed:
+                hint.display = vetoed
+
     def apply_session_state(self, state: LibraryNotePresentationState) -> None:
         """Synchronize stable editor surfaces from one immutable snapshot.
 
@@ -4123,6 +4223,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
+        self._apply_field_validation_marks(state)
         # task-32139: one Back label, sized by compact -- see the matching
         # compose-time comment above.
         back_label = _library_note_back_label(state.compact)

@@ -518,7 +518,16 @@ _BUDGETS: dict[str, int] = {
     # import of the autosave policy module (one line plus its blank); the
     # predicate itself is in ``library_note_autosave.py``. Re-set to the
     # exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6389,
+    #
+    # 2026-10-21, TASK-34000.10: 6389 -> 6397 (+8), owner decision (same
+    # 2026-10-04 ruling). ``_library_note_presentation_state`` carries the
+    # vetoed field and its reason (``validation_field`` /
+    # ``validation_message``: one ``vetoed`` line, two kwargs, a three-line
+    # comment), and the two explicit veto presenters (Save, conflict
+    # Overwrite) each record the field in one line; the focus-independent
+    # guard itself is in ``library_note_autosave.py``, the tidy in
+    # ``Library/library_note_field_tidy.py``. Re-set to the exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6397,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

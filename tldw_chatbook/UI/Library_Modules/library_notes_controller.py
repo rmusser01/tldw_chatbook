@@ -1471,6 +1471,7 @@ class LibraryNotesController:
             ("Words", word_copy),
         )
         operation = self._library_notes_operation_for_active_region()
+        vetoed = self._library_note_autosave_state == "validation"
         from .library_note_autosave import autosave_is_scheduled  # noqa: PLC0415 -- lazy: keeps the autosave policy module off the preimport census
 
         status_channels = resolve_database_note_status_channels(
@@ -1507,7 +1508,12 @@ class LibraryNotesController:
             region="context" if self._library_note_context else "editor",
             presentation="preview" if self._library_note_preview else "edit",
             compact=self._library_notes_compact,
-            validation=self._library_note_autosave_state == "validation",
+            validation=vetoed,
+            # TASK-34000.10 (N-07): the vetoed field and the coordinator's own
+            # reason, for the outline and the hint under the field; both
+            # empty the moment the veto no longer stands.
+            validation_field=self._notes_state.validation_field if vetoed else "",
+            validation_message=snapshot.status_message if vetoed else "",
             autosave_scheduled=autosave_is_scheduled(self._notes_state, snapshot),
             conflict=snapshot.in_conflict,
             conflict_running=self._library_note_session.conflict_resolution_running,
@@ -3959,6 +3965,7 @@ class LibraryNotesController:
             else "error"
         )
         validation_field = outcome.veto.field if outcome.veto is not None else ""
+        self._notes_state.validation_field = validation_field  # TASK-34000.10: the mark
         if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO:
             self._route_library_note_validation_field(validation_field)
         elif self._library_note_preview:
@@ -4124,6 +4131,7 @@ class LibraryNotesController:
                 and outcome.save_outcome.veto is not None
             ):
                 validation_field = outcome.save_outcome.veto.field
+            self._notes_state.validation_field = validation_field  # TASK-34000.10
         self._library_note_preview = False
         self._library_note_context = False
         if outcome.kind is ConflictOutcomeKind.VALIDATION_VETO:

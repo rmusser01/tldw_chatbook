@@ -19949,7 +19949,16 @@ async def test_library_note_coordinator_validation_veto_keeps_raw_title_and_focu
 async def test_library_note_keyword_validation_routes_to_wide_info_control(
     monkeypatch,
 ):
-    """A wide Info autosave veto keeps focus on its visible keywords field."""
+    """An explicit Save's keyword veto routes to the visible Info keywords
+    field; the autosave's veto before it marks the field and moves nothing.
+
+    TASK-34000.10 (review N-07): this pin used to wait for the 0.05 s
+    AUTOSAVE to focus the Info keywords control -- the very routing that
+    sent a typing user's next keys into the wrong field. A vetoed autosave
+    now never moves focus or switches the pane, wherever focus is; the
+    explicit Save still does (AC#3), so the routing half is driven by the
+    Save button here.
+    """
     monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -19962,10 +19971,26 @@ async def test_library_note_keyword_validation_routes_to_wide_info_control(
 
         screen.query_one("#library-note-context").press()
         await _wait_for_display(screen, pilot, "#library-note-context-region")
-        screen.query_one(
-            "#library-note-context-keywords", Input
-        ).value = "duplicate, Duplicate"
+        focused_before = screen.focused
+        keywords = screen.query_one("#library-note-context-keywords", Input)
+        keywords.value = "duplicate, Duplicate"
 
+        # The autosave's veto: in place. Nothing moves, the field is marked.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.autosave_state == "validation",
+            message="The autosave's keyword veto never landed.",
+        )
+        await pilot.pause()
+        await pilot.pause(0.3)  # the old routing focused after a refresh
+        assert screen.focused is focused_before, (
+            f"a vetoed autosave moved focus to {getattr(screen.focused, 'id', None)!r}"
+        )
+        assert screen._notes_state.validation_field == "keywords"
+        assert keywords.has_class("library-note-field-invalid")
+
+        # The explicit Save's veto: routes to the visible keywords control.
+        screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -19973,7 +19998,7 @@ async def test_library_note_keyword_validation_routes_to_wide_info_control(
                 and getattr(screen.focused, "id", None)
                 == "library-note-context-keywords"
             ),
-            message="Wide keyword veto did not focus the Info keyword control.",
+            message="Save's keyword veto did not focus the Info keyword control.",
         )
         assert screen.query_one("#library-note-context-region").display is True
         assert screen.query_one("#library-note-wide-utilities").display is False

@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Keywords contain a case-insensitive duplicate — remove one to save.
+  a    o   · Next: Fix the marked field, or press Save to go to it.
+  v    t    ‹ Back to list    Untitled                        Library notes
+       e   In the Library database only — no file on disk
+       s   Keywords contain a case-insensitive duplicate — remove one to save.
+           Next: Retry Save.
+--->          Edit     Preview     Info
+              Save     Use in Console
+     --->  Title     Untitled
+           Keywords  ok, x, X
+           Keywords contain a case-insensitive duplicate — remove one to save.
+--->       Body
+          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+          ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+                                                                  0 words · 1:1
+  esc notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

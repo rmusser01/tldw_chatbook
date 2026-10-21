@@ -104,3 +104,38 @@
 .library-notes-sync-attention-actions > Button {
     width: $ds-width-full;
 }
+
+
+/* TASK-34000.10 (review N-07): a validation veto marks the field itself. The
+   vetoed field carries `library-note-field-invalid` (an error outline, the
+   `-ingest-option-invalid` precedent) and the Static directly under it shows
+   the coordinator's own reason; the hint is display-gated from Python (an
+   empty Static still takes its row), so the sheet only shapes and colours it.
+   Every selector token is Library-prefixed (ADR-097): the splitter moves
+   these rules onto the Library screen's lazily-loaded sheet, off the boot
+   bundle. The focused-field accent is also `tall`, so the outline keeps the
+   field's size; the error tier is the readable one (task-2230, a11y). */
+.library-note-field-hint {
+    height: auto;
+    color: $ds-status-error-readable;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-note-title.library-note-field-invalid,
+#library-note-keywords.library-note-field-invalid,
+#library-note-context-keywords.library-note-field-invalid,
+#library-note-body.library-note-field-invalid {
+    border: tall $ds-status-error-readable;
+}
+
+/* Compact (under 120 columns): the hint takes exactly one row while a veto
+   stands, so the body gives up one row and no more. Measured at the 60x20
+   floor: the wrapped reason took two rows and the body fell from five to
+   two. The status row above still carries the whole reason (its own compact
+   rule wraps it over two rows), so the clipped tail here loses nothing. */
+#library-shell-grid.library-notes-compact .library-note-field-hint {
+    height: $ds-size-1;
+    max-height: $ds-size-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
