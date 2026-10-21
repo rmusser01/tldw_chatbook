@@ -318,3 +318,17 @@ class ProjectSearchResult:
     def __post_init__(self):
         if self.status not in {"ready", "partial", "unavailable"}:
             raise ValueError("invalid_search_status")
+
+
+@dataclass(frozen=True, slots=True)
+class ScanRunResult:
+    """Truthful scan outcome; only completed receipts certify enumeration."""
+
+    status: str
+    directories_completed: int
+    discovered: int
+    issues: tuple[str, ...]
+
+    def __post_init__(self):
+        if self.status not in {"complete", "partial", "paused", "interrupted", "error"}:
+            raise ValueError("invalid_scan_status")
