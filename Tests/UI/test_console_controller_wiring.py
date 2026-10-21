@@ -332,7 +332,7 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     store = object()
     conversation_id = "conversation"
     provider = object()
-    roots = object()
+    roots = "/bound/root"
     runs_db = object()
     bindings = object()
     native_messages = object()
@@ -340,11 +340,12 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     active_status = next(iter(FEEDBACK_ACTIVE_RUN_STATUSES))
     # TASK-33620.15.1.3: the roots are read narrowly -- the session's own
     # workspace through the app's Change Review consent service -- never by
-    # building a whole turn snapshot.
+    # building a whole turn snapshot. Roots come back as strings, as the
+    # snapshot stores them, so the doubles are strings too.
     chat_controller = SimpleNamespace(
         store=SimpleNamespace(
             active_session_id="session",
-            session_workspace_id=lambda session_id: ("workspace", session_id),
+            session_workspace_id=lambda session_id: f"workspace-of-{session_id}",
         ),
         run_state=SimpleNamespace(status=active_status),
         _agent_conversation_id=lambda session_id: (conversation_id, session_id),
@@ -397,7 +398,7 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     assert controller._run_active_for_root("root") == ("active", "root")
     assert controller._workspace_roots_accessor() == (
         roots,
-        ("workspace", "session"),
+        "workspace-of-session",
     )
     assert controller._agent_runs_db_accessor() is runs_db
     assert controller._capture_policy_bindings_accessor("session", "conversation") == (
