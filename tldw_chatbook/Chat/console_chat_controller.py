@@ -3757,6 +3757,7 @@ class ConsoleChatController:
         canvas_enabled_reader: Callable[[], bool] | None = None,
         canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
+        library_initialization_timeout: float = 60.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
         hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
         response_rules_changed: Callable[[str], None] | None = None,
@@ -3816,6 +3817,9 @@ class ConsoleChatController:
         self._canvas_disabled_reader = canvas_disabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
+        )
+        self._library_initialization_timeout = max(
+            0.001, float(library_initialization_timeout)
         )
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
@@ -7369,6 +7373,15 @@ class ConsoleChatController:
 
         return self._preparation_outcomes.get(preparation_id)
 
+    async def _prewarm_library_service(self, service: Any) -> None:
+        """Initialize retrieval within its own finite startup budget."""
+        prewarm = getattr(service, "prewarm", None)
+        if callable(prewarm):
+            async with asyncio.timeout(self._library_initialization_timeout):
+                result = prewarm()
+                if inspect.isawaitable(result):
+                    await result
+
     async def prepare_library_for_turn(
         self, preparation_id: str
     ) -> ConsolePreparationOutcome:
@@ -7401,8 +7414,9 @@ class ConsoleChatController:
         )
         error_code: str | None = None
         try:
+            service = getattr(self.app, "library_rag_search_service", None)
+            await self._prewarm_library_service(service)
             async with asyncio.timeout(self._library_preparation_timeout):
-                service = getattr(self.app, "library_rag_search_service", None)
                 search = getattr(service, "search", None)
                 if not callable(search):
                     raise RuntimeError("library service unavailable")
@@ -7426,15 +7440,20 @@ class ConsoleChatController:
         except TimeoutError:
             result = None
             error_code = "library_retrieval_timeout"
-        except Exception:
+        except Exception as exc:
             result = None
             error_code = "library_retrieval_failed"
+            logger.warning(
+                "Console Library retrieval failed | exception_type={}",
+                type(exc).__name__,
+            )
 
         results = tuple(getattr(result, "results", ()) or ()) if result else ()
         status = str(getattr(result, "status", "") or "") if result else ""
         if error_code is None and status not in {"ready", "empty"}:
             error_code = "library_retrieval_failed"
         if error_code is not None:
+            logger.warning("Console Library preparation paused | error_code={}", error_code)
             paused = self.store.compare_and_set_preparation(
                 preparation.session_id,
                 ConsolePreparationTransition(
@@ -9295,6 +9314,15 @@ class ConsoleChatController:
                 if result.accepted
                 else "refused"
             )
+            if not result.accepted or result.terminal_status in {
+                ConsoleRunStatus.BLOCKED,
+                ConsoleRunStatus.FAILED,
+            }:
+                logger.warning(
+                    "Console submit requires attention | accepted={} status={}",
+                    result.accepted,
+                    diagnostic.outcome,
+                )
             return result
 
     async def _submit_draft_lifecycle(
@@ -10611,6 +10639,7 @@ class ConsoleChatController:
                         session_id=session.id,
                         origin=origin,
                         queue_entry_id=queue_entry_id,
+                        preparation_id=preparation.preparation_id,
                     )
 
         if origin is ConsoleSubmissionOrigin.GOAL_ITERATION:
@@ -12894,6 +12923,11 @@ class ConsoleChatController:
                 provider_started=True,
             )
         except BaseException as exc:
+            if not isinstance(exc, asyncio.CancelledError):
+                logger.error(
+                    "Console accepted-turn settlement failed | exception_type={}",
+                    type(exc).__name__,
+                )
             if native_owner is not None:
                 if not self._ordinary_native_commit_current(native_owner):
                     return self._retain_original_native_commit_recovery(
@@ -13203,6 +13237,7 @@ class ConsoleChatController:
             if request.scope is not None:
                 kwargs["scope"] = request.scope
             try:
+                await self._prewarm_library_service(service)
                 async with asyncio.timeout(self._library_preparation_timeout):
                     raw = search(
                         request.query,
@@ -26452,8 +26487,13 @@ class ConsoleChatController:
                 expected_project_state = state
 
                 def on_owning_loop(callback):
-                    call_from_thread = getattr(self.app, "call_from_thread", None)
-                    if callable(call_from_thread):
+                    app = self.app
+                    call_from_thread = getattr(app, "call_from_thread", None)
+                    # Stock composition checks authority on the app loop too;
+                    # Textual only permits call_from_thread from another thread.
+                    if callable(call_from_thread) and threading.get_ident() != getattr(
+                        app, "_thread_id", None
+                    ):
                         return call_from_thread(callback)
                     return callback()
 

@@ -32,6 +32,8 @@ This document describes the RAG stack: the shared RAG service (embeddings + vect
 8. **Answer**: the canvas renders the Answer region **above** the evidence rows. `generate_library_rag_answer` builds an evidence bundle; with no citable references it returns `no_evidence` **without any provider call**; otherwise exactly one `chat_api_call` (max_tokens 1200, 6000 for reasoning-typed models, temperature 0.2) under an honesty-contract system prompt; citations validate against the evidence grammar shared with Console cited answers; the whole body never raises into the calling worker.
 9. **Unavailability is honest**: "RAG unavailable" surfaces a recovery state with the `pip install "tldw_chatbook[embeddings_rag]"` instruction; "Index empty" points at ingest/backfill.
 
+Console send-time retrieval calls `LibraryLocalRagSearchService.prewarm()` under a separate 60-second initialization budget before the existing 5-second search budget. Both initial preparation and explicit dispatch retry use these bounds; initialization failure/timeout remains a retrieval pause or retry refusal. Cancellation still propagates. The enhanced public search does not forward `query_embedding` to the base search; a supplied non-None vector is rejected explicitly because that public base method computes its own embedding.
+
 ## Indexing flow (document → chunk → embed → store)
 
 1. Ingestion fires a registered **post-commit** hook (`add_media_with_keywords` and the notes/conversation equivalents); a cheap availability gate (find-spec probe + the `[…rag.indexing] enabled` kill switch) runs first; hook errors are swallowed — ingestion is never affected.

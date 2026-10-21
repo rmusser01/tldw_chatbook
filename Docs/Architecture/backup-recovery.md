@@ -2,6 +2,8 @@
 
 This document describes the ADR-126 complete local backup and restore subsystem: inventory and data groups, admission/quiescing, capture and encrypted archives, replace/isolated restore with journaled publication and encrypted rollback, recovered-media review, and the startup fence. "Recovery" elsewhere (notes-sync crash recovery, server-sync account recovery, fleet worktree recovery) belongs to those subsystems' own docs.
 
+Qualification keeps native identity and operation verdicts fresh on every call. Only parsed installed evidence is cached, by its path and descriptor-verified file generation (device, file identity, size, nanosecond modification and change times). Windows uses native ChangeTime. Changed, missing, malformed or concurrently replaced evidence is refused; a prior refusal is never retained as an authorization cache.
+
 ## Authoritative files
 
 | Concern | File | Key symbols |

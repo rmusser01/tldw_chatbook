@@ -1033,6 +1033,43 @@ def test_project_dispatch_confirmation_waits_app_owned_when_detached_before_requ
     assert result == ["proceed"]
 
 
+@pytest.mark.parametrize("projection", ("detached", "refused", "mounted"))
+def test_project_dispatch_unanswered_confirmation_cancels_without_disabling(projection):
+    runtime = _project_notice_runtime()
+    runtime._project_instruction_notice_timeout_seconds = 0.01
+    view = None
+    if projection != "detached":
+        view = _WeakView(
+            {
+                "project_project_instruction_dispatch": lambda *_args: projection
+                == "mounted"
+            }
+        )
+        generation = runtime.attach_view(view)
+        assert runtime.finish_view_reconciliation(view, generation)
+    result = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            runtime._confirm_project_instruction_dispatch(
+                SimpleNamespace(session_id="session-a")
+            )
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        worker.join(0.5)
+        assert not worker.is_alive(), "an invisible dispatch decision must expire"
+        assert result == [
+            "cancel"
+        ], "expiry must preserve project-instruction preferences"
+        assert runtime._project_dispatch_decisions == {}
+    finally:
+        for decision_id in tuple(runtime._project_dispatch_decisions):
+            runtime.resolve_project_instruction_dispatch(decision_id, "cancel")
+        worker.join(1)
+
+
 def test_project_dispatch_confirmation_does_not_retain_view_detached_during_wait():
     runtime = _project_notice_runtime()
     first_projected = threading.Event()
