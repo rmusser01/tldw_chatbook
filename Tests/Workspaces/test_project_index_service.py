@@ -1058,3 +1058,166 @@ async def test_failed_writer_dispatch_becomes_explicitly_resumable(
         assert rig.service.status(rig.key).state == "Interrupted"
     finally:
         await rig.close()
+
+
+class AdmissionBarrierScanner(ProjectScanner):
+    """Hold before the second real Directory admission, after a committed page."""
+
+    def __init__(self):
+        super().__init__()
+        self.before_admit = threading.Event()
+        self.release = threading.Event()
+        self.admissions = []
+        self.directory_requests = []
+
+    def scan(self, *args, **kwargs):
+        admit = kwargs["admit_unit"]
+
+        def held(directory):
+            if self.admissions:
+                self.before_admit.set()
+                assert self.release.wait(30)
+            result = admit(directory)
+            self.admissions.append(result)
+            return result
+
+        kwargs["admit_unit"] = held
+        return super().scan(*args, **kwargs)
+
+    def _unit(self, process, request):
+        if request["type"] == "Directory":
+            self.directory_requests.append(request["directory"])
+        return super()._unit(process, request)
+
+
+@pytest.mark.parametrize("action", ["pause", "disable", "clear"])
+@private_profile_test
+async def test_remote_management_denies_next_scanner_admission(
+    tmp_path, request, action
+):
+    from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
+
+    scanner = AdmissionBarrierScanner()
+    rig = Rig(tmp_path, scanner)
+    other = type(rig.service)(rig.store, ProjectScanner(), rig.read, rig.fence)
+    try:
+        (rig.root / "nested").mkdir()
+        (rig.root / "nested/secret.txt").write_text("must not read after revocation")
+        rig.enable()
+        job = rig.refresh()
+        assert await asyncio.to_thread(scanner.before_admit.wait, 30)
+        current = other.status(rig.key)
+        assert scanner.directory_requests == [""]
+        if action == "pause":
+            other.pause(
+                job,
+                expected_scope=current.scope,
+                expected_job_revision=current.job_revision,
+            )
+        elif action == "clear":
+            # Clear revokes before refusing cleanup of the still-live scanner.
+            with pytest.raises(LifetimeBusy):
+                other.clear(rig.key, expected_scope=current.scope)
+        else:
+            other.disable(rig.key, expected_scope=current.scope)
+        scanner.release.set()
+        await asyncio.to_thread(rig.service._runs[job].supervisor.join)
+        assert scanner.admissions[-1] is None
+        assert scanner.directory_requests == [""]
+        assert scanner.retired
+        assert rig.service.status(rig.key).indexed == 0
+        if action == "clear":
+            off = other.status(rig.key)
+            assert other.clear(rig.key, expected_scope=off.scope).state == "Off"
+    finally:
+        scanner.release.set()
+        await other.aclose()
+        await rig.close()
+
+
+@pytest.mark.parametrize("action", ["pause", "disable", "clear"])
+@private_profile_test
+async def test_delayed_local_stop_cannot_cancel_replacement_job(
+    tmp_path, request, monkeypatch, action
+):
+    from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
+
+    scanner = BarrierScanner()
+    rig = Rig(tmp_path, scanner)
+    entered, release, replacement_stopped = (threading.Event() for _ in range(3))
+    management = stop_waiter = None
+    try:
+        (rig.root / "a.txt").write_text("replacement must finish")
+        current = rig.enable()
+        old_job = rig.refresh()
+        assert await asyncio.to_thread(scanner.before_publish.wait, 10)
+        current = rig.service.status(rig.key)
+        stop_local = rig.service._stop_local
+
+        def delayed_stop(target):
+            entered.set()
+            assert release.wait(30)
+            return stop_local(target)
+
+        monkeypatch.setattr(rig.service, "_stop_local", delayed_stop)
+
+        def operation():
+            if action == "pause":
+                return rig.service.pause(
+                    old_job,
+                    expected_scope=current.scope,
+                    expected_job_revision=current.job_revision,
+                )
+            return getattr(rig.service, action)(rig.key, expected_scope=current.scope)
+
+        management = asyncio.create_task(asyncio.to_thread(operation))
+        assert await asyncio.to_thread(entered.wait, 30)
+        scanner.release.set()
+        await asyncio.to_thread(rig.service._runs[old_job].supervisor.join)
+        assert rig.service._runs[old_job].native_retired
+        scanner.before_publish.clear()
+        scanner.release.clear()
+        if action == "pause":
+            paused = rig.service.status(rig.key)
+            new_job = rig.service.resume(
+                old_job,
+                expected_scope=paused.scope,
+                expected_job_revision=paused.job_revision,
+            )
+        else:
+            rig.enable()
+            new_job = rig.refresh()
+        assert await asyncio.to_thread(scanner.before_publish.wait, 10)
+        replacement = rig.service._runs[new_job]
+        set_stop = replacement.stop.set
+
+        def observe_stop():
+            set_stop()
+            replacement_stopped.set()
+
+        monkeypatch.setattr(replacement.stop, "set", observe_stop)
+        stop_waiter = asyncio.create_task(
+            asyncio.to_thread(replacement_stopped.wait, 30)
+        )
+        release.set()
+        done, _ = await asyncio.wait(
+            (management, stop_waiter), timeout=30, return_when=asyncio.FIRST_COMPLETED
+        )
+        assert done, "management did not finish or target a run"
+        assert not replacement.stop.is_set()
+        if action == "clear":
+            with pytest.raises((LifetimeBusy, ValueError)):
+                await management
+        else:
+            await management
+        scanner.release.set()
+        assert rig.settle().indexed == 1
+    finally:
+        release.set()
+        scanner.release.set()
+        replacement_stopped.set()
+        if management is not None:
+            await asyncio.gather(management, return_exceptions=True)
+        if stop_waiter is not None:
+            await stop_waiter
+        await rig.close()

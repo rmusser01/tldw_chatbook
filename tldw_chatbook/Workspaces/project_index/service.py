@@ -196,8 +196,7 @@ class ProjectIndexService:
             finally:
                 lease.close()
 
-    def _stop_local(self, key):
-        runs = [run for run in self._runs.values() if run.claim.scope.key == key]
+    def _stop_local(self, runs: tuple[_Run, ...]) -> None:
         for run in runs:
             run.stop.set()
         for run in runs:
@@ -208,13 +207,18 @@ class ProjectIndexService:
 
     def _revoke(self, key, expected_scope, *, clear):
         with self._store(key) as store:
-            with self._fence(key) as authority:
+            # Serialize capture with _start's claim/dispatch interval, but never
+            # hold either lock while signalling or joining native borrowers.
+            with self._lock, self._fence(key) as authority:
                 if expected_scope is not None and authority is None:
                     raise ValueError("authority_unavailable")
                 if authority is not None:
                     store.reconcile_authority(key, authority.authority_revision)
                 revoked = store.revoke(key, clear=False, expected_scope=expected_scope)
-            self._stop_local(key)
+                affected = tuple(
+                    run for run in self._runs.values() if run.claim.scope.key == key
+                )
+            self._stop_local(affected)
             if clear:
                 # Revocation is already durable if external retirement or cleanup
                 # fails. Retry Clear explicitly; there is no background reopen.
@@ -326,7 +330,7 @@ class ProjectIndexService:
     ) -> ProjectIndexStatus:
         key = expected_scope.key
         with self._store(key) as store:
-            with self._admitted(store, key):
+            with self._lock, self._admitted(store, key):
                 current = store.load_status(key)
                 claim = store.read_claim(expected_scope)
                 if current.scope != expected_scope:
@@ -339,7 +343,10 @@ class ProjectIndexService:
                 ):
                     raise ValueError("stale_job")
                 store.suspend_job(claim, state="Paused")
-            self._stop_local(key)
+                affected = tuple(
+                    run for run in self._runs.values() if run.claim == claim
+                )
+            self._stop_local(affected)
             return store.load_status(key)
 
     def refresh(
@@ -499,13 +506,16 @@ class ProjectIndexService:
         def admit(directory):
             if run.stop.is_set():
                 return None
-            current = self._reader(claim.scope.key)
-            if (
-                current is None
-                or current.authority_revision != claim.authority_revision
-            ):
-                return None
-            return current
+            with self._admitted(store, claim.scope.key) as current:
+                if (
+                    run.stop.is_set()
+                    or current is None
+                    or current.authority_revision != claim.authority_revision
+                    or current.exclusions != authority.exclusions
+                    or not store.admit_job(claim)
+                ):
+                    return None
+                return current
 
         def emit(page):
             prepared = prepare_scan_page(page)

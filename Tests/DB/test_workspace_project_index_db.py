@@ -411,3 +411,35 @@ def test_narrowed_processing_policy_filters_old_candidates(tmp_path):
         == ()
     )
     store.close()
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "scope",
+        "job_id",
+        "owner_token",
+        "job_revision",
+        "authority_revision",
+        "paused",
+        "disabled",
+    ],
+)
+def test_scanner_admission_requires_exact_enabled_building_claim(tmp_path, mismatch):
+    store, key, scope, claim = enabled_store(tmp_path)
+    try:
+        assert store.admit_job(claim)
+        candidate = claim
+        if mismatch == "scope":
+            candidate = replace(claim, scope=replace(scope, epoch=scope.epoch + 1))
+        elif mismatch in {"job_id", "owner_token"}:
+            candidate = replace(claim, **{mismatch: "other"})
+        elif mismatch in {"job_revision", "authority_revision"}:
+            candidate = replace(claim, **{mismatch: getattr(claim, mismatch) + 1})
+        elif mismatch == "paused":
+            store.suspend_job(claim, state="Paused", advance=False)
+        else:
+            store.revoke(key, clear=False, expected_scope=scope)
+        assert not store.admit_job(candidate)
+    finally:
+        store.close()

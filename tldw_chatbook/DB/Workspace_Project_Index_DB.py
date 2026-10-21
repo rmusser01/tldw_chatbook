@@ -454,6 +454,31 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 )
             )
 
+    @_activated
+    def admit_job(self, claim: ProjectIndexJobClaim) -> bool:
+        """Admit one scanner unit at the exact live claim under a registry fence."""
+        with self.transaction() as conn:
+            row = self._current(conn, claim.scope)
+            if (
+                row is None
+                or not row["enabled"]
+                or row["state"] != "Building"
+                or row["job_revision"] != claim.job_revision
+            ):
+                return False
+            return (
+                conn.execute(
+                    "SELECT 1 FROM active_job WHERE job_id=? AND owner_token=? AND job_revision=? AND authority_revision=?",
+                    (
+                        claim.job_id,
+                        claim.owner_token,
+                        claim.job_revision,
+                        claim.authority_revision,
+                    ),
+                ).fetchone()
+                is not None
+            )
+
     def read_claim(self, scope: ProjectIndexScope) -> ProjectIndexJobClaim | None:
         """Read the exact internal claim needed for explicit restart recovery."""
         with self.transaction() as conn:
