@@ -235,7 +235,12 @@ async def _quiesce(tick, seen, limit: int = 10) -> None:
         await tick()
         if seen.calls == before and not _replay_pending(tick.console):
             return
-    raise AssertionError(f"inputs still moving after {limit} ticks")
+    # Without the cadence (dev) every poll tick enters the projection, so
+    # this is where a build with no skipping fails.
+    raise AssertionError(
+        f"every one of {limit} poll ticks entered the projection"
+        " (inputs still moving, or no tick skips it)"
+    )
 
 
 async def _run_over(console) -> None:
