@@ -292,6 +292,16 @@ the operation can.
 
 **What to do.** When a change reorders or merges the reads that a barrier test counts, map each barrier to the phase it was written for: the first pair of a batch, the read before groups, or the final fence pair. Do not shift the number by the delta. Run the tests on the branch to measure the new counts, and say in a comment which phase the barrier now names. A test that times out at a barrier is usually waiting for a read that no longer happens, not a hang.
 
+## A merged step drops the absorbed step's entry side effects on raising exits too (TASK-33620.15.6, 2026-10-20)
+
+**Incident.** On dev, the Character display check probed the scope and then called `refresh()`. The first thing `refresh()` does is drop the idle display's last-successful-refresh marker. The branch folded the reload into the probe's callback, so nothing on the new path ran that entry code. Two review rounds each found part of the gap:
+- **First review: return paths.** A changed check whose owner flapped during the read returned without publishing and left the 2 s memo armed. The fix cleared the marker on three return paths. Three tests pinned them, and each failed when its clearing site was removed.
+- **Second review: raising exits.** A cancellation, or an ambient accessor error re-raised after the callback retired, still left the marker set. On dev those exits ran after `refresh()` had already dropped it. One `except BaseException` around the decision closed this.
+
+The 57 tests from the first round passed throughout. No test interrupted a changed check.
+
+**What to do.** When you fold step B into step A, list everything B did on entry, such as clearing a marker, advancing a generation or publishing a loading state. Then check every exit of the merged path against that list: each return, each exception, and cancellation. Write one test per exit class, not per return statement. A barrier that cancels the task, or makes a loop accessor raise, while the worker is held, will cover the raising exits.
+
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.
