@@ -2,9 +2,10 @@
 
 Measured live on origin/dev 4de437a5c5 (Anthropic haiku, 160x45, a probe
 recording every module imported on the UI thread): between Enter and the
-provider call, a Console's first send after launch imported 54 modules on the
-UI loop, inside the send's own callbacks: hook preparation and the hooks v2
-package, the response-rules package, the visual transcript with PIL, the
+provider call, a Console's first send after launch imported 52 modules and
+three packages on the UI loop, inside the send's own callbacks (56 imports in
+all, one by the dictionary-summary sync tick): hook preparation and the hooks
+v2 package, the response-rules package, the visual transcript with PIL, the
 agent's tool providers (one defines pydantic models at import) and the
 run-start catalog. They are lazy on purpose (each is kept off the ADR-097
 UI-ready census), so the first send paid them while the user waited, in
@@ -112,28 +113,39 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Tools.remote_session_worker",
     "tldw_chatbook.UI.Console_Modules.citation_counts",
     # Reached by the send too; a live app has usually imported them already
-    # (the sync tick and the scheduler), so here they are dictionary hits.
+    # (the sync tick, the scheduler, the composer's dictation-state sync), so
+    # here they are dictionary hits.
     "tldw_chatbook.UI.Console_Modules.config_sync",
     "tldw_chatbook.emergency_stop",
+    "tldw_chatbook.Chat.console_voice_input",
 )
 
 
 def preimport_first_send_modules(app: Any) -> None:
     """Import ``FIRST_SEND_MODULES`` in order, then parse the MCP manifest source.
 
-    Runs on the pre-import daemon thread and never raises. Paced like the
-    screen routes that follow it: after each import the thread gives the UI
-    loop a pause as long as that import took (the app's pre-import pacing),
-    and parks while a navigation or accepted Console work owns the loop, so a
-    send that starts mid-warm-up imports what it still needs itself, as
-    before. A module that fails to import is left to fail again, identically,
-    where the send imports it (a failed import is never cached).
+    Runs on the pre-import daemon thread, inline before the screen routes,
+    and never raises: a fault anywhere in it, the app's own pacing and park
+    included, ends the warm-up and leaves the screen routes to run. Paced like
+    those routes: after each import the thread gives the UI loop a pause as
+    long as that import took (the app's pre-import pacing), and parks while a
+    navigation or accepted Console work owns the loop, so a send that starts
+    mid-warm-up imports what it still needs itself, as before. A module that
+    fails to import is left to fail again, identically, where the send
+    imports it (a failed import is never cached).
 
     Args:
         app: The running ``TldwCli``. Its ``_shutting_down`` stops the
             warm-up; ``_screen_preimport_pacing()`` and
             ``_pause_between_preimports()`` pace it.
     """
+    try:
+        _warm_first_send(app)
+    except Exception as exc:  # noqa: BLE001 -- the screen routes must still run
+        logger.debug("First-send warm-up stopped (error_type={})", type(exc).__name__)
+
+
+def _warm_first_send(app: Any) -> None:
     ratio, cap = app._screen_preimport_pacing()
     for name in FIRST_SEND_MODULES:
         if getattr(app, "_shutting_down", False):

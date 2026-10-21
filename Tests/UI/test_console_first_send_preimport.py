@@ -2,14 +2,14 @@
 
 Measured live on origin/dev 4de437a5c5 (Anthropic haiku, 160x45, a probe
 recording every module imported on the UI thread): the first send after launch
-imported 54 modules on the UI loop between Enter and the provider call (hook
-preparation and the hooks v2 package, the response-rules package, the visual
-transcript with PIL, the agent's tool providers, the run-start catalog),
-inside run-start callbacks of 40-118 ms, and nine more after the provider
-call (the canvas settlement's in one 157 ms-CPU callback). Its configuration
-capture also parsed ``MCP/server.py`` for the built-in manifest. The app's
-post-UI-ready pre-import pass now does both first, at idle, on its daemon
-thread.
+imported 52 modules and three packages on the UI loop between Enter and the
+provider call (hook preparation and the hooks v2 package, the response-rules
+package, the visual transcript with PIL, the agent's tool providers, the
+run-start catalog), inside run-start callbacks of 40-118 ms, and nine more
+after the provider call (the canvas settlement's in one 157 ms-CPU callback).
+Its configuration capture also parsed ``MCP/server.py`` for the built-in
+manifest. The app's post-UI-ready pre-import pass now does both first, at
+idle, on its daemon thread.
 """
 
 from __future__ import annotations
@@ -265,6 +265,41 @@ def test_the_warm_up_hands_the_loop_a_paced_gap_after_every_import(monkeypatch):
     assert primed == [True]
 
 
+def _raise(*_args, **_kwargs):
+    raise RuntimeError("the pass's pacing is unavailable")
+
+
+@pytest.mark.parametrize(
+    "broken", ["_screen_preimport_pacing", "_pause_between_preimports"]
+)
+def test_a_failing_warm_up_still_hands_over_to_the_screen_routes(monkeypatch, broken):
+    """The warm-up runs inline before the screen routes: a raise must end it, not the pass.
+
+    Its pacing and park calls are the app's own, so a fault there (or in a
+    later refactor of either) would otherwise skip every speculative screen
+    import for the session.
+    """
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+
+    cls = app_module.TldwCli
+    app = cls.__new__(cls)  # the pass reads only what is patched here
+    app._shutting_down = False
+    handed: list[list[str]] = []
+    monkeypatch.setattr(warm.importlib, "import_module", lambda name: None)
+    monkeypatch.setattr(cls, broken, _raise)
+    monkeypatch.setattr(cls, "_screen_preimport_route_order", lambda self: ["routes"])
+    monkeypatch.setattr(
+        cls, "_preimport_screens", lambda self, routes: handed.append(routes)
+    )
+    if broken != "_screen_preimport_pacing":
+        monkeypatch.setattr(cls, "_screen_preimport_pacing", lambda self: (1.0, 0.5))
+
+    cls._preimport_heavy_screens(app)
+
+    assert handed == [["routes"]]
+
+
 #: Frames that mark the send's own work (the acknowledgement, admission and run
 #: start); the UI's ticks and polls lazily import their own modules meanwhile.
 SEND_FRAMES = frozenset(
@@ -315,6 +350,7 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
     main = threading.main_thread()
 
     def recording(name, globals=None, locals=None, fromlist=(), level=0):
+        full = None
         if threading.current_thread() is main:
             caller = sys._getframe(1).f_code
             if caller.co_name != "<module>" and _in_send():
@@ -323,7 +359,16 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
                     package = (globals or {}).get("__package__")
                     full = importlib.util.resolve_name("." * level + name, package)
                 seen.setdefault(full, caller.co_qualname)
-        return real(name, globals, locals, fromlist, level)
+        module = real(name, globals, locals, fromlist, level)
+        if full is not None:
+            # ``from pkg import submodule`` imports the submodule inside the
+            # import system, past this hook; record each fromlist name that
+            # is a loaded submodule, or the package (covered as a parent of
+            # a listed module) would hide it.
+            for item in fromlist or ():
+                if item != "*" and f"{full}.{item}" in sys.modules:
+                    seen.setdefault(f"{full}.{item}", caller.co_qualname)
+        return module
 
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -345,3 +390,9 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
     }
     assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
     assert "tldw_chatbook.Agents.hooks_v2.lifecycle" in seen, "the send never ran hooks"
+    # The composer's ``from ...Chat import console_voice_input`` (its
+    # dictation-state sync) is a fromlist submodule import every harness send
+    # makes; seeing it keeps that path of the guard non-vacuous.
+    assert "tldw_chatbook.Chat.console_voice_input" in seen, (
+        "the guard no longer records `from package import submodule`"
+    )
