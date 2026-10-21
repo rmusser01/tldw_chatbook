@@ -130,6 +130,43 @@ The first release indexes local UTF-8 project text. Remote/SSH indexing and
 binary/media extraction require separate designs. Settings owns management;
 Console shows status and a route to Settings. Library controls stay distinct.
 
+### Runtime identity and native job lifetime (execution clarification)
+
+Issue the cache's opaque data-authority identity outside registry fences while
+holding its actual storage/activation admission. Combine the admitted profile,
+data/store identity and verified installation/activation generation, then expose
+a bounded memory reader for that pinned lifetime. Ordinary preference reloads do
+not change it; profile changes and restore/rollback invalidate old readiness.
+Unknown or lost admission refuses execution. Existing config/admission counters
+and unverified catalog records are not authority identities.
+
+A stable private native lifetime lease per binding spans writer dispatch, native
+DB closure, writer-thread exit and scanner process retirement. The scanner
+inherits the lease capability at process creation, before its containment/root
+handshake. POSIX inherited flock ownership and Windows inherited share-denying
+file-object handles permit a fresh process to prove prior holders retired by
+exclusive reacquisition; byte-lock inheritance is not assumed. Retained process
+objects, PIDs, elapsed time and a child-main-only lock cannot prove this after a
+parent crash. The fixed-purpose child creates no descendants; any future child
+must retain the same lifetime or recovery must refuse proof.
+
+Prepare exact-claim retirement evidence outside all registry/cache locks and
+retain that native acquisition through claim replacement. Clear retains the
+stable lease/control object, which remains declared, accounted, device-local
+and excluded from ordinary backup. This single-writer/lifetime witness grants no
+file or activation permission. Existing authority and admission gates still
+apply. Platform inheritance and hard-parent-death tests qualify the native seam.
+Windows lease acquisition uses nonzero data access and share mode zero;
+attribute-only access is not an exclusion witness. Inheritance keeps a reference
+to the same file object. [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew),
+[handle inheritance](https://learn.microsoft.com/en-us/windows/win32/sysinfo/handle-inheritance).
+On Linux, close descriptors without an explicit unlock: LOCK_UN through any
+inherited duplicate would release the shared-description lock early.
+[flock](https://man7.org/linux/man-pages/man2/flock.2.html).
+Use explicit child handle/FD lists and restore temporary Windows inheritability
+on every path; unrelated children must not receive this capability.
+[Python 3.12 subprocess](https://docs.python.org/3.12/library/subprocess.html#subprocess.STARTUPINFO.lpAttributeList).
+These source contracts do not replace actual crash/retirement qualification.
 ## Alternatives considered
 
 | Alternative | Reason not selected |
