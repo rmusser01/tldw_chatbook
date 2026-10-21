@@ -1095,17 +1095,31 @@ async def test_local_group_dependents_are_disabled_while_master_is_off(monkeypat
 @pytest.mark.asyncio
 async def test_local_group_dependents_are_enabled_while_master_is_on(monkeypatch):
     """Mirror of the test above: master ON -> no dependency note, and every
-    local-group dependent renders enabled (not `disabled`)."""
+    local-group dependent renders enabled (not `disabled`).
+
+    task-35154 (carryover B, review Minor 1 from 35153): gate rows read
+    config through the live loader (`_gate_config_snapshot()` ->
+    `load_cli_config_and_ensure_existence`, task-32804.7), NOT through
+    `get_cli_setting` -- this test used to patch only `get_cli_setting`,
+    a dead seam that passed by coincidence against this host's real
+    config. Declared setup now rides the loader the rows actually read
+    (saved-dict pattern, mirroring
+    `test_gate_row_state_is_spelled_out_and_follows_the_saved_value`)."""
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import LOCAL_TOOLS_MASTER_KEY
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        if key == LOCAL_TOOLS_MASTER_KEY:
-            return True
-        return default
+    saved: dict[str, dict[str, object]] = {
+        "tools": {},
+        "console": {LOCAL_TOOLS_MASTER_KEY: True},
+    }
 
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    def fake_load_cli_config(*_args, **_kwargs):
+        return {section: dict(values) for section, values in saved.items()}
+
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", fake_load_cli_config
+    )
 
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -1172,17 +1186,31 @@ async def test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_an
     master ON specifically to exercise web_deep_search's own click/toggle
     -- `test_local_group_dependents_are_disabled_while_master_is_off`
     covers the disabled state itself.
+
+    task-35154 (carryover B, review Minor 1 from 35153): the declared
+    starting states ride the live loader seam the gate rows actually read
+    (`_gate_config_snapshot()` -> `load_cli_config_and_ensure_existence`,
+    task-32804.7) -- the previous `get_cli_setting`-only patch was dead
+    for these rows, so "declared, not accidental" held only by
+    coincidence with this host's real config.
     """
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import LOCAL_TOOLS_MASTER_KEY
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        if key == LOCAL_TOOLS_MASTER_KEY:
-            return True  # master ON -> web_deep_search is not disabled
-        return False
+    saved: dict[str, dict[str, object]] = {
+        # master ON -> web_deep_search is not disabled; web_deep_search
+        # itself absent -> `tools_cfg.get(..., False)` reads it OFF.
+        "tools": {},
+        "console": {LOCAL_TOOLS_MASTER_KEY: True},
+    }
 
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    def fake_load_cli_config(*_args, **_kwargs):
+        return {section: dict(values) for section, values in saved.items()}
+
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", fake_load_cli_config
+    )
 
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:

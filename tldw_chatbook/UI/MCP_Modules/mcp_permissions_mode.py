@@ -87,6 +87,22 @@ _PROFILE_HINT_TEXT = (
     "some tools to Ask."
 )
 
+# task-35154 (spec amendment A7 item 2): the mode's opening line, pinned
+# verbatim like `_SERVER_PROFILES_POINTER` above (tests assert this exact
+# copy, so any rewording happens HERE). Users flip a tool gate in Servers,
+# watch this matrix not change, and conclude it is broken -- the two
+# layers do different jobs: a gate off in Servers means the tool does not
+# exist for agents (it can still be LISTED here -- catalog visibility is
+# not the gate), while Allow/Ask/Off in this matrix governs only tools
+# that pass the gate. Plain-language per the TASK-35018/35019 copy rule:
+# names what the user sees (Servers, Allow/Ask/Off, this list), no config
+# keys, no "registration gate" jargon. "Console agents" is this surface's
+# own term (see `_PROFILE_HINT_TEXT` above).
+_GATE_VS_PERMISSION_EXPLAINER = (
+    "Tools turned off in Servers do not exist for Console agents — "
+    "Allow/Ask/Off in this list only governs tools that are turned on."
+)
+
 # Wave C (F3): cap on how many undiscovered server names the discovery
 # hint names inline before collapsing to "+N more" -- the hint is one dim
 # line under the legend, not a second table.
@@ -505,6 +521,15 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         color: $text-muted;
         padding: 0 1;
     }
+    /* task-35154: the gate-vs-permission explainer is the same quiet,
+    dimmed one-liner tier as the kill-switch hint -- informational chrome
+    above the profile selector, never a competing headline. */
+    #mcp-perm-explainer {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
     /* T8: the server-source governance section is a plain read-only
     listing (a handful of Static rows at most) -- hugs its own content,
     same rationale as #mcp-perm-preview immediately above. */
@@ -634,6 +659,12 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self._tool_column_width: int | None = None
 
     def compose(self) -> ComposeResult:
+        # task-35154: the mode opens with the one-line gate-vs-permission
+        # explainer (see `_GATE_VS_PERMISSION_EXPLAINER` above) -- FIRST
+        # child, so it is read before the profile selector and the matrix.
+        yield Static(
+            _GATE_VS_PERMISSION_EXPLAINER, id="mcp-perm-explainer", markup=False
+        )
         yield Static(
             "Tool policy profile", id="mcp-perm-tool-profile-label", markup=False
         )
