@@ -77,7 +77,11 @@ def default_prompt_history_path() -> Path:
     compares it with the live config's mapping when the file job is created
     and during its IO, and the file job's guarded IO re-checks the directory
     (a removed one is recreated, a group-writable one refused with
-    ``PrivatePathError``, as on origin/dev).
+    ``PrivatePathError``, as on origin/dev). One difference in when, not
+    whether: on origin/dev a group-writable data directory made the
+    resolution itself raise ``PrivatePathError``, so no history could be
+    constructed; with a warm memo the history is constructed and its first
+    append is refused with that error instead. Neither writes anything.
     """
     global _DEFAULT_PATH_MEMO
     from ..config import get_user_data_dir
