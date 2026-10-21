@@ -244,3 +244,98 @@ def test_note_says_builtin_relative_paths_resolve_in_private_scratch(
     assert len(scratch_lines) == 1
     assert "read_file" in scratch_lines[0]
     assert "list_directory" in scratch_lines[0]
+
+
+@private_profile_test
+def test_first_request_guides_project_exploration(request, tmp_path, monkeypatch) -> None:
+    """Missing guidance must fail at the real first-request boundary."""
+    run = _workspace_run(tmp_path, monkeypatch)
+    provider = _local_provider(run)
+    plan = _plan(run, provider)
+    note = " ".join(plan.config.workspace_context_note.split())
+
+    assert "before saying project information is unavailable" in note
+    (alias,) = _advertised_aliases(provider)
+    assert alias in note
+    result = provider.invoke("fs_list", {"root_alias": alias, "path": "."})
+    assert result.ok, result.error
+    assert "myproj-README.md" in result.content
+
+
+@pytest.mark.parametrize("read_tools", [(), ("git_status",)], ids=["empty", "git-only"])
+@private_profile_test
+def test_guidance_requires_workspace_read_tools(
+    request, tmp_path, monkeypatch, read_tools
+) -> None:
+    run = _workspace_run(tmp_path, monkeypatch)
+    (alias,) = _advertised_aliases(_local_provider(run))
+    note = roots_module.workspace_context_note(
+        WORKSPACE_ID,
+        binding_authority=tuple(run.authority.options),
+        path_tool_aliases=(alias,),
+        workspace_read_tools=read_tools,
+    )
+
+    assert alias in note
+    assert "before saying project information is unavailable" not in " ".join(note.split())
+
+
+@private_profile_test
+def test_goal_scope_removing_readers_removes_exploration_promise(
+    request, tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.Agents import automatic_work_runtime
+    from tldw_chatbook.Agents.goal_models import GoalPolicy, GoalToolScope
+    from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
+
+    run = _workspace_run(tmp_path, monkeypatch)
+    # Exercise real scope narrowing without dispatching/accepting a durable goal.
+    goal = object.__new__(GoalIterationAuthorization)
+    goal.goal = SimpleNamespace(
+        request=SimpleNamespace(
+            tool_scope=GoalToolScope(catalog_tools=("local:git_status",))
+        ),
+        policy=GoalPolicy(),
+    )
+    monkeypatch.setattr(goal, "remaining_seconds", lambda: 60.0)
+    monkeypatch.setattr(
+        automatic_work_runtime, "current_automatic_work", lambda: SimpleNamespace(goal=goal)
+    )
+    plan = _plan(run, _local_provider(run))
+
+    assert plan.allowed_tools == ("git_status",)
+    assert not {"fs_list", "fs_glob", "fs_grep", "fs_read"}.intersection(plan.allowed_tools)
+    note = " ".join(plan.config.workspace_context_note.split())
+    assert "before saying project information is unavailable" not in note
+
+
+@private_profile_test
+def test_custom_operating_prompt_keeps_workspace_guidance(
+    request, tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Internal_Prompts import resolver
+
+    run = _workspace_run(tmp_path, monkeypatch)
+    original = resolver._config_value
+
+    def custom_config_value(key):
+        if key == "internal_prompts.agents.console_agent_operating":
+            return "CUSTOM OPERATING PROMPT"
+        return original(key)
+
+    monkeypatch.setattr(resolver, "_config_value", custom_config_value)
+    plan = _plan(run, _local_provider(run))
+    service = AgentService(AgentRunsDB(tmp_path / "runs.db"), plan.registry)
+    model_request = service._build_model_request(
+        plan.config,
+        plan.api_endpoint,
+        list(plan.schemas.runtime_schemas),
+        plan.messages,
+        plan.schemas.active_schemas,
+    )
+    prompt = " ".join(model_request.messages[0]["content"].split())
+
+    assert "CUSTOM OPERATING PROMPT" in prompt
+    assert "before saying project information is unavailable" in prompt

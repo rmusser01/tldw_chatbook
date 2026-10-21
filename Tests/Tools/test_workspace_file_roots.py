@@ -968,3 +968,52 @@ def test_remote_only_workspace_without_path_tools_says_so(tmp_path) -> None:
     assert "no filesystem roots" not in note
     assert "ssh-b1" not in note  # no alias the tools would reject
     assert "no fs_*, git_* or virtual_cli tools are available" in note
+
+
+@pytest.mark.parametrize("read_tool", ["fs_list", "fs_glob", "fs_grep", "fs_read"])
+def test_note_guides_exploration_with_an_admitted_readable_folder(tmp_path, read_tool):
+    registry = _registry(tmp_path)
+    folder = tmp_path / "project"
+    folder.mkdir()
+    binding = registry.add_folder_binding("ws-a", folder)
+    note = wfr.workspace_context_note(
+        "ws-a",
+        registry=registry,
+        path_tool_aliases=(binding.binding_id,),
+        workspace_read_tools=(read_tool,),
+    )
+
+    assert "before saying project information is unavailable" in " ".join(note.split())
+    assert binding.binding_id in note
+
+
+@pytest.mark.parametrize("state", ["reachable", "blocked", "unadvertised"])
+def test_remote_guidance_requires_a_reachable_advertised_root(state):
+    from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+
+    cache = _status_cache()
+    if state == "blocked":
+        cache.record_transport_failure(
+            "ssh-b1", TransportFailureKind.UNREACHABLE, "offline"
+        )
+    note = wfr.workspace_context_note(
+        "ws-a",
+        registry=_MixedRegistry(_SshRow()),
+        status_cache=cache,
+        path_tool_aliases=() if state == "unadvertised" else ("ssh-b1",),
+        workspace_read_tools=("fs_read",),
+    )
+
+    has_guidance = "before saying project information is unavailable" in " ".join(
+        note.split()
+    )
+    assert has_guidance == (state == "reachable")
+
+
+def test_read_tools_without_bound_roots_offer_no_exploration(tmp_path):
+    note = wfr.workspace_context_note(
+        "ws-a", registry=_registry(tmp_path), workspace_read_tools=("fs_read",)
+    )
+
+    assert "no filesystem roots" in note
+    assert "before saying project information is unavailable" not in " ".join(note.split())

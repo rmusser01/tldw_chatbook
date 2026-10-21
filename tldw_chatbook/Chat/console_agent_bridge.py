@@ -5094,22 +5094,6 @@ def build_console_first_request_plan(
     from tldw_chatbook.Agents.agent_models import plugin_tool_ceiling
 
     allowed_tools = plugin_tool_ceiling(agent_messages, allowed_tools)
-    # TASK-33940.1: built AFTER the final allow-list so the note describes only
-    # tools the model is actually offered -- the root_alias values its path
-    # tools accept and which built-ins resolve relative paths in scratch.
-    workspace_note = workspace_context_note(
-        workspace_id,
-        binding_authority=workspace_binding_authority,
-        status_cache=get_remote_binding_status_cache(),
-        path_tool_aliases=_advertised_path_root_aliases(
-            allowed_tools,
-            local_provider=local_provider,
-            virtual_cli_provider=virtual_cli_provider,
-        ),
-        scratch_relative_tools=_advertised_scratch_relative_tools(
-            allowed_tools, builtin_names
-        ),
-    )
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
@@ -5126,7 +5110,6 @@ def build_console_first_request_plan(
         ),
         native_tools=native_tools,
         reasoning_replay=getattr(resolution, "reasoning_replay", None),
-        workspace_context_note=workspace_note,
         response_reserve_tokens=response_reserve,
     )
     catalog_entries = None
@@ -5162,6 +5145,24 @@ def build_console_first_request_plan(
             config, registry, catalog_entries=catalog_entries
         )
         allowed_tools = config.allowed_tools
+    # Describe only the final offered capabilities, including Goal scope
+    # narrowing, before schema/request construction consumes the note.
+    workspace_note = workspace_context_note(
+        workspace_id,
+        binding_authority=workspace_binding_authority,
+        status_cache=get_remote_binding_status_cache(),
+        path_tool_aliases=_advertised_path_root_aliases(
+            allowed_tools,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+        ),
+        workspace_read_tools=set(allowed_tools)
+        & {"fs_list", "fs_glob", "fs_grep", "fs_read"},
+        scratch_relative_tools=_advertised_scratch_relative_tools(
+            allowed_tools, builtin_names
+        ),
+    )
+    config = dataclass_replace(config, workspace_context_note=workspace_note)
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
