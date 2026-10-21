@@ -273,7 +273,7 @@ _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.VALIDATE: "Check readiness",
     HubAction.VIEW_DETAILS: "View details",
     HubAction.OPEN_TOOL_CATALOG: "Open tool catalog",
-    HubAction.OPEN_AUDIT: "Open audit",
+    HubAction.OPEN_AUDIT: "Open history",
 }
 
 # Tooltips for the actions that have first-class UI (see _wired_actions()).
@@ -282,7 +282,7 @@ _ACTION_LABELS: dict[HubAction, str] = {
 _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     HubAction.VIEW_DETAILS: "Show this server's detail view in Servers mode.",
     HubAction.OPEN_TOOL_CATALOG: "Switch to Tools mode.",
-    HubAction.OPEN_AUDIT: "Switch to Audit mode.",
+    HubAction.OPEN_AUDIT: "Switch to History mode.",
     HubAction.CONNECT: "Connect to this server and discover its tools.",
     HubAction.VALIDATE: "Test the connection without changing the cached catalog.",
     HubAction.REFRESH_DISCOVERY: "Reconnect and refresh the tool/resource/prompt catalog.",

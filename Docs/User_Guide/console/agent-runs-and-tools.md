@@ -532,7 +532,7 @@ one generic word:
 Expanding a refused row is labelled **Sent to the model** rather than "Full
 output": what it holds is the refusal text the model was given ("Do not retry
 this call…"), never a result the tool produced. The same vocabulary shows up
-in the MCP screen's [Audit mode](../mcp.md#permission-continuity-for-built-in-tools),
+in the MCP screen's [History mode](../mcp.md#permission-continuity-for-built-in-tools),
 so what you read in the transcript and what you read in the log are the same
 words.
 

@@ -1,4 +1,4 @@
-# MCP — MCP servers, tools, permissions, auth, and audit
+# MCP — MCP servers, tools, permissions, auth, and history
 
 ## Watchlists privacy boundary
 
@@ -16,10 +16,10 @@ Use Console when an agent needs to read or summarize a complete briefing on your
 
 ## What this screen is for
 
-MCP manages MCP servers, scoped tools, permissions, and audit readiness
-(on-screen subtitle: "MCP (Model Context Protocol) lets chatbook use
-external tools — most people never need to change anything here."). It's
-organized into four modes: Servers, Tools, Permissions, and Audit.
+MCP manages MCP servers, scoped tools, permissions, and history
+(on-screen subtitle: "What your agents can use, what asks first, and what
+they did — most people never need to change anything here."). It's
+organized into four modes: Servers, Tools, Permissions, and History.
 
 ## Getting there
 
@@ -56,7 +56,7 @@ your shell before connecting.
 5. **Try a tool.** Press `2` (Tools), arrow onto the tool, and press `t`
    to open the Test Tool panel — a form built from the tool's schema (or
    a raw-JSON box when the schema is too complex). An Ask-gated tool asks
-   once per run; the run is recorded in Audit (`4`).
+   once per run; the run is recorded in History (`4`).
 
 To remove a server, select its row in Servers mode and use **Delete**
 (a two-step confirm; Escape backs out). **Import…** accepts a
@@ -612,7 +612,7 @@ A completed run shows:
   isn't enough.
 
 A run that finished but can't be shown where you're looking — you closed
-the panel, picked a different tool, or switched to Audit mode while it was
+the panel, picked a different tool, or switched to History mode while it was
 still in flight — still tells you: a toast reads "\<tool\> finished
 running, but its result isn't shown here." A run that never reached the
 tool at all — a hard **Off** gate, a runtime-governance denial, or the
@@ -629,7 +629,7 @@ changes what a tool does drops back to Ask) — built-in tools skip that
 check entirely, since an ordinary app update that only edits a docstring
 must never silently turn your "Allow" back into "Ask".
 
-In Audit mode, a run you confirmed under an Ask gate is recorded with the
+In History mode, a run you confirmed under an Ask gate is recorded with the
 decision **approved**, distinct from **allowed** (a tool already set to
 Allow) — so the log shows not just that a call reached the tool, but
 whether it needed your confirmation first. The table repopulates as soon
@@ -725,7 +725,7 @@ arguments, pick `tool.execute` from the action list, and press **Run
 Action**. It goes through the same
 permission gate and the same execution log as every other tool run —
 a tool set to **Off** is refused ("Blocked · not run"), and the refusal is
-recorded in Audit mode just like any other blocked run.
+recorded in History mode just like any other blocked run.
 
 Because this route resolves permissions by key rather than a stored
 definition hash, almost everything it touches needs a per-run confirm —

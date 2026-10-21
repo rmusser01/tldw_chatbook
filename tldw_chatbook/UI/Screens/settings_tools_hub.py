@@ -38,13 +38,21 @@ logger = logging.getLogger(__name__)
 
 _MODE_BY_BUTTON_ID = {spec["button_id"]: mode for mode, spec in MCP_HUB_MODES.items()}
 
+# TASK-35155: plain-language pass under the TASK-35018/35019 copy rules.
+# Each tooltip answers the question that mode exists for; the chip names
+# stay the surface's own concrete nouns (rows ARE servers, the list IS
+# tools) except "audit", an accounting word for a log, now "History".
 _MODE_TOOLTIPS = {
     "servers": "Servers mode: view MCP servers and their readiness.",
-    "tools": "Tools mode: browse and test scoped MCP tools.",
+    "tools": "Tools mode: browse and test what your agents can use.",
     "permissions": (
-        "Permissions mode: set Allow / Ask / Off per tool. Space cycles the selected row."
+        "Permissions mode: choose what agents may use freely and what "
+        "asks you first (Allow / Ask / Off). Space cycles the selected row."
     ),
-    "audit": "Audit mode: review MCP tool execution history and drill into a call's detail.",
+    "audit": (
+        "History mode: review what your agents ran — tool execution "
+        "history and a call's detail."
+    ),
 }
 
 # F-055: the hint set is PER-MODE -- a key is only advertised where it
@@ -64,7 +72,7 @@ TOOLS_HUB_MODE_SHORTCUTS: dict[str, tuple[tuple[str, str], ...]] = {
 TOOLS_HUB_CATEGORY_SUMMARY = SettingsCategorySummary(
     SettingsCategoryId.TOOLS,
     "Tools & MCP",
-    "Agent tools, MCP servers, permissions, and audit.",
+    "What your agents can use, what asks first, and what they did.",
     "Immediate actions",
 )
 
@@ -81,7 +89,7 @@ TOOLS_HUB_OWNERSHIP_RECORD = SettingsOwnershipRecord(
     writes_allowed=True,
     runtime_owner="MCP workbench (immediate reviewed actions)",
     boundary_copy=(
-        "Tools & MCP owns servers, tools, permissions, and audit "
+        "Tools & MCP owns servers, tools, permissions, and history "
         "in place; Tool Profiles next door owns profile lifecycle."
     ),
     recovery_copy=(
@@ -278,7 +286,7 @@ class ToolsHubPanel(Vertical):
         Binding("1", "tools_mode('servers')", "Servers", show=False),
         Binding("2", "tools_mode('tools')", "Tools", show=False),
         Binding("3", "tools_mode('permissions')", "Permissions", show=False),
-        Binding("4", "tools_mode('audit')", "Audit", show=False),
+        Binding("4", "tools_mode('audit')", "History", show=False),
         Binding("a", "tools_add_server", "Add server", show=False),
         Binding("r", "tools_refresh", "Refresh", show=False),
         Binding("t", "tools_test_tool", "Test tool", show=False),
@@ -333,9 +341,12 @@ class ToolsHubPanel(Vertical):
         self.workbench: MCPWorkbench | None = None
 
     def compose(self) -> ComposeResult:
+        # TASK-35155: the purpose line answers the three questions users
+        # actually bring here (what can my agents use, what asks first,
+        # what did they do) instead of restating the protocol's name.
         yield Static(
-            "MCP (Model Context Protocol) lets chatbook use external "
-            "tools — most people never need to change anything here.",
+            "What your agents can use, what asks first, and what they "
+            "did — most people never need to change anything here.",
             id="tools-hub-purpose",
             classes="destination-purpose",
         )

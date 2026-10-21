@@ -51,9 +51,10 @@ CORE_FIRST_USE_ROUTES = (
     (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "New skill")),
     # ADR-240: the MCP destination retired into Settings > Tools & MCP; the
     # legacy "mcp" route lands SettingsScreen (canonical tab "settings") via
-    # the alias + default context, and the pane's purpose copy carries the
-    # MCP identity -- same shape as the retired skills row above.
-    (TAB_MCP, TAB_SETTINGS, "SettingsScreen", ("MCP", "Model Context Protocol")),
+    # the alias + default context. TASK-35155: the pane's purpose copy is
+    # now the plain-language three-questions line; the MCP identity rides
+    # the "Tools & MCP" category name -- same shape as the skills row above.
+    (TAB_MCP, TAB_SETTINGS, "SettingsScreen", ("Tools & MCP", "what asks first")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),
 )
 
