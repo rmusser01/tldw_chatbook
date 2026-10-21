@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 10:28'
+updated_date: '2026-10-21 21:16'
 labels:
   - console
   - bug
@@ -38,6 +38,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #11 The UI gate retains its exact census and existing shard count, test/job timeouts, dependencies and required aggregation, with the UI2 allocation reduced by a measured balance correction; hosted outcomes and remaining global margin limits stay explicit.
 - [x] #12 The changed-source replay regression distinguishes the held narrowed sync from later FULL invocations independently of recycled frame addresses, preserving original source-currentness, task, custody, draft and deadline assertions; the separately filed first-wait mode remains explicitly unclaimed.
 - [x] #13 The committed production diagnostic inventory reproduces the reviewed logger owners and statements introduced or moved by this PR, with sink topology, privacy classifications and checker policy preserved.
+- [x] #14 The queue-evicted branch integrates the latest dev without losing either side of the testing-evidence lessons, the upstream UI gate topology, or the independently reviewed send repairs; focused integration checks and fresh independent review pass before re-arming.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,11 +59,18 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 ADR required: no
 ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md and backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
-<!-- SECTION:PLAN:END -->
 
+13. After the queue conflict eviction, re-fetch and rebase onto the actual latest dev; preserve both sides of every testing-evidence lesson, upstream integration changes (including its 13-shard UI gate), and all previously reviewed send-repair behavior. Verify the resolved tree, task IDs, census and affected contracts, then obtain fresh independent review before publishing and re-arming.
+ADR required: no
+ADR path: N/A; existing ADR-069, ADR-126 and ADR-103 remain applicable.
+Reason: resolve overlapping documentation additions and compose existing reviewed changes; no new behavior, storage, authority or CI-policy design is intended.
+
+14. Retire only this PR's obsolete ten-shard census slot swap: the latest dev has 430 entries over 13 shards, where that old swap now affects UI13/UI10 rather than UI6/UI2. Restore the exact latest-dev census blob and retain its workflow, checker, limits and dependencies. Preserve the historical ten-shard results as historical evidence without claiming the new integration passed.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Consolidates Csavoldi's discoveries and original patches from PRs #3181 and #3185. Owning-thread project guards now run directly while worker callbacks preserve Textual scheduling. Enhanced RAG search no longer forwards an unsupported argument; unsupported precomputed vectors are explicitly refused. Console initialization has a separate finite 60-second budget before the existing 5-second retrieval budget on preparation and retry paths.
 
 Unsent-turn recovery carries the exact preparation ID, preserves empty/matching and newer drafts/attachments, and releases only its matching retrieval pause. Cancellation failure retains the recovery entry. Never-answerable dispatch decisions cancel without changing persisted consent; existing once-mounted detached-time policy stays intact. Qualification caches only parsed evidence under descriptor-verified file-generation stamps, using native Windows ChangeTime; native identity/verdict checks remain fresh. Logs contain status/error categories and exception types, not draft or exception bodies.
@@ -402,3 +410,47 @@ UI2 passed 168 cases in 1027.73s pytest / 1085s job time; UI6 passed 164 in
 852.61s / 944s. Both keep their original 20-minute job caps. This is one hosted
 run, not TASK-35834's three-run/global-margin qualification. Raw logs are in
 `.tmp-replacement-tests/ui-budget-evidence/39572669933`.
+
+### Queue conflict integration (2026-10-21)
+
+The queue evicted f24fd27ac82b at 20:33:07 UTC for conflicts with dev and
+disabled auto-merge. After a fresh remote-branch pull, the branch was rebased
+onto actual dev 3ea1d5bb6108120c8e80b5c172d65794aa86651d. The two conflicts
+were independent additions to lessons-testing-evidence.md. Both sides remain
+complete: repeated-pytest timing, returned-frame identity, recovery mutation,
+artificial holds, native UTF-8 edits, Textual Input selection and numbered
+pytest receipts. No lesson or adverse evidence was discarded.
+
+All 17 production and regression-test Python files changed by this PR retain
+their exact previously reviewed f24 blobs. The size ratchet composes the
+upstream entries with the reviewed lower controller budget. The diagnostic
+manifest is also the exact reviewed blob. Independent review checked these
+objects, the conflict sides and the rebase range-diff directly.
+
+Dev now has 430 census entries over 13 UI shards. This PR's historical
+ten-shard slot swap would now move entries between UI13/UI10 rather than
+UI6/UI2. The obsolete swap is retired, preserving dev's exact census blob
+5e834c5bcf and exact workflow/checker, including all limits, dependencies and
+required aggregation. AC11's earlier 408-entry/ten-shard measurements remain
+historical evidence; they do not qualify the new distribution.
+
+Focused verification passed 152 cases in 147.46s: census/workflow/replay/count
+contracts, task uniqueness, four controller/store ratchet cases and nine
+diagnostic inventory contracts. The full-source diagnostic checker took
+113.82s. A CLI-only 900s allowance was supplied; committed limits are unchanged.
+All 5,597 live/archive task files pass uniqueness, path and readability checks;
+census passes 430/floor430. Changed Python lint comparison retains exactly
+252 baseline/current diagnostics and introduces zero. No full suite was run.
+
+Fresh independent requesting-code-review reports no actionable findings.
+Its exact committed-head confirmation precedes push/re-arm. The prior f24
+hosted successes tested an earlier dev integration; the new combined tree's
+hosted CI remains pending. Existing baseline failures and the separate
+TASK-35713 and TASK-35834 qualifications remain unclaimed.
+ADR required: no; this mechanical integration preserves ADR-069, ADR-126 and
+ADR-103 without changing behavior, authority or CI policy.
+
+Evidence: .tmp-replacement-tests/rebase-range-diff.txt,
+rebase-composition-proof.json, rebase-final-blob-proof.json, the two saved
+rebase conflict files, and rebase-integration-targeted.txt/.xml.
+<!-- SECTION:NOTES:END -->
