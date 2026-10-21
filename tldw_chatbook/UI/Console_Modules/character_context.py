@@ -1374,6 +1374,7 @@ class ConsoleCharacterContextController:
         an unchanged scope or a published reload drops the last-successful-
         refresh marker, as ``refresh()`` does on entry on the original route,
         so the idle display memo cannot keep serving a list it never reloaded.
+        That includes a check that ends by cancellation or by an error.
 
         Args:
             presentation: The original display-owner closure.
@@ -1395,7 +1396,8 @@ class ConsoleCharacterContextController:
             probe-then-refresh route, which owns those outcomes.
 
         Raises:
-            BaseException: An original ambient accessor failure, unchanged.
+            BaseException: An original ambient accessor failure, unchanged,
+                or a cancellation; either drops the marker before it leaves.
         """
         readers = _stock_character_refresh_readers(
             self, presentation, self._generation, settled
@@ -1407,96 +1409,104 @@ class ConsoleCharacterContextController:
             readers.require_current()
             return readers.batch.__func__(readers.controller, readers)
 
-        ambient_error = None
         try:
-            result = await self._await_database_work(readers.database, read_current)
-        except _ConsoleCharacterReaderChanged:
-            # As in the original batch, a changed qualified reader authorizes
-            # no further read or publication. A no-argument refresh dispatch
-            # customized meanwhile is honored at once, as after the probe.
-            customized = any(
-                inspect.getattr_static(self, name)
-                is not vars(ConsoleCharacterContextController)[name]
-                for name in ("refresh", "refresh_if_scope_changed")
-            )
-            if customized:
-                return None
-            self._successful_refresh_generation = None
-            return True
-        except _ConsoleCharacterAmbientError as failure:
-            ambient_error = failure.error
-        except Exception:  # noqa: BLE001 - an unsettled or unreadable first scope.
-            # As after the original probe: a display owner that moved on gets
-            # nothing; a current one takes the original route, which decides
-            # and presents the read error.
+            ambient_error = None
+            try:
+                result = await self._await_database_work(readers.database, read_current)
+            except _ConsoleCharacterReaderChanged:
+                # As in the original batch, a changed qualified reader authorizes
+                # no further read or publication. A no-argument refresh dispatch
+                # customized meanwhile is honored at once, as after the probe.
+                customized = any(
+                    inspect.getattr_static(self, name)
+                    is not vars(ConsoleCharacterContextController)[name]
+                    for name in ("refresh", "refresh_if_scope_changed")
+                )
+                if customized:
+                    return None
+                self._successful_refresh_generation = None
+                return True
+            except _ConsoleCharacterAmbientError as failure:
+                ambient_error = failure.error
+            except Exception:  # noqa: BLE001 - an unsettled or unreadable first scope.
+                # As after the original probe: a display owner that moved on gets
+                # nothing; a current one takes the original route, which decides
+                # and presents the read error.
+                try:
+                    current = readers.ambient_current()
+                except _ConsoleCharacterReaderChanged:
+                    current = False
+                if current:
+                    return None
+                self._successful_refresh_generation = None
+                return False
+            # Outside the catch, as _capture_scope does: the exact original
+            # accessor exception, cause and traceback, after retirement.
+            if ambient_error is not None:
+                raise ambient_error
+            if result.unchanged:
+                # As after the original probe: the ambient scope is confirmed on
+                # the loop, and a display invalidated meanwhile no longer shows
+                # ``settled``; either change takes the original route.
+                if not self._ambient_scope_matches(
+                    readers.database, readers.current, readers.conversation
+                ):
+                    return None
+                return False if self.state.scope_fingerprint == settled else None
+            # Past here the scope changed. Every exit that publishes nothing drops
+            # the last-successful-refresh marker, as ``refresh()`` does on entry
+            # on the original route, so the idle display memo cannot keep serving
+            # the old list.
             try:
                 current = readers.ambient_current()
             except _ConsoleCharacterReaderChanged:
                 current = False
-            if current:
-                return None
+            if not current:
+                # As the original batch: an owner or reader that changed during
+                # the read gets no publication; its next check reloads.
+                self._successful_refresh_generation = None
+                return True
+            if not result.scope_current:
+                # The first read already differed from ``settled``, so the scope
+                # changed; it moved again during the load. The original refresh
+                # retries it and presents a scope that never settles.
+                if _stock_character_presentation(self):
+                    await self.refresh(_presentation_is_current=presentation)
+                else:
+                    await self.refresh()
+                return True
+            # Publish as the original batch does after its ``_begin``.
             self._successful_refresh_generation = None
-            return False
-        # Outside the catch, as _capture_scope does: the exact original
-        # accessor exception, cause and traceback, after retirement.
-        if ambient_error is not None:
-            raise ambient_error
-        if result.unchanged:
-            # As after the original probe: the ambient scope is confirmed on
-            # the loop, and a display invalidated meanwhile no longer shows
-            # ``settled``; either change takes the original route.
-            if not self._ambient_scope_matches(
-                readers.database, readers.current, readers.conversation
-            ):
-                return None
-            return False if self.state.scope_fingerprint == settled else None
-        # Past here the scope changed. Every exit that publishes nothing drops
-        # the last-successful-refresh marker, as ``refresh()`` does on entry
-        # on the original route, so the idle display memo cannot keep serving
-        # the old list.
-        try:
-            current = readers.ambient_current()
-        except _ConsoleCharacterReaderChanged:
-            current = False
-        if not current:
-            # As the original batch: an owner or reader that changed during
-            # the read gets no publication; its next check reloads.
-            self._successful_refresh_generation = None
-            return True
-        if not result.scope_current:
-            # The first read already differed from ``settled``, so the scope
-            # changed; it moved again during the load. The original refresh
-            # retries it and presents a scope that never settles.
-            if _stock_character_presentation(self):
-                await self.refresh(_presentation_is_current=presentation)
-            else:
-                await self.refresh()
-            return True
-        # Publish as the original batch does after its ``_begin``.
-        self._successful_refresh_generation = None
-        self._generation += 1
-        generation = self._generation
-        if result.load_failed:
-            self._publish(
-                replace(
-                    self.state,
-                    phase=ConsoleCharacterOperationPhase.IDLE,
-                    loading=False,
-                    operation_row_key="",
-                    error="Could not load local character chats · Retry",
+            self._generation += 1
+            generation = self._generation
+            if result.load_failed:
+                self._publish(
+                    replace(
+                        self.state,
+                        phase=ConsoleCharacterOperationPhase.IDLE,
+                        loading=False,
+                        operation_row_key="",
+                        error="Could not load local character chats · Retry",
+                    )
                 )
+                return True
+            self._publish_recent_groups(
+                result.snapshot.fingerprint, result.groups, result.details
             )
+            try:
+                readers.require_current()
+                if generation == self._generation:
+                    self._successful_refresh_generation = generation
+            except _ConsoleCharacterReaderChanged:
+                pass
             return True
-        self._publish_recent_groups(
-            result.snapshot.fingerprint, result.groups, result.details
-        )
-        try:
-            readers.require_current()
-            if generation == self._generation:
-                self._successful_refresh_generation = generation
-        except _ConsoleCharacterReaderChanged:
-            pass
-        return True
+        except BaseException:
+            # A cancellation, or an error re-raised above, ends the check
+            # without a publication. On the original route the reload ran
+            # after ``refresh()`` had dropped the marker, so the idle display
+            # memo must not outlive this check either.
+            self._successful_refresh_generation = None
+            raise
 
     async def _refresh_recent_batch(
         self, readers: _CharacterRefreshReaders, generation: int

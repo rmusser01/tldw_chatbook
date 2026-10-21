@@ -16,6 +16,7 @@ replacing any guarded identity.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import threading
@@ -90,6 +91,27 @@ def _loop_checks():
     finally:
         threading.setprofile_all_threads(old_thread)
         sys.setprofile(old_main)
+
+
+def _on_loop(loop, action) -> None:
+    """Run ``action`` on the UI loop from a worker barrier and wait for it."""
+    done = threading.Event()
+
+    def run() -> None:
+        try:
+            action()
+        finally:
+            done.set()
+
+    loop.call_soon_threadsafe(run)
+    assert done.wait(10), "the UI loop never ran the barrier action"
+
+
+class _UnreadableCharacter:
+    """A current-character value whose read raises, as a broken accessor would."""
+
+    def __getitem__(self, _index):
+        raise RuntimeError("character accessor failed")
 
 
 async def _settled(database, *, run_active: bool):
@@ -184,6 +206,63 @@ async def test_unchanged_display_check_keeps_the_probe_loop_cost(tmp_path, run_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["database-switch", "invalidated"])
+async def test_unchanged_read_overtaken_before_retirement_is_not_unchanged(
+    tmp_path, change
+):
+    """A scope read made stale before its callback retires does not count.
+
+    Between the merged check's first scope read and the callback's
+    retirement, the profile can switch or the display can be invalidated (a
+    character pick). Neither change trips the worker's reader checks, so the
+    batch still reports the scope unchanged. Only the two checks after
+    retirement see it: the ambient scope, and the fingerprint the display
+    still shows. They hand a run's check to the original probe-then-refresh
+    route, which answers as dev did. An invalidated display reloads in the
+    same check, and a switched profile is reported as changed, not
+    unchanged. (The idle display compares its whole owner key after the
+    check, so these two checks do not change its outcome.)
+    """
+    old = CharactersRAGDB(tmp_path / "old.sqlite", "old-profile")
+    new = CharactersRAGDB(tmp_path / "new.sqlite", "new-profile")
+    try:
+        new.close_connection()
+        controller, screen, active = await _settled(old, run_active=True)
+        revision = old.get_character_conversation_search_revision()
+        loop = asyncio.get_running_loop()
+        overtaken = []
+
+        def overtake() -> None:
+            if change == "database-switch":
+                active[0] = new
+            else:
+                controller.invalidate_scope()
+
+        def barrier(_frame, name, event, _argument):
+            # After the first pair returns, before the callback retires.
+            if name == "pairs" and event == "return" and not overtaken:
+                overtaken.append(True)
+                _on_loop(loop, overtake)
+
+        with _original_calls(old, barrier=barrier):
+            changed = await _display(controller, screen)
+
+        assert overtaken
+        assert changed is True, "a stale unchanged read was reported unchanged"
+        assert not worker_leases(old) and not worker_leases(new)
+        state = controller.state
+        assert not state.loading and not state.error
+        if change == "invalidated":
+            # Reloaded by the same check rather than one run tick later.
+            assert state.scope_fingerprint is not None
+            assert state.scope_fingerprint.database_identity == id(old)
+            assert state.data_revision == revision
+    finally:
+        old.close()
+        new.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "flap", ["owner-first-read", "owner-fence-read", "reader-first-read"]
 )
@@ -242,6 +321,72 @@ async def test_unpublished_changed_check_leaves_no_idle_memo(
         assert controller.state.data_revision == revision
         assert not controller.state.loading and not controller.state.error
     finally:
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["cancelled", "accessor-error"])
+async def test_interrupted_changed_check_leaves_no_idle_memo(
+    tmp_path, monkeypatch, interruption
+):
+    """A run's check interrupted while reloading does not keep the idle memo.
+
+    On the original route the reload ran after ``refresh()`` had dropped the
+    last-successful-refresh marker. So a cancellation during the reload, or an
+    ambient accessor error re-raised from it, left no memo behind. The merged
+    check reloads inside its one callback. If the marker survived such an
+    interruption, the next idle display would take the memo and keep showing
+    the old revision until the next sync event.
+    """
+    monkeypatch.setattr(
+        character_context, "_CHARACTER_PRESENTATION_TTL_SECONDS", 3600.0
+    )
+    database = CharactersRAGDB(tmp_path / "interrupted.sqlite", "one-helper")
+    release = threading.Event()
+    task = None
+    try:
+        controller, screen, _active, current, _conversation = _character(database)
+        await controller.refresh()
+        assert await _display(controller, screen) is False  # arms the idle memo
+        revision = database.increment_character_conversation_search_revision()
+        entered = threading.Event()
+        held = []
+
+        def barrier(_frame, name, event, _argument):
+            # The changed check has loaded the groups and not yet fenced them.
+            if name != "recent" or event != "return" or held:
+                return
+            held.append(True)
+            if interruption == "accessor-error":
+                current[0] = _UnreadableCharacter()
+                return
+            entered.set()
+            assert release.wait(10), "the held reload was not released"
+
+        controller._run_active = lambda: True
+        with _original_calls(database, barrier=barrier):
+            task = asyncio.create_task(_display(controller, screen))
+            if interruption == "cancelled":
+                assert await asyncio.to_thread(entered.wait, 10)
+                task.cancel()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                with pytest.raises(RuntimeError, match="character accessor failed"):
+                    await task
+        assert held
+        current[0] = None
+        assert not worker_leases(database)
+
+        controller._run_active = lambda: False  # the reply ended
+        assert await _display(controller, screen) is True
+        assert controller.state.data_revision == revision
+        assert not controller.state.loading and not controller.state.error
+    finally:
+        release.set()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
         database.close()
 
 
