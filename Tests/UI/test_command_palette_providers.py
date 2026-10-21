@@ -396,10 +396,12 @@ class TestTabNavigationProvider:
         assert any("Console" in name for name in tab_names)
         assert any("Library" in name for name in tab_names)
         assert any("Artifacts" in name for name in tab_names)
-        # ADR-240: the retired MCP destination's popular slot is now a
-        # Settings > Tools & MCP deep-link -- a second "Switch to Settings"
-        # entry beside the Settings destination's own.
-        assert sum("Switch to Settings" in name for name in tab_names) == 2
+        # task-35152 / ADR-240: the retired MCP destination's popular slot
+        # is a labeled "Tools & MCP" deep-link, so the row carries exactly
+        # one "Switch to Settings" (the Settings destination's own) and one
+        # "Switch to Tools & MCP" -- not a duplicate Settings entry.
+        assert sum("Switch to Settings" in name for name in tab_names) == 1
+        assert sum("Switch to Tools & MCP" in name for name in tab_names) == 1
         assert any("Home" in name for name in tab_names)
 
     @pytest.mark.asyncio
@@ -409,10 +411,10 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        # One command per current destination plus the labeled Library
-        # sub-route deep links (currently just Skills).
+        # One command per current destination plus the labeled folded-route
+        # deep links (Library — Artifacts, Library — Skills, Tools & MCP).
         expected = len(TabNavigationProvider.command_palette_tab_ids()) + len(
-            TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+            TabNavigationProvider.FOLDED_ROUTE_COMMANDS
         )
         assert len(hits) == expected
         tab_texts = [hit.text for hit in hits]
@@ -428,6 +430,9 @@ class TestTabNavigationProvider:
         # DEEP-LINK command (lands on the Skills rail row) -- still no
         # standalone Skills destination.
         assert any("Library — Skills" in text for text in tab_texts)
+        # task-35152: the retired MCP route's deep-link is a labeled
+        # command distinct from the Settings destination's own.
+        assert any("Switch to Tools & MCP" in text for text in tab_texts)
 
     @pytest.mark.asyncio
     async def test_palette_library_skills_command_opens_hidden_starter_route(
@@ -514,7 +519,8 @@ class TestTabNavigationProvider:
             "Schedules",
             "Workflows",
             # ADR-240: the MCP destination retired into Settings > Tools &
-            # MCP; "mcp" is a Settings alias term, not a labeled command.
+            # MCP; "mcp" rides the labeled Tools & MCP deep-link command
+            # plus Settings' alias terms, not a duplicate Settings command.
             "ACP",
             "Lab",
             "Settings",
@@ -524,6 +530,7 @@ class TestTabNavigationProvider:
             assert texts.count(expected_text) == 1, expected_text
 
         assert texts.count("Tab Navigation: Library — Artifacts") == 1
+        assert texts.count("Tab Navigation: Switch to Tools & MCP") == 1
         joined_text = "\n".join(texts)
         assert "Tab Navigation: Switch to Chat" not in joined_text
         assert "Tab Navigation: Switch to Skills" not in joined_text
@@ -602,11 +609,14 @@ class TestTabNavigationProvider:
             ("logs", "Tab Navigation: Switch to Logs"),
             ("stats", "Tab Navigation: Switch to Settings"),
             ("media", "Tab Navigation: Switch to Library"),
-            # ADR-240: the MCP destination's route ids are Settings palette
-            # alias terms now ("tools_settings" remains a route alias, just
-            # not a labeled palette command).
-            ("tools", "Tab Navigation: Switch to Settings"),
-            ("mcp", "Tab Navigation: Switch to Settings"),
+            # ADR-240 / task-35152: the retired MCP routes surface the
+            # labeled "Tools & MCP" deep-link command (which lands on
+            # Settings' Tools category) alongside the Settings
+            # destination's own command (still matched via its alias
+            # terms); asserting the deep-link keeps the search truthful
+            # about where "tools"/"mcp" actually land.
+            ("tools", "Tab Navigation: Switch to Tools & MCP"),
+            ("mcp", "Tab Navigation: Switch to Tools & MCP"),
         ]
 
         for query, expected_text in cases:

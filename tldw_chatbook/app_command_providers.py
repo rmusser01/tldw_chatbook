@@ -283,7 +283,7 @@ class TabNavigationProvider(Provider):
         TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
         TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
         TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
-        TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",
+        TAB_MCP: "Open Settings → Tools & MCP for servers, tools, permissions, and audit",
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, storage, and app behavior",
@@ -300,7 +300,7 @@ class TabNavigationProvider(Provider):
         TAB_RESEARCH: "Switch to research workflows",
         TAB_RESEARCH_WORKSPACE: "Open Research Workspace for grounded research",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
-        TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
+        TAB_TOOLS_SETTINGS: "Open Settings → Tools & MCP (legacy tools-settings route)",
         TAB_LOGS: "Switch to application logs",
         TAB_STATS: "Switch to statistics view",
     }
@@ -319,12 +319,16 @@ class TabNavigationProvider(Provider):
         TAB_SETTINGS,
     )
 
-    # task-423: labeled deep-link commands into Library-folded content
-    # types that would otherwise only fuzzy-match the generic Library
-    # command (which lands on generic Library, not the content row). Each
-    # entry is (legacy route, command text, help text); the route rides
-    # ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` to land on its rail row.
-    LIBRARY_SUBROUTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
+    # task-423: labeled deep-link commands into destination-folded content
+    # that would otherwise only fuzzy-match the owning destination's
+    # generic command (which lands on the generic screen, not the folded
+    # surface). Each entry is (legacy route, command text, help text); the
+    # route rides the legacy-route nav-context maps to land on its surface.
+    # task-35152 / ADR-240: this is also the label mechanism for the
+    # retired MCP destination's popular-row slot -- without its own entry,
+    # ``_tab_command`` resolves "mcp" to the Settings destination and the
+    # popular row would show "Switch to Settings" twice.
+    FOLDED_ROUTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
         (
             "artifacts",
             "Tab Navigation: Library — Artifacts",
@@ -334,6 +338,11 @@ class TabNavigationProvider(Provider):
             "skills",
             "Tab Navigation: Library — Skills",
             "Open Library's Skills row for Agent Skills packs, validation, and trust",
+        ),
+        (
+            TAB_MCP,
+            "Tab Navigation: Switch to Tools & MCP",
+            "Open Settings → Tools & MCP for servers, tools, permissions, and audit",
         ),
     )
 
@@ -403,7 +412,7 @@ class TabNavigationProvider(Provider):
         return f"Open {destination.accessible_label} for {destination.purpose}"
 
     def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
-        for route, text, help_text in self.LIBRARY_SUBROUTE_COMMANDS:
+        for route, text, help_text in self.FOLDED_ROUTE_COMMANDS:
             if route == tab_id:
                 return text, tab_id, help_text
         destination = self._shell_destination_for_tab(tab_id)
@@ -444,8 +453,9 @@ class TabNavigationProvider(Provider):
                     help=help_text,
                 )
 
-        # task-423: Library sub-route deep links (e.g. "skills").
-        for route, command_text, help_text in self.LIBRARY_SUBROUTE_COMMANDS:
+        # task-423 / task-35152: folded-route deep links (e.g. "skills",
+        # "mcp").
+        for route, command_text, help_text in self.FOLDED_ROUTE_COMMANDS:
             score = max(
                 matcher.match(command_text),
                 matcher.match(help_text),
