@@ -1,11 +1,11 @@
 ---
 id: TASK-35932
 title: Qualify workspace guidance with preserved Library choices
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 04:24'
-updated_date: '2026-10-21 07:10'
+updated_date: '2026-10-21 07:47'
 labels: []
 dependencies: []
 documentation:
@@ -36,5 +36,5 @@ Verify natural project questions and mixed evidence through the real Console whi
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Qualified workspace guidance and unchanged saved Library choices using real SQLite/controller/agent dispatch and synthetic real-provider journeys. All 55 affected node IDs have final passing evidence across targeted runs (52 initially passed; corrected four-case policy guard passed). Initial/retry x native/fenced requests retain owning tab files and scopes. DeepSeek deepseek-flash normal TldwCli Send completed with real README/manifest tools, unchanged full policy row, original config SHA256 and user-data metadata; normal UI shows completion. Earlier interrupted/confounded observations and model inference limits are explicit. G3 commit196b0d3a8e and receipt correction0cfd2977d2; Independent task review and scoped receipt-fix re-review approved with no open findings; whole-branch gate pending, so task stays In Progress. No indexing, policy migration, new dependency or original-profile write. Architecture/user docs and sanitized receipts: Docs/superpowers/qa/2026-10-20-workspace-project-context/guidance/. ADR: backlog/decisions/240-workspace-project-context-and-folder-bound-index.md.
+Qualified all four durable Library policy combinations and native/fenced initial/retry owning-session payloads. All 55 affected node IDs have final passing evidence across targeted runs; no pristine full-suite claim. Real DeepSeek native-tool synthetic journeys include completed normal TldwCli Send; the final canonical mixed run after correction c2578bca5d cites [S1] Library claims and project file paths with unchanged full Automatic/Blocked row and recorded original config SHA256/user-data metadata. Prior interrupted/Host-only, missing dispatch, model inference/line-range and viewport limits remain explicit. Architecture/user docs and raw-derived QA receipts are updated. Per-task reviews and final whole-branch correction re-review are approved, all findings addressed, no new breakage. Guidance only; optional indexing stays separate. Existing baseline platform/cancellation/lint/warning debt is documented. Evidence/review records: Docs/superpowers/qa/2026-10-20-workspace-project-context/guidance/. ADR: backlog/decisions/240-workspace-project-context-and-folder-bound-index.md.
 <!-- SECTION:NOTES:END -->
