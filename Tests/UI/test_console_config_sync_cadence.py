@@ -243,6 +243,28 @@ async def _quiesce(tick, seen, limit: int = 10) -> None:
     )
 
 
+async def _until_a_tick_skips(tick, seen, clock, limit: int = 10):
+    """Tick a live poll until a tick skipped after a projection that rendered.
+
+    The clock stands still. A projection that defers records nothing, so
+    the next tick still owes the backstop and projects again; a tick refused
+    at entry projects nothing and skips nothing. Either can end a
+    ``_quiesce``, so check the cadence itself.
+
+    Returns:
+        The screen's cadence: a projection rendered within the backstop's
+        second, and a tick has skipped since.
+    """
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
+    cadence = config_sync._cadence(tick.console)
+    for _ in range(limit):
+        await _quiesce(tick, seen)
+        if cadence.owed and clock.now - cadence.at < config_sync.RUN_BACKSTOP_SECONDS:
+            return cadence
+    raise AssertionError(f"no poll tick skipped a fresh projection in {limit} rounds")
+
+
 async def _run_over(console) -> None:
     """Wait until no chat has a run going (the backstop's gate is closed)."""
     from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
@@ -277,6 +299,8 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
     status; ticks in that tail get the backstop too, and the tick on which
     the poll stops itself leaves the controls rendered.
     """
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
     clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -337,24 +361,49 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
             # (e) The poll stops itself on a tick that skips (nothing moved
             # within the second); the stop renders what it skipped, so the
             # Console is left as current as an always-rendering last tick
-            # left it.
+            # left it. Run work is over, but the poll is kept live until a
+            # tick skips after a projection that rendered: the tail's
+            # backstop above can defer, and a deferral records nothing, so
+            # without this the stop tick would still owe the backstop and
+            # project on its own, with nothing left for the stop to render.
             await until(
                 lambda: not console._console_transcript_poll_needed(), timeout=30
             )
+            console._console_transcript_poll_needed = lambda: True
+            try:
+                cadence = await _until_a_tick_skips(tick, seen, clock)
+            finally:
+                del console._console_transcript_poll_needed
             stops: list[None] = []
             stop = console._stop_console_transcript_sync_timer
             console._stop_console_transcript_sync_timer = lambda: (
                 stops.append(None),
                 stop(),
             )
+            forced: list[bool] = []
+            project = config_sync.project_console_tick
+
+            def spy(screen, *, force: bool = False) -> bool:
+                result = project(screen, force=force)
+                if force:
+                    forced.append(result)
+                return result
+
+            monkeypatch.setattr(config_sync, "project_console_tick", spy)
             try:
                 before = (seen.calls, seen.renders)
                 await tick()
                 assert stops, "the poll did not stop itself"
+                assert forced == [True], (
+                    f"the stop forced {len(forced)} projections; want the one"
+                    " that renders what the skipped last tick left"
+                )
                 assert (seen.calls, seen.renders) == (before[0] + 1, before[1] + 1), (
                     "the stopping poll's last tick left the controls unrendered"
                 )
+                assert not cadence.owed
             finally:
+                monkeypatch.setattr(config_sync, "project_console_tick", project)
                 del console._stop_console_transcript_sync_timer
                 tick.release()
 
