@@ -8649,14 +8649,16 @@ class ChatScreen(BaseAppScreen):
             cancel_all_visible,
         ) = payload
         try:
-            self.query_one("#console-agent-section-status", Static).update(status_line)
+            # TASK-33620.15.7: a payload change rarely changes every line, and
+            # an unchanged one must not request a whole-screen layout.
+            status = self.query_one("#console-agent-section-status", Static)
+            if status.content != status_line:
+                status.update(status_line)
             # TASK-31429: the run status word also picks the line's colour.
-            # (Separate lookup on purpose: the timer-path census pins the
-            # `.update()` receiver expression above.)
-            apply_console_agent_status_state(
-                self.query_one("#console-agent-section-status", Static), status_line
-            )
-            self.query_one("#console-agent-section-steps", Static).update(steps_text)
+            apply_console_agent_status_state(status, status_line)
+            steps = self.query_one("#console-agent-section-steps", Static)
+            if steps.content != steps_text:
+                steps.update(steps_text)
             fleet_section = self.query_one(
                 "#console-agent-section-subagents", ConsoleInspectorSection
             )
@@ -8705,7 +8707,8 @@ class ChatScreen(BaseAppScreen):
                 bool(fleet_section_state.rows), fleet_section
             )
             fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
-            fleet_summary.update(fleet_line)
+            if fleet_summary.content != fleet_line:
+                fleet_summary.update(fleet_line)
             fleet_summary.styles.display = "block" if fleet_line else "none"
             back_button = self.query_one("#console-agent-drilldown-back", Button)
             back_button.styles.display = "block" if back_visible else "none"
@@ -11275,27 +11278,36 @@ class ChatScreen(BaseAppScreen):
         try:
             if not is_current():
                 return
-            left_rail.invalidate_character_avatar_geometry()
-            fitted_box = left_rail.character_avatar_box
-            replaced = await left_rail.replace_character_avatar_widget(
-                lambda: self._build_character_avatar_widget(spec, box=fitted_box),
-                is_current=is_current,
-            )
+            if self._character_avatar_spec_is_blank(
+                spec
+            ) and left_rail.character_avatar_is_blank():
+                # TASK-33620.15.7: with no character every expression change
+                # of a run re-mounted the same hidden blank -- a whole-screen
+                # layout for a widget that paints nothing.
+                replaced = True
+            else:
+                left_rail.invalidate_character_avatar_geometry()
+                fitted_box = left_rail.character_avatar_box
+                replaced = await left_rail.replace_character_avatar_widget(
+                    lambda: self._build_character_avatar_widget(spec, box=fitted_box),
+                    is_current=is_current,
+                )
             if not replaced or not is_current():
                 return
             try:
                 name_widget = self.query_one("#console-character-name", Static)
                 if not is_current():
                     return
-                name_widget.update(
-                    Text(
-                        sanitize_character_display_label(
-                            name,
-                            max_characters=180,
-                        )
-                        or "No character in this chat"
+                name_text = Text(
+                    sanitize_character_display_label(
+                        name,
+                        max_characters=180,
                     )
+                    or "No character in this chat"
                 )
+                current_name = name_widget.content
+                if not (isinstance(current_name, Text) and current_name == name_text):
+                    name_widget.update(name_text)
             except QueryError:
                 pass
             try:
@@ -11304,11 +11316,13 @@ class ChatScreen(BaseAppScreen):
                 )
                 if not is_current():
                     return
-                reaction_widget.update(
+                reaction_text = (
                     f"Reaction: {manual_label} (manual)"
                     if manual_label
                     else "Reaction: Automatic"
                 )
+                if reaction_widget.content != reaction_text:
+                    reaction_widget.update(reaction_text)
             except QueryError:
                 pass
             self._request_console_context_allocation_reconcile()
@@ -11373,6 +11387,25 @@ class ChatScreen(BaseAppScreen):
             return int(body.content_size.width)
         except Exception:
             return 0
+
+    @staticmethod
+    def _character_avatar_spec_is_blank(spec: dict | None) -> bool:
+        """Whether ``spec`` builds the hidden blank: no character, no image.
+
+        Args:
+            spec: The cached avatar spec, or None.
+
+        Returns:
+            True when `_build_character_avatar_widget` mounts the zero-size,
+            display-none ``#console-character-avatar-empty`` Static.
+        """
+        if spec and spec.get("character_id") is not None:
+            return False
+        return not spec or (
+            spec.get("pil") is None
+            and spec.get("pixels") is None
+            and not spec.get("animation_bytes")
+        )
 
     def _build_character_avatar_widget(
         self,
@@ -11440,7 +11473,7 @@ class ChatScreen(BaseAppScreen):
             and spec.get("pixels") is None
             and not spec.get("animation_bytes")
         ):
-            if not (spec and spec.get("character_id") is not None):
+            if self._character_avatar_spec_is_blank(spec):
                 # TASK-23194: with no character set, `#console-character-name`
                 # below already renders "No character in this chat". This
                 # placeholder used to render the SAME sentence, so the rail
@@ -17354,7 +17387,11 @@ class ChatScreen(BaseAppScreen):
         mode_copy = self._console_mode_summary(control_state)
         if run_status := self._native_run_status_copy():
             mode_copy = f"{mode_copy} | Run: {run_status}"
-        mode_bar.update(mode_copy)
+        # TASK-33620.15.7: a hidden, zero-height compat static, re-synced on
+        # every 0.2 s run tick -- its copy never moves another widget, so it
+        # must not request a whole-screen layout, changed or not.
+        if mode_bar.content != mode_copy:
+            mode_bar.update(mode_copy, layout=False)
         # TASK-2154.18 (FB-08): the mode bar itself is a hidden compat
         # static -- the run chip in the status strip is run copy's
         # persistent VISIBLE home. This sync runs on send/stop

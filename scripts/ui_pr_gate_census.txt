@@ -1052,3 +1052,6 @@ Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_onl
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[retry-edited-correct]
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_retained_create_next_explicit_save_updates_same_owner_and_row
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[ordinary-multi-question]
+# TASK-33620.15.7: run-tick layout-request pins (ten widget pins, ~3 s, and one
+# private-profile held-run journey, ~12 s locally).
+Tests/UI/test_console_run_tick_layout_requests.py

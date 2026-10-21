@@ -237,7 +237,12 @@ class ConsoleSetupModal(Vertical):
                 widget = self.query_one(f"#console-setup-step-{index}", Static)
             except Exception:
                 continue
-            widget.update(self._step_text(index, step))
+            # TASK-33620.15.7: this sync runs on every 0.2 s run tick; an
+            # unchanged step (the hidden card, most of all) must not request
+            # a whole-screen reflow.
+            text = self._step_text(index, step)
+            if widget.content != text:
+                widget.update(text)
             widget.set_classes(self._step_classes(step))
             # Own display must track blocking so hidden-modal content does not
             # leak into visible-text scrapes while the overlay is dismissed.
@@ -256,7 +261,8 @@ class ConsoleSetupModal(Vertical):
         except Exception:
             pass
         else:
-            staged_widget.update(self._staged_evidence_notice)
+            if staged_widget.content != self._staged_evidence_notice:
+                staged_widget.update(self._staged_evidence_notice)
             staged_widget.display = blocking and bool(self._staged_evidence_notice)
         self._sync_detected_action_button()
         try:

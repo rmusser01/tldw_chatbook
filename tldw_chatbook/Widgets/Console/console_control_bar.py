@@ -128,7 +128,11 @@ class ConsoleControlBar(Vertical):
         height = 2 if visible else 1
         classes = {name for name in self.classes if not name.startswith("h-")}
         classes.add(f"h-{height}")
-        self.set_styles(height=None)
+        # Clearing a scalar style requests a whole-screen layout even when no
+        # inline rule is set, and this runs on every 0.2 s run tick through the
+        # auto-speak sync (TASK-33620.15.7): clear only a rule that exists.
+        if self.styles.inline.has_rule("height"):
+            self.set_styles(height=None)
         # One atomic update; Textual skips restyling when classes are unchanged.
         self.set_classes(classes)
         self.styles.min_height = height
@@ -189,7 +193,11 @@ class ConsoleControlBar(Vertical):
                 widget = self.query_one(selector, Static)
             except NoMatches:
                 continue
-            widget.update(label)
+            # TASK-33620.15.7: every label here is a hidden zero-size compat
+            # widget (`_compatibility_layout_widget`), so new copy never moves
+            # anything and unchanged copy is not written at all.
+            if widget.content != label:
+                widget.update(label, layout=False)
 
     @staticmethod
     def _action_widget_id(action: WorkbenchAction) -> str:

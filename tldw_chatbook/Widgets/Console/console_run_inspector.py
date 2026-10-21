@@ -347,7 +347,15 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         the same state explicitly or rows updated while the rail is hidden
         would stay ``display=False`` after the rail reopens mid-recompose
         (and diverge from the recompose path's observable DOM).
+
+        While the cascade still hides this inspector itself, the rail is
+        collapsed: restoring its rows now only showed them inside the hidden
+        rail until the screen's next cascade hid them again, two whole-screen
+        layouts per Inspector update during a run (TASK-33620.15.7). The
+        markers stay, so the rail's reopening cascade restores the rows.
         """
+        if getattr(self, "_console_rail_prior_display", None) is not None:
+            return
         for child in self.query("*"):
             prior_display = getattr(child, "_console_rail_prior_display", None)
             if prior_display is None:

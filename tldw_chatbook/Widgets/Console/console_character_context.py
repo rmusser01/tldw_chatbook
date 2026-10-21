@@ -351,7 +351,10 @@ class ConsoleCharacterContext(Vertical):
             character = scope.current_character_label or "Current character"
             open_copy = "Open" if scope.open_conversation_id else "No open chat"
             copy = f"{character} · Local · {open_copy}"
-        self._identity_state.update(copy)
+        # TASK-33620.15.7: a state change rarely changes this line; unchanged
+        # copy must not request a whole-screen layout.
+        if self._identity_state.content != copy:
+            self._identity_state.update(copy)
         self._identity_state.tooltip = copy
 
     def _compose_unavailable_detail(
