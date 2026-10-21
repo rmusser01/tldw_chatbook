@@ -6881,7 +6881,8 @@ class ConsoleSessionController:
             if releasable:
                 # TASK-33621.20: the card may be gone (a center swap cancels its
                 # worker), so the shelf offers the turn again, repainted from
-                # the screen rather than from this ending task.
+                # the screen rather than from this ending task (passed uncalled,
+                # so a worker a teardown never starts leaves no coroutine).
                 card_action_finished(
                     runtime,
                     controller,
@@ -6890,7 +6891,7 @@ class ConsoleSessionController:
                     return_to_composer=False,
                     interrupted=True,
                 )
-                self.run_worker(sync_ui(), exclusive=False, group="console-sync")
+                self.run_worker(sync_ui, exclusive=False, group="console-sync")
             raise
         composer = self._console_composer_or_none()
         # By id: after a tab switch the active session's pause is another's.
