@@ -21,17 +21,21 @@ PR #3140's pre-merge review tried to close the coverage gap by adding test_setti
 
 <!-- SECTION:PLAN:BEGIN -->
 1. INVESTIGATED (findings): Root cause of the lane failures is ADR-126 config-participant admission, not the suites' logic. Tests/conftest.py binds the tldw_chatbook.config module as a raw participant to the SESSION bootstrap sandbox at import time (eager Chunking/config_profiles imports). isolate_test_environment then redirects TLDW_CONFIG_PATH to a per-test tmp_path for every file NOT on its keep-list; the first guarded config read in such a test re-registers the config source with the new path and _register_raw_participant fails closed with RecoveryRequired(raw_source_selection_changed) (raw_participants.py:307). Verified: dev's censused app-constructing suites survive the lane via @pytest.mark.bootstrap_profile (60+ censused files; e.g. test_settings_configuration_hub.py marks its mounting tests per-node and is censused by node id) or the conftest file allowlist; @private_profile_test works because each case runs in a fresh child interpreter.
-2. Fix mechanism: per-test @pytest.mark.bootstrap_profile on the app/harness-constructing tests of test_settings_tools_hub.py (5), test_settings_footer_hints.py (7), test_screen_footer_hints.py (6); module-level pytestmark for test_screen_navigation.py (108 of 141 plain-run nodes fail; private_profile would cost 108 child boots x 5-20s = far over shard budget, marker is the established in-lane pattern). test_mcp_permissions_handoff.py is already fully @private_profile_test and passes plain - no change.
+2. Fix mechanism: per-test @pytest.mark.bootstrap_profile on the app/harness-constructing tests of test_settings_tools_hub.py (4 bootstrap_profile markers + 1 test moved to @private_profile_test), test_settings_footer_hints.py (7), test_screen_footer_hints.py (6); module-level pytestmark for test_screen_navigation.py (108 of 141 plain-run nodes fail; private_profile would cost 108 child boots x 5-20s = far over shard budget, marker is the established in-lane pattern). test_mcp_permissions_handoff.py is already fully @private_profile_test and passes plain - no change.
 3. CSS guards (test_screen_footer_hints.py): both fail on dev. (i) built-bundle marker guard: the bundle deliberately strips source comments (build_css without_source_comments, policy guarded by test_css_generated_comments.py, landed ae9093a714) so markers can never return via rebuild - adapt the guard to extract the footer selectors structurally from the bundle instead. (ii) BUNDLED_CSS parity guard: _widgets.tcss migrated to -* tokens in the same commit; BUNDLED_CSS must keep raw literals (its documented purpose is stylesheet-less harnesses where -* do not resolve - settings_tools_hub.py DEFAULT_CSS comment) - teach the guard to resolve -* tokens from core/_variables.tcss before comparing. Verified all 7 drifted values resolve to exactly the BUNDLED_CSS literals.
 4. Verify: .venv/bin/python -m pytest <five files> -q -p no:cacheprovider (one process, mirroring the lane) green; run Tests/UI/test_design_token_governance.py after CSS-adjacent changes.
 5. Census: append the green files to scripts/ui_pr_gate_census.txt with a task-35597 comment; run scripts/check_ui_pr_gate_census.py.
 6. Commit (fix + census), mark task Done with Implementation Notes.
+
+ADR required: no
+Reason: test-only change (isolation markers, guard-side test fixes, census entries); no production boundary moved.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Lane-safe via bootstrap_profile/private_profile_test; 2 CSS guards fixed guard-side; census: 3 whole files + 112 node ids (523 entries, checker OK); lane-mirroring run 145 passed; 36 dev-red tests documented and left ungated for owners.
+Review round: raised MINIMUM_FILES 408 -> 523 in scripts/check_ui_pr_gate_census.py to match the census this task landed (checker OK); filed task-35837 for the MCPRail warm-cache Mount race the round-trip test routed around via the child runner.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
