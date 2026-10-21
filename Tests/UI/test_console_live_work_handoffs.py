@@ -3209,7 +3209,19 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(
         assert isinstance(result, LocalRagContextResult)
         assert "Attention is all you need. " * 4 in result.context
         assert "Media staged:" not in result.context
-        assert result.context in gateway.calls[0]["messages"][-1]["content"]
+        provider_text = gateway.calls[0]["messages"][-1]["content"]
+        instructions, exact_evidence = provider_text.split("Evidence: ", 1)
+        assert "[S#] labels only for the supplied Library references" in instructions
+        assert (
+            "cite claims supported by those references with their labels"
+            in instructions
+        )
+        assert (
+            "binding label, relative path, and line range when available"
+            in instructions
+        )
+        assert "do not assign Library labels" in instructions
+        assert exact_evidence.startswith(result.context + "\n\n---\n\n")
         assert result.citation_repair_contract.require_markers is False
         assert contract_identity == [True]
         assert screen._pending_console_launch_context is None

@@ -1,0 +1,435 @@
+{
+  "observation_bound_seconds": 600,
+  "overall_normal_exit_bound_seconds": 730,
+  "dispatch_observation_scope": "Observed gateway dispatch-message arrays only. Separately supplied system context is omitted; these are not complete prompts or HTTP/wire bytes.",
+  "profile": "fresh private task-local profile",
+  "model": "deepseek-flash",
+  "protocol": "native tools",
+  "gateway_type": "ConsoleProviderGateway",
+  "route": "actual TldwCli.run_test startup; normal ChatScreen.handle_console_send_message(Button.Pressed) and runtime-owned send",
+  "controller_after_activation_matches": true,
+  "store_after_activation_matches": true,
+  "action_snapshot": {
+    "returned": false,
+    "intended_session": "85665973-1309-4518-8ee9-38ec6cabd15f",
+    "visible_draft_session": "85665973-1309-4518-8ee9-38ec6cabd15f",
+    "active_session": "85665973-1309-4518-8ee9-38ec6cabd15f",
+    "draft_at_action": "Summarize this project and explain what the supplied Library note says about Bluefin Archive. Distinguish their purposes and unique markers.",
+    "draft_after_action": "Summarize this project and explain what the supplied Library note says about Bluefin Archive. Distinguish their purposes and unique markers.",
+    "send_blocked_reason": "",
+    "saved_user_rows": 0,
+    "pending_send_review": false,
+    "gateway_observation_only": true
+  },
+  "controller_at_snapshot_matches": true,
+  "current_runtime_status": "completed",
+  "runtime_session_id": "85665973-1309-4518-8ee9-38ec6cabd15f",
+  "persisted_conversation_id": "a43970f9-d0af-471d-8f74-ae9ee6ae0277",
+  "action_result": false,
+  "normal_refresh_completed": true,
+  "user_profile_unchanged": {
+    "config_sha256_unchanged": true,
+    "user_data_file_metadata_unchanged": true
+  },
+  "receipt_schema": "workspace-guidance-qa-v1",
+  "scenarios": [
+    {
+      "name": "mixed-canonical",
+      "question": "Summarize this project and explain what the supplied Library note says about Bluefin Archive. Distinguish their purposes and unique markers.",
+      "accepted": true,
+      "run_status": "completed",
+      "policy_before": [
+        [
+          "a43970f9-d0af-471d-8f74-ae9ee6ae0277",
+          1,
+          1,
+          0,
+          2,
+          "2026-10-21T07:30:46"
+        ]
+      ],
+      "policy_after": [
+        [
+          "a43970f9-d0af-471d-8f74-ae9ee6ae0277",
+          1,
+          1,
+          0,
+          2,
+          "2026-10-21T07:30:46"
+        ]
+      ],
+      "durable_policy_unchanged": true,
+      "saved_policy": {
+        "auto_retrieve": "automatic",
+        "assistant_access": "blocked"
+      },
+      "staged_evidence_consumed": true,
+      "final_answer": "## The project: Lantern Orchard\n\nThe workspace folder (`folder-46c1c02cf11c`) contains just two files at its root:\n\n- **`README.md`** (lines 1–4) — describes **Lantern Orchard**, a Python command-line tool that converts orchard sensor CSV files into weekly irrigation reports. Its unique marker is **`LANTERN-ORCHARD-8274`**.\n- **`pyproject.toml`** (lines 1–4) — names the package `lantern-orchard`, version `0.4.2`, requiring Python `>=3.12`.\n\nSo in essence: an agriculture/irrigation reporting CLI — sensor CSVs in, weekly irrigation reports out, packaged as a small Python 3.12+ project.\n\n*Scope limit:* I inspected only these two root files. There is no `src/`, package directory, tests, or other modules visible at the top level, so I can't describe implementation details beyond what the README states.\n\n## What the Library note says about Bluefin Archive\n\n[S1] describes a completely separate thing:\n\n- **Purpose:** Bluefin Archive **stores tide observations for coastal museums** — a marine/tide data archive.\n- **Unique marker:** **`BLUEFIN-TIDE-9361`**.\n- **Explicit relationship statement:** the note says it \"has no relationship to Lantern Orchard.\"\n\n## Distinguishing the two\n\n| | Lantern Orchard (workspace project) | Bluefin Archive ([S1] Library note) |\n|---|---|---|\n| Domain | Orchard sensor data → irrigation reports | Tide observations for coastal museums |\n| Form | Python CLI tool, v0.4.2, Python ≥3.12 | Described only as a data archive; no tooling or version given |\n| Unique marker | `LANTERN-ORCHARD-8274` | `BLUEFIN-TIDE-9361` |\n| Relationship | — | None; the note states this outright |\n\nThe key point for citation purposes: these are two distinct entities with two distinct identifiers. The Library note is about Bluefin Archive only, and the project's own identity marker lives in `README.md` line 2 — the two should not be conflated or cross-cited.",
+      "user_messages": [
+        {
+          "role": "user",
+          "content": "Summarize this project and explain what the supplied Library note says about Bluefin Archive. Distinguish their purposes and unique markers."
+        }
+      ],
+      "first_request": {
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "native": true,
+        "messages": [
+          {
+            "role": "user",
+            "content": "[Citation instructions]\n- Ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.\n- Use [S#] labels only for the supplied Library references; cite claims supported by those references with their labels.\n- Identify workspace file evidence by its binding label, relative path, and line range when available; do not assign Library labels to it.\n- Unrelated or insufficient Library evidence does not rule out workspace file evidence. Say when the available sources are insufficient instead of guessing.\n- Do not invent citation labels; unknown labels are untrusted.\n\nEvidence: [S1] NOTES — Synthetic Bluefin Library note\nBluefin Archive stores tide observations for coastal museums. Unique Library marker: BLUEFIN-TIDE-9361. It has no relationship to Lantern Orchard.\n\n---\n\nSummarize this project and explain what the supplied Library note says about Bluefin Archive. Distinguish their purposes and unique markers."
+          }
+        ],
+        "tool_names": [
+          "spawn_subagent",
+          "wait_agents",
+          "check_agents",
+          "send_to_agent",
+          "merge_agent_worktree",
+          "discard_agent_worktree",
+          "read_agent_messages",
+          "find_tools",
+          "load_tools",
+          "install_skill",
+          "fork_chat",
+          "new_chat",
+          "search_run_log",
+          "run_log_stats",
+          "run_log_slice"
+        ]
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice"
+          ],
+          "calls": [
+            {
+              "id": "call_00_M7H8fCHauJi7UfeV8DwA5643",
+              "type": "function",
+              "function": {
+                "name": "find_tools",
+                "arguments": "{\"query\": \"list files read file directory\"}"
+              }
+            }
+          ],
+          "request_messages_sha256": "11d7e6d18e9b691ff92c7d55daeb61e7f17f56718b776fab02396f020c465c05",
+          "tool_result_indexes_in_request": []
+        },
+        {
+          "round": 2,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice"
+          ],
+          "calls": [
+            {
+              "id": "call_00_ET_jxtQmxAeWaNmlvLhzozr0230",
+              "type": "function",
+              "function": {
+                "name": "load_tools",
+                "arguments": "{\"ids\": [\"local:fs_list\", \"local:fs_read\"]}"
+              }
+            }
+          ],
+          "request_messages_sha256": "0997da8c195f6faa7dae2d1204835f8a00e04db70a5ead580422936b42730765",
+          "tool_result_indexes_in_request": [
+            0
+          ]
+        },
+        {
+          "round": 3,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice",
+            "fs_list",
+            "fs_read"
+          ],
+          "calls": [
+            {
+              "id": "call_00_ET_AZtEf6pi8NNZAQwOCSFm1718",
+              "type": "function",
+              "function": {
+                "name": "fs_list",
+                "arguments": "{\"path\": \".\", \"root_alias\": \"folder-46c1c02cf11c\"}"
+              }
+            }
+          ],
+          "request_messages_sha256": "26bf17e6d48a5478083ff999eaeb5acf359faf12be5a713cb0b891bb395b8465",
+          "tool_result_indexes_in_request": [
+            0,
+            1
+          ]
+        },
+        {
+          "round": 4,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice",
+            "fs_list",
+            "fs_read"
+          ],
+          "calls": [
+            {
+              "id": "call_00_ET_6K6zaHmU36Kl8Y3kMWNn9148",
+              "type": "function",
+              "function": {
+                "name": "fs_read",
+                "arguments": "{\"path\": \"README.md\", \"root_alias\": \"folder-46c1c02cf11c\"}"
+              }
+            },
+            {
+              "id": "call_01_ET_JI3Ew0r7RRj3m1rddN3j6913",
+              "type": "function",
+              "function": {
+                "name": "fs_read",
+                "arguments": "{\"path\": \"pyproject.toml\", \"root_alias\": \"folder-46c1c02cf11c\"}"
+              }
+            }
+          ],
+          "request_messages_sha256": "efa924a8a7230e2acbb85b61930b9a99fcbe7905761fb8bec3e3f9636f154e89",
+          "tool_result_indexes_in_request": [
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "round": 5,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice",
+            "fs_list",
+            "fs_read"
+          ],
+          "calls": [],
+          "request_messages_sha256": "6aaa63ef52d9d8b37d161c35dfe07acdf90e5ff11d3f5d3038aeed3bf925b193",
+          "tool_result_indexes_in_request": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ],
+      "tool_results": [
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_M7H8fCHauJi7UfeV8DwA5643",
+          "content": "local:fs_list — fs_list: List a directory's entries (dirs first, then files), relative to the workspace root.\nlocal:fs_read — fs_read: Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.\nlocal:ask_user — ask_user: Ask the user up to 4 multiple-choice questions and wait for the answers. Use it ONLY for a decision that is genuinely the user's to make: a preference, a trade-off between valid designs, or something neither the code nor the conversation can tell you. Do not ask when a conventional default exists, when the answer is discoverable by reading the code or running a tool, when you can proceed and state your assumption, or to confirm a plan you already have. Batch related questions into ONE call instead of asking several times. Each question offers 2-4 options; the user can always type a free-text 'Other' answer instead. The result lists the selected labels per question; 'unanswered' marks questions the user skipped, and 'answered': false with a reason means no answer will come. If the reason is 'busy', another question is already waiting for the user: proceed without asking again this turn.\nlocal:git_blame — git_blame: Show per-line authorship (blame) for a file in the workspace repository, optionally restricted to a 1-based inclusive line range. Read-only; cannot modify the repository.\nlocal:git_branches — git_branches: List the workspace repository's branches (current branch marked with *), with commit and upstream info. Read-only; cannot modify the repository.\ncanvas:canvas_guide — canvas_guide: Read a focused authoring guide after the user requests or accepts Canvas.\ncanvas:canvas_list — canvas_list: List named Canvases and selected revision IDs reachable on this conversation branch.\ncanvas:canvas_read — canvas_read: Read a reachable Canvas's complete selected HTML and revision_id before updating it."
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_ET_jxtQmxAeWaNmlvLhzozr0230",
+          "content": "loaded: fs_list, fs_read"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_ET_AZtEf6pi8NNZAQwOCSFm1718",
+          "content": "pyproject.toml\nREADME.md"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_ET_6K6zaHmU36Kl8Y3kMWNn9148",
+          "content": "1\t# Lantern Orchard\n2\tUnique marker: LANTERN-ORCHARD-8274.\n3\tA Python command-line tool that converts orchard sensor CSV files into weekly irrigation reports.\nsha256: cd9e37499d148ed9d12852e35e01bb033379e8599e24c269c70ee5cdca9360d2\nsize: 156"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_01_ET_JI3Ew0r7RRj3m1rddN3j6913",
+          "content": "1\t[project]\n2\tname = \"lantern-orchard\"\n3\tversion = \"0.4.2\"\n4\trequires-python = \">=3.12\"\nsha256: 15f4bbc6109a8265557d04868d7e1bdf57579348754b1ff8d82fe939389e4a6a\nsize: 84"
+        }
+      ],
+      "ledger_observation": {
+        "id": "a2eaecfc-e472-4faf-8164-a21caece556e",
+        "conversation_id": "a43970f9-d0af-471d-8f74-ae9ee6ae0277",
+        "status": "done",
+        "budget": {
+          "max_steps": 25000,
+          "max_wall_seconds": 86400.0,
+          "max_subagents": 2,
+          "max_subagent_result_chars": 4000,
+          "max_tool_result_chars": 16000,
+          "max_model_turns": 2000,
+          "max_total_tokens": 25000000,
+          "max_tool_call_seconds": 3600.0,
+          "max_model_retries": 2,
+          "budget_warning_fraction": 0.8,
+          "denial_circuit_breaker_limit": 3
+        },
+        "created_at": "2026-10-21T07:31:43.077630Z",
+        "updated_at": "2026-10-21T07:34:43.091444Z",
+        "step_kind_counts": {
+          "model": 5,
+          "tool_call": 5,
+          "tool_result": 5,
+          "context_attached": 1,
+          "context_injected": 1,
+          "model_request_started": 5,
+          "model_response_completed": 5,
+          "tool_proposed": 5,
+          "approval_requested": 5,
+          "approval_approved": 5,
+          "tool_execution_started": 5,
+          "tool_succeeded": 5,
+          "agent_run_created": 1,
+          "agent_run_started": 1,
+          "agent_run_completed": 1
+        },
+        "approval_events": [
+          {
+            "kind": "approval_requested",
+            "summary": "Approval requested for find_tools",
+            "created_at": "2026-10-21T07:32:06.364713Z"
+          },
+          {
+            "kind": "approval_approved",
+            "summary": "Approval granted for find_tools",
+            "created_at": "2026-10-21T07:32:10.316183Z"
+          },
+          {
+            "kind": "approval_requested",
+            "summary": "Approval requested for load_tools",
+            "created_at": "2026-10-21T07:32:21.553669Z"
+          },
+          {
+            "kind": "approval_approved",
+            "summary": "Approval granted for load_tools",
+            "created_at": "2026-10-21T07:32:25.478414Z"
+          },
+          {
+            "kind": "approval_requested",
+            "summary": "Approval requested for fs_list",
+            "created_at": "2026-10-21T07:32:37.933620Z"
+          },
+          {
+            "kind": "approval_approved",
+            "summary": "Approval granted for fs_list",
+            "created_at": "2026-10-21T07:32:45.180549Z"
+          },
+          {
+            "kind": "approval_requested",
+            "summary": "Approval requested for fs_read",
+            "created_at": "2026-10-21T07:33:12.675478Z"
+          },
+          {
+            "kind": "approval_requested",
+            "summary": "Approval requested for fs_read",
+            "created_at": "2026-10-21T07:33:12.826598Z"
+          },
+          {
+            "kind": "approval_approved",
+            "summary": "Approval granted for fs_read",
+            "created_at": "2026-10-21T07:33:22.891641Z"
+          },
+          {
+            "kind": "approval_approved",
+            "summary": "Approval granted for fs_read",
+            "created_at": "2026-10-21T07:33:23.065143Z"
+          }
+        ],
+        "agent_completed_event_at": "2026-10-21T07:34:40.034696Z",
+        "agent_created_to_completed_event_seconds": 176.957,
+        "approval_path": "Normal shipping permission path under disposable global Allow; no manual approval callback or Ask-floor bypass.",
+        "agent_created_to_final_ledger_update_seconds": 180.014
+      },
+      "full_console_state_file": "mixed-canonical-actual-app-state.jsonl",
+      "full_console_state_sha256": "f88a6be9919d234448e975f23e821ad002b7d11f69d8ce71b813ea22619f5d3e",
+      "qualification_limit": "One real-model run, with exact unedited final answer. Its README.md citation says lines 1–4 while the actual returned README has lines 1–3; the pyproject.toml range 1–4 matches. The observed purposes/markers/version/Python requirement are supported. No reliability claim across models or prompts. Separately supplied system context is omitted from gateway observations.",
+      "snapshot_observation": {
+        "console-mode-bar": {
+          "display": false,
+          "text": "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools 5 | Approvals 0 | Run: Response complete."
+        },
+        "console-agent-section-status": {
+          "display": true,
+          "text": "Agent: done"
+        },
+        "viewport_limit": "Full updated assistant transcript including Bluefin [S1] is visible in the exported viewport; Response complete and Agent: done strings are absent from viewport text. Widget state does not establish their visible rendering."
+      }
+    }
+  ]
+}

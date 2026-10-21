@@ -54,11 +54,13 @@ and does not replace AGENTS.md trust, exclusions, approval or read-only gates.
 Library evidence may accompany file results without becoming their exclusive
 grounding source. Saved Library choices and source scopes stay independent.
 
-Native Windows root pinning compares the complete handle-derived identity at
-both capture and revalidation; it does not compare a native handle identity with
-the truncated identity from `os.stat`. The root-pinning and actual worker tests
-qualify that narrow prerequisite. Metadata availability and the existing
-private-profile/platform admission limits still apply.
+Native Windows admission captures the full Python filesystem identity through
+`os.lstat`. Root pinning now reads complete native handle metadata and matches
+that captured identity at initial pin and again after chdir. The old handle
+query truncated the volume serial; the Python capture was not truncated.
+The root-pinning and actual worker tests qualify that narrow prerequisite.
+Metadata availability and existing private-profile/platform admission limits
+still apply.
 
 ## Project instructions (AGENTS.md / AGENTS.override.md)
 

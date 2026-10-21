@@ -21,6 +21,14 @@ MAX_CITATION_ARTIFACT_SUMMARY_TEXT_CHARS = 256
 MAX_CITATION_ARTIFACT_SUMMARY_IDS = 20
 MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES = 200
 
+CONSOLE_CITATION_INSTRUCTIONS = (
+    "- Ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
+    "- Use [S#] labels only for the supplied Library references; cite claims supported by those references with their labels.",
+    "- Identify workspace file evidence by its binding label, relative path, and line range when available; do not assign Library labels to it.",
+    "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. Say when the available sources are insufficient instead of guessing.",
+    "- Do not invent citation labels; unknown labels are untrusted.",
+)
+
 
 @dataclass(frozen=True)
 class AnswerCitationValidation:
@@ -198,13 +206,7 @@ def format_console_evidence_for_cited_answer(value: Any) -> str:
     """
     return _format_evidence_for_cited_answer(
         value,
-        instructions=(
-            "- Ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
-            "- Use [S#] labels only for the supplied Library references; cite claims supported by those references with their labels.",
-            "- Identify workspace file evidence by its file path; do not assign Library labels to it.",
-            "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. Say when the available sources are insufficient instead of guessing.",
-            "- Do not invent citation labels; unknown labels are untrusted.",
-        ),
+        instructions=CONSOLE_CITATION_INSTRUCTIONS,
     )
 
 

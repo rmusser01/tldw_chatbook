@@ -113,7 +113,10 @@ from tldw_chatbook.Chat.citation_trace_builder import (
 )
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
-from tldw_chatbook.Chat.answer_citations import format_console_evidence_for_cited_answer
+from tldw_chatbook.Chat.answer_citations import (
+    CONSOLE_CITATION_INSTRUCTIONS,
+    format_console_evidence_for_cited_answer,
+)
 from tldw_chatbook.Chat.console_chat_store import (
     CapturePurgeStaleError,
     CapturePolicyStaleError,
@@ -10715,6 +10718,12 @@ class ConsoleChatController:
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
                     citation_context,
+                    instructions=(
+                        CONSOLE_CITATION_INSTRUCTIONS
+                        if citation_repair_contract is not None
+                        and not citation_repair_contract.require_markers
+                        else ()
+                    ),
                 )
             if citation_context and echoed_user is not None and not repeated_pass:
                 trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
@@ -22473,8 +22482,10 @@ class ConsoleChatController:
     def _prepend_evidence_context(
         provider_messages: list[dict[str, Any]],
         context: str,
+        *,
+        instructions: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
-        """Prefix exact evidence to the final provider-only user message."""
+        """Prefix optional guidance and exact evidence to the provider-only message."""
 
         final_index = next(
             (
@@ -22486,7 +22497,12 @@ class ConsoleChatController:
         )
         if final_index is None:
             return provider_messages
-        prefix = f"Evidence: {context}\n\n---\n\n"
+        guidance = (
+            "[Citation instructions]\n" + "\n".join(instructions) + "\n\n"
+            if instructions
+            else ""
+        )
+        prefix = f"{guidance}Evidence: {context}\n\n---\n\n"
         message = provider_messages[final_index]
         content = message.get("content")
         if isinstance(content, str):

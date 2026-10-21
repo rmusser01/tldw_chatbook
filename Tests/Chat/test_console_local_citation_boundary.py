@@ -3789,6 +3789,16 @@ async def test_canonical_console_file_answer_uses_optional_library_markers(
         )
     elif not agent:
         assert captured.context in gateway.calls[0]["messages"][-1]["content"]
+    initial_messages = (
+        bridge.calls[0]["agent_messages"] if agent else gateway.calls[0]["messages"]
+    )
+    provider_text = initial_messages[-1]["content"]
+    instructions, exact_evidence = provider_text.split("Evidence: ", 1)
+    assert "[S#] labels only for the supplied Library references" in instructions
+    assert "cite claims supported by those references with their labels" in instructions
+    assert "binding label, relative path, and line range when available" in instructions
+    assert "do not assign Library labels" in instructions
+    assert exact_evidence.startswith(captured.context + "\n\n---\n\n")
     assert contract.require_markers is False
     assert (
         captured.context

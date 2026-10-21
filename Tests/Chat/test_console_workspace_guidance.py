@@ -287,6 +287,7 @@ def _assert_mixed_grounding(messages) -> None:
     context = "\n".join(row["content"] for row in messages)
     assert "workspace file evidence" in context
     assert "[S#] labels only for the supplied Library references" in context
+    assert "binding label, relative path, and line range when available" in context
     assert "needle body" in context
     assert (
         "Use only available evidence references below to ground factual claims."
