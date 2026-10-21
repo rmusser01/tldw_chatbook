@@ -21063,6 +21063,16 @@ the helper's own syncs (those made from the test's task) and requires a deferral
 mutation it fails with `[False]`. Before trusting an outcome assertion, ask what else in the app could produce it while
 the code under test does nothing.
 
+**A guard on a derived state can hold for a different reason (TASK-35660, review of 2026-10-20).** Both helper pilots
+opened with `assert send.disabled, "no mount-time block for the helper to lift"`. But Send is disabled whenever the
+draft is empty (`send_ready = has_draft and not effective_send_blocked` in the composer), and the draft was empty
+there, so the guard held with or without the block. A probe read `disabled=True, _send_blocked=True` with the tooltip
+"Add API key ..." before the helper, and `disabled=True, _send_blocked=False` with "Type a message to send." after it.
+Without the block, the lock-hold test's final `assert not send.disabled` passes even when the helper renders nothing.
+So this guard was the only thing that kept the test from passing vacuously, and it could never fail. The guards now
+assert the block itself (`composer._send_blocked`, naming the tooltip). When a guard exists to stop a test from going
+vacuous, check that the state it reads has no other cause.
+
 
 ## Loaded controller data does not give a newly shown button mouse geometry
 
