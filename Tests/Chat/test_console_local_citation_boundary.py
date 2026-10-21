@@ -3692,3 +3692,109 @@ async def test_retry_and_regenerate_never_inherit_initial_rag_finalizer():
     assert builder.answer_attempts == ()
     assert builder.answer_attempt_payloads == ()
     _assert_no_terminal_state(store)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", [False, True], ids=["direct", "agent"])
+@pytest.mark.parametrize("marker", ["", " [S999]", " [S01]", " [S1,S2]"])
+async def test_canonical_console_file_answer_uses_optional_library_markers(
+    agent, marker
+):
+    from Tests.RAG.test_local_citation_capture import _CaptureApp, _CaptureRepository
+    from tldw_chatbook.Chat.citation_evidence_models import (
+        EvidenceBundle,
+        EvidenceReference,
+    )
+    from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+        capture_console_staged_evidence_for_chat,
+    )
+
+    repository = _CaptureRepository()
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Unrelated incident",
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="unrelated-library",
+                query="project layout",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title="Unrelated incident",
+                        snippet="Expired credential caused an outage.",
+                        authority_label="local",
+                        source_owner="local",
+                    ),
+                ),
+            ).to_payload()
+        },
+        status="staged",
+    )
+    captured = await capture_console_staged_evidence_for_chat(
+        _CaptureApp(repository=repository),
+        launch,
+        user_message="project layout",
+    )
+    contract = captured.citation_repair_contract
+    body = "README.md describes the app."
+    initial = f"README.md describes the app{marker}."
+    scripts = ((body,),) if agent else ((initial,), (body,))
+    if not marker:
+        scripts = () if agent else ((body,),)
+    gateway = _ScriptedCitationGateway(scripts)
+    store = _recording_citation_store()
+    bridge = _AgentBridge(store, text=initial) if agent else None
+    observed = []
+
+    async def capture(_draft):
+        return captured
+
+    def observe(_call_index):
+        active = _active_citation_repair_session(controller)
+        observed.append(active.contract is contract)
+
+    if agent:
+        agent_run_reply = bridge.run_reply
+
+        def observe_agent(**kwargs):
+            observe(0)
+            return agent_run_reply(**kwargs)
+
+        bridge.run_reply = observe_agent
+    gateway.on_call = observe
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=capture,
+        agent_bridge=bridge,
+        agent_runtime_enabled=agent,
+    )
+    result = await controller.submit_draft("Explain this project from README.md")
+
+    assert result.accepted
+    assert result.visible_copy == _assistant(store).content == body
+    assert len(gateway.calls) == (int(bool(marker)) if agent else 1 + int(bool(marker)))
+    assert observed == [True] * (1 + int(bool(marker)))
+    assert _assistant(store).citation_presentation.notice_code is (
+        ConsoleCitationNoticeCode.REPAIRED if marker else None
+    )
+    if agent:
+        assert captured.context in bridge.calls[0]["agent_messages"][-1]["content"]
+    if marker:
+        assert gateway.calls[-1]["messages"] == build_citation_repair_messages(
+            contract, initial
+        )
+    elif not agent:
+        assert captured.context in gateway.calls[0]["messages"][-1]["content"]
+    assert contract.require_markers is False
+    assert (
+        captured.context
+        == "[S1] MEDIA — Unrelated incident\nExpired credential caused an outage."
+    )
+    assert (
+        repository.builders[0].evidence_snapshot_payloads[0].snapshot_text
+        == captured.context
+    )

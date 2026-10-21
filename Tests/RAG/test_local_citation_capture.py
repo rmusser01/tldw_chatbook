@@ -1322,6 +1322,7 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
         marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
         allowed_ordinals=(1,),
         evidence_context=captured.context,
+        require_markers=False,
     )
     run_payload = captured.citation_builder.evidence_run_payloads[0]
     assert run_payload.raw_query is None
@@ -1578,6 +1579,7 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
             marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
             allowed_ordinals=(1,),
             evidence_context=expected_context,
+            require_markers=False,
         ),
     )
     assert captured.prompt_evidence_set_id is None
@@ -1630,6 +1632,7 @@ async def test_console_builder_unavailable_returns_exact_repair_contract():
             marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
             allowed_ordinals=(1,),
             evidence_context="[S1] MEDIA — Legacy staged source\nlegacy body",
+            require_markers=False,
         ),
     )
     assert captured.prompt_evidence_set_id is None

@@ -3150,11 +3150,35 @@ class _ExistingChaChaDBDouble:
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(request):
-    """The send-time capture contains media text, not its display label."""
-    app = _build_test_app()
-    host = ConsoleHarness(app)
+async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(
+    request, monkeypatch
+):
+    """Mounted handoff staging reaches real canonical capture and provider dispatch."""
+    from Tests.UI.app_factory import attach_chachanotes_db
+    from Tests.Chat.test_console_local_citation_boundary import (
+        _ScriptedCitationGateway,
+        _active_citation_repair_session,
+    )
+    from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
 
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    app.media_db = _ExistingMediaDBDouble("media-77")
+    captured = []
+
+    async def capture(app_instance, launch, *, user_message):
+        result = await capture_console_staged_evidence_for_chat(
+            app_instance,
+            launch,
+            user_message=user_message,
+        )
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(
+        chat_rag_events, "capture_console_staged_evidence_for_chat", capture
+    )
+    host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = _active_console_screen(host)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
@@ -3162,16 +3186,33 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(req
         await pilot.pause()
         launch = screen._pending_console_launch_context
         assert launch is not None
+        controller = screen._ensure_console_chat_controller()
+        gateway = _ScriptedCitationGateway((("README.md describes the app.",),))
+        controller.provider_gateway = gateway
+        controller._agent_runtime_enabled = False
+        contract_identity = []
 
-    capture_app = SimpleNamespace(media_db=_ExistingMediaDBDouble("media-77"))
-    result = await capture_console_staged_evidence_for_chat(
-        capture_app, launch, user_message="What does this media say?"
-    )
+        def observe(_call_index):
+            assert len(captured) == 1
+            contract_identity.append(
+                _active_citation_repair_session(controller).contract
+                is captured[0].citation_repair_contract
+            )
 
-    assert isinstance(result, LocalRagContextResult)
-    assert result.context is not None
-    assert "Attention is all you need. " * 4 in result.context
-    assert "Media staged:" not in result.context
+        gateway.on_call = observe
+        sent = await controller.submit_draft("Explain this project from README.md")
+
+        assert sent.accepted
+        assert sent.visible_copy == "README.md describes the app."
+        assert len(captured) == len(gateway.calls) == 1
+        result = captured[0]
+        assert isinstance(result, LocalRagContextResult)
+        assert "Attention is all you need. " * 4 in result.context
+        assert "Media staged:" not in result.context
+        assert result.context in gateway.calls[0]["messages"][-1]["content"]
+        assert result.citation_repair_contract.require_markers is False
+        assert contract_identity == [True]
+        assert screen._pending_console_launch_context is None
 
 
 @pytest.mark.asyncio

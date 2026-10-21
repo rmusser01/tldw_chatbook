@@ -175,6 +175,42 @@ def format_evidence_for_cited_answer(value: Any) -> str:
         Prompt-ready staged evidence block, or an empty string when no valid
         evidence bundle is available.
     """
+    return _format_evidence_for_cited_answer(
+        value,
+        instructions=(
+            "- Use only available evidence references below to ground factual claims.",
+            "- Cite each evidence-supported claim with its bracketed source label, for example [S1].",
+            "- If the available evidence is insufficient, say so explicitly instead of guessing.",
+            "- Do not invent citation labels; unknown labels are untrusted.",
+        ),
+    )
+
+
+def format_console_evidence_for_cited_answer(value: Any) -> str:
+    """Render Library evidence alongside the Console's other grounding sources.
+
+    Args:
+        value: Existing evidence bundle or serialized evidence bundle payload.
+
+    Returns:
+        Mixed-source grounding instructions and references, or an empty string
+        when the evidence bundle is invalid.
+    """
+    return _format_evidence_for_cited_answer(
+        value,
+        instructions=(
+            "- Ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
+            "- Use [S#] labels only for the supplied Library references; cite claims supported by those references with their labels.",
+            "- Identify workspace file evidence by its file path; do not assign Library labels to it.",
+            "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. Say when the available sources are insufficient instead of guessing.",
+            "- Do not invent citation labels; unknown labels are untrusted.",
+        ),
+    )
+
+
+def _format_evidence_for_cited_answer(
+    value: Any, *, instructions: tuple[str, ...]
+) -> str:
     bundle = evidence_bundle_from_value(value)
     if bundle is None:
         return ""
@@ -186,10 +222,7 @@ def format_evidence_for_cited_answer(value: Any) -> str:
         f"Evidence query: {bundle.query or 'none'}",
         f"Evidence status: {bundle.status}",
         "[Citation instructions]",
-        "- Use only available evidence references below to ground factual claims.",
-        "- Cite each evidence-supported claim with its bracketed source label, for example [S1].",
-        "- If the available evidence is insufficient, say so explicitly instead of guessing.",
-        "- Do not invent citation labels; unknown labels are untrusted.",
+        *instructions,
     ]
     if available_count == 0:
         lines.append("No available evidence references are eligible for grounding.")

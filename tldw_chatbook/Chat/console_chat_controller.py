@@ -113,7 +113,7 @@ from tldw_chatbook.Chat.citation_trace_builder import (
 )
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
-from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
+from tldw_chatbook.Chat.answer_citations import format_console_evidence_for_cited_answer
 from tldw_chatbook.Chat.console_chat_store import (
     CapturePurgeStaleError,
     CapturePolicyStaleError,
@@ -10624,7 +10624,7 @@ class ConsoleChatController:
                 preparation_outcome is not None
                 and preparation_outcome.evidence_bundle is not None
             ):
-                citation_context = format_evidence_for_cited_answer(
+                citation_context = format_console_evidence_for_cited_answer(
                     preparation_outcome.evidence_bundle
                 )
             elif origin not in (
@@ -13121,7 +13121,7 @@ class ConsoleChatController:
                 )
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
-                    format_evidence_for_cited_answer(bundle),
+                    format_console_evidence_for_cited_answer(bundle),
                 )
         return _DispatchRetryContext(
             resolution=resolution,

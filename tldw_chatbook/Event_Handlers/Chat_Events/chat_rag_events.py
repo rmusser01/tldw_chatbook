@@ -1548,6 +1548,8 @@ def _create_local_capture_builder(app: "TldwCli") -> CitationTraceBuilder | None
 
 def _repair_contract_for_local_evidence(
     formatted: LocalEvidenceContext,
+    *,
+    require_markers: bool = True,
 ) -> CitationRepairContract | None:
     """Build bounded repair eligibility from exact formatted entry metadata."""
 
@@ -1561,6 +1563,7 @@ def _repair_contract_for_local_evidence(
             marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
             allowed_ordinals=tuple(range(1, len(formatted.entries) + 1)),
             evidence_context=formatted.context,
+            require_markers=require_markers,
         )
     except (TypeError, ValueError, UnicodeEncodeError):
         logger.warning(
@@ -1798,7 +1801,7 @@ async def capture_console_staged_evidence_for_chat(
     context = formatted.context if formatted.context.strip() else None
     if context is None:
         return LocalRagContextResult(None, None)
-    repair_contract = _repair_contract_for_local_evidence(formatted)
+    repair_contract = _repair_contract_for_local_evidence(formatted, require_markers=False)
 
     builder = _create_local_capture_builder(app)
     if builder is None:
