@@ -3,15 +3,19 @@
 
 The UI lane runs ``scripts/ui_pr_gate_census.txt`` as round-robin shards, so
 where a slow file sits decides which shard it lands in. This replays the
-per-file seconds of real CI runs over the current census and prints the
+file and node seconds of real CI runs over the current census and prints the
 pytest minutes each shard would carry; ``--write`` re-orders the census tail
 (the last ``--tail`` entries) for the flattest split. Each tail entry moves
 with the comment lines directly above it (the "what it pins" note); the tail
 block's own header stays put, so end it with a blank line before the first
 entry, or that entry takes the header with it.
 
-Per-file seconds move about 40% between runs on the hosted runners, so each
-file is scored at the WORST of the runs given. Pass more than one run.
+Timings move about 40% between hosted runs. Each file/node is scored at its
+WORST observed run. Pass more than one run. Node costs use pytest duration
+rows (all phases and parameter cases); old top-25 logs leave an evenly split
+unmeasured remainder. This is an estimate of pytest work, not job wall time:
+collection, shutdown and runner setup must be measured separately. The UI
+lane prints all durations so future runs do not need the old even-split guess.
 
 Usage:
     # one directory per CI run, one file per shard job; --shards is the UI
@@ -20,8 +24,8 @@ Usage:
     # entries appended after it; such entries must not be blank-separated,
     # or --write carries the blank into the block):
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
-    python scripts/ui_lane_shard_replay.py --shards 10 run1 run2
-    python scripts/ui_lane_shard_replay.py --shards 10 --tail 92 --write run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 13 run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 13 --tail 92 --write run1 run2
 """
 
 from __future__ import annotations
@@ -32,7 +36,6 @@ import itertools
 import random
 import re
 import sys
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -54,6 +57,9 @@ UNTIMED_SECONDS = 3.0
 _STAMPED = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)Z (.*)$")
 _FILE_LINE = re.compile(r"(Tests/UI/\S+\.py) ")
 _DOTS_LINE = re.compile(r"^[.FEsxX]+\s")
+_DURATION = re.compile(
+    r"(\d+(?:\.\d+)?)s\s+(?:setup|call|teardown)\s+(Tests/UI/\S+\.py::.+)$"
+)
 
 
 def file_seconds(log_text: str) -> dict[str, float]:
@@ -72,9 +78,7 @@ def file_seconds(log_text: str) -> dict[str, float]:
         Seconds by ``Tests/UI/...`` path; a file listed by several node ids
         is one entry.
     """
-    last: dict[str, datetime] = {}
-    order: list[str] = []
-    current: str | None = None
+    occurrences: list[tuple[str, datetime]] = []
     collected: datetime | None = None
     before_first: datetime | None = None
     for line in log_text.splitlines():
@@ -85,28 +89,24 @@ def file_seconds(log_text: str) -> dict[str, float]:
         body = match.group(2)
         named = _FILE_LINE.match(body)
         if named:
-            current = named.group(1)
-            order.append(current)
-            last[current] = stamp
-        elif current is None:
+            occurrences.append((named.group(1), stamp))
+        elif not occurrences:
             before_first = stamp
             if "collected " in body and " item" in body:
                 collected = stamp
         elif _DOTS_LINE.match(body):
-            last[current] = stamp
+            occurrences[-1] = (occurrences[-1][0], stamp)
     seconds: dict[str, float] = {}
     previous = collected or before_first
-    for name in order:
+    for name, ended in occurrences:
         if previous is not None:
-            seconds[name] = (
-                seconds.get(name, 0.0) + (last[name] - previous).total_seconds()
-            )
-        previous = last[name]
+            seconds[name] = seconds.get(name, 0.0) + (ended - previous).total_seconds()
+        previous = ended
     return seconds
 
 
 def run_seconds(run_dir: Path) -> dict[str, float]:
-    """Per-file seconds of one CI run: every shard log in ``run_dir``.
+    """File and per-node phase seconds of one CI run in ``run_dir``.
 
     A file whose node ids land in several shards is timed in each of their
     logs; its seconds are the sum.
@@ -116,30 +116,69 @@ def run_seconds(run_dir: Path) -> dict[str, float]:
         text = log.read_text(encoding="utf-8", errors="replace")
         for name, spent in file_seconds(text).items():
             seconds[name] = seconds.get(name, 0.0) + spent
+        for line in text.splitlines():
+            stamped = _STAMPED.search(line)
+            duration = _DURATION.match(stamped.group(2)) if stamped else None
+            if duration:
+                node = duration.group(2).rstrip()
+                seconds[node] = seconds.get(node, 0.0) + float(duration.group(1))
     return seconds
 
 
 def worst_case(runs: list[dict[str, float]]) -> dict[str, float]:
-    """Each file at the slowest of the runs that timed it."""
+    """Each file/node at the slowest of the runs that timed it."""
     names = set().union(*runs) if runs else set()
     return {name: max(run.get(name, 0.0) for run in runs) for name in names}
+
+
+def entry_seconds(entries: list[str], seconds: dict[str, float]) -> dict[str, float]:
+    """Charge measured nodes directly; share only unmeasured file remainder.
+
+    Function/class selectors include their parameter cases and descendants.
+    Old logs report only the slowest tests: unknown selectors share the file's
+    remaining seconds. With all selectors measured, any file overhead is
+    shared equally. Per-node worst cases may exceed a file's worst case; keep
+    those costs rather than scale measured work down.
+    """
+    by_file: dict[str, list[str]] = {}
+    for entry in entries:
+        by_file.setdefault(entry.split("::", 1)[0], []).append(entry)
+    costs: dict[str, float] = {}
+    for path, selectors in by_file.items():
+        measured: dict[str, float] = {}
+        for entry in selectors:
+            if entry == path:
+                continue
+            matches = [
+                spent
+                for node, spent in seconds.items()
+                if node == entry
+                or node.startswith(entry + "[")
+                or node.startswith(entry + "::")
+            ]
+            if matches:
+                measured[entry] = sum(matches)
+        remainder = max(
+            seconds.get(path, UNTIMED_SECONDS) - sum(measured.values()), 0.0
+        )
+        unknown = [entry for entry in selectors if entry not in measured]
+        for entry in selectors:
+            costs[entry] = measured.get(entry, 0.0)
+            if entry in unknown:
+                costs[entry] += remainder / len(unknown)
+            elif not unknown:
+                costs[entry] += remainder / len(selectors)
+    return costs
 
 
 def shard_loads(
     entries: list[str], seconds: dict[str, float], total: int
 ) -> list[float]:
-    """Seconds each of ``total`` round-robin shards carries.
-
-    A log times a file, not a node id, so a file listed by node ids has its
-    seconds split evenly over those entries, each charged to the shard it
-    lands in.
-    """
-    # ponytail: an even split; per-node seconds need --durations in the lane's logs.
-    paths = [entry.split("::", 1)[0] for entry in entries]
-    listed = Counter(paths)
+    """Seconds each round-robin shard carries, using node times when available."""
+    costs = entry_seconds(entries, seconds)
     loads = [0.0] * total
-    for index, path in enumerate(paths):
-        loads[index % total] += seconds.get(path, UNTIMED_SECONDS) / listed[path]
+    for index, entry in enumerate(entries):
+        loads[index % total] += costs[entry]
     return loads
 
 
@@ -148,8 +187,12 @@ def flattest_tail(
 ) -> list[str]:
     """Order ``tail`` so the heaviest shard is as light as a swap search finds."""
 
+    costs = entry_seconds(head + tail, seconds)
+
     def score(order: list[str]) -> tuple[float, float]:
-        loads = shard_loads(head + order, seconds, total)
+        loads = [0.0] * total
+        for index, entry in enumerate(head + order):
+            loads[index % total] += costs[entry]
         return max(loads), max(loads) - min(loads)
 
     rng = random.Random(11)

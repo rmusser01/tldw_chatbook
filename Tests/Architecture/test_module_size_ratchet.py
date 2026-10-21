@@ -261,7 +261,7 @@ _BUDGETS: dict[str, int] = {
     # S1's base of 35,770): 35,747.
     # TASK-35677/35678: bounded paste ownership and action support (-13).
     # TASK-35680: parallel-run origin handling removes one more line.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35733,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35732,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -374,7 +374,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/tldw_api/client.py": 16687,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
-    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14283,
     # TASK-33921: 10,854 on dev 2026-10-03 (over by 450); the Voice step moved
     # to UI/Wizards/first_run_voice_step.py. TASK-34100.1: every other step
     # moved to its own module (9,866 -> 3,149), then the busy line and the

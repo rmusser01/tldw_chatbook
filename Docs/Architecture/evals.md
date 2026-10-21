@@ -47,6 +47,23 @@ Backup/recovery keeps the `eval.definitions` owner for private YAML, separate fr
 
 Word bench is the third engine: logprob capture against llama.cpp completions, driven by `sample_bench.run_existing_bench`; it shares `eval_models` targets, run groups, and the steering reader.
 
+## Evals keyboard scope
+
+ResultsGrid owns `l` (lens), `b` (baseline), `s` (sort) and `e` (export).
+`EvalsScreen._grid_shortcut_context` derives both footer hints and F1 entries
+from those bindings, the mounted selected grid's loaded readiness, and Textual's
+active binding map. Catalog and Inspector focus cannot dispatch grid commands;
+text fields and open Select searches consume printable keys. The footer hides
+unreachable commands; F1 lists supported commands with an explicit grid focus
+requirement when needed, even when the narrow footer cannot fit them. Empty,
+unavailable and failed grid loads retain their visible explanation and expose
+no inert commands. Focus and help projection perform no fresh DB/config reads.
+
+The existing global F6 delegate calls Evals' pane handler, cycling Catalog →
+detail → Inspector through `focus_relative_workbench_pane`, skipping collapsed
+or unavailable panes. Tab continues through individual controls. Selecting a
+loaded word-bench run focuses its table so its commands are immediately usable.
+
 ## DB notes
 
 Schema version at `DB/Evals_DB.py::SCHEMA_VERSION`, tracked via `PRAGMA user_version` (no version table — contrast ChaChaNotes). `eval_tasks.task_type` CHECK allows only the four basic types; specialized runners are selected via `metadata.category`/`subcategory` or `task_type == "research_report"`, so a specialized task must be stored with a compatible basic type. `eval_models` rows are immutable (no update API — steering is fixed per row). `eval_results` is UNIQUE(run_id, sample_id); run groups (`run_group_id`) pivot the UI's one-row-per-group view with status precedence and an all-cells-failed rollup query.

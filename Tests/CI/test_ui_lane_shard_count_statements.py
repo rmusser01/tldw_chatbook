@@ -28,15 +28,19 @@ _WORDS = (
 #: "runners" is the shards plus the other test lanes the required check needs;
 #: "runners+perf" adds perf-guard's jobs, which a PR touching code also starts.
 _STATEMENTS = (
-    (WORKFLOW, r"TASK-33007 \(PR #3057\) runs (\w+) shards", "shards"),
+    (WORKFLOW, r"TASK-35834 runs (\w+) shards", "shards"),
     ("scripts/ui_pr_gate_census.txt", r"round-robin over (\w+) shards", "shards"),
-    ("scripts/ui_pr_gate_census.txt", r"TASK-33007 runs (\w+):", "shards"),
-    ("scripts/check_ui_pr_gate_census.py", r"so the lane runs (\w+)\.", "shards"),
+    ("scripts/ui_pr_gate_census.txt", r"TASK-35834 runs (\w+):", "shards"),
+    (
+        "scripts/check_ui_pr_gate_census.py",
+        r"TASK-35834: lane now runs (\w+)\.",
+        "shards",
+    ),
     ("scripts/ui_lane_shard_replay.py", r"--shards (\d+) run1 run2", "shards"),
     ("scripts/ui_lane_shard_replay.py", r"--shards (\d+) --tail", "shards"),
-    (ADR, r"took the UI lane to (\w+) shards", "shards"),
-    (ADR, r"makes (\w+) concurrent test\s+runners per PR", "runners"),
-    (ADR, r"TASK-34353; (\w+) since\s+TASK-33007", "shards"),
+    (ADR, r"TASK-35834: (\w+) UI\s+shards", "shards"),
+    (ADR, r"current total is (\w+) concurrent test runners per PR", "runners"),
+    (ADR, r"TASK-34353; (\w+) since\s+TASK-35834", "shards"),
     (ADR, r"now runs (\w+) test runners at once", "runners"),
     (ADR, r"(\w+) with perf-guard", "runners+perf"),
 )

@@ -198,12 +198,12 @@ def test_the_census_tail_block_keeps_the_shape_write_relies_on():
     count = int(announced.group(1))
     blank = next((i for i in range(header, len(lines)) if not lines[i].strip()), None)
     assert blank is not None, "no blank line ends the block header"
-    assert all(line.lstrip().startswith("#") for line in lines[header:blank]), (
-        "a non-comment line inside the block header (is the blank line that ends it missing?)"
-    )
-    assert blank + 1 < len(lines) and lines[blank + 1].strip(), (
-        "more than one blank line ends the block header, or no entry follows it"
-    )
+    assert all(
+        line.lstrip().startswith("#") for line in lines[header:blank]
+    ), "a non-comment line inside the block header (is the blank line that ends it missing?)"
+    assert (
+        blank + 1 < len(lines) and lines[blank + 1].strip()
+    ), "more than one blank line ends the block header, or no entry follows it"
     rows = [
         i
         for i in range(blank + 1, len(lines))
@@ -226,3 +226,93 @@ def test_main_refuses_runs_that_timed_no_file(tmp_path, capsys):
 
     assert code == 2
     assert "no shard logs" in capsys.readouterr().err
+
+
+def test_repeated_file_occurrences_keep_their_own_end_timestamps():
+    log = "\n".join(
+        [
+            "x 2026-10-20T00:00:00.0000000Z collected 3 items",
+            "x 2026-10-20T00:00:10.0000000Z Tests/UI/test_a.py . [ 33%]",
+            "x 2026-10-20T00:00:30.0000000Z Tests/UI/test_b.py . [ 66%]",
+            "x 2026-10-20T00:01:00.0000000Z Tests/UI/test_a.py . [100%]",
+        ]
+    )
+    assert replay.file_seconds(log) == {
+        "Tests/UI/test_a.py": 40.0,
+        "Tests/UI/test_b.py": 20.0,
+    }
+
+
+def test_run_timings_keep_all_node_phases_and_parameter_cases(tmp_path):
+    log = "\n".join(
+        [
+            "2026-10-20T00:00:00.0000000Z collected 3 items",
+            "2026-10-20T00:01:20.0000000Z Tests/UI/test_a.py ... [100%]",
+            "2026-10-20T00:01:21.0000000Z 5.00s setup Tests/UI/test_a.py::test_slow[x]",
+            "2026-10-20T00:01:21.0000000Z 20.00s call Tests/UI/test_a.py::test_slow[x]",
+            "2026-10-20T00:01:21.0000000Z 5.00s teardown Tests/UI/test_a.py::test_slow[x]",
+            "2026-10-20T00:01:21.0000000Z 30.00s call Tests/UI/test_a.py::test_slow[y]",
+            "2026-10-20T00:01:21.0000000Z 10.00s call Tests/UI/test_a.py::test_fast",
+        ]
+    )
+    (tmp_path / "shard.log").write_text(log, encoding="utf-8")
+    seconds = replay.run_seconds(tmp_path)
+    assert seconds["Tests/UI/test_a.py::test_slow[x]"] == 30.0
+    assert replay.shard_loads(
+        [
+            "Tests/UI/test_a.py::test_slow",
+            "Tests/UI/test_a.py::test_fast",
+        ],
+        seconds,
+        2,
+    ) == [65.0, 15.0]  # 10s file overhead shared, not 40/40
+
+
+def test_partial_node_timings_only_share_the_unmeasured_file_remainder():
+    assert replay.shard_loads(
+        [
+            "Tests/UI/test_a.py::test_slow",
+            "Tests/UI/test_a.py::test_other",
+            "Tests/UI/test_a.py::test_last",
+        ],
+        {
+            "Tests/UI/test_a.py": 90.0,
+            "Tests/UI/test_a.py::test_slow": 50.0,
+        },
+        3,
+    ) == [50.0, 20.0, 20.0]
+
+
+def test_a_parameter_entry_does_not_charge_its_sibling_cases():
+    assert replay.shard_loads(
+        [
+            "Tests/UI/test_a.py::test_rows[small]",
+            "Tests/UI/test_a.py::test_rows[large]",
+        ],
+        {
+            "Tests/UI/test_a.py": 60.0,
+            "Tests/UI/test_a.py::test_rows[small]": 10.0,
+            "Tests/UI/test_a.py::test_rows[large]": 50.0,
+        },
+        2,
+    ) == [10.0, 50.0]
+
+
+def test_duration_rows_keep_spaces_inside_parameter_ids(tmp_path):
+    log = "\n".join(
+        [
+            "2026-10-20T00:00:00.0000000Z collected 2 items",
+            "2026-10-20T00:01:00.0000000Z Tests/UI/test_a.py .. [100%]",
+            "2026-10-20T00:01:01.0000000Z 10.00s call Tests/UI/test_a.py::test_rows[small value]",
+            "2026-10-20T00:01:01.0000000Z 50.00s call Tests/UI/test_a.py::test_rows[large value]",
+        ]
+    )
+    (tmp_path / "shard.log").write_text(log, encoding="utf-8")
+    assert replay.shard_loads(
+        [
+            "Tests/UI/test_a.py::test_rows[small value]",
+            "Tests/UI/test_a.py::test_rows[large value]",
+        ],
+        replay.run_seconds(tmp_path),
+        2,
+    ) == [10.0, 50.0]

@@ -641,7 +641,10 @@ preset, whether to be notified, and an optional provider/model pin.
 **Preview** runs the same validation the save itself will run and shows
 the next few scheduled occurrences without saving anything; a rejected
 preview highlights the specific field that needs fixing. **Save** always
-previews first — an invalid definition is never written. Only the
+previews first — an invalid definition is never written. While saving, the
+button shows **Saving…** and repeated Save actions cannot start another
+save. Validation errors, server refusals and failed writes keep your draft
+open so you can correct it or retry. Only the
 `recurring_question` family can be authored here; agent-task automations
 are not yet supported from this form.
 
@@ -805,12 +808,18 @@ Actions inside the view are keys:
 | `r` | Mark the selected result **read** |
 | `d` | **Dismiss** the selected result |
 | `o` | Mark the selected finding's automation **solved** |
-| `a` | Mark **every** currently-listed unread result read |
+| `a` | Mark **every** unread result in this view’s scope read, including rows beyond the table window |
 
 These four belong to the results view itself — it is a screen of its
 own, so its keys never collide with the list's behind it. A server-owned
 row's read/dismiss writes locally and automatically queues the matching
 pushback to the server; nothing extra to do.
+
+While one Results action is pending, another `r`, `d`, `o` or `a` shows
+a busy notice. Wait for completion, then press the desired key again. An accepted
+action keeps its original result or unread batch even if you move the selection;
+new results arriving afterward wait for a later batch. Mark all read reports how
+many succeeded and how many failed; failed rows stay unread and can be retried.
 
 **Mark solved** only applies to a `finding` whose automation is not
 already solved — a `failure` row, or a finding whose automation was

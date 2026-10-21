@@ -1,5 +1,12 @@
 # Lessons: what counts as evidence a change works
 
+
+## Repeated pytest file names need occurrence timestamps (TASK-35834, 2026-10-20)
+
+**Incident.** PR3182 UI timing analysis found that the replay kept only each file's final timestamp. An a/b/a control charged90s/-30s instead of40s/20s. Corrected occurrence timing and node duration rows brought two exact-census baseline comparisons within33seconds per shard. Comparing an older408-entry run against the later415-entry census initially produced misleading three-minute discrepancies; reading that run's own committed census removed them.
+
+**What to do.** Retain every progress occurrence, all duration phases and each run's exact census. Top-25 reports do not fully time parameterized functions; label the unmeasured remainder and measure hosted job setup separately. Bind evidence hashes to canonical Git blob bytes (LF/UTF8), since Windows checkout newlines and upstream-only comments can change file hashes without changing the selected tests.
+
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
 **Incident.** PR #3176's admission-sensitive job failed the headless-delivery
@@ -20959,3 +20966,42 @@ picker file were checked the same way before changing test placement.
 profile each occurrence in order. Check for negative costs before trusting a
 replay aggregate. This incident used raw per-occurrence intervals; it does not
 claim to fix the helper.
+
+## Native Windows source edits must specify UTF-8 on every read
+
+**TASK-35867, 2026-10-20.** An intermediate Settings event-origin edit used
+`Path.read_text()` without an encoding on native Windows. The default cp1252
+codec accepted the UTF-8 bytes and a later UTF-8 write silently changed unrelated
+em dashes and navigation glyphs into mojibake. Compilation and the first mounted
+regression still passed. A comparison of unchanged method ASTs against the Git
+base caught the changed string constants before commit; the complete diff then
+showed the unrelated copy changes. The patch was rebuilt from exact Git bytes
+decoded as UTF-8, all unrelated method/string ASTs were compared again, and the
+intermediate verification runs were excluded from final evidence.
+
+Use explicit `encoding="utf-8"` for repository text reads and writes, including
+small follow-up scripts. For a Unicode-heavy large file, inspect the complete
+diff and compare untouched method/string ASTs before treating targeted green
+tests as evidence for the final source. Compilation cannot detect text corruption
+that remains valid Python.
+
+
+## Replace seeded Textual Input text with explicit selection before typing
+
+**TASK-35868, 2026-10-20.** The Watchlists Rule draft regression initially used
+Ctrl+A before typing a replacement Name into a seeded Textual 8.2.8 `Input`.
+The pre-trigger value assertion caught `Unsaved ruleOriginal`: the default
+binding had moved to Home, leaving the seed in place. This was a test setup
+failure, not evidence of the draft-preservation bug. Home, Shift+End, Backspace
+then printable typing replaced the seed and let the Edit cases reach the
+actual refresh and section-return boundaries.
+
+For a single-line `Input` using these default bindings, explicitly select and
+replace its seed, then assert the actual text and settled focus before triggering
+the behavior under test. Do not infer another text widget's bindings or change
+screen keybindings to accommodate a test.
+
+
+## Copy numbered pytest receipts before subsequent runs retire them (TASK-35869)
+
+During the Textual follow-up gate on 2026-10-20, the Evals report referenced original-code child receipts under pytest-74/75. By final review the normal numbered-temp rotation retained pytest-82/83/84, so the controller could independently inspect named final logs and reproduce baseline lint, but could not reinspect those early raw RED logs. Contemporaneous reports remain evidence, with this qualification disclosed. Copy the needed RED/GREEN receipt to a named artifact outside the rotating pytest directory before later targeted runs; do not disable retention, bypass private-temp permissions, or replay product tests only to recreate an aged-out log.

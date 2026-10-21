@@ -253,6 +253,7 @@ class AutomationDefinitionForm(ModalScreen):
         self._default_owner = default_owner
         self._dirty = False
         self._ready = False
+        self._save_pending = False
 
     # -- discard guard (mirrors ReminderForm) --------------------------------
 
@@ -939,6 +940,8 @@ class AutomationDefinitionForm(ModalScreen):
     # -- save ------------------------------------------------------------------------
 
     def _run_save(self) -> None:
+        if self._save_pending:
+            return
         schedule_error = self._client_side_schedule_error()
         if schedule_error:
             self._set_validation_errors(
@@ -948,10 +951,28 @@ class AutomationDefinitionForm(ModalScreen):
         payload = self._build_payload()
         owner = self._selected_owner()
 
-        async def _do() -> None:
-            await self._save_async(payload, owner)
+        # Admit before the worker starts: cancelling its asyncio waiter cannot
+        # stop a physical SQLite write already running in a thread.
+        self._save_pending = True
+        save = self.query_one("#automation-save", Button)
+        save.disabled = True
+        save.label = "Saving…"
 
-        self.run_worker(_do, exclusive=True, group="automation-form-save")
+        async def _do() -> None:
+            try:
+                await self._save_async(payload, owner)
+            finally:
+                self._save_pending = False
+                save.disabled = False
+                save.label = "Save"
+
+        try:
+            self.run_worker(_do, exclusive=True, group="automation-form-save")
+        except Exception:
+            self._save_pending = False
+            save.disabled = False
+            save.label = "Save"
+            raise
 
     async def _save_async(self, payload: dict[str, Any], owner: str) -> None:
         try:

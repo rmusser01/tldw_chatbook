@@ -1084,13 +1084,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # (`_scope_default_destination`), not from a stale mirror.
         self._source_create_draft_type: str | None = None
         self._source_create_draft_destination: Any = None
-        # Mirrors RulesPane's edit-form state (Finding 4, fix round 2): the
-        # same rebuild-destroys-pane-local-state failure mode as the Sources
-        # create form above, but for an in-progress rule EDIT rather than a
-        # create. `_rule_form_editing` holds the rule being edited, or `None`
-        # when the open form is for a brand new rule.
+        # Ephemeral Rule editor state survives section/region reconstruction.
         self._rule_form_open = False
         self._rule_form_editing: dict[str, Any] | None = None
+        self._rule_form_draft: dict[str, Any] | None = None
         # Mirrors ItemsPane's filter/search state, for exactly the reason
         # above (whole-branch review, Important). Any workbench rebuild
         # constructs a brand new `ItemsPane` via `_build_detail_pane`, and
@@ -2806,18 +2803,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # note on `sources_pane.sources` above; same rebuild, same gap.
             rules_pane = RulesPane(id="watchlists-rules-pane")
             rules_pane.set_reactive(RulesPane.rules, self._loaded_rules)
-            # Seed the edit-form state so an in-progress rule edit survives
-            # this pane being reconstructed (Finding 4, fix round 2) — the
-            # same treatment the Sources create-form draft already gets
-            # above; see `_rule_form_open`/`_rule_form_editing` in __init__
-            # and RuleFormVisibilityChanged in rules_pane.py. `edit_rule`
-            # itself takes the `set_reactive` route on an unmounted pane
-            # (task-15778) — see its own comment.
+            # Preserve original identity and raw fields without a pre-mount
+            # recompose (TASK-15778); draft changes use the existing message seam.
             if self._rule_form_open:
                 if self._rule_form_editing is not None:
                     rules_pane.edit_rule(self._rule_form_editing)
                 else:
                     rules_pane.set_reactive(RulesPane.show_rule_form, True)
+            rules_pane.form_draft = self._rule_form_draft
             children.append(rules_pane)
         elif section == "notifications":
             notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
@@ -12906,13 +12899,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self._rule_form_open = event.is_open
-        # Always clear on close, regardless of what `event.editing_rule`
-        # carries: RulesPane's Cancel/Submit handlers clear `show_rule_form`
-        # before clearing `_editing_rule_id`, so the message posted at that
-        # instant can still report the rule that WAS being edited. Ignoring
-        # it here (rather than trusting it) keeps a closed form from being
-        # re-seeded as still-editing on the next rebuild.
+        # Closed events may still carry the previous editing identity.
         self._rule_form_editing = event.editing_rule if event.is_open else None
+        self._rule_form_draft = event.draft if event.is_open else None
 
     @on(RefreshRulesRequested)
     def handle_refresh_rules_requested(self, event: RefreshRulesRequested) -> None:
@@ -12934,6 +12923,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # chain that can recompose.
         self._rule_form_open = False
         self._rule_form_editing = None
+        self._rule_form_draft = None
         self.run_worker(
             self._save_rule(event.payload),
             exclusive=True,
