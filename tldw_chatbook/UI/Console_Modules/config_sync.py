@@ -273,10 +273,10 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
     step and fleet rows (elapsed time and token totals included), the cost
     chip's running total, the readiness evidence and the tool counts. Those
     are inputs too, as the text or counter the screen shows, so they keep
-    the parent's tick rate; only config-driven text waits for the backstop.
-    Public accessors only (a renamed private global must not reach a live
-    tick), except the installed config and settings, read by identity with
-    a default.
+    the parent's tick rate. No private module global is read (a renamed one
+    must not reach a live tick) except the installed config and settings,
+    by identity with a default; the Agent rail's rows come from the rail's
+    own readers, the ones the projection renders from.
 
     Returns:
         Objects compared by identity (the installed config and settings, the
@@ -357,12 +357,14 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     deferral. A deferred or failed projection records nothing, so the next
     tick tries again. What changes on its own during a run (the Agent rail,
     the cost chip, readiness evidence, tool counts, pending rounds) is an
-    input, so it renders on the next tick as before. What reaches the
-    screen up to a second later is what the projections derive from config
-    that no input sees change: a config value read fresh inside them, and
-    the context estimate, which itself refreshes once a second while
-    streaming. When the poll does not tick there was no poll to render it
-    before either.
+    input, so it renders on the next tick as before. What can reach the
+    screen up to a second later is whatever else the projections read that
+    no input sees change: a config value read fresh inside them, the
+    context estimate (itself refreshed once a second while streaming), and
+    state with its own syncs or that moves with an input (the workbench's
+    image-edit and prepared-start state, whether the Agent rail offers its
+    full log, the cost chip's helper usage and pricing catalog). When the
+    poll does not tick there was no poll to render it before either.
 
     Since PR #3023 a projection renders from a checked display, with no
     operation, while that display is under a second old, and pays the
