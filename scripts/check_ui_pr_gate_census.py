@@ -472,6 +472,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.3 (2026-10-20; rebased onto dev e2cffbed60 2026-10-22)
 # appends the idle heap re-freeze's mounted Console file at the tail
 # (about 10 s locally): 588 + 1 = 589.
+# TASK-33620.15.1.3 (2026-10-20) appends the Environment controller file,
+# whose closed-rail test pins the rail guard before the root read. Rebased
+# onto dev after the TASK-34000 clarify batch (588): 589.
+MINIMUM_FILES = 605
 MINIMUM_FILES = 604
 
 
