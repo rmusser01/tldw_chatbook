@@ -3,7 +3,10 @@
 Status: Accepted (user approved the design on 2026-10-20)
 Date: 2026-10-20
 Design: [Workspace aware project context](../../Docs/superpowers/specs/2026-10-20-workspace-aware-project-context-design.md)
-Related Task: N/A (design requested before implementation task selection)
+Related guidance tasks: [TASK-35930](<../tasks/task-35930 - Guide-project-questions-toward-admitted-workspace-files.md>),
+[TASK-35931](<../tasks/task-35931 - Allow-mixed-Console-grounding-without-forced-Library-attribution.md>),
+[TASK-35932](<../tasks/task-35932 - Qualify-workspace-guidance-with-preserved-Library-choices.md>).
+Optional keyword and semantic indexing remain separate planned deliverables.
 Related decisions: ADR-030 derived-index lifecycle, ADR-079 Console Library
 authority, ADR-082 private scratch, ADR-101 pinned workers, ADR-102 run-admitted
 roots, ADR-126 recovery, ADR-174 binding exclusions

@@ -21129,3 +21129,11 @@ holds now wait for explicit release; their existing `finally` releases both
 before worker retirement, and the test/process deadline remains the bound.
 Preserve the original navigation, Close and sibling-decision assertions.
 An early app-startup failure is not evidence that held-worker cleanup passed.
+
+## Inspect native ACLs when a private Windows test ancestor becomes shared-writable (TASK-35932, 2026-10-21)
+
+**Incident.** Workspace-guidance qualification first passed a native payload guard in 41.31s. After a scratch live launcher was created with `apply_patch` outside the sandbox's writable roots, subsequent guard/live starts refused the plan's `.superpowers/sdd/<plan>` ancestor as `shared_writable_parent` (normalized mode 0o766). Native `Get-Acl` inspection found two explicit inheritable sandbox Modify grants on that directory; its ancestors still gave the sandbox only inherited ReadAndExecute. Plain Windows `os.stat` showed 0o777 for all these directories and did not reveal the DACL difference. No live scenario ran during the refusal, and the original config/user-data integrity comparison remained unchanged.
+
+**What worked.** The controller verified the exact task-owned path, backed up its DACL, removed only those two identified explicit grants, and verified that the parent and native-temp child again inherited read-only sandbox access plus owner/System/Admin access. The next real retry authority/payload guard passed in 40.20s without a product or admission-guard change. Further task-private scratch writes used normal-user/escalated shell commands.
+
+**Rule.** When an established private Windows test ancestor suddenly fails admission, compare its native ACL with its parents before changing fixtures or code. Restore only evidenced task-owned setup grants; do not apply a broad permission reset to user profiles or the worktree, and do not weaken the private-path guard. Treat a refused launch as zero executed live scenarios.
