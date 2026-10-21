@@ -204,6 +204,12 @@ def test_reuse_consequences_name_the_watchlist_that_will_be_billed():
     assert "openai · gpt-4.1-mini" in existing[0] and "API quota" in existing[0]
     assert any("“Tech news”" in line and "Watchlists" in line for line in existing), existing
     assert not any("Daily Brief watchlist" in line for line in existing), existing
+    # Final-fix re-review: the reused watchlist is the USER's own collection, so
+    # the stop line points at its Cadence (Off stops the brief and keeps the
+    # watchlist, its sources and history) -- never at deleting it.
+    stop = existing[-1]
+    assert "Cadence" in stop and "Off" in stop and "Watchlists (⌃5)" in stop, stop
+    assert "remove" not in stop.lower(), stop
 
 
 @pytest.mark.asyncio

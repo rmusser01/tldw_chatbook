@@ -134,12 +134,15 @@ def daily_report_demo_consequences(
             if name
             else "You already have a scheduled brief."
         )
-        which = f"the “{name}” watchlist" if name else "that watchlist"
+        # The reused watchlist is the user's own collection: stopping its
+        # brief is its Cadence set to Off, which keeps the watchlist.
+        which = f"the “{name}” watchlist's" if name else "that watchlist's"
         return (
             f"{headline} This checks its sources now and writes today's brief "
             f"with {pair}, using your API quota.",
             audio,
-            f"• Keeps running until you remove {which} in Watchlists (⌃5).",
+            f"• Keeps running until you set {which} Cadence to Off in "
+            "Watchlists (⌃5).",
         )
     stop = (
         "• Keeps running until you remove the Daily Brief watchlist in "
