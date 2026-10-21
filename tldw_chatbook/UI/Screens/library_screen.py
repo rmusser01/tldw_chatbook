@@ -9500,12 +9500,11 @@ class LibraryScreen(BaseAppScreen):
             prompts_timer.stop()
             self._prompts_state.debounce_timer = None
         # (wave-8 task 3) The notes autosave timer moved to ``_notes_state``
-        # for the same reason, and left the string loop above for the same
-        # explicit block the ingest and prompts timers already use.
-        notes_timer = self._notes_state.autosave_timer
-        if notes_timer is not None:
-            notes_timer.stop()
-            self._notes_state.autosave_timer = None
+        # for the same reason, and left the string loop above. TASK-34000.9
+        # fix round 1: the invalidate stops and clears it as before AND bumps
+        # the generation, so a save a just-fired timer had queued but not yet
+        # started is fenced off too; the resume re-arms what is still dirty.
+        self._invalidate_library_note_autosave()
 
     def on_screen_resume(self) -> None:
         """Refresh every visible surface for this visit (initial and repeat).

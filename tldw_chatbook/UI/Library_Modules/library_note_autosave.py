@@ -36,6 +36,10 @@ import time
 from typing import TYPE_CHECKING
 
 from ...Library.library_notes_session import NoteSaveOutcome, NoteSaveOutcomeKind
+from ...Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_CREATE_NOTE,
+)
 
 if TYPE_CHECKING:
     from ...Library.library_notes_state import LibraryNoteSessionSnapshot
@@ -60,6 +64,12 @@ _REFUSED = frozenset({NoteSaveOutcomeKind.VALIDATION_VETO, NoteSaveOutcomeKind.F
 #: and the app then raises that error when it shuts down. A burst whose max
 #: wait has already run out therefore saves "almost at once", never "at once".
 AUTOSAVE_MIN_DELAY_SECONDS = 0.05
+#: The rail rows on which the note editor is the visible surface: Notes, and
+#: Create ▸ New note while the just-created note's editor shows
+#: (TASK-34000.25). A resume on any other row leaves a parked note parked.
+_NOTES_EDITOR_ROWS = frozenset({LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE})
+#: Autosave states a resume never re-arms: the next keystroke or Save does.
+_NOT_RESUMED = frozenset({"validation", "error"})
 
 
 def library_note_autosave_delay(
@@ -202,23 +212,33 @@ def resume_library_note_autosave(screen: LibraryScreen) -> bool:
         screen: The Library screen that just resumed.
 
     Returns:
-        True when a timer was armed. False when nothing needed one: no
-        editor, no session, another note selected, a clean, saving or
-        conflicted note, a timer already armed, or a draft the last autosave
-        refused (``autosave_state == "validation"`` -- it cannot succeed
-        without an edit, and the next keystroke re-arms it).
+        True when a timer was armed. False when nothing needed one, or when
+        arming would save behind the user's back: another screen still
+        covers this one (a chained dialog); the visible rail row is not
+        Notes (a note parked by a switch to Media or another reader row is
+        saved only on the return to Notes, the rail-switch precedent -- a
+        hidden save could flip the parked state and a veto could route to a
+        field that is not on screen); no editor, no session, another note
+        selected; a clean, saving or conflicted note; a timer already armed;
+        or a draft the last autosave refused or failed to write
+        (``autosave_state`` in ``validation`` / ``error``: a veto cannot
+        succeed without an edit, and a failed write keeps its "Save failed"
+        status until Save or the next keystroke -- a retry here could also
+        write a draft that "Discard and quit" had just discarded).
     """
     state = screen._notes_state
     snapshot = screen._library_note_session.snapshot
     if (
-        state.view != "editor"
+        screen.app.screen is not screen
+        or screen._library_selected_row_id not in _NOTES_EDITOR_ROWS
+        or state.view != "editor"
         or snapshot is None
         or snapshot.note_id != state.selected_note_id
         or not snapshot.dirty
         or snapshot.saving
         or snapshot.in_conflict
         or state.autosave_timer is not None
-        or state.autosave_state == "validation"
+        or state.autosave_state in _NOT_RESUMED
     ):
         return False
     screen._schedule_library_note_autosave()

@@ -22,6 +22,10 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App
 
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_CREATE_NOTE,
+)
 from tldw_chatbook.UI.Library_Modules import library_note_autosave
 from tldw_chatbook.UI.Library_Modules.library_notes_state import LibraryNotesState
 from tldw_chatbook.UI.Library_Modules.library_note_autosave import (
@@ -246,8 +250,15 @@ class _ResumableScreen(_Screen):
         autosave_state: str = "idle",
         armed: bool = False,
         snapshot: bool = True,
+        row: str = LIBRARY_ROW_BROWSE_NOTES,
+        covered: bool = False,
     ) -> None:
         super().__init__()
+        # Fix round 1: the visible rail row (a parked note on Media must not
+        # be saved behind the user's back) and whether another screen still
+        # covers this one (a chained dialog).
+        self._library_selected_row_id = row
+        self.app = SimpleNamespace(screen=object() if covered else self)
         self._notes_state.view = view
         self._notes_state.selected_note_id = selected
         self._notes_state.autosave_state = autosave_state
@@ -277,8 +288,11 @@ class _ResumableScreen(_Screen):
         self.status_refreshes += 1
 
 
-def test_resume_re_arms_a_dirty_editor_note_once_and_repaints_its_status() -> None:
-    screen = _ResumableScreen()
+@pytest.mark.parametrize("row", [LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE])
+def test_resume_re_arms_a_dirty_editor_note_once_and_repaints_its_status(row) -> None:
+    """On the Notes row, or on Create ▸ New note while the just-created note's
+    editor is showing (TASK-34000.25)."""
+    screen = _ResumableScreen(row=row)
 
     assert library_note_autosave.resume_library_note_autosave(screen) is True
 
@@ -298,12 +312,20 @@ def test_resume_re_arms_a_dirty_editor_note_once_and_repaints_its_status() -> No
         pytest.param({"armed": True}, id="already-armed"),
         pytest.param({"selected": "n2"}, id="another-note-selected"),
         pytest.param({"snapshot": False}, id="no-session"),
+        pytest.param({"autosave_state": "error"}, id="failed-write"),
+        pytest.param({"row": "browse-media"}, id="parked-on-media"),
+        pytest.param({"covered": True}, id="still-covered-by-a-dialog"),
     ],
 )
 def test_resume_arms_nothing_unless_a_dirty_editor_note_is_waiting(state) -> None:
     """A vetoed draft cannot succeed without an edit (the next keystroke
     re-arms it); a clean, saving, conflicted or already-armed note needs no
-    second timer; a list view has no editor to save."""
+    second timer; a list view has no editor to save. Fix round 1: a failed
+    write keeps its "Save failed" status until Save or the next keystroke (a
+    retry at resume could write a draft "Discard and quit" just discarded);
+    a note parked on another rail row is saved only when the user lands back
+    on Notes (the rail-switch precedent); a screen still covered by a chained
+    dialog is not visible yet."""
     screen = _ResumableScreen(**state)
     armed_before = screen._notes_state.autosave_timer
 

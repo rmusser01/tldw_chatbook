@@ -97,22 +97,34 @@ async def _autosaved(pilot, screen, profile, body: str) -> bool:
     return True
 
 
-async def _open_help(pilot, app, screen) -> None:
-    """Press F1; the help panel covers Library and its timer is stopped."""
+def _covered(screen, profile, body: str) -> None:
+    """The dialog is up: the timer is stopped and nothing has been saved yet.
+
+    TASK-31521 (AC#3): no timer may fire against the suspended screen. The
+    row check keeps the test honest under load: were the debounce to land
+    before the dialog opened, the save after it would prove nothing.
+    """
+    assert screen._notes_state.autosave_timer is None, "suspend left a timer armed"
+    assert profile.note(profile.note_id)["content"] == body, (
+        "the edit was saved before the dialog opened; the arm measures nothing"
+    )
+
+
+async def _open_help(pilot, app, screen, profile, body: str = _BODY) -> None:
+    """Press F1; the help panel covers Library with the edit still unsaved."""
     await pilot.press("f1")
     await _until(
         pilot, lambda: isinstance(app.screen, WorkbenchHelpPanel), "F1 help to open"
     )
-    # TASK-31521 (AC#3): no timer may fire against the suspended screen.
-    assert screen._notes_state.autosave_timer is None, "suspend left a timer armed"
+    _covered(screen, profile, body)
 
 
-async def _open_palette(pilot, app, screen) -> None:
+async def _open_palette(pilot, app, screen, profile, body: str = _BODY) -> None:
     await pilot.press("ctrl+p")
     await _until(
         pilot, lambda: isinstance(app.screen, CommandPalette), "the palette to open"
     )
-    assert screen._notes_state.autosave_timer is None, "suspend left a timer armed"
+    _covered(screen, profile, body)
 
 
 async def _close_dialog(pilot, app, screen) -> None:
@@ -140,7 +152,7 @@ async def test_f1_help_inside_the_autosave_window_still_saves_the_edit(
                 await _type_at_end(pilot, body, " after help")
                 assert screen._library_note_session.snapshot.dirty
 
-                await _open_help(pilot, app, screen)
+                await _open_help(pilot, app, screen, profile)
                 await _close_dialog(pilot, app, screen)
 
                 saved = await _autosaved(pilot, screen, profile, _BODY + " after help")
@@ -171,7 +183,7 @@ async def test_the_command_palette_inside_the_autosave_window_still_saves_the_ed
                 body = await _open_note(screen, pilot, _TITLE, profile.note_id)
                 await _type_at_end(pilot, body, " after palette")
 
-                await _open_palette(pilot, app, screen)
+                await _open_palette(pilot, app, screen, profile)
                 await _close_dialog(pilot, app, screen)
 
                 saved = await _autosaved(
@@ -211,7 +223,7 @@ async def test_the_status_promises_autosave_only_while_a_timer_is_armed(
 
                 # The real dialog: the palette stops the timer; closing it
                 # must arm one again, and only then is the promise true.
-                await _open_palette(pilot, app, screen)
+                await _open_palette(pilot, app, screen, profile)
                 await _close_dialog(pilot, app, screen)
                 await pilot.pause()
                 assert screen._notes_state.autosave_timer is not None, (
@@ -219,9 +231,12 @@ async def test_the_status_promises_autosave_only_while_a_timer_is_armed(
                 )
                 assert _PROMISE in _painted_status(app, screen)
 
-                # Dirty with nothing armed -- the state a modal leaves while it
-                # is up -- must not promise. The suspend hook is called
-                # directly so the covered screen's own paint can be read.
+                # Wiring check, controller -> canvas -> compositor: a dirty
+                # note with nothing armed paints no promise. The suspend hook
+                # is called directly so this screen's own paint can be read;
+                # under a real dialog the line is covered and keeps whatever
+                # it last showed (the promise is "armed, running, or paused
+                # by a covering dialog").
                 screen.on_screen_suspend()
                 assert screen._notes_state.autosave_timer is None
                 screen._update_library_note_meta_static(content=body.text)
@@ -263,9 +278,9 @@ async def test_resume_arms_exactly_one_timer_and_it_fires_once(tmp_path, monkeyp
                 body = await _open_note(screen, pilot, _TITLE, profile.note_id)
                 await _type_at_end(pilot, body, " twice")
 
-                await _open_help(pilot, app, screen)
+                await _open_help(pilot, app, screen, profile)
                 await _close_dialog(pilot, app, screen)
-                await _open_help(pilot, app, screen)
+                await _open_help(pilot, app, screen, profile)
                 await _close_dialog(pilot, app, screen)
 
                 saved = await _autosaved(pilot, screen, profile, _BODY + " twice")
