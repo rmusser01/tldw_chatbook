@@ -450,7 +450,7 @@ def freeze_long_lived_heap(reason: str, *, generation: int | None = 1) -> int:
     return frozen
 
 
-def refreeze_long_lived_heap(reason: str) -> int:
+def refreeze_long_lived_heap(reason: str) -> None:
     """Collect the unfrozen heap in full, then freeze it (TASK-33620.15.3).
 
     The idle re-freeze (ADR-198 amendment). The full collection reclaims
@@ -458,15 +458,14 @@ def refreeze_long_lived_heap(reason: str) -> int:
     good; frozen objects are never scanned, so it costs what the next
     automatic pass would have cost on the UI loop.
 
+    The DEBUG line counts the old generation after the collection (a full
+    collection leaves every unfrozen survivor there), and only when DEBUG is
+    on: the count lists every object about to be frozen. The freeze can move
+    more, because other threads can allocate between the count and the
+    freeze, so the refreezer walks the permanent generation to size it.
+
     Args:
         reason: What asked for the re-freeze, for the DEBUG log line.
-
-    Returns:
-        How many objects the old generation held after the collection (a full
-        collection leaves every unfrozen survivor there), for the DEBUG line.
-        The freeze can move more: other threads can allocate between that
-        count and the freeze, so the refreezer walks the permanent generation
-        to size it instead.
 
     Raises:
         CollectorBusy: Another pass kept the collection from running; nothing
@@ -474,13 +473,14 @@ def refreeze_long_lived_heap(reason: str) -> int:
     """
     global _freeze_epoch
     _collect_in_full()
-    added = len(gc.get_objects(generation=2))
+    log = logging.getLogger(__name__)
+    added = (
+        len(gc.get_objects(generation=2)) if log.isEnabledFor(logging.DEBUG) else None
+    )
     gc.freeze()
     _freeze_epoch += 1
-    logging.getLogger(__name__).debug(
-        "gc heap re-frozen (%s): +%d objects", reason, added
-    )
-    return added
+    if added is not None:
+        log.debug("gc heap re-frozen (%s): +%d objects", reason, added)
 
 
 def compact_long_lived_heap(reason: str) -> int:
@@ -591,7 +591,7 @@ class IdleHeapRefreezer:
         min_growth: int = COMPACTION_MIN_GROWTH,
         clock: Callable[[], float] = time.monotonic,
         enabled: Callable[[], bool] = _idle_refreeze_enabled,
-        refreeze: Callable[[str], int] = refreeze_long_lived_heap,
+        refreeze: Callable[[str], object] = refreeze_long_lived_heap,
         compact: Callable[[str], int] = compact_long_lived_heap,
         freeze_count: Callable[[], int] = gc.get_freeze_count,
     ) -> None:
@@ -605,8 +605,8 @@ class IdleHeapRefreezer:
             min_growth: The smallest growth that makes a compaction due.
             clock: Monotonic clock, injectable for tests.
             enabled: Whether requests are honoured at all.
-            refreeze: Collects the unfrozen heap, freezes it and returns how
-                many objects it froze.
+            refreeze: Collects the unfrozen heap and freezes it; its return
+                value is ignored (the permanent generation is walked instead).
             compact: Unfreezes, collects the whole heap, freezes it and
                 returns the permanent generation's size.
             freeze_count: Walks the permanent generation to size it.

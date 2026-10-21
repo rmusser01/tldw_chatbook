@@ -14,6 +14,7 @@ style cycles are exactly what a re-freeze could strand.
 from __future__ import annotations
 
 import gc
+import logging
 import weakref
 from collections.abc import Callable
 
@@ -136,14 +137,24 @@ def counting_collector(monkeypatch: pytest.MonkeyPatch, calls: list[tuple]) -> N
     )
 
 
+@pytest.mark.parametrize("debug", [False, True], ids=["info", "debug"])
 def test_the_idle_refreeze_collects_every_unfrozen_generation_then_freezes(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, debug: bool
 ) -> None:
     """A full collection first (reclaims old-generation garbage), then the freeze.
 
+    The old generation is listed only for the DEBUG line: building that list
+    walks every object the re-freeze is about to freeze, so it is skipped
+    when nobody reads the line.
+
     Args:
         monkeypatch: Records the collector calls instead of running them.
+        caplog: Sets the module logger's level and captures the DEBUG line.
+        debug: Whether the module logger has DEBUG enabled.
     """
+    caplog.set_level(
+        logging.DEBUG if debug else logging.INFO, logger=ui_responsiveness.__name__
+    )
     calls: list[tuple] = []
     counting_collector(monkeypatch, calls)
     monkeypatch.setattr(
@@ -155,8 +166,12 @@ def test_the_idle_refreeze_collects_every_unfrozen_generation_then_freezes(
         ui_responsiveness.gc, "freeze", lambda: calls.append(("freeze",))
     )
 
-    assert ui_responsiveness.refreeze_long_lived_heap("unit-test") == 2
-    assert calls == [("collect", 2), ("get_objects", 2), ("freeze",)]
+    ui_responsiveness.refreeze_long_lived_heap("unit-test")
+    if debug:
+        assert calls == [("collect", 2), ("get_objects", 2), ("freeze",)]
+        assert "gc heap re-frozen (unit-test): +2 objects" in caplog.messages
+    else:
+        assert calls == [("collect", 2), ("freeze",)], "walked the heap for no reader"
 
 
 def test_a_compaction_unfreezes_then_collects_everything_then_freezes(
