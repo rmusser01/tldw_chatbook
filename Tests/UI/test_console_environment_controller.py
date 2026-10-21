@@ -78,6 +78,39 @@ def test_no_dispatch_while_rail_closed(monkeypatch):
     assert fx.dispatched == []
 
 
+def test_a_closed_rail_never_asks_for_the_workspace_root(monkeypatch):
+    """TASK-33620.15.1.3: the rail guard runs before the root accessor.
+
+    The production accessor read the root by building a whole turn
+    configuration (measured live: 0.1-1.0 s on the UI loop per call), and a
+    closed rail threw the answer away -- yet the run-completion nudge and the
+    10 s poll kept asking after the rail had once been open. No caller of a
+    closed rail may pay for a root it discards.
+    """
+    fx = Fixture(monkeypatch, rail_open=False)
+    asked: list[int] = []
+
+    def counting_root():
+        asked.append(1)
+        return fx.root
+
+    fx.controller._workspace_root_accessor = counting_root
+    fx.controller.request_refresh()
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    fx.controller.notify_rail_opened()
+    for _ in range(fx.controller._MAX_UNKNOWN_TICKS + 1):
+        fx.controller.poll_tick()
+
+    assert asked == []
+    assert fx.dispatched == []
+    assert fx.snapshots == []
+
+    fx.rail_open = True
+    fx.controller.poll_tick()
+    assert asked, "an open rail still reads the root"
+    assert fx.git_calls == 1
+
+
 def test_local_and_net_use_distinct_worker_groups(monkeypatch):
     fx = Fixture(monkeypatch)
     fx.controller.request_refresh(include_net=True)
