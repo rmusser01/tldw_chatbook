@@ -284,3 +284,44 @@ def test_switching_away_from_a_transcript_frozen_while_shown_owes_a_compaction(
     console_transcript.note_console_conversation_painted(screen)
     assert len(screen.timers) == 3
     assert refreezer.compaction_due(), "rows frozen while shown were left stranded"
+
+
+def test_a_new_chat_gaining_its_conversation_id_is_not_a_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A first send that persists a new chat keeps its rows: nothing is stranded.
+
+    The (session, conversation) key goes from ``(s1, None)`` to ``(s1, id)``
+    when a new chat's first send persists it, but the transcript matches rows
+    by message id, so no row is replaced. Noting that as stranded garbage
+    made the next idle moment pay a full-heap compaction for nothing. The
+    freeze epoch recorded while the new chat was shown carries over, so a
+    later real switch still owes the compaction for rows frozen back then.
+
+    Args:
+        monkeypatch: Installs a recording refreezer and a settable freeze epoch.
+    """
+    epoch = [0]
+    monkeypatch.setattr(console_transcript, "heap_freeze_epoch", lambda: epoch[0])
+    refreezer = IdleHeapRefreezer(
+        enabled=lambda: True,
+        refreeze=lambda reason: 0,
+        compact=lambda reason: 1_000_000,
+        freeze_count=lambda: 1_000_000,
+        min_growth=10_000_000,
+    )
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    screen = PaintedScreen()
+    screen.conversation = None  # a new chat, not yet persisted
+
+    console_transcript.note_console_conversation_painted(screen)
+    epoch[0] += 1  # a re-freeze ran while the new chat was shown
+    screen.conversation = "c1"  # its first send persisted it
+    console_transcript.note_console_conversation_painted(screen)
+    assert not refreezer.compaction_due(), "persisting a new chat stranded its rows"
+
+    screen.conversation = "c2"  # a real switch in the same tab
+    console_transcript.note_console_conversation_painted(screen)
+    assert refreezer.compaction_due(), (
+        "the rows frozen while the new chat was shown were left stranded"
+    )

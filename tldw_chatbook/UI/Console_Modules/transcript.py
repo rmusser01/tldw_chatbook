@@ -448,7 +448,8 @@ def note_console_conversation_painted(screen: Any) -> None:
     now cyclic garbage no collection reaches, so the refreezer is told to
     compact at the next idle moment (ADR-198 amendment). Rows replaced
     before any freeze are ordinary garbage: the re-freeze's own full
-    collection reclaims them.
+    collection reclaims them. A new chat gaining its conversation id on its
+    first send is not a switch: its rows stay (they match by message id).
 
     Args:
         screen: The Console ``ChatScreen`` whose transcript was just synced.
@@ -460,6 +461,11 @@ def note_console_conversation_painted(screen: Any) -> None:
     )
     shown = getattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, None)
     if shown is not None and shown[0] == key:
+        return
+    if shown is not None and shown[0] == (key[0], None):
+        # A new chat's first send persisted it: rows match by message id, so
+        # none were replaced. Keep the epoch it was first shown under.
+        setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, shown[1]))
         return
     if shown is not None and heap_freeze_epoch() != shown[1]:
         heap_refreezer().note_stranded()
