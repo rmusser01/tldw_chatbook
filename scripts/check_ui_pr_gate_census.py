@@ -649,8 +649,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # The mounted flow remains outside this addition pending qualification.
 # PR #3166: two independently verified regression nodes; retain all 1175 entries.
 # PR #3173, 2026-10-31: retain all 1177 base entries and append four reviewed nodes.
-# PR #3183: preserve current-base prefix and append three mount-start controls.
-MINIMUM_FILES = 1184
+# PR #3183: preserve current-base prefix and append four reviewed mount/retry controls.
+MINIMUM_FILES = 1185
 
 
 def read_census(path: Path) -> list[str]:
