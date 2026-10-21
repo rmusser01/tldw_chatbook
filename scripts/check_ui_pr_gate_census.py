@@ -451,8 +451,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # nine new entries stay in place at the 399-entry boundary. Coverage,
 # shard count, timeout and the inherited floor are preserved.
 # TASK-35836 appends its mount pin as three node ids (one per rebuild start),
-# landing one case each on jobs 9, 10 and 1: 411.
-MINIMUM_FILES = 411
+# landing one case each on jobs 9, 10 and 1, and its decorator test on job 2: 412.
+MINIMUM_FILES = 412
 
 
 def read_census(path: Path) -> list[str]:

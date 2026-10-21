@@ -21506,11 +21506,11 @@ class ChatScreen(BaseAppScreen):
 
         TASK-2154.1 (LY-08/LY-09): available_columns feeds build_console_rail_state
         only when rail state is (re)built -- at compose or on a console sync tick --
-        and a pure terminal resize triggers neither, so without this hook crossing
-        the 100/84-column thresholds mid-session left the grid in its stale
-        (possibly broken) layout until some unrelated state change rebuilt it.
-        Guarded on the width BAND so a resize drag does not rebuild the
-        (store-reading) effective rail state on every event.
+        and a pure terminal resize triggers neither, so without this hook crossing the
+        100/84-column thresholds mid-session left the grid in its stale (possibly
+        broken) layout until some unrelated state change happened to rebuild it.
+        Guarded on the width BAND so a resize drag does not rebuild the (store-
+        reading) effective rail state on every event.
         """
         band = console_rail_width_band(event.size.width)
         if band == self._last_console_workspace_width_band:

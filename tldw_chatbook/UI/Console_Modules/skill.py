@@ -150,10 +150,10 @@ class ConsoleSkillController:
         """Refresh the popup's cached trusted-candidate snapshot."""
         from tldw_chatbook.config import config_read_would_wait
 
+        owner = _capture_console_skill_discovery(self)
         # TASK-35836: the first trust-service build reads config on the UI loop.
         while config_read_would_wait():
             await asyncio.sleep(0.2)
-        owner = _capture_console_skill_discovery(self)
         context = await self._fetch_console_skill_context()
         if owner is not None and not owner[0]():
             return
