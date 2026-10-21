@@ -186,6 +186,7 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
         timer = console._console_transcript_sync_timer
         full_code = ChatScreen._sync_native_console_chat_ui.__code__
         held, results, calls = {}, [], []
+        active_full = {}
         original = console._sync_console_chat_core_state
 
         def custom(self):
@@ -203,17 +204,26 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
                     assert type(value) is asyncio.Future and not value.done()
                     assert any(waiter is value for waiter in lock._waiters)
                     held.update(
-                        full=id(full), task=asyncio.current_task(), future=value
+                        full=active_full[id(full)],
+                        task=asyncio.current_task(),
+                        future=value,
                     )
-            elif (
-                label == "full"
-                and frame.f_locals.get("self") is console
-                and kind == sys.monitoring.events.PY_RETURN
-                and held
-            ):
-                results.append(
-                    (id(frame), frame.f_locals.get("poll_record") is record, value)
-                )
+            elif label == "full" and frame.f_locals.get("self") is console:
+                if kind == sys.monitoring.events.PY_START:
+                    # Frame addresses may be reused after return. Retain only a
+                    # per-invocation token, never the original frame itself.
+                    active_full[id(frame)] = object()
+                elif kind == sys.monitoring.events.PY_RETURN:
+                    identity = active_full.pop(id(frame), None)
+                    if held:
+                        assert identity is not None
+                        results.append(
+                            (
+                                identity,
+                                frame.f_locals.get("poll_record") is record,
+                                value,
+                            )
+                        )
 
         await lock.acquire()
         owned_lock = True
@@ -243,11 +253,13 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
                 assert await _until(
                     lambda: (
                         any(
-                            identity == held["full"] and narrowed and value is False
+                            identity is held["full"] and narrowed and value is False
                             for identity, narrowed, value in results
                         )
                         and any(
-                            identity != held["full"] and not narrowed and value is True
+                            identity is not held["full"]
+                            and not narrowed
+                            and value is True
                             for identity, narrowed, value in results
                         )
                         and not console._console_sync_in_progress

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 08:03'
+updated_date: '2026-10-21 08:50'
 labels:
   - console
   - bug
@@ -36,6 +36,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #9 Windows late chat-create projection journeys keep test-owned worker gates held until explicit release, preserve the close/navigation and sibling-decision assertions, and retire held workers during cleanup within the existing test deadline.
 - [x] #10 The replacement send-repair task has a unique filename/frontmatter ID and consistent live references in the combined dev and PR task tree, with renumbering provenance preserving its original identity.
 - [x] #11 The UI gate retains its exact census and existing shard count, test/job timeouts, dependencies and required aggregation, with the UI2 allocation reduced by a measured balance correction; hosted outcomes and remaining global margin limits stay explicit.
+- [x] #12 The changed-source replay regression distinguishes the held narrowed sync from later FULL invocations independently of recycled frame addresses, preserving original source-currentness, task, custody, draft and deadline assertions; the separately filed first-wait mode remains explicitly unclaimed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,7 +51,8 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 7. Instrument the Windows late-projection baseline failure; replace test-owned five-second self-expiry with explicit event release under existing test deadline/finally cleanup, verify close and navigation paths and failure cleanup, then review.
 8. Resolve the CI integration collision by renumbering this younger task and all live references, retaining ownership provenance, and verifying uniqueness against the combined dev/PR task tree.
 9. Diagnose the hosted UI2 job-cap cancellation from comparable raw shard logs; balance measured whole-file slots without changing coverage, dependencies, counts or limits; verify census/queue contracts and request independent review.
-10. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
+10. Repair the hosted P0 replay witness using per-invocation tokens assigned on original PY_START and retired on PY_RETURN; verify the original lifecycle without retaining frames or changing product code/deadlines, and record the separately open TASK-35713 first-wait mode.
+11. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
 ADR required: no
 ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md and backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
@@ -291,3 +293,49 @@ timing and collection/import composition remain pending, so this is not
 claimed as a hosted pass or global margin qualification. At this checkpoint
 all nine other UI shards on the preceding head passed; PR Fast Lane was still
 running. No full suite was run.
+
+
+### CI P0 invocation identity witness
+
+On reviewed head `8952057f6d70d60285a108d403d4373d91bd16fb`, required
+run 39566575303 / Console P0 job 119110873891 passed its sandboxed step but
+failed the admission-sensitive changed-source replay test (236 passed, 1 failed,
+571.43s). The original line-243 predicate saw a narrowed `False` followed by
+successful FULL `True` results at the same numeric frame address. This is the
+already filed TASK-35713 address-reuse mechanism, not evidence that FULL replay
+failed. The unchanged source was introduced at `3e618d711923`.
+
+The observer now assigns an opaque token at the original FULL's `PY_START`,
+uses frame addresses only to look up live invocations, and removes that lookup
+at `PY_RETURN`. Held/results retain tokens, never original frames. Original
+lock/Future ownership, narrowed failure, later different FULL success, custom
+callback task, custody, draft, source-currentness and five-second assertions
+remain enforced. Production callbacks, helper contracts, test census and
+committed deadlines are unchanged. ADR required: no; this is a test witness
+repair under ADR-103.
+
+An independent exact-observer/predicate probe used real `sys.monitoring`,
+`asyncio.Lock` and Futures without importing app code or retaining frames.
+Both base and repair executed the same narrowed return plus 25 sequential FULL
+returns: all 26 reused one raw frame address. The base retained one identity
+and rejected its genuine False/True completions; the repair retained 26 distinct
+tokens and accepted them. The live map was empty after every return. The
+implementer repeated that probe successfully after formatting. This validates
+the observer, not 25 complete Textual journeys.
+
+The original five-case Windows file was also attempted: all five failed earlier
+at `_held_received_record`'s unchanged ten-second reader-entry wait (line 318),
+before this observer is installed, in 246.53s. A fresh native-private-profile
+control using the untouched head's exact replay-test source failed at the same
+earlier wait (57.40s). Neither run is counted green. The different TASK-35713
+first-wait mode (original line 231) and its 25 consecutive complete dev-run
+qualification remain open and unclaimed. No full suite was run.
+
+Evidence: `.tmp-replacement-tests/ci895-console-p0-failure.log`,
+`p0-frame-identity-file.txt`, `p0-frame-identity-baseline.txt`, and
+`p0-frame-identity-exact-observer.py`/`.txt`. An initial scratch probe imported
+UI helpers outside pytest and was stopped before producing a witness result;
+it is not evidence and was replaced with the app-free AST probe. Fresh scoped
+independent requesting-code-review found no actionable correctness or weakened
+assertion findings. Changed-file Ruff has zero diagnostics, formatting and
+diff checks pass; hosted P0 remains the integration gate.

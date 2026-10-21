@@ -7,6 +7,25 @@
 
 **What to do.** Retain every progress occurrence, all duration phases and each run's exact census. Top-25 reports do not fully time parameterized functions; label the unmeasured remainder and measure hosted job setup separately. Bind evidence hashes to canonical Git blob bytes (LF/UTF8), since Windows checkout newlines and upstream-only comments can change file hashes without changing the selected tests.
 
+
+## A returned frame address cannot identify a later invocation (TASK-35713, PR #3189, 2026-10-21)
+
+**Incident.** Required Console P0 run 39566575303 rejected a valid FULL replay:
+its narrowed invocation returned False, then FULL returned True at the same
+numeric frame address. The test retained `id(frame)` after the frame had died;
+CPython reused that address. The exact base observer and replay predicate
+reproduced the problem with real monitoring/asyncio primitives: 26 returns
+shared one raw address, so the predicate rejected the successful replay.
+
+**What to do.** Assign a fresh token on PY_START, look it up by frame address
+only while that invocation is live, and remove the lookup on PY_RETURN.
+Retain the token across completions. This preserves the existing no-frame-
+retention observation contract; retaining original frames can itself alter
+lifetime behavior. The repaired observer distinguished all 26 completions.
+This proves the witness repair; it does not establish the separately filed
+first-wait mode or 25 complete dev-run qualification in TASK-35713.
+
+
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
 **Incident.** PR #3176's admission-sensitive job failed the headless-delivery
