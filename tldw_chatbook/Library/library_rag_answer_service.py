@@ -45,7 +45,11 @@ from tldw_chatbook.Chat.answer_citations import (
     build_answer_citation_validation,
     format_evidence_for_cited_answer,
 )
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call, extract_response_content
+from tldw_chatbook.Chat.Chat_Functions import (
+    API_CALL_HANDLERS,
+    chat_api_call,
+    extract_response_content,
+)
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
@@ -420,9 +424,11 @@ class LibraryRagAnswer:
             ``model``.
         model: The MODEL THE PROVIDER ACTUALLY RAN, read from the response
             payload's own ``"model"`` key -- never the configured endpoint
-            name. This is the only app-side source of the model, since
-            ``resolve_library_rag_answer_provider`` deliberately resolves
-            ``model=None`` and leaves the handler to pick its own default.
+            name and never the requested model: since TASK-34000.21
+            ``resolve_library_rag_answer_provider`` names the persisted
+            ``[chat_defaults]`` model (or the provider table's own), but a
+            config naming none anywhere still leaves the handler to pick its
+            own default, and only the response says which model answered.
             ``""`` when no response was ever obtained -- no call was made
             (no-evidence path), or an exception fired before `_invoke_chat`
             returned one (a bundle-build failure, or the provider call
@@ -601,6 +607,52 @@ def _effective_max_tokens(endpoint: str, model: str | None) -> int:
     return ANSWER_MAX_TOKENS
 
 
+def _execution_endpoint(provider: str) -> str:
+    """The `chat_api_call` handler key for a configured provider key.
+
+    Final review of TASK-34000.21 (Important 1, 2026-10-20):
+    `resolve_library_rag_answer_provider` returns the canonical READINESS key
+    -- `canonical_provider_key([chat_defaults].provider)`, what First Run
+    persists and `get_provider_readiness` checks -- and for `custom`,
+    `custom_2` and `local_llm` that is not a handler key (`custom-openai-api`,
+    `custom-openai-api-2`, `local-llm`). The gate said ready and the pre-Run
+    line named the pair, then the real dispatcher raised `ValueError:
+    Unsupported API endpoint`; the scheduler's `resolve_execution_target`
+    adopts the same key and failed the same way, unattended.
+
+    Console already owns this exact mapping (`console_provider_support.
+    _READINESS_TO_EXECUTION_ALIASES`, through `resolve_console_provider_
+    identity(...).execution_key`), so it is reused rather than restated.
+    Imported lazily: this module is on the Library boot path and the
+    scheduler thread, and the Console module is not needed until a call is
+    actually made. A provider the mapping cannot place on a handler --
+    including the readiness key itself when it is one -- is passed through
+    unchanged, so every provider that worked before still reaches the same
+    handler.
+
+    Args:
+        provider: The configured provider key (`LibraryRagAnswer.provider`
+            keeps naming this; only the wire call takes the handler key).
+
+    Returns:
+        The key `chat_api_call` dispatches on.
+    """
+    from ..Chat.console_provider_support import resolve_console_provider_identity
+
+    try:
+        identity = resolve_console_provider_identity(provider)
+    except Exception as exc:  # noqa: BLE001 - never let the alias lookup fail the call
+        logger.debug(
+            f"library rag answer: execution key for {provider!r} unresolved "
+            f"({type(exc).__name__}); calling it as configured"
+        )
+        return provider
+    execution_key = identity.execution_key
+    if execution_key != provider and execution_key in API_CALL_HANDLERS:
+        return execution_key
+    return provider
+
+
 async def _invoke_chat(
     chat: Callable[..., Any],
     *,
@@ -733,7 +785,7 @@ async def generate_library_rag_answer(
 
         raw = await _invoke_chat(
             _resolve_answer_chat(chat),
-            endpoint=provider,
+            endpoint=_execution_endpoint(provider),
             model=model,
             system=LIBRARY_RAG_ANSWER_SYSTEM_PROMPT,
             user=user_message,

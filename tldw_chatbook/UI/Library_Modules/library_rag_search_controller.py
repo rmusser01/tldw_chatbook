@@ -1298,19 +1298,17 @@ class LibraryRagSearchController:
         link = decision.result
 
         # Task-2852 (b): Console's blocking first-run setup card visually
-        # covers the whole workbench, so if we said nothing here the user's
+        # covers the whole workbench, so if we said nothing the user's
         # selection would silently vanish into a locked "Get started"
         # screen. The handoff still proceeds -- the evidence really is
         # staged, and a matching receipt appears on the locked Console
-        # surface (AC #2, `console_setup_staged_receipt`) -- this is just
-        # the immediate, pre-navigation half of that receipt.
-        if self._console_setup_would_block():
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
-                    severity="information",
-                )
+        # surface (AC #2, `console_setup_staged_receipt`) -- this is the
+        # immediate half of that receipt. Final review of TASK-34000.24
+        # (F7, 2026-10-20): the lock is read here but the notice is sent
+        # only AFTER the opener reports success -- a refused stage now says
+        # "Console could not take it", and "staged" beside it would be a
+        # second, false sentence.
+        console_locked = bool(self._console_setup_would_block())
 
         try:
             staged = opener(
@@ -1359,6 +1357,13 @@ class LibraryRagSearchController:
             if callable(notify):
                 notify(failure, severity="warning", markup=False)
             return
+        if console_locked:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
+                    severity="information",
+                )
         if link is not None and link.written:
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):

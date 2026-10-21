@@ -36900,7 +36900,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify(message, severity="warning", markup=False)
 
-        block = self._media_controller._library_media_link_receipt_block(open_item_id)
+        block = self._media_controller.library_media_link_receipt_block(open_item_id)
         if receipt is None or not open_item_id or block in ("no_receipt", "other_item"):
             self._sync_library_media_viewer_or_recompose()
             return

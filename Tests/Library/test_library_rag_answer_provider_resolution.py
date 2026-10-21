@@ -20,6 +20,7 @@ import pytest
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_rag_answer_service import (
+    generate_library_rag_answer,
     library_rag_answer_provider_gate,
     resolve_library_rag_answer_provider,
 )
@@ -263,3 +264,87 @@ def test_gate_blocks_a_configured_provider_without_a_key_and_names_no_model(
     assert state.query_state.ready_answer_model == ""
     assert not state.query_state.run_action.enabled
     assert library_rag_query_quiet_text(state) == ""
+
+
+# --- Final review, Important 1 (2026-10-20): readiness key vs handler key ---
+
+#: `[chat_defaults] provider` keys First Run persists whose canonical
+#: readiness key is NOT a `chat_api_call` handler key. The handler keys are
+#: the ones `Chat/console_provider_support._READINESS_TO_EXECUTION_ALIASES`
+#: already maps them to for Console.
+_READINESS_ONLY_PROVIDERS = (
+    ("custom", "custom-openai-api"),
+    ("custom_2", "custom-openai-api-2"),
+    ("local_llm", "local-llm"),
+)
+
+
+def _citable_row() -> dict:
+    """One Library RAG result row the evidence bundle can cite."""
+    return {
+        "result_id": "note-42:chunk-7",
+        "title": "Incident Review",
+        "snippet": "Expired credential caused the incident.",
+        "source_id": "note-42",
+        "chunk_id": "chunk-7",
+        "source_type": "note",
+        "runtime_backend": "local-fts",
+        "score": 0.93,
+    }
+
+
+@pytest.mark.parametrize(("provider", "handler_key"), _READINESS_ONLY_PROVIDERS)
+async def test_rag_answer_calls_the_handler_key_for_a_readiness_only_provider(
+    persisted, provider, handler_key
+):
+    """The resolver keeps returning the readiness key (what the gate checks
+    and the pre-Run line names), but the one provider call must reach the
+    handler: `chat_api_call(api_endpoint="custom")` raises `ValueError:
+    Unsupported API endpoint` on the real dispatcher, so the paid call the
+    gate said was ready could never be made."""
+    settings = _settings(provider=provider, model="qwen3")
+    settings["api_settings"][provider] = {"api_key": "sk-test-local"}
+    persisted(settings)
+    resolved_provider, resolved_model = resolve_library_rag_answer_provider()
+    assert (resolved_provider, resolved_model) == (provider, "qwen3")
+
+    calls: list[dict] = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        return "An expired credential caused the incident [S1]."
+
+    answer = await generate_library_rag_answer(
+        query="Why did the incident happen?",
+        results=[_citable_row()],
+        coverage_note="",
+        provider=resolved_provider,
+        model=resolved_model,
+        chat=chat,
+    )
+
+    assert len(calls) == 1, answer
+    assert calls[0]["api_endpoint"] == handler_key
+    assert calls[0]["model"] == "qwen3"
+    # The user-facing name stays the configured key.
+    assert answer.provider == provider
+
+
+async def test_rag_answer_passes_a_handler_key_through_unchanged(persisted):
+    """A provider whose readiness key IS its handler key is untouched."""
+    persisted(_settings(provider="OpenAI", model="gpt-4.1-mini"))
+    calls: list[dict] = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        return "An expired credential caused the incident [S1]."
+
+    await generate_library_rag_answer(
+        query="Why did the incident happen?",
+        results=[_citable_row()],
+        coverage_note="",
+        provider="openai",
+        model="gpt-4.1-mini",
+        chat=chat,
+    )
+    assert [call["api_endpoint"] for call in calls] == ["openai"]

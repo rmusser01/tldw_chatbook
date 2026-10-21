@@ -444,3 +444,54 @@ def test_classify_missing_answer_after_attempted_generation_degrades_honestly():
     assert outcome.outcome == "degraded"
     assert outcome.failure_reason == {"code": "generation_unavailable"}
     assert outcome.evidence_summary["answer_present"] is False
+
+
+# --- Final review, Important 1 (2026-10-20): the scheduler reaches a handler --
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "handler_key"),
+    [
+        ("custom", "custom-openai-api"),
+        ("custom_2", "custom-openai-api-2"),
+        ("local_llm", "local-llm"),
+    ],
+)
+async def test_scheduled_run_calls_the_handler_key_for_a_readiness_only_provider(
+    monkeypatch, provider, handler_key
+):
+    """`resolve_execution_target` adopts the readiness key the Library
+    resolver returns (`custom`, `custom_2`, `local_llm`), which the real
+    `chat_api_call` cannot route ("Unsupported API endpoint"). The
+    unattended run must hand the chat seam the handler key instead. Only
+    retrieval and the chat seam are faked; generation is the real
+    `generate_library_rag_answer`."""
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    async def fake_search(app, request):
+        return LibraryRagSearchOutcome(status="ready", results=(_row(),))
+
+    calls: list[dict] = []
+
+    def fake_chat(**kwargs):
+        calls.append(kwargs)
+        return "The answer is 42 [S1]."
+
+    monkeypatch.setattr(automation_execution, "run_library_rag_search", fake_search)
+    monkeypatch.setattr(automation_execution, "get_cli_setting", lambda *a, **k: None)
+    monkeypatch.setattr(
+        automation_execution,
+        "resolve_library_rag_answer_provider",
+        lambda: (provider, "qwen3"),
+    )
+    monkeypatch.setattr(library_rag_answer_service, "chat_api_call", fake_chat)
+
+    target = resolve_execution_target(_definition_row())
+    assert (target["provider"], target["model"]) == (provider, "qwen3")
+
+    outcome = await execute_recurring_question(_FakeApp(), _definition_row())
+
+    assert len(calls) == 1, outcome
+    assert calls[0]["api_endpoint"] == handler_key
+    assert calls[0]["model"] == "qwen3"

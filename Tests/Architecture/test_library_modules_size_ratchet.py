@@ -381,7 +381,7 @@ _BUDGETS: dict[str, int] = {
     # the selection entry (+6, with its comment). No code was moved or
     # reflowed to fit. Re-measured after fix round 1: still 4874.
     # 2026-10-20, fix round 2 (item 4): 4874 -> 4898 (+24),
-    # `_library_media_link_receipt_block` -- why a standing receipt is
+    # `library_media_link_receipt_block` -- why a standing receipt is
     # withheld (other item / registry unavailable / workspace inactive), so
     # the Undo handler can tell an unreadable registry from a moved
     # workspace; the visibility rule now reads it.
@@ -609,7 +609,11 @@ _BUDGETS: dict[str, int] = {
     # write taken back on a refused stage) -- the row raise that round's
     # commit missed; fix round 2 added +6 (one plain sentence whether the
     # opener refused or raised).
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2051,
+    # 2026-10-20, TASK-34000.24 final-review fix (F7; owner decision
+    # 2026-10-04, same rule): 2051 -> 2056 (+5). The locked-Console "staged"
+    # notice is read before the opener but sent only after it succeeds, so
+    # a refused stage no longer shows "staged" beside "could not take it".
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2056,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
     # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
     # Library-only `include_disabled_builtins` flag through the browse read so
@@ -702,7 +706,14 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # 909 -> 1020. Dev itself already measures 904 against its own 806 row (a
 # pre-existing dev red); this branch adds the same +116 the rows above
 # record (the demo consent block). Measured with `len(read_text().splitlines())`.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1020
+# 2026-10-20, TASK-34000.23 final-review fix (F4; owner decision 2026-10-04,
+# same rule): 1020 -> 1057 (+37). `empty_actions_visible`, the ONE predicate
+# for the Reports empty-state actions (empty page, or a failed newest first
+# run), moved out of the items pane's `sync` so the work pane can hide its
+# standing "Watchlists" button while the items pane offers the empty-state
+# one; plus the reused schedule's name handed to the consent copy (F3).
+# Measured with `len(read_text().splitlines())`.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1057
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

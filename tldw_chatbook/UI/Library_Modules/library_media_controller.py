@@ -3743,7 +3743,7 @@ class LibraryMediaController:
             id="library-media-canvas",
         )
 
-    def _library_media_link_receipt_block(self, media_id: str) -> str:
+    def library_media_link_receipt_block(self, media_id: str) -> str:
         """Why the standing link receipt is withheld for ``media_id``, if it is.
 
         Fix round 2 (item 4): the Undo handler has to tell a registry it
@@ -3797,7 +3797,7 @@ class LibraryMediaController:
             ``(line, undo_offered)``: the receipt sentence or ``""``, and
             whether "Undo link" renders beside it.
         """
-        if self._library_media_link_receipt_block(media_id):
+        if self.library_media_link_receipt_block(media_id):
             return "", False
         receipt = self._library_media_link_receipt
         assert receipt is not None  # the block check above covers None

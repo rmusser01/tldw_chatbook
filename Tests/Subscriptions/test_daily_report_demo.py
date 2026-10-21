@@ -175,13 +175,35 @@ def test_consequences_name_every_feed_the_cadence_and_the_pair():
     assert "cast script" in text and "second openai call" in text
     assert "TTS provider" in text
 
+    # Final review (2026-10-20) F5: the app writes "—", never ASCII "--".
+    assert not [line for line in lines if " -- " in line], lines
+
     existing = daily_report_demo_consequences(
         provider="openai", model="gpt-4.1-mini", existing=True
     )
-    assert existing[0].startswith("You already have a Daily Brief.")
+    assert existing[0].startswith("You already have a scheduled brief.")
     assert "openai · gpt-4.1-mini" in existing[0] and "API quota" in existing[0]
     assert "one call" not in " ".join(existing)
     assert "cast script" in " ".join(existing) and "TTS provider" in " ".join(existing)
+    assert not [line for line in existing if " -- " in line], existing
+
+
+def test_reuse_consequences_name_the_watchlist_that_will_be_billed():
+    """Final review (2026-10-20) F3: `list_briefing_schedules()` returns ANY
+    watchlist with a briefing cadence and the demo reuses the first one, so a
+    user whose own "Tech news" watchlist is scheduled was told "You already
+    have a Daily Brief" and Confirm billed a brief on THEIR watchlist. The
+    reuse sentence names the watchlist it will actually run (its real name,
+    never an id), and so does the line that says how to stop it."""
+    existing = daily_report_demo_consequences(
+        provider="openai", model="gpt-4.1-mini", existing=True,
+        existing_name="Tech news",
+    )
+    assert existing[0].startswith("Your “Tech news” watchlist already has a scheduled brief.")
+    assert "Daily Brief" not in existing[0]
+    assert "openai · gpt-4.1-mini" in existing[0] and "API quota" in existing[0]
+    assert any("“Tech news”" in line and "Watchlists" in line for line in existing), existing
+    assert not any("Daily Brief watchlist" in line for line in existing), existing
 
 
 @pytest.mark.asyncio

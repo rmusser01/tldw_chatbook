@@ -58,6 +58,9 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
+)
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
@@ -427,6 +430,10 @@ async def test_search_u_and_reader_c_agree():
         await _wait_for_library_shell(screen, pilot)
         await _run_search_and_select_first(screen, pilot)
         assert _memberships(app) == (), "control: nothing linked before u"
+        # Console's first-run setup card would cover the stage (task-2852):
+        # the "staged — finish provider setup" notice is still said on a
+        # successful stage (final review 2026-10-20, F7), before the receipt.
+        screen._rag_search_controller._console_setup_would_block_fn = lambda: True
 
         await pilot.press("u")
         await pilot.pause()
@@ -439,7 +446,12 @@ async def test_search_u_and_reader_c_agree():
         assert [(row.workspace_id, row.item_id) for row in _memberships(app)] == [
             (RAW_ID, MEDIA_ID)
         ]
-        assert LINKED_RECEIPT in _notified(app), _notified(app)
+        notified = _notified(app)
+        assert LINKED_RECEIPT in notified, notified
+        assert notified.count(LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE) == 1, notified
+        assert notified.index(LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE) < notified.index(
+            LINKED_RECEIPT
+        ), notified
         assert not [line for line in _notified(app) if RAW_ID in line]
 
         # The reader now finds the item already linked: same membership, no
@@ -475,6 +487,11 @@ async def test_search_u_unlinks_its_own_write_when_console_refuses(opener):
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _run_search_and_select_first(screen, pilot)
+        # Final review (2026-10-20) F7: with Console's setup card blocking,
+        # the locked "staged" notice used to be sent BEFORE the opener ran,
+        # so a refused stage showed "evidence staged" beside "Console could
+        # not take it". A refused stage notifies no "staged" text at all.
+        screen._rag_search_controller._console_setup_would_block_fn = lambda: True
 
         await pilot.press("u")
         await pilot.pause()
@@ -486,3 +503,6 @@ async def test_search_u_unlinks_its_own_write_when_console_refuses(opener):
             _notified(app)
         )
         assert _notified(app).count(CONSOLE_REFUSED_LINE) == 1, _notified(app)
+        assert not [line for line in _notified(app) if "staged" in line], (
+            _notified(app)
+        )

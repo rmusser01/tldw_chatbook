@@ -283,6 +283,36 @@ class LibraryArtifactsController:
         if self.shell is not None and self.shell.is_mounted and self.active():
             self.shell.sync()
 
+    @property
+    def empty_actions_visible(self) -> bool:
+        """Whether the Reports empty-state actions (Watchlists, "Set up a
+        daily brief…") are offered (TASK-34000.23).
+
+        True for an unfiltered, loaded Reports page with no rows, and --
+        review 1 #2 (mirrors `ArtifactsScreen._latest_report_failed`) -- for
+        one whose newest row is a `failed` first run: that run leaves a row,
+        so the page is no longer empty, yet the failure toast says "run the
+        demo again" and no other surface offers it. Newest-first at the top
+        of the default page means `items[0]` IS the newest run.
+
+        One predicate for both panes (final review 2026-10-20, F4): the items
+        pane shows the actions on it and the work pane hides its own standing
+        "Watchlists" button while they are visible, so the empty state never
+        paints that control twice.
+        """
+        page = self.page
+        if self.loading or self.error or not page:
+            return False
+        if self.scope.view != "reports" or self.scope.query or self.scope.kept_only:
+            return False
+        if not page.items:
+            return True
+        return bool(
+            page.start == 0
+            and self.scope.sort == "newest"
+            and page.items[0].status == "failed"
+        )
+
     def resize(self, *, priority=None, manual_reopen=None) -> None:
         shell = self.shell
         if not shell or not shell.is_mounted:
@@ -775,17 +805,24 @@ class LibraryArtifactsController:
                 )
                 schedules = []
             existing = bool(schedules)
+            existing_name = ""
             if existing:
                 # Review 1 minor 1: a reused schedule bills its default
                 # preset's own provider/model when the preset carries them
                 # (`generate_briefing`: `endpoint = provider or preset_provider`),
-                # so that is the pair the copy must name.
+                # so that is the pair the copy must name. Final review F3:
+                # `schedules[0]` is whatever watchlist has a cadence -- the
+                # same row `run_demo` reuses -- so the copy names it.
                 provider, model = self._reused_schedule_pair(
                     db, int(schedules[0]["watchlist_id"]), (provider, model)
                 )
+                existing_name = str(schedules[0].get("name") or "")
             self.demo_consent = DemoConsent(
                 lines=daily_report_demo_consequences(
-                    provider=provider, model=model, existing=existing
+                    provider=provider,
+                    model=model,
+                    existing=existing,
+                    existing_name=existing_name,
                 ),
                 existing=existing,
             )

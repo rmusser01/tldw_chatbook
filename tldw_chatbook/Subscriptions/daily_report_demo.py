@@ -94,7 +94,7 @@ def _every(seconds: int) -> str:
 
 
 def daily_report_demo_consequences(
-    *, provider: str, model: str, existing: bool = False
+    *, provider: str, model: str, existing: bool = False, existing_name: str = ""
 ) -> tuple[str, ...]:
     """The consequence copy both demo entry points show (ADR-079: "CTA copy
     says so"; TASK-34000.23 review finding L-10).
@@ -106,8 +106,15 @@ def daily_report_demo_consequences(
     Args:
         provider: The canonical provider key the brief will be billed to.
         model: Its resolved model; an empty string names the provider alone.
-        existing: A Daily Brief schedule already exists, so a run reuses it
+        existing: A briefing schedule already exists, so a run reuses it
             (one call now) and seeds nothing.
+        existing_name: The name of the watchlist that schedule belongs to.
+            Final review of TASK-34000.23 (F3, 2026-10-20):
+            `list_briefing_schedules()` returns ANY watchlist with a
+            briefing cadence and the service reuses the first, so the
+            reused one may be the user's own ("Tech news"), not a Daily
+            Brief -- the copy names what Confirm will actually bill. Blank
+            when the caller could not read a name.
 
     Returns:
         One sentence per line; the first line is the headline.
@@ -120,21 +127,28 @@ def daily_report_demo_consequences(
         "• With a TTS voice profile set up, also writes a cast script (a second "
         f"{provider} call) and records audio through your TTS provider."
     )
+    if existing:
+        name = " ".join(str(existing_name or "").split())
+        headline = (
+            f"Your “{name}” watchlist already has a scheduled brief."
+            if name
+            else "You already have a scheduled brief."
+        )
+        which = f"the “{name}” watchlist" if name else "that watchlist"
+        return (
+            f"{headline} This checks its sources now and writes today's brief "
+            f"with {pair}, using your API quota.",
+            audio,
+            f"• Keeps running until you remove {which} in Watchlists (⌃5).",
+        )
     stop = (
         "• Keeps running until you remove the Daily Brief watchlist in "
         "Watchlists (⌃5)."
     )
-    if existing:
-        return (
-            "You already have a Daily Brief. This checks its sources now and "
-            f"writes today's brief with {pair}, using your API quota.",
-            audio,
-            stop,
-        )
     feeds = ", ".join(str(source["name"]) for source in DEMO_SOURCES)
     return (
-        "This sets up a recurring Daily Brief -- not a one-off demo:",
-        f"• Watches {len(DEMO_SOURCES)} live RSS feeds -- {feeds} -- and checks "
+        "This sets up a recurring Daily Brief — not a one-off demo:",
+        f"• Watches {len(DEMO_SOURCES)} live RSS feeds — {feeds} — and checks "
         f"each {_every(DEMO_SOURCE_CHECK_SECONDS)}.",
         f"• Writes a brief {_every(DEMO_CADENCE_SECONDS)} with {pair}, using your "
         "API quota. The first one is written now.",

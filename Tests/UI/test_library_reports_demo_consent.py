@@ -265,12 +265,14 @@ async def test_no_provider_disables_the_run_button_with_the_reason(
 
 
 async def test_existing_schedule_discloses_reuse_not_seeding(tmp_path, monkeypatch):
-    """A Daily Brief schedule already on disk: the copy says it will reuse
-    it (one call now), and the run button says so."""
+    """A briefing schedule already on disk: the copy says it will reuse it,
+    NAMES the watchlist it will bill (final review 2026-10-20, F3: the
+    reused schedule is whichever watchlist has a cadence -- here the user's
+    own "Tech news", not a Daily Brief), and the run button says so."""
     _persist_pair(monkeypatch)
     async with _empty_reports(tmp_path) as (app, screen, pilot, stub):
         db = app.subscriptions_db
-        watchlist_id = int(WatchlistBundleService(db).create("Daily Brief")["id"])
+        watchlist_id = int(WatchlistBundleService(db).create("Tech news")["id"])
         db.set_watchlist_briefing_settings(
             watchlist_id, briefing_cadence_seconds=86_400
         )
@@ -283,7 +285,11 @@ async def test_existing_schedule_discloses_reuse_not_seeding(tmp_path, monkeypat
         text = _painted_flat(
             screen, screen.query_one("#library-artifacts-demo-copy").region
         )
-        assert text.startswith("You already have a Daily Brief.")
+        assert text.startswith(
+            "Your “Tech news” watchlist already has a scheduled brief."
+        ), text
+        assert "You already have a Daily Brief" not in text
+        assert " -- " not in text
         assert "openai · gpt-4.1-mini" in text
         assert "API quota" in text and "one call" not in text
         assert "cast script" in text and "TTS provider" in text
@@ -319,7 +325,9 @@ async def test_failed_first_run_keeps_a_retry_through_the_same_consent(
         text = _painted_flat(
             screen, screen.query_one("#library-artifacts-demo-copy").region
         )
-        assert text.startswith("You already have a Daily Brief.")
+        assert text.startswith(
+            "Your “Daily Brief” watchlist already has a scheduled brief."
+        ), text
         assert "openai · gpt-4.1-mini" in text
         run = screen.query_one("#library-artifacts-demo-confirm-run", Button)
         assert "Write today's brief" in _painted_flat(screen, run.region)
@@ -380,7 +388,39 @@ async def test_reused_schedule_names_its_presets_own_pair(tmp_path, monkeypatch)
         text = _painted_flat(
             screen, screen.query_one("#library-artifacts-demo-copy").region
         )
-        assert text.startswith("You already have a Daily Brief.")
+        assert text.startswith(
+            "Your “Daily Brief” watchlist already has a scheduled brief."
+        ), text
         assert "anthropic · claude-haiku-4-5" in text
         assert "openai · gpt-4.1-mini" not in text
         assert stub.started == 0
+
+
+async def test_empty_reports_paints_exactly_one_watchlists_control(tmp_path, monkeypatch):
+    """Final review (2026-10-20) F4: the empty Reports state offered two
+    "Watchlists" buttons at 160x45 -- the one under the empty-state sentence
+    (`#library-artifacts-watchlists-items`) and the work pane's standing
+    `#library-artifacts-watchlists`. While the empty-state actions are
+    visible exactly ONE "Watchlists" control is painted across both panes
+    (the status sentence's own "Open Watchlists" is discounted)."""
+    _persist_pair(monkeypatch)
+    async with _empty_reports(tmp_path, size=(160, 45)) as (app, screen, pilot, stub):
+        assert screen.query_one("#library-artifacts-empty-actions").display
+
+        def painted_count(region) -> int:
+            return _painted_flat(screen, region).count("Watchlists")
+
+        panes = (
+            screen.query_one("#library-canvas"),
+            screen.query_one("#library-artifacts-work"),
+        )
+        controls = sum(painted_count(pane.region) for pane in panes if pane.region.height)
+        controls -= painted_count(screen.query_one("#library-artifacts-count").region)
+        assert controls == 1, [
+            _painted_flat(screen, pane.region) for pane in panes if pane.region.height
+        ]
+        # The one that paints is the empty-state copy, beside the CTA.
+        items_button = screen.query_one("#library-artifacts-watchlists-items", Button)
+        assert items_button.region.height and "Watchlists" in _painted_flat(
+            screen, items_button.region
+        )
