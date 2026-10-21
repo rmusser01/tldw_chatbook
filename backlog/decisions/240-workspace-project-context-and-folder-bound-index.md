@@ -248,3 +248,15 @@ storage/recovery qualification before the index is enabled in production.
 
 ### Settings execution handoff
 Index cards carry exact workspace and selected-binding data; any root/status admission is captured in background workers. Binding ID alone is not file authority. Console reuses safe modal dismissal and the existing Workspaces-category Settings navigation contract; no binding deep-link or new navigation API is introduced. Existing row replacement and per-binding job/epoch/visit fences remain required. See the keyword plan and retained UI contract probe.
+
+### Run executor snapshot for keyword capture
+The local provider may consume an immutable snapshot of the exact run executor's captured local DirectoryChain through a read-only code-owned accessor. This is data provenance, not permission or live admission; both search/read review, the exact run guard and exclusions, operation pin, and final disclosure fence remain required. Remote executors expose no local chain. Ordinary file-tool wire/result and lifecycle contracts remain unchanged.
+
+### Live query retirement
+Live Capture queries do not take the exclusive durable-writer lifetime lease because they access no cache handle in the worker. They retain ordinary admitted operation ownership through actual scanner retirement. Unproven retirement retains that admission and a service-owned failure record, refuses further affected work and makes close fail explicitly; cancellation or an ordinary missing/stale file is not native proof. No PID/elapsed-time substitution or automatic permission recovery is introduced.
+
+### Saved processing policy display
+Settings reads immutable processing policy through an exact-scope admitted service operation backed by the existing store.policy(scope). It performs that read in a worker after status capture; a changed scope refuses/reloads. No constructor I/O, new persisted model, direct UI store ownership or implicit policy reset is introduced.
+
+### Aggregate index read budget
+The app-owned service shares its at-most-two index-read budget across durable writer scans and live Capture queries. Permits survive until actual reader retirement, including failure paths; writer cache/lifetime ownership remains separate. A whole-operation permit may conservatively reduce query concurrency while a build runs. Waiting occurs outside publication/disclosure fences and locks needed by cancellation. Writer Refresh/Resume uses nonblocking admission before pins/fences/service locks; when both slots are occupied it returns the existing LifetimeBusy outcome without changing scope/job state or queuing deferred work. UI copy offers retry and does not infer that another build is running. This service boundary does not impose a machine-wide budget on ordinary file tools or independent applications.
