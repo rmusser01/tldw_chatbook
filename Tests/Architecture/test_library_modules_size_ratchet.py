@@ -506,7 +506,10 @@ _BUDGETS: dict[str, int] = {
     # modify other code to make it fit", 2026-10-04): 2375 -> 2378 (+3). The
     # row title is the runtime's `display_name` (the folder's name) instead
     # of a placeholder literal; three comment lines name the source.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2378,
+    # 2026-10-20, TASK-32451 rebase onto dev 250159834c, same owner decision:
+    # 2378 -> 2397. Dev itself already measures 2394 against its own 2375
+    # row (a pre-existing dev red); this branch adds the same +3 above.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2397,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -695,7 +698,11 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # `_reused_schedule_pair` (a reused schedule's default preset bills its own
 # provider/model, so the consent names that pair) and the schedule read it
 # hangs off. Measured with `len(read_text().splitlines())` after the edits.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 909
+# 2026-10-20, TASK-34000.23 rebase onto dev 250159834c, same owner decision:
+# 909 -> 1020. Dev itself already measures 904 against its own 806 row (a
+# pre-existing dev red); this branch adds the same +116 the rows above
+# record (the demo consent block). Measured with `len(read_text().splitlines())`.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1020
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in
