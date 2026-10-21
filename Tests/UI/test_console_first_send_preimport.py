@@ -121,6 +121,7 @@ def routes_start(self, routes):
 cls._preimport_screens = routes_start
 cls._pause_between_preimports = lambda self, gap: None  # pacing: unit-tested below
 cls._preimport_heavy_screens(app)
+after = [m for m in expected if m in sys.modules]
 
 # The first send's configuration capture reads the built-in manifest.
 parses = []
@@ -137,7 +138,12 @@ server.describe_local_mcp_capabilities()
 print(
     "PASS_JSON:"
     + json.dumps(
-        {"before": loaded_before, "at_routes": at_routes, "manifest_parses": len(parses)}
+        {
+            "before": loaded_before,
+            "at_routes": at_routes,
+            "after": after,
+            "manifest_parses": len(parses),
+        }
     )
 )
 """
@@ -177,14 +183,31 @@ def pass_outcome(tmp_path_factory) -> dict:
 
 
 @pytest.mark.integration
-def test_the_idle_pass_imports_the_first_send_modules_before_any_screen(pass_outcome):
+def test_the_idle_pass_imports_the_first_send_modules(pass_outcome):
     """Red on origin/dev: the pass warmed none of them."""
     assert pass_outcome["before"] == [], (
         "no longer lazy at UI-ready, drop from the list: "
         + ", ".join(pass_outcome["before"])
     )
-    cold = sorted(m for m, loaded in pass_outcome["at_routes"].items() if not loaded)
-    assert not cold, "the first send would import these on the UI loop: " + ", ".join(cold)
+    cold = sorted(set(pass_outcome["at_routes"]) - set(pass_outcome["after"]))
+    assert not cold, "the first send would import these on the UI loop: " + ", ".join(
+        cold
+    )
+
+
+@pytest.mark.integration
+def test_the_idle_pass_warms_every_screen_route_before_the_first_send_modules(
+    pass_outcome,
+):
+    """TASK-33620.15.14: the warm-up runs after the last screen route.
+
+    Run first, it pushed every speculative screen import back by its own
+    import time and paced gaps, so a first navigation soon after boot found
+    its screen cold where origin/dev had warmed it. Red on the branch's first
+    order (warm-up, then routes).
+    """
+    early = sorted(m for m, loaded in pass_outcome["at_routes"].items() if loaded)
+    assert not early, "warmed before the screen routes: " + ", ".join(early)
 
 
 @pytest.mark.integration
@@ -213,6 +236,7 @@ class _PassApp:
     def __init__(self, stop_after: int | None = None) -> None:
         self._shutting_down = False
         self.pauses: list[float] = []
+        self.events: list[tuple[str, object]] = []
         self._stop_after = stop_after
 
     def _screen_preimport_pacing(self) -> tuple[float, float]:
@@ -220,6 +244,7 @@ class _PassApp:
 
     def _pause_between_preimports(self, gap_seconds: float) -> None:
         self.pauses.append(gap_seconds)
+        self.events.append(("pause", gap_seconds))
         if self._stop_after is not None and len(self.pauses) >= self._stop_after:
             self._shutting_down = True
 
@@ -228,41 +253,59 @@ def test_the_warm_up_stops_on_quit_and_swallows_a_failed_import(monkeypatch):
     from tldw_chatbook.Chat import console_first_send_modules as warm
 
     imported: list[str] = []
+    frozen: list[str] = []
 
     def fake_import(name):
         imported.append(name)
-        if len(imported) == 2:
+        if len(imported) == 1:
             raise ImportError("broken optional dependency")
 
     monkeypatch.setattr(warm.importlib, "import_module", fake_import)
+    monkeypatch.setattr(warm, "freeze_long_lived_heap", frozen.append, raising=False)
     warm.preimport_first_send_modules(_PassApp(stop_after=3))
 
-    assert imported == list(warm.FIRST_SEND_MODULES[:3])
+    # Every import waits behind a pause (the park); quit lands in the third.
+    assert imported == list(warm.FIRST_SEND_MODULES[:2])
+    assert frozen == []
 
 
-def test_the_warm_up_hands_the_loop_a_paced_gap_after_every_import(monkeypatch):
-    """Like the screen routes after it: a gap of cost x ratio, capped, per import.
+def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
+    """Like the screen routes before it: a park, then a gap of cost x ratio, capped.
 
-    The pass's pause also parks while a navigation or accepted Console work
-    owns the loop, so a send that starts mid-warm-up is not raced.
+    The warm-up starts right after the last screen route, so its first pause
+    has no gap of its own but still parks while a navigation or accepted
+    Console work owns the loop: a send that starts as the routes finish
+    imports what it needs itself, unraced. When it is done it freezes the
+    heap again (ADR-198), since the routes' freeze ran before it.
     """
     from tldw_chatbook.Chat import console_first_send_modules as warm
 
+    app = _PassApp()
     clock = iter(float(n) * 0.1 for n in range(10_000))
     monkeypatch.setattr(warm.time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(warm.importlib, "import_module", lambda name: None)
-    primed: list[bool] = []
+    monkeypatch.setattr(
+        warm.importlib,
+        "import_module",
+        lambda name: app.events.append(("import", name)),
+    )
     monkeypatch.setattr(
         "tldw_chatbook.MCP.server.prime_local_manifest_source",
-        lambda: primed.append(True),
+        lambda: app.events.append(("prime", None)),
     )
-    app = _PassApp()
+    monkeypatch.setattr(
+        warm,
+        "freeze_long_lived_heap",
+        lambda reason: app.events.append(("freeze", reason)),
+        raising=False,
+    )
 
     warm.preimport_first_send_modules(app)
 
-    # Each import "took" 0.1 s on the fake clock: gap 0.1 x 2.0 = 0.2 s.
-    assert app.pauses == [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES)
-    assert primed == [True]
+    # Each import "took" 0.1 s on the fake clock: gap 0.1 x 2.0 = 0.2 s,
+    # before every later import and before the manifest parse.
+    assert app.pauses == [0.0] + [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES)
+    assert app.events[:2] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[0])]
+    assert app.events[-2:] == [("prime", None), ("freeze", "first_send_preimport")]
 
 
 def _raise(*_args, **_kwargs):
@@ -272,12 +315,12 @@ def _raise(*_args, **_kwargs):
 @pytest.mark.parametrize(
     "broken", ["_screen_preimport_pacing", "_pause_between_preimports"]
 )
-def test_a_failing_warm_up_still_hands_over_to_the_screen_routes(monkeypatch, broken):
-    """The warm-up runs inline before the screen routes: a raise must end it, not the pass.
+def test_a_failing_warm_up_ends_quietly_after_the_screen_routes(monkeypatch, broken):
+    """The warm-up runs on the pass's thread after the routes: a raise ends only it.
 
     Its pacing and park calls are the app's own, so a fault there (or in a
-    later refactor of either) would otherwise skip every speculative screen
-    import for the session.
+    later refactor of either) must not escape the pass thread, and the
+    screen routes must already have run.
     """
     import tldw_chatbook.app as app_module
     from tldw_chatbook.Chat import console_first_send_modules as warm
@@ -285,19 +328,25 @@ def test_a_failing_warm_up_still_hands_over_to_the_screen_routes(monkeypatch, br
     cls = app_module.TldwCli
     app = cls.__new__(cls)  # the pass reads only what is patched here
     app._shutting_down = False
-    handed: list[list[str]] = []
+    order: list[tuple[str, object]] = []
     monkeypatch.setattr(warm.importlib, "import_module", lambda name: None)
+    monkeypatch.setattr(
+        warm,
+        "freeze_long_lived_heap",
+        lambda r: order.append(("freeze", r)),
+        raising=False,
+    )
     monkeypatch.setattr(cls, broken, _raise)
     monkeypatch.setattr(cls, "_screen_preimport_route_order", lambda self: ["routes"])
     monkeypatch.setattr(
-        cls, "_preimport_screens", lambda self, routes: handed.append(routes)
+        cls, "_preimport_screens", lambda self, routes: order.append(("routes", routes))
     )
     if broken != "_screen_preimport_pacing":
         monkeypatch.setattr(cls, "_screen_preimport_pacing", lambda self: (1.0, 0.5))
 
     cls._preimport_heavy_screens(app)
 
-    assert handed == [["routes"]]
+    assert order == [("routes", ["routes"])]
 
 
 #: Frames that mark the send's own work (the acknowledgement, admission and run
@@ -341,7 +390,9 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
     )
     from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
 
-    ready = {line for line in SNAPSHOT.read_text().splitlines() if not line.startswith("#")}
+    ready = {
+        line for line in SNAPSHOT.read_text().splitlines() if not line.startswith("#")
+    }
     covered = set(FIRST_SEND_MODULES) | {
         name.rsplit(".", depth)[0] for name in FIRST_SEND_MODULES for depth in (1, 2)
     }
@@ -386,7 +437,9 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
     lazy = {
         name: where
         for name, where in seen.items()
-        if name.startswith("tldw_chatbook") and name not in ready and name not in covered
+        if name.startswith("tldw_chatbook")
+        and name not in ready
+        and name not in covered
     }
     assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
     assert "tldw_chatbook.Agents.hooks_v2.lifecycle" in seen, "the send never ran hooks"

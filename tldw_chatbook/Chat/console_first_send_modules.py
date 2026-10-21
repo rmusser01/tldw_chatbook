@@ -14,11 +14,18 @@ more, the canvas settlement's in one callback of 157 ms CPU.
 
 The app's post-UI-ready pre-import pass (``TldwCli._preimport_heavy_screens``,
 a daemon thread behind the same on/off switch, off in the census) imports them
-first, before the speculative screen routes and paced like them, then parses
-the built-in MCP manifest's source once (every send's configuration capture
-reads that manifest). Nothing moves before UI-ready, and a send racing the
+after the speculative screen routes, paced like them, then parses the built-in
+MCP manifest's source once (every send's configuration capture reads that
+manifest) and freezes the heap again (ADR-198). Nothing moves before UI-ready.
+TASK-33620.15.14: run first, the warm-up pushed every screen import back by
+its own time, so a Library click one second after the Console's first frame
+found Library cold in 8 of 8 launches (0 of 8 on origin/dev) and imported
+about 200 modules on the UI loop; after the routes, a first navigation sees
+origin/dev's timing. A send racing the
 warm-up blocks on Python's per-module import lock no longer than its own
-import would have taken.
+import would have taken, and ``Tests/UI/test_console_first_send_import_cycles.py``
+keeps the list free of module-level import cycles, which two threads could
+otherwise deadlock on.
 
 Keep the list to modules the send path really imports, in the order it does;
 ``Tests/UI/test_console_first_send_preimport.py`` checks that each is still
@@ -32,6 +39,8 @@ import time
 from typing import Any
 
 from loguru import logger
+
+from tldw_chatbook.Utils.ui_responsiveness import freeze_long_lived_heap
 
 #: In first-send order. Before acceptance: the acknowledgement, the received
 #: intent and admission. After it, run start: hook preparation, compaction
@@ -124,15 +133,16 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
 def preimport_first_send_modules(app: Any) -> None:
     """Import ``FIRST_SEND_MODULES`` in order, then parse the MCP manifest source.
 
-    Runs on the pre-import daemon thread, inline before the screen routes,
-    and never raises: a fault anywhere in it, the app's own pacing and park
-    included, ends the warm-up and leaves the screen routes to run. Paced like
-    those routes: after each import the thread gives the UI loop a pause as
-    long as that import took (the app's pre-import pacing), and parks while a
-    navigation or accepted Console work owns the loop, so a send that starts
-    mid-warm-up imports what it still needs itself, as before. A module that
-    fails to import is left to fail again, identically, where the send
-    imports it (a failed import is never cached).
+    Runs on the pre-import daemon thread after the screen routes, and never
+    raises: a fault anywhere in it, the app's own pacing and park included,
+    ends the warm-up quietly. Paced like the routes: before each import the
+    thread parks while a navigation or accepted Console work owns the loop
+    (so a send that starts first imports what it needs itself, as before),
+    then gives the UI loop a pause as long as the previous import took (the
+    app's pre-import pacing). A module that fails to import is left to fail
+    again, identically, where the send imports it (a failed import is never
+    cached). When it finishes it freezes the heap, as the routes' pass did
+    before it (ADR-198: these modules live as long as the app).
 
     Args:
         app: The running ``TldwCli``. Its ``_shutting_down`` stops the
@@ -141,13 +151,15 @@ def preimport_first_send_modules(app: Any) -> None:
     """
     try:
         _warm_first_send(app)
-    except Exception as exc:  # noqa: BLE001 -- the screen routes must still run
+    except Exception as exc:  # noqa: BLE001 -- a speculative warm-up
         logger.debug("First-send warm-up stopped (error_type={})", type(exc).__name__)
 
 
 def _warm_first_send(app: Any) -> None:
     ratio, cap = app._screen_preimport_pacing()
+    previous = 0.0
     for name in FIRST_SEND_MODULES:
+        app._pause_between_preimports(min(previous * ratio, cap))
         if getattr(app, "_shutting_down", False):
             return
         started = time.monotonic()
@@ -159,7 +171,8 @@ def _warm_first_send(app: Any) -> None:
                 name,
                 type(exc).__name__,
             )
-        app._pause_between_preimports(min((time.monotonic() - started) * ratio, cap))
+        previous = time.monotonic() - started
+    app._pause_between_preimports(min(previous * ratio, cap))
     if getattr(app, "_shutting_down", False):
         return
     try:
@@ -170,3 +183,4 @@ def _warm_first_send(app: Any) -> None:
         logger.debug(
             "First-send manifest warm-up failed (error_type={})", type(exc).__name__
         )
+    freeze_long_lived_heap("first_send_preimport")
