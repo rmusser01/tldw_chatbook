@@ -66,6 +66,24 @@ depends on (an idle pass, a worker pool, a boot stagger), list what it now
 runs ahead of, and measure the first use of each of those at the earliest
 moment a user could reach it, not only the path you sped up.
 
+## Console send-harness tests skip the received-intent path that a real composer send takes (TASK-33621.20, 2026-10-20)
+
+**Incident.** Three defects in this task's Library-pause recovery passed every send-harness test (`Tests/UI/test_console_library_auto_outcome.py`, `test_console_library_pause_recovery.py`) and were found only in the live app:
+- Stop during "Searching Library…" cancelled the whole send instead of pausing it.
+- The unsent-turn shelf's Restore refused the paused send as an "ambiguous merge".
+- The card's Cancel send left a stale "Not sent" shelf entry, whose Restore would have sent the message a second time.
+
+A real composer send takes the received-intent path, which the harness never enters, and that path differs in two ways:
+- The composer keeps showing the sent text as the draft until the turn is accepted. On the harness path the composer is already empty when the card or the shelf acts, so every "is the composer/draft empty?" check passed there and failed live (Restore, Cancel).
+- The send stays in the runtime's intake custody for its whole preparation, and dev's Stop cancels custody first (Stop).
+
+Each defect went red only once a test drove `_received_console_case` (`Tests/UI/test_console_received_intent_feedback.py`), as `Tests/UI/test_console_library_stop_received_send.py` now does.
+
+**What to do.**
+- For any send recovery that reads the draft or the composer (refill, restore, merge refusal), or that Stop reaches during preparation, write one test on `_received_console_case`.
+- In that test, assert the precondition explicitly: the composer still shows the sent text.
+- Treat a harness-only green as unverified for draft-dependent behaviour.
+
 ## A fix that swallows an exception can break dev's pin that the exception is raised (TASK-33621.20, 2026-10-20)
 
 **Incident.** A fix for a center-swap race (ea160fd859) guarded `ProviderContinuationTranscriptRegion.sync_recovery` twice. It returned while the region was being pruned, and it also swallowed `NoMatches` when a card was missing. The branch's own tests went green. Dev's `Tests/UI/test_console_trace_call_recovery.py` pins the opposite for a live region: it removes the card and expects `pytest.raises(NoMatches)`. Its 4 cases failed with "DID NOT RAISE".
