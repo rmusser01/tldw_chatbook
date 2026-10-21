@@ -990,7 +990,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-20, fix round 2 (item 4): 37134 -> 37137 (+3), the Undo
     #: handler says the registry-unavailable sentence for a registry it
     #: cannot read and "no longer active" only for a moved workspace.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37137, 1344),
+    #: 2026-10-20, rebased onto dev 2d071d6d71 (same owner decision): dev's own
+    #: file is 36929 there (+7 since the last base); this branch's net
+    #: +215 is unchanged: 37137 -> 37144.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37144, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
