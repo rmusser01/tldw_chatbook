@@ -41,13 +41,13 @@ def _cursor_visible(app, table):
 # full-screen MCP destination, which had all 80 columns for the workbench
 # triad. Inside Settings the Tools & MCP pane shares the screen with the
 # category rail, and the workbench grid cannot squeeze its compact minimums
-# (rail 16 + canvas 30 + inspector 20) below ~66 columns of detail width,
-# which the terminal only reaches at ~150 columns; narrower than that the
-# canvas is horizontally offscreen (verified locally: 80/120/140 all
-# overflow, 150 fits). (150, 30) is the smallest terminal at which the
-# deep-linked matrix is reachable, so that is the new "small" end of the
-# pair.
-@pytest.mark.parametrize("size", [(150, 30), (170, 48)])
+# (rail 16 + canvas 30 + inspector 20) below ~66 columns of detail width;
+# narrower than that Textual's fr resolution degenerates (each pane takes
+# fraction x pane width) and the canvas lands offscreen (task-35151 probe:
+# 120/140 overflowed, 150 fit). task-35151 adds the ADR-148 stacked triad
+# (inspector band under a rail+canvas row) below that 66-column floor, so
+# (120, 30) -- the AC's target width -- rejoins the "small" end of the pair.
+@pytest.mark.parametrize("size", [(120, 30), (150, 30), (170, 48)])
 @private_profile_test
 async def test_edit_routes_to_visible_current_profile_and_keyboard_rows(
     request, tmp_path, theme, size

@@ -216,6 +216,18 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         color: $error;
         text-style: bold;
     }
+    /* task-35151: the master-switch Button sizes to its label (~50 cols),
+    which escaped the canvas once a host pane got narrower than that
+    (Settings' stacked canvas is 44 cols at a 120-col terminal). Same idiom
+    as the inspector's `.console-action-secondary` clamp
+    (_agentic_terminal.tcss): let the label wrap and cap at the canvas
+    width. No-op wherever the label already fits. */
+    #mcp-tools-local-enabled {
+        min-width: 0;
+        max-width: 100%;
+        height: auto;
+        text-wrap: wrap;
+    }
     #mcp-tools-workspace-root {
         width: 1fr;
     }

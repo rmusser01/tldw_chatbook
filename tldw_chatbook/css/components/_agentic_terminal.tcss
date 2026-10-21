@@ -1132,6 +1132,62 @@ ListItem.personas-library-row.is-active.-highlight {
   min-width: $ds-size-20;
 }
 
+/* task-35151: the rail+canvas row wrapper (MCPWorkbench.compose). The row
+   carries the rail+canvas fr sum ($ds-agentic-mcp-row-share = 3fr+5fr base,
+   compact = 2fr+7fr), so nesting it preserves every pane's exact prior
+   share of the grid; its compact min-width is the rail+canvas minimums'
+   sum, keeping the grid-level fit threshold identical to the pre-wrapper
+   triad. Kept in lockstep with the bare-harness copy in
+   MCPWorkbench.DEFAULT_CSS. */
+#mcp-hub-row {
+  width: $ds-agentic-mcp-row-share;
+  min-width: $ds-size-0;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
+}
+
+#mcp-hub-grid.mcp-compact #mcp-hub-row {
+  width: $ds-agentic-mcp-compact-row-share;
+  min-width: $ds-size-46;
+}
+
+/* task-35151: below `_STACKED_WIDTH` (66 cols, the compact minimums' sum,
+   toggled by MCPWorkbench._sync_compact_class alongside `.mcp-compact`)
+   the three columns cannot all fit and Textual's fr resolution degenerates
+   -- each pane takes fraction x pane width, pushing the canvas offscreen
+   (measured in Settings' ~56-col detail pane: rail 112, canvas 392,
+   inspector 112). ADR-148's stacked triad takes over instead: the
+   rail+canvas row on top, the bounded internally-scrolling inspector band
+   below it. Later AND equally specific vs the `.mcp-compact` rules it
+   overrides; same lockstep as above. */
+#mcp-hub-grid.mcp-stacked {
+  layout: vertical;
+}
+
+/* Stacked mins: rail keeps its compact 16 (its content floor -- a lower
+   min only adds an internal horizontal scrollbar); the canvas drops to 24
+   (its stacked-row floor), so the row fits from 40 columns (rail 16 +
+   canvas 24). Heights: the inspector band is a percentage share with a
+   minimal floor so short panes (Settings' ~4-row grid at 30-row
+   terminals) still leave the row at least a couple of rows; both panes
+   scroll internally. */
+#mcp-hub-grid.mcp-stacked #mcp-hub-row {
+  width: $ds-width-full;
+  min-width: $ds-size-40;
+  height: $ds-height-fill;
+  min-height: $ds-size-2;
+}
+
+#mcp-hub-grid.mcp-stacked #mcp-hub-canvas {
+  min-width: $ds-size-24;
+}
+
+#mcp-hub-grid.mcp-stacked #mcp-hub-inspector {
+  width: $ds-width-full;
+  height: $ds-percent-40;
+  min-height: $ds-size-1;
+}
+
 /* A5: the row wrapping the aggregate summary's colored glyph + neutral
    sentence (kept in lockstep with the width rules in
    MCPServersMode.DEFAULT_CSS, mcp_servers_mode.py -- required in EVERY

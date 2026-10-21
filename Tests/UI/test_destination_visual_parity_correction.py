@@ -2309,12 +2309,22 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(request, monkeypa
             )
             inspector = screen.query_one("#mcp-hub-inspector")
             _assert_strip_compact(screen, "#mcp-mode-strip", max_height=2)
-            assert rail.region.x < loading.region.x < inspector.region.x
-            assert len({rail.region.y, loading.region.y, inspector.region.y}) == 1
+            # task-35151: at 140 columns the Settings detail pane (~61 cols)
+            # sits below the compact triad's minimum width (rail 16 + canvas
+            # 30 + inspector 20), so the ADR-148 stacked layout renders:
+            # rail+canvas share one row and the inspector is the bounded
+            # band below it. (The previous rail < canvas < inspector
+            # x-ordering pinned the pre-task-35151 triad, whose canvas
+            # actually degenerated to ~7x the pane width and ran offscreen
+            # at this size -- nothing here checked horizontal containment,
+            # so it passed vacuously.)
+            assert rail.region.x < loading.region.x
+            assert rail.region.y == loading.region.y
+            assert inspector.region.y > rail.region.y
             for widget, context in (
                 (rail, "MCP rail"),
                 (loading, "MCP loading canvas"),
-                (inspector, "MCP inspector"),
+                (inspector, "MCP inspector band"),
             ):
                 _assert_visible_in_viewport(widget, height=42, context=context)
             _assert_marker_inside_container(

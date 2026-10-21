@@ -452,6 +452,18 @@ _LEGACY_SECTIONS = [
 # BUNDLED_CSS and its _agentic_terminal.tcss mirror).
 _COMPACT_WIDTH = 120
 
+# task-35151: width threshold (cols) below which the triad CANNOT render as
+# three columns -- the compact minimums sum (rail 16 + canvas 30 + inspector
+# 20, kept in lockstep with BUNDLED_CSS/_agentic_terminal.tcss). Below it
+# Textual's fr resolution degenerates (each pane takes fraction x pane
+# width, pushing the canvas offscreen -- measured in Settings' detail pane:
+# rail 112 / canvas 392 / inspector 112 at a 56-column pane), so
+# `.mcp-stacked` flips the grid to ADR-148's stacked triad instead:
+# the bounded, internally scrolling inspector band under the rail+canvas
+# row. Both thresholds key on the workbench's OWN width, which is the
+# pane-relative width in every host (Settings detail pane, bare harness).
+_STACKED_WIDTH = 66
+
 # T5: local-profile lifecycle actions this workbench can dispatch, keyed by
 # the short verb used throughout `_in_flight_action`/notifications. Maps to
 # the typed T2 methods on `UnifiedMCPControlPlaneService` -- each raises with
@@ -675,6 +687,45 @@ class MCPWorkbench(Container):
     #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
         width: 2fr;
         min-width: 20;
+    }
+    /* task-35151: the rail+canvas row wrapper (see compose()). The row
+    carries the rail+canvas fr sum so each pane's share of the grid is
+    unchanged from the pre-wrapper triad; its compact min-width is the
+    rail+canvas minimums' sum, so the grid-level fr resolution keeps the
+    same fit threshold it had before. Bare-harness copy; the REAL app gets
+    the identical rules from _agentic_terminal.tcss (app-tier CSS beats
+    widget DEFAULT_CSS on ties in this Textual version -- the established
+    lockstep pattern documented there). */
+    #mcp-hub-row {
+        width: 8fr;
+        min-width: 0;
+        height: 100%;
+        min-height: 0;
+    }
+    #mcp-hub-grid.mcp-compact #mcp-hub-row {
+        width: 9fr;
+        min-width: 46;
+    }
+    /* task-35151: below `_STACKED_WIDTH` the compact minimums cannot all
+    fit and fr resolution degenerates, so ADR-148's stacked triad takes
+    over: rail+canvas row on top, bounded internally-scrolling inspector
+    band below. Placed after the `.mcp-compact` rules it overrides. */
+    #mcp-hub-grid.mcp-stacked {
+        layout: vertical;
+    }
+    #mcp-hub-grid.mcp-stacked #mcp-hub-row {
+        width: 100%;
+        min-width: 40;
+        height: 1fr;
+        min-height: 2;
+    }
+    #mcp-hub-grid.mcp-stacked #mcp-hub-canvas {
+        min-width: 24;
+    }
+    #mcp-hub-grid.mcp-stacked #mcp-hub-inspector {
+        width: 100%;
+        height: 40%;
+        min-height: 1;
     }
     """
 
@@ -921,31 +972,38 @@ class MCPWorkbench(Container):
         return getattr(self.app_instance, "unified_mcp_service", None)
 
     def compose(self) -> ComposeResult:
+        # task-35151: rail + canvas ride inside #mcp-hub-row so the grid's
+        # children are [row, inspector]. Wide screens see the same triad as
+        # before (the row carries the rail+canvas fr sum, so every pane's
+        # share of the grid is unchanged); `.mcp-stacked` flips the grid to
+        # `layout: vertical` below the compact minimums, turning the same DOM
+        # into ADR-148's stacked triad -- inspector band under the row.
         with Horizontal(id="mcp-hub-grid", classes="destination-workbench"):
-            yield MCPRail(
-                source=self._source,
-                snapshots=[],
-                selected_server_key=None,
-                scope_options=[("Personal", "personal")],
-                scope_value=self._scope,
-                scope_ref_options=[],
-                scope_ref_value=self._scope_ref,
-                id="mcp-hub-rail",
-                classes="destination-workbench-pane",
-            )
-            with ContentSwitcher(
-                initial="mcp-mode-canvas-servers",
-                id="mcp-hub-canvas",
-                classes="destination-workbench-pane",
-            ):
-                yield MCPServersMode(id="mcp-mode-canvas-servers")
-                # task-2901: Tools/Permissions/Audit (T5/T6/T7 canvases —
-                # every `MCP_HUB_MODES` entry is a real canvas) arrive
-                # hidden behind the ContentSwitcher and are NOT composed
-                # here. They mount as `_reload_guarded`'s first step
-                # (`_mount_deferred_canvases`), before `reload()` pushes
-                # data into them — off the click→paint critical path with
-                # the load pipeline's ordering intact.
+            with Horizontal(id="mcp-hub-row"):
+                yield MCPRail(
+                    source=self._source,
+                    snapshots=[],
+                    selected_server_key=None,
+                    scope_options=[("Personal", "personal")],
+                    scope_value=self._scope,
+                    scope_ref_options=[],
+                    scope_ref_value=self._scope_ref,
+                    id="mcp-hub-rail",
+                    classes="destination-workbench-pane",
+                )
+                with ContentSwitcher(
+                    initial="mcp-mode-canvas-servers",
+                    id="mcp-hub-canvas",
+                    classes="destination-workbench-pane",
+                ):
+                    yield MCPServersMode(id="mcp-mode-canvas-servers")
+                    # task-2901: Tools/Permissions/Audit (T5/T6/T7 canvases —
+                    # every `MCP_HUB_MODES` entry is a real canvas) arrive
+                    # hidden behind the ContentSwitcher and are NOT composed
+                    # here. They mount as `_reload_guarded`'s first step
+                    # (`_mount_deferred_canvases`), before `reload()` pushes
+                    # data into them — off the click→paint critical path with
+                    # the load pipeline's ordering intact.
             yield MCPInspector(
                 id="mcp-hub-inspector", classes="destination-workbench-pane"
             )
@@ -1008,13 +1066,17 @@ class MCPWorkbench(Container):
         self._sync_compact_class()
 
     def _sync_compact_class(self) -> None:
-        """Toggle `.mcp-compact` on `#mcp-hub-grid` below ~120 cols (F-057).
+        """Toggle `.mcp-compact`/`.mcp-stacked` on `#mcp-hub-grid` (F-057/task-35151).
 
-        The class drives the triad-rebalancing rules in BUNDLED_CSS (and
-        their _agentic_terminal.tcss mirror): narrower rail/inspector
-        shares so the canvas keeps its primary columns in-viewport. Width
-        0 (pre-layout) means "not compact" -- the full triad renders first
-        and the first real resize corrects it.
+        `.mcp-compact` (below ~120 cols) drives the triad-rebalancing rules
+        in BUNDLED_CSS (and their _agentic_terminal.tcss mirror): narrower
+        rail/inspector shares so the canvas keeps its primary columns
+        in-viewport. `.mcp-stacked` (below `_STACKED_WIDTH`) drives ADR-148's
+        stacked triad -- the inspector band under the rail+canvas row --
+        because at that width the compact minimums cannot all fit and the
+        three-column layout is geometrically impossible. Width 0 (pre-layout)
+        means "not compact" -- the full triad renders first and the first
+        real resize corrects it.
         """
         try:
             grid = self.query_one("#mcp-hub-grid")
@@ -1024,6 +1086,7 @@ class MCPWorkbench(Container):
             return
         width = self.size.width
         grid.set_class(0 < width < _COMPACT_WIDTH, "mcp-compact")
+        grid.set_class(0 < width < _STACKED_WIDTH, "mcp-stacked")
 
     def _start_initial_load(self) -> None:
         """Kick off the mount-time reload once the subtree is mounted."""

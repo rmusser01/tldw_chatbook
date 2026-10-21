@@ -322,6 +322,59 @@ async def test_apply_navigation_context_rejects_malformed_tools_context(request)
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_tools_triad_fits_settings_detail_pane_at_120_columns(request, tmp_path):
+    """task-35151 AC: Tools & MCP is usable at 120 terminal columns.
+
+    The detail pane gives the workbench ~56 columns there -- below the
+    compact triad's minimum rail+canvas+inspector width (66), where
+    Textual's fr resolution degenerates and every pane takes fraction x
+    pane width (measured: rail 112, canvas 392, inspector 112 -- the
+    canvas fully offscreen). ADR-148's stacked triad (inspector band
+    under a rail+canvas row, keyed on the workbench's OWN width, not the
+    terminal's) must take over and keep every pane inside the pane."""
+    app = _build_test_app()
+    # A real (fake-seam) hub service: the workbench's initial load worker
+    # reads app_instance.unified_mcp_service, and the real service raises
+    # RecoveryRequired in this sandbox (pre-existing env block, see
+    # baseline-failures.txt) -- same seam stub as the tests above.
+    app.unified_mcp_service = PermissionsHubService(tmp_path / "mcp_perms.json")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        await pilot.pause()
+
+        grid = settings.query_one("#mcp-hub-grid")
+        assert grid.has_class("mcp-compact"), "56-col pane must be compact"
+        assert grid.has_class("mcp-stacked"), (
+            "below the compact triad minimums (66 cols) the ADR-148 stacked "
+            "layout must take over"
+        )
+        compositor = host.screen._compositor
+        for pane_id in ("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"):
+            pane = settings.query_one(pane_id)
+            assert pane.outer_size.width > 0, f"{pane_id} must render"
+            region, clip = compositor.visible_widgets[pane]
+            assert region.intersection(clip) == region, (
+                f"{pane_id} escapes the Settings detail pane at 120 columns "
+                f"(region={region}, clip={clip})"
+            )
+        # The stacked contract: rail+canvas share one row; the inspector is
+        # the bounded band BELOW it (ADR-148 decision 2).
+        rail = settings.query_one("#mcp-hub-rail")
+        canvas = settings.query_one("#mcp-hub-canvas")
+        inspector = settings.query_one("#mcp-hub-inspector")
+        assert rail.region.y == canvas.region.y
+        assert inspector.region.y > rail.region.y
+        assert inspector.region.width >= rail.region.width
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_suspending_settings_invalidates_in_flight_recovery_review(request):
     """ADR-240 port check: leaving Settings mid-review must invalidate an
     accepted recovery review's UI receipt AND clear the TOOLS footer hints --
