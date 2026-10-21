@@ -106,6 +106,40 @@ def test_a_new_home_resolves_a_new_default_path(local_root, monkeypatch, tmp_pat
     assert after == config.get_user_data_dir() / "prompt_history.jsonl"
 
 
+def test_a_reselected_default_data_root_resolves_a_new_default_path(
+    local_root, monkeypatch, tmp_path
+):
+    """ADR-127's default root follows which root exists on disk, not config or HOME.
+
+    With no configured data_dir, the default root is the conventional one
+    unless only the fallback root exists. Red when the kept path ignored that
+    (kept on config and HOME alone): it named the removed conventional root
+    while ``get_user_data_dir()`` selected the fallback, so a bound history's
+    state check compared the stale path with itself instead of refusing it.
+    """
+    from tldw_chatbook.Backup_Recovery import profile_paths
+
+    config = install_config_source(monkeypatch)
+    if config.get_cli_setting("paths", "data_dir", None) or config.get_cli_setting(
+        "Paths", "data_dir", None
+    ):
+        pytest.skip("a data_dir is configured; the default root is unused")
+    conventional = profile_paths.default_base_data_dir()
+    # This test moves the default data root: never outside its own sandbox.
+    assert conventional.is_relative_to(tmp_path), conventional
+    fallback = conventional.parents[2] / profile_paths.DEFAULT_DATA_FALLBACK_DIRECTORY
+    before = prompt_history.default_prompt_history_path()
+    assert before.is_relative_to(conventional)
+    assert not fallback.exists()
+    conventional.rename(conventional.with_name("tldw_cli-moved-away"))
+    fallback.mkdir(mode=0o700)
+
+    after = prompt_history.default_prompt_history_path()
+
+    assert after == config.get_user_data_dir() / "prompt_history.jsonl"
+    assert after.is_relative_to(fallback), after
+
+
 def _edit_users_name(config, name: str) -> None:
     """Edit the selected config file outside the app, then force a reload.
 

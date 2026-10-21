@@ -30,6 +30,7 @@ from loguru import logger
 
 from ..Backup_Recovery import raw_participants as raw
 from ..Backup_Recovery.async_file_participants import _FileJob
+from ..Backup_Recovery import profile_paths
 from ..Backup_Recovery.profile_paths import lexical_path
 
 DEFAULT_MAX_ENTRIES = 1000
@@ -39,7 +40,7 @@ _DEFAULT_PATH_MEMO: tuple[tuple, Path] | None = None
 
 
 def _default_path_inputs() -> tuple:
-    """What the default path depends on, cheaply: no lock, no file access.
+    """What the default path depends on, cheaply: no lock, two ``lstat`` calls.
 
     The config module and its installed mapping are compared by identity,
     the rest by value (``_same_inputs``).
@@ -50,7 +51,32 @@ def _default_path_inputs() -> tuple:
         getattr(config, "_CONFIG_CACHE", None),
         config.current_config_identity(),
         os.environ.get("HOME"),
+        _default_root_entries(),
     )
+
+
+def _default_root_entries() -> tuple[object, object]:
+    """Whether each of ADR-127's two default data roots exists.
+
+    With no configured data_dir, ``get_user_data_dir()`` selects the
+    conventional root unless only the fallback root exists, so the default
+    path follows these two entries on disk as well as HOME. A link counts as
+    an entry, as in the selection; an error other than absence is kept as its
+    type name, never read as absence.
+    """
+    conventional = profile_paths.default_base_data_dir()
+    fallback = conventional.parents[2] / profile_paths.DEFAULT_DATA_FALLBACK_DIRECTORY
+    return _entry(conventional), _entry(fallback)
+
+
+def _entry(path: Path) -> object:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        return type(exc).__name__
+    return True
 
 
 def _same_inputs(kept: tuple, current: tuple) -> bool:
@@ -65,11 +91,14 @@ def default_prompt_history_path() -> Path:
     guarded config operations (storage admission, companion guard, pause
     probe): about 10 ms each. The result is kept while its inputs hold: the
     config module, the mapping it has installed, its identity (generation and
-    effective path) and ``HOME``, which the default data root follows. Inputs
-    are read before and after the resolution, and the result is kept only if
-    they did not move. The installed mapping is in the key because a reload
-    (an external edit, a forced reload) installs a new mapping without a new
-    generation; ``get_user_data_dir``'s own memo keys on it for that reason.
+    effective path), ``HOME`` and which of ADR-127's two default roots exist,
+    which together decide the default data root. Inputs are read before and
+    after the resolution, and the result is kept only if they did not move.
+    The installed mapping is in the key because a reload (an external edit,
+    a forced reload) installs a new mapping without a new generation;
+    ``get_user_data_dir``'s own memo keys on it for that reason. Its
+    thread-local verified branch answers only inside the config module's own
+    participant operations, which never resolve this path.
 
     A path kept across a change these inputs do not see (the data directory
     removed or re-permissioned on disk) is still checked where it is used: a
