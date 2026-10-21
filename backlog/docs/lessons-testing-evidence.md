@@ -42,6 +42,23 @@ lifetime behavior. The repaired observer distinguished all 26 completions.
 This proves the witness repair; it does not establish the separately filed
 first-wait mode or 25 complete dev-run qualification in TASK-35713.
 
+## Work added to the front of a shared idle pass lands on whatever was queued behind it (TASK-33620.15.14, 2026-10-20)
+
+**Incident.** TASK-33620.15.5 put a first-send warm-up (75 modules, about 213 ms
+CPU, paced 1:1) at the front of the app's post-UI-ready pre-import thread,
+ahead of the speculative screen routes. Five live rounds measured the first
+send and found it faster; none measured the screen routes the warm-up had
+pushed back. Measured afterwards, paired with origin/dev: a Library click one
+second after the Console's first frame found Library cold in 8 of 8 launches
+(0 of 8 on dev), imported about 200 modules on the UI loop, and painted a
+median 451 ms after the click (dev 356). Clicks at 3 and 6 s were unchanged,
+so only the earliest plausible moment showed it. Moving the warm-up after the
+last route removed it, and the first send kept most of its gain.
+
+**What to do.** When you add work to a queue that something else already
+depends on (an idle pass, a worker pool, a boot stagger), list what it now
+runs ahead of, and measure the first use of each of those at the earliest
+moment a user could reach it, not only the path you sped up.
 
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 

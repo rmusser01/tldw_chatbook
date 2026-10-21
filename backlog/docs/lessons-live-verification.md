@@ -1,5 +1,24 @@
 # Lessons: verifying against the real thing
 
+## A profile reused across launches can carry one arm's history into the next round (TASK-33620.15.14, 2026-10-20)
+
+**Incident.** Paired rounds typed a 29-character prompt 0.5 s after the
+Console's first frame, each arm on its own profile reused from launch to
+launch. The prompt landed in 18 of 22 origin/dev launches and 7 of 22 branch
+launches, which read as a branch regression in first keystrokes. It was not.
+Keys typed before the composer's first focus (the nav bar's Home button holds
+it until an idle-time restore, 0.1-2.5 s after the first frame) are dropped on
+both arms (TASK-33620.15.17), and an arm whose prompt had landed carried a
+restored draft into its later launches while the other did not. On a fresh
+seeded profile per launch the arms matched: 7 of 10 each.
+
+**What to do.** For a boot-time measurement, give every launch a fresh
+profile: write its `config.toml` (with any consent the run needs) into
+`uxrev/profiles/<name>/` and start it with `REUSE=1 launch.sh`, which keeps a
+config it finds. If an arm difference grows round after round, look for state
+the measurement itself leaves behind. And before typing into a just-launched
+Console, wait for the composer to hold focus, or record where the keys went.
+
 ## A probe thread that polls `sys.modules` can catch a module mid-import and die unseen (TASK-33620.15.5, 2026-10-19)
 
 **Incident.** The probe-free arm of the run-start latency rounds timed each
