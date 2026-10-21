@@ -22,7 +22,7 @@ Governance: `backlog/decisions/069-console-project-instruction-local-state-and-p
 
 ## File authority model
 
-Every live Console Chat gets **private temporary scratch** (ADR-082). Named Workspaces may add **explicit folder bindings**. Local `fs_*`/git tools use scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and **never grants a Console Chat access** (it still configures the standalone MCP server and legacy non-Console callers).
+Every live Console Chat gets **private temporary scratch** (ADR-082). Named Workspaces may add **explicit folder bindings**, addressed by their advertised `root_alias` in `fs_*`/git tools. Selecting a project-instruction folder narrows the run to that binding. Built-in relative file paths resolve in private scratch. `[console] workspace_root` is compatibility-only outside this Console path and **never grants a Console Chat access** (it still configures the standalone MCP server and legacy non-Console callers).
 
 ### Scratch space
 
@@ -43,6 +43,22 @@ At run start, `capture_run_admitted_workspace_roots` freezes the run's authority
 ### Model-facing workspace note
 
 `workspace_context_note()` (TASK-33940.1, TASK-35080) tells the model how to address what it can reach: for a named workspace, each bound folder by the `root_alias` its fs_*/git_* tools accept; for the Default/global workspace — which admits no roots and therefore offers no path tools — an explicit no-project-folders note with the remediation (bind folders in a named workspace), so the model says it cannot access project files instead of confabulating.
+
+ADR-240 adds exploration guidance only after the owning run's final tool filters.
+When authorized workspace read tools remain, natural project questions should
+inspect the relevant admitted folder, README/manifests and source as needed
+before claiming project information is unavailable. Multiple folders retain
+distinct aliases; built-in private-scratch paths use a separate coordinate
+system. The note grants no authority, reads no folder contents on attachment,
+and does not replace AGENTS.md trust, exclusions, approval or read-only gates.
+Library evidence may accompany file results without becoming their exclusive
+grounding source. Saved Library choices and source scopes stay independent.
+
+Native Windows root pinning compares the complete handle-derived identity at
+both capture and revalidation; it does not compare a native handle identity with
+the truncated identity from `os.stat`. The root-pinning and actual worker tests
+qualify that narrow prerequisite. Metadata availability and the existing
+private-profile/platform admission limits still apply.
 
 ## Project instructions (AGENTS.md / AGENTS.override.md)
 
@@ -94,6 +110,6 @@ The fixed narrowing order: config gates → ephemeral restrictions → ADR-069 b
 
 1. A registry locator can be retargeted under an existing binding id — consent must fingerprint the locator, not trust the id.
 2. An oversized `AGENTS.override.md` suppresses the same-directory `AGENTS.md` fallback too.
-3. `workspace_context_note` renders roots relative to the launch cwd (never `../..` chains) and JSON-escapes workspace names against prompt injection.
+3. `workspace_context_note` renders each admitted folder's tool `root_alias` and JSON-escapes workspace names against prompt injection. It does not render paths relative to the launch directory or disclose absolute host paths.
 4. The ledger's owner mapping must be the registry's cached mapping — a parallel lookup could disagree with dispatch about who owns a tool.
 5. Persona `require_confirmation` floors can only narrow; a persona can never lift a permission-store ask or deny.

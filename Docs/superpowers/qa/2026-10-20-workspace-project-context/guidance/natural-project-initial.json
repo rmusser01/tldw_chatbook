@@ -1,0 +1,40 @@
+{
+  "profile": "fresh private task-local profile",
+  "model": "deepseek-flash",
+  "protocol": "native tools",
+  "scenarios": [
+    {
+      "name": "natural unindexed project",
+      "accepted": true,
+      "run_status": "completed",
+      "policy": {
+        "auto_retrieve": "never",
+        "assistant_access": "blocked"
+      },
+      "full_console_state_file": "natural-project-state.jsonl",
+      "full_console_state_sha256": "e81dcd83371caf149a4b30423d820cbf75bf5da3f66f3e9cab806f53e8ad45c9",
+      "final_answer": "## Lantern Orchard â€” project summary\n\n**What it is:** A Python command-line tool that converts orchard sensor CSV files into weekly irrigation reports.\n\n**Metadata (`pyproject.toml`)**\n| Field | Value |\n|---|---|\n| Name | `lantern-orchard` |\n| Version | `0.4.2` |\n| Python | `>=3.12` |\n\n**Files present (entire project):**\n- `README.md` â€” one-line description, plus a unique marker `LANTERN-ORCHARD-8274`\n- `pyproject.toml` â€” only the `[project]` name/version/requires-python block\n\n**Notable gaps:**\n- **No source code** â€” no package directory or module, so nothing implements the CSV â†’ report conversion yet.\n- **No declared dependencies** â€” no `dependencies` list (presumably it would need a CSV lib and possibly a templating/reporting lib).\n- **No entry point** â€” no `[project.scripts]` console command, so `lantern-orchard` isn't invocable.\n- **No build backend** â€” no `[build-system]` table; the file isn't installable as-is.\n- **No tests, CI, docs, license, or sample data.**\n\n**Assessment:** This is a scaffold/skeleton at version 0.4.2 â€” the manifest and description exist, but the actual implementation is absent. It reads like a placeholder or a trimmed-down fixture rather than a working tool.\n\nTwo caveats on what I inspected: the folder is read-only and contains only these two files (no hidden subdirectories beyond them), and `git` history was unavailable â€” the repository root resolves outside the workspace, so I couldn't check commits, branches, or whether source code once existed.\n\nIf you'd like, I can sketch the missing structure â€” package layout, `[project.scripts]` entry point, dependencies, and a first-cut CSV parser + weekly report generator.",
+      "user_messages": [
+        {
+          "role": "user",
+          "content": "Summarize this project"
+        }
+      ],
+      "tool_transcript": [
+        "I'll take a look at the project files.",
+        "âš™ find_tools â†’ local:ask_user â€” ask_user: Ask the user up to 4 multiple-choice questions and wait for the answers. Use it ONLY for a decision that is genuinely the user's to make: a preference, a trade-off between valid designs, or something neither the code nor the conversation can tell you. Do not ask when a conventional default exists, when the answer is discoverable by reading the code or running a tool, when you can proceed and state your assumption, or to confirm a plan you already have. Batch related questions into ONE call instead of asking several times. Each question offers 2-4 options; the user can always type a free-text 'Other' answer instead. The result lists the selected labels per question; 'unanswered' marks questions the user skipped, and 'answered': false with a reason means no answer will come. If the reason is 'busy', another question is already waiting for the user: proceed without asking again this turn.\nlocal:fs_list â€” fs_list: List a directory's entries (dirs first, then files), relative to the workspace root.\nlocal:fs_read â€” fs_read: Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.\nlocal:git_blame â€” git_blame: Show per-line authorship (blame) for a file in the workspace repository, optionally restricted to a 1-based inclusive line range. Read-only; cannot modify the repository.\nlocal:git_branches â€” git_branches: List the workspace repository's branches (current branch marked with *), with commit and upstream info. Read-only; cannot modify the repository.\ncanvas:canvas_guide â€” canvas_guide: Read a focused authoring guide after the user requests or accepts Canvas.\ncanvas:canvas_list â€” canvas_list: List named Canvases and selected revision IDs reachable on this conversation branch.\ncanvas:canvas_read â€” canvas_read: Read a reachable Canvas's complete selected HTML and revision_id before updating it.",
+        "âš™ load_tools â†’ loaded: fs_list, fs_read, git_branches, git_blame",
+        "âš™ fs_list â†’ pyproject.toml\nREADME.md",
+        "âš™ fs_read â†’ 1\t# Lantern Orchard\n2\tUnique marker: LANTERN-ORCHARD-8274.\n3\tA Python command-line tool that converts orchard sensor CSV files into weekly irrigation reports.â€¦ (+83 chars)",
+        "âš™ fs_read â†’ 1\t[project]\n2\tname = \"lantern-orchard\"\n3\tversion = \"0.4.2\"\n4\trequires-python = \">=3.12\"\nsha256:â€¦ (+74 chars)",
+        "âš™ git_branches â†’ ERROR: repository root (C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui) is outside the workspace root (.); refusing"
+      ]
+    }
+  ],
+  "user_profile_unchanged": {
+    "config_sha256_unchanged": true,
+    "user_data_file_metadata_unchanged": true
+  },
+  "receipt_schema": "workspace-guidance-qa-v1",
+  "harness_provenance": "Real ChatScreen mounted in separate Host(Textual App), borrowing constructed TldwCli. Direct runtime-owned controller submits exercised production provider/tools. TldwCli lifecycle did not run; snapshots do not qualify normal application UI refresh."
+}

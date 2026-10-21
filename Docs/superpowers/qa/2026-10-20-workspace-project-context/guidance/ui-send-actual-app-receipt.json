@@ -1,0 +1,467 @@
+{
+  "profile": "fresh private task-local profile",
+  "model": "deepseek-flash",
+  "protocol": "native tools",
+  "scenarios": [
+    {
+      "name": "ui-send-actual-app",
+      "question": "Summarize this project",
+      "accepted": true,
+      "run_status": "completed",
+      "policy_before": [
+        [
+          "238a8f43-b8db-464c-b2c9-53b43fe6cdad",
+          1,
+          0,
+          0,
+          2,
+          "2026-10-21T06:40:18"
+        ]
+      ],
+      "policy_after": [
+        [
+          "238a8f43-b8db-464c-b2c9-53b43fe6cdad",
+          1,
+          0,
+          0,
+          2,
+          "2026-10-21T06:40:18"
+        ]
+      ],
+      "durable_policy_unchanged": true,
+      "saved_policy": {
+        "auto_retrieve": "never",
+        "assistant_access": "blocked"
+      },
+      "staged_evidence_consumed": true,
+      "ledger_observation": {
+        "status": "done",
+        "budget": {
+          "max_steps": 25000,
+          "max_wall_seconds": 86400.0,
+          "max_subagents": 2,
+          "max_subagent_result_chars": 4000,
+          "max_tool_result_chars": 16000,
+          "max_model_turns": 2000,
+          "max_total_tokens": 25000000,
+          "max_tool_call_seconds": 3600.0,
+          "max_model_retries": 2,
+          "budget_warning_fraction": 0.8,
+          "denial_circuit_breaker_limit": 3
+        },
+        "created_at": "2026-10-21T06:41:27.063105Z",
+        "updated_at": "2026-10-21T06:45:03.576506Z",
+        "step_kind_counts": {
+          "model": 6,
+          "tool_call": 6,
+          "tool_result": 6,
+          "context_attached": 1,
+          "context_injected": 1,
+          "model_request_started": 6,
+          "model_response_completed": 6,
+          "tool_proposed": 6,
+          "approval_requested": 6,
+          "approval_approved": 6,
+          "tool_execution_started": 6,
+          "tool_succeeded": 5,
+          "tool_failed": 1,
+          "agent_run_created": 1,
+          "agent_run_started": 1,
+          "agent_run_completed": 1
+        },
+        "approval_dwells": [
+          {
+            "tool": "find_tools",
+            "seconds": 4.621,
+            "outcome": "approved"
+          },
+          {
+            "tool": "load_tools",
+            "seconds": 4.641,
+            "outcome": "approved"
+          },
+          {
+            "tool": "fs_list",
+            "seconds": 7.507,
+            "outcome": "approved"
+          },
+          {
+            "tool": "fs_read",
+            "seconds": 11.931,
+            "outcome": "approved"
+          },
+          {
+            "tool": "fs_read",
+            "seconds": 11.918,
+            "outcome": "approved"
+          },
+          {
+            "tool": "git_branches",
+            "seconds": 7.924,
+            "outcome": "approved"
+          }
+        ],
+        "pending_approvals_at_end": 0,
+        "terminal_reason": "agent_run_completed; no harness Stop or deadline needed",
+        "approval_path": "Normal shipping permission/approval path under the disposable profile global Allow; all six approval_requested events were followed by approval_approved. No Ask remained pending and no synthetic-read approval bypass or manual callback was used.",
+        "agent_completed_event_at": "2026-10-21T06:45:01.461728Z",
+        "agent_created_to_completed_event_seconds": 214.399,
+        "agent_created_to_final_ledger_update_seconds": 216.513
+      },
+      "snapshot_observation": {
+        "console-mode-bar": "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools 5 | Approvals 0 | Run: Response complete.",
+        "console-agent-section-status": "Agent: done"
+      },
+      "qualification_limit": "The real final summary correctly identifies observed purpose, marker, version, Python requirement and two-file contents, with truthful Git refusal. Its additional claim that absence of a build-system section makes the package not installable was not verified and is an unsupported model inference. No product policy or response-text rewrite was applied.",
+      "full_console_state_file": "ui-send-actual-app-state.jsonl",
+      "full_console_state_sha256": "88b99434bfca5ccd11443043d6dbcf70cb7c9a220f46dbd2356f6ab63f387de7",
+      "final_answer": "**Lantern Orchard** (`lantern-orchard` v0.4.2) — a small Python CLI project.\n\n**What it is:** Per its README, a Python command-line tool that converts orchard sensor CSV files into weekly irrigation reports. Requires Python ≥ 3.12.\n\n**Contents:** The folder is essentially a skeleton — only two files exist:\n\n| File | Size | Notes |\n|---|---|---|\n| `README.md` | 156 B | Title, unique marker `LANTERN-ORCHARD-8274`, one-line description |\n| `pyproject.toml` | 84 B | Name, version, `requires-python = \">=3.12\"`; no dependencies, build backend, or entry points declared |\n\n**Notable gaps:** There is no source code, no `src/` or package directory, no tests, no CLI entry point, and no declared dependencies — so despite the stated purpose, the actual CSV-parsing and report-generation logic is not present in this folder. `pyproject.toml` also lacks a `[build-system]` section, so the package isn't currently installable.\n\n**Limits of inspection:** I read both files in full. I could not check git history or branches — the repository root reported for this workspace resolves outside the admitted folder, so the tool refused. If the code lives in another branch or folder, let me know and I can look there.",
+      "user_messages": [
+        {
+          "role": "user",
+          "content": "Summarize this project"
+        }
+      ],
+      "first_request": {
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "native": true,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Summarize this project"
+          }
+        ],
+        "tool_names": [
+          "spawn_subagent",
+          "wait_agents",
+          "check_agents",
+          "send_to_agent",
+          "merge_agent_worktree",
+          "discard_agent_worktree",
+          "read_agent_messages",
+          "find_tools",
+          "load_tools",
+          "install_skill",
+          "fork_chat",
+          "new_chat",
+          "search_run_log",
+          "run_log_stats",
+          "run_log_slice"
+        ]
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice"
+          ],
+          "calls": [
+            {
+              "id": "call_00_ET_oV373JiJ0ewgJQYKjH1F1614",
+              "type": "function",
+              "function": {
+                "name": "find_tools",
+                "arguments": "{\"query\": \"fs list directory read file\"}"
+              }
+            }
+          ],
+          "request_messages_sha256": "482f8f8ea76f1e0364e3b243b21b48de86bf6c2ee56161b007bd2b9e121870d3",
+          "tool_result_indexes_in_request": []
+        },
+        {
+          "round": 2,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice"
+          ],
+          "calls": [
+            {
+              "id": "call_00_ET_Wl5wI4U5d9SCvk9zU1fR6718",
+              "type": "function",
+              "function": {
+                "name": "load_tools",
+                "arguments": "{\"ids\": [\"local:fs_list\", \"local:fs_read\", \"local:fs_grep\", \"local:git_branches\", \"local:git_blame\"]}"
+              }
+            }
+          ],
+          "request_messages_sha256": "68d6f4fec507be565b818b04af1332dbcf35e4df1d60f852aa0e0b5f8747dbd8",
+          "tool_result_indexes_in_request": [
+            0
+          ]
+        },
+        {
+          "round": 3,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice",
+            "fs_list",
+            "fs_read",
+            "fs_grep",
+            "git_branches",
+            "git_blame"
+          ],
+          "calls": [
+            {
+              "id": "call_00_ET_G9QlRdmgE8GNrhQ5CRen7702",
+              "type": "function",
+              "function": {
+                "name": "fs_list",
+                "arguments": "{\"path\": \".\", \"root_alias\": \"folder-0a2f08f3ea9e\"}"
+              }
+            }
+          ],
+          "request_messages_sha256": "61a30e408194f6ce1172b0851d330d1d7a5499f2e35abc98e721c24acad8e89b",
+          "tool_result_indexes_in_request": [
+            0,
+            1
+          ]
+        },
+        {
+          "round": 4,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice",
+            "fs_list",
+            "fs_read",
+            "fs_grep",
+            "git_branches",
+            "git_blame"
+          ],
+          "calls": [
+            {
+              "id": "call_00_ET_MoJMg5ibEABvk4S0FPBP6804",
+              "type": "function",
+              "function": {
+                "name": "fs_read",
+                "arguments": "{\"path\": \"README.md\", \"root_alias\": \"folder-0a2f08f3ea9e\"}"
+              }
+            },
+            {
+              "id": "call_01_ET_ZzsJDDD0JBKRoVtc0VQ85114",
+              "type": "function",
+              "function": {
+                "name": "fs_read",
+                "arguments": "{\"path\": \"pyproject.toml\", \"root_alias\": \"folder-0a2f08f3ea9e\"}"
+              }
+            }
+          ],
+          "request_messages_sha256": "ee67260b8b6bb147217b0f87c36e816b0705d2031edda3f31bba96027e2bf3cf",
+          "tool_result_indexes_in_request": [
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "round": 5,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice",
+            "fs_list",
+            "fs_read",
+            "fs_grep",
+            "git_branches",
+            "git_blame"
+          ],
+          "calls": [
+            {
+              "id": "call_00_X6HEBKU3MJIsyNVxLb6F1904",
+              "type": "function",
+              "function": {
+                "name": "git_branches",
+                "arguments": "{\"root_alias\": \"folder-0a2f08f3ea9e\"}"
+              }
+            }
+          ],
+          "request_messages_sha256": "450128cee6fc72f056b94e83da13e5868aabd106a6e14c2b23fa3d7ac478dd13",
+          "tool_result_indexes_in_request": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "round": 6,
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "native": true,
+          "advertised_tool_names": [
+            "spawn_subagent",
+            "wait_agents",
+            "check_agents",
+            "send_to_agent",
+            "merge_agent_worktree",
+            "discard_agent_worktree",
+            "read_agent_messages",
+            "find_tools",
+            "load_tools",
+            "install_skill",
+            "fork_chat",
+            "new_chat",
+            "search_run_log",
+            "run_log_stats",
+            "run_log_slice",
+            "fs_list",
+            "fs_read",
+            "fs_grep",
+            "git_branches",
+            "git_blame"
+          ],
+          "calls": [],
+          "request_messages_sha256": "a0e97cac43326ecff70b76953539fec3c5c23bab3d2b44303341a94186226658",
+          "tool_result_indexes_in_request": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        }
+      ],
+      "tool_results": [
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_ET_oV373JiJ0ewgJQYKjH1F1614",
+          "content": "local:fs_list — fs_list: List a directory's entries (dirs first, then files), relative to the workspace root.\nlocal:fs_read — fs_read: Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.\nlocal:ask_user — ask_user: Ask the user up to 4 multiple-choice questions and wait for the answers. Use it ONLY for a decision that is genuinely the user's to make: a preference, a trade-off between valid designs, or something neither the code nor the conversation can tell you. Do not ask when a conventional default exists, when the answer is discoverable by reading the code or running a tool, when you can proceed and state your assumption, or to confirm a plan you already have. Batch related questions into ONE call instead of asking several times. Each question offers 2-4 options; the user can always type a free-text 'Other' answer instead. The result lists the selected labels per question; 'unanswered' marks questions the user skipped, and 'answered': false with a reason means no answer will come. If the reason is 'busy', another question is already waiting for the user: proceed without asking again this turn.\nlocal:fs_grep — fs_grep: Regex search under the workspace: matching lines (default), file names, or per-file match counts.\nlocal:git_blame — git_blame: Show per-line authorship (blame) for a file in the workspace repository, optionally restricted to a 1-based inclusive line range. Read-only; cannot modify the repository.\nlocal:git_branches — git_branches: List the workspace repository's branches (current branch marked with *), with commit and upstream info. Read-only; cannot modify the repository.\ncanvas:canvas_guide — canvas_guide: Read a focused authoring guide after the user requests or accepts Canvas.\ncanvas:canvas_list — canvas_list: List named Canvases and selected revision IDs reachable on this conversation branch."
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_ET_Wl5wI4U5d9SCvk9zU1fR6718",
+          "content": "loaded: fs_list, fs_read, fs_grep, git_branches, git_blame"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_ET_G9QlRdmgE8GNrhQ5CRen7702",
+          "content": "pyproject.toml\nREADME.md"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_ET_MoJMg5ibEABvk4S0FPBP6804",
+          "content": "1\t# Lantern Orchard\n2\tUnique marker: LANTERN-ORCHARD-8274.\n3\tA Python command-line tool that converts orchard sensor CSV files into weekly irrigation reports.\nsha256: cd9e37499d148ed9d12852e35e01bb033379e8599e24c269c70ee5cdca9360d2\nsize: 156"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_01_ET_ZzsJDDD0JBKRoVtc0VQ85114",
+          "content": "1\t[project]\n2\tname = \"lantern-orchard\"\n3\tversion = \"0.4.2\"\n4\trequires-python = \">=3.12\"\nsha256: 15f4bbc6109a8265557d04868d7e1bdf57579348754b1ff8d82fe939389e4a6a\nsize: 84"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_00_X6HEBKU3MJIsyNVxLb6F1904",
+          "content": "ERROR: repository root (C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui) is outside the workspace root (.); refusing"
+        }
+      ]
+    }
+  ],
+  "gateway_type": "ConsoleProviderGateway",
+  "route": "actual TldwCli.run_test startup; normal ChatScreen.handle_console_send_message(Button.Pressed) and runtime-owned send",
+  "controller_after_activation_matches": true,
+  "store_after_activation_matches": true,
+  "action_snapshot": {
+    "returned": false,
+    "intended_session": "55ccdfc5-898b-423c-bea9-08a0a2dc0df8",
+    "visible_draft_session": "55ccdfc5-898b-423c-bea9-08a0a2dc0df8",
+    "active_session": "55ccdfc5-898b-423c-bea9-08a0a2dc0df8",
+    "draft_at_action": "Summarize this project",
+    "draft_after_action": "Summarize this project",
+    "send_blocked_reason": "",
+    "saved_user_rows": 0,
+    "pending_send_review": false,
+    "gateway_observation_only": true
+  },
+  "controller_at_snapshot_matches": true,
+  "current_runtime_status": "completed",
+  "action_result": false,
+  "normal_refresh_completed": true,
+  "user_profile_unchanged": {
+    "config_sha256_unchanged": true,
+    "user_data_file_metadata_unchanged": true
+  },
+  "observation_bound_seconds": 600,
+  "harness_provenance": "Actual TldwCli application lifecycle/run_test and normal visible Send handler. Same controller/store after activation and same controller at final capture. Real production gateway observed only. Startup readiness observed, never set.",
+  "receipt_schema": "workspace-guidance-qa-v1"
+}
