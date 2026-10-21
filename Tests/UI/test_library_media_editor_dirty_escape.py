@@ -19,9 +19,11 @@ said there was no dirty field to veto on); both Cancel handlers discarded;
 Real app stylesheet (``LibraryProductionCSSHarness``), the production-shaped
 exact-page fake, real keys and clicks, painted text through the compositor,
 the toast recorder from the quit-guard support. One boot per test; the
-whole file stays inside the 35 s lane budget (the 80x24 arm of the first
-test is in ``test_library_media_editor_dirty_escape_extended.py`` only if
-that budget needs it -- see the task's Implementation Notes).
+whole file stays inside the 35 s lane budget. The fix-round-1 arms (the
+Items filter / 0-result / Clear pin, the row press / Up-Down / Tab / Back
+boot, the tab reveal, the armed-delete Escape and the Media rail return)
+are the slower siblings in
+``test_library_media_editor_dirty_escape_extended.py``, also in the census.
 """
 
 from __future__ import annotations
@@ -383,3 +385,35 @@ async def test_a_dirty_metadata_save_targets_the_opened_item(monkeypatch):
             "Product Demo Video!"
         )
         assert _label(screen, "#library-media-edit-cancel") == "Cancel"
+
+
+async def test_export_beside_a_dirty_form_is_refused_with_one_toast(monkeypatch):
+    """Fix round 1, C-1: the Items pane's Export… used to move the destination
+    to Export while the dirty form stayed set behind it, and every way back
+    was then refused for a form nobody could see (the only exit was Ctrl+Q).
+    Now the opener refuses beside its note flush: the row stays Media, the
+    form and its text stay on screen, and exactly one toast says why."""
+    host, app, _service = _host()
+    toasts = _record_toasts(monkeypatch, app)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_row_1(screen, pilot)
+        area = await _open_analysis_form(screen, pilot)
+        await _type(pilot, "Key points")
+        await _wait_for_text(screen, pilot, "Key points")
+
+        screen.query_one("#library-media-export", Button).press()
+        await _wait_for_condition(
+            pilot, lambda: bool(toasts), message="Export… neither opened nor refused"
+        )
+        for _ in range(6):
+            await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert toasts == [LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY], toasts
+        assert screen._media_state.editing_analysis is True
+        assert screen._media_state.analysis_draft == "Key points"
+        assert screen.query_one("#library-media-analysis-edit-text", TextArea) is area
+        assert area.text == "Key points"
+        assert not screen.query("#library-export-name")

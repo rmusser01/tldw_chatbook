@@ -165,7 +165,12 @@ _BUDGETS: dict[str, int] = {
     # recheck_settled_load, so a load a list read found in flight is re-checked.
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1453,
+    # 2026-10-21, TASK-34000.22 fix round 1 (owner decision 2026-10-04: raise
+    # the row to the measured value): 1453 -> 1492. Dev itself was already
+    # over this row at 1484 (one of dev's own pre-existing ratchet reds);
+    # this task adds 8 lines -- the Media authoring forms' dirty refusal
+    # beside the Export… opener's note flush (C-1).
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1492,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -415,7 +420,10 @@ _BUDGETS: dict[str, int] = {
     # resync helper and the five ``Changed`` recorders (+~150 with their
     # docstrings), the draft seeding/clearing beside every flag write, and
     # the per-item drop at the reader-row select seam.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5185,
+    # 2026-10-21, TASK-34000.22 fix round 1 (same owner decision): 5185 ->
+    # 5227 (+42): the central guard at the reader-row select seam, the
+    # refusal's tab reveal, and the three review-set openers' refusals.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5227,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

@@ -91,9 +91,43 @@ def _move_library_list_row_focus(focused: Widget | None, key: str) -> bool:
         return False
     if not any(focused.has_class(name) for name in _LIBRARY_LIST_ROW_CLASSES):
         return False
+    target = _adjacent_library_list_row(focused, key)
+    if target is not None:
+        # TASK-34000.7: reveal the row minimally, not centred. ``focus()``'s
+        # own path is ``Screen.set_focus(scroll_visible=True)`` ->
+        # ``scroll_to_center``, which jumps the list half a pane at every
+        # edge of a Down/Up walk (measured 7 rows per step at 160x45).
+        # ``scroll_visible`` scrolls each ancestor only as far as the row
+        # needs -- one press, one row, like ListView/OptionList -- and it is
+        # the no-op it always was when the row is already on screen.
+        target.focus(scroll_visible=False)
+        target.scroll_visible(animate=False, immediate=True)
+    return True
+
+
+def _adjacent_library_list_row(focused: Widget | None, key: str) -> Widget | None:
+    """The row an Up/Down press from ``focused`` would land on, or None.
+
+    TASK-34000.22 fix round 1 (M-6): the walk's target, exposed so the
+    screen can ask what the key WOULD do before it does it -- a Media
+    row walk is refused only when its target is another item than the
+    Reader's (``media_id`` differs) while an authoring form holds unsaved
+    text. Same sibling rule as ``_move_library_list_row_focus`` (rows
+    sharing a row class under one parent; the Skills list interleaves a
+    non-row ``Static``). None when ``focused`` is not a Library list row,
+    has no parent, is not among its siblings, or sits at the list end.
+
+    Args:
+        focused: The screen's currently focused widget, or ``None``.
+        key: ``"up"`` or ``"down"``.
+    """
+    if focused is None:
+        return None
+    if not any(focused.has_class(name) for name in _LIBRARY_LIST_ROW_CLASSES):
+        return None
     parent = focused.parent
     if parent is None:
-        return False
+        return None
     siblings = [
         child
         for child in parent.children
@@ -102,21 +136,11 @@ def _move_library_list_row_focus(focused: Widget | None, key: str) -> bool:
     try:
         index = siblings.index(focused)
     except ValueError:
-        return True
-    step = -1 if key == "up" else 1
-    new_index = index + step
+        return None
+    new_index = index + (-1 if key == "up" else 1)
     if 0 <= new_index < len(siblings):
-        # TASK-34000.7: reveal the row minimally, not centred. ``focus()``'s
-        # own path is ``Screen.set_focus(scroll_visible=True)`` ->
-        # ``scroll_to_center``, which jumps the list half a pane at every
-        # edge of a Down/Up walk (measured 7 rows per step at 160x45).
-        # ``scroll_visible`` scrolls each ancestor only as far as the row
-        # needs -- one press, one row, like ListView/OptionList -- and it is
-        # the no-op it always was when the row is already on screen.
-        target = siblings[new_index]
-        target.focus(scroll_visible=False)
-        target.scroll_visible(animate=False, immediate=True)
-    return True
+        return siblings[new_index]
+    return None
 
 
 # --- task-252: targeted (non-recompose) selection-interaction updates ------

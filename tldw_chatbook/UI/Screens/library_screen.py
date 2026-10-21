@@ -837,6 +837,7 @@ from ..Library_Modules.screen_support_types import (
 )
 from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
 from ..Library_Modules.canvas_sync import (
+    _adjacent_library_list_row,
     _move_library_list_row_focus,
     _patch_library_disabled_marker_label,
     _apply_library_row_toggle,
@@ -9072,11 +9073,16 @@ class LibraryScreen(BaseAppScreen):
             event.key in ("up", "down")
             and self.focused is not None
             and self.focused.has_class("library-media-row")
-            and self._library_media_editor_dirty()
+            and not self._media_state.select_mode
+            and self._library_media_row_walk_leaves_dirty_form(event.key)
         ):
             # TASK-34000.22: the keyboard twin of a row click -- an Up/Down
-            # walk would select the next item under a dirty authoring form.
-            # Refuse before focus moves, out loud, so the key is not dead.
+            # walk onto ANOTHER item would select it under a dirty authoring
+            # form. Refuse before focus moves, out loud, so the key is not
+            # dead. Fix round 1 (M-6): only when the walk's target is a
+            # different item than the Reader's -- walking onto the Reader's
+            # own row, a list-end press, or a select-mode walk (no select)
+            # is left alone.
             self._notify_media_editor_dirty_veto()
             event.stop()
             event.prevent_default()
@@ -16997,6 +17003,11 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.highlights = []
         self._media_state.editing = False
         self._media_state.editing_analysis = False
+        # TASK-34000.22 fix round 1 (I-2): the forms go with the item they
+        # were typed for -- a reset that cleared the flags but left the
+        # drafts kept the dirty predicate true for a form nobody could see.
+        self._media_state.edit_draft = None
+        self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
@@ -17019,25 +17030,35 @@ class LibraryScreen(BaseAppScreen):
             and applied == controller.requested_scope
         ):
             page_ids = {str(item["id"]) for item in controller.retained_items}
+            # TASK-34000.22 fix round 1 (I-2): while an authoring form holds
+            # unsaved text the Reader's item is PINNED -- the list filters
+            # as usual, but neither the typed query's select-first nor the
+            # Clear's restore moves the Reader (the selection stays the
+            # Reader's item; Task 1's hold paints no row when it is off the
+            # page), and a 0-result page keeps the form instead of
+            # resetting the Reader under it.
+            reader_pinned = bool(self._library_media_editor_dirty())
             if applied.query and self._media_state.filter_select_first:
-                self._media_state.selected_media_id = (
-                    str(controller.retained_items[0]["id"])
-                    if controller.retained_items
-                    else ""
-                )
-                applied_selection_id = self._media_state.selected_media_id
-                self._media_state.filter_select_first = False
-            elif not applied.query:
-                self._media_state.unfiltered_scope = applied
-                if self._media_state.filter_restore_id:
+                if not reader_pinned:
                     self._media_state.selected_media_id = (
-                        self._media_state.filter_restore_id
-                        if self._media_state.filter_restore_id in page_ids
-                        else str(controller.retained_items[0]["id"])
+                        str(controller.retained_items[0]["id"])
                         if controller.retained_items
                         else ""
                     )
                     applied_selection_id = self._media_state.selected_media_id
+                self._media_state.filter_select_first = False
+            elif not applied.query:
+                self._media_state.unfiltered_scope = applied
+                if self._media_state.filter_restore_id:
+                    if not reader_pinned:
+                        self._media_state.selected_media_id = (
+                            self._media_state.filter_restore_id
+                            if self._media_state.filter_restore_id in page_ids
+                            else str(controller.retained_items[0]["id"])
+                            if controller.retained_items
+                            else ""
+                        )
+                        applied_selection_id = self._media_state.selected_media_id
                     self._media_state.filter_restore_id = ""
             # task-32043: a settled page with NO visible rows -- a 0-result
             # filter -- must stop the Reader painting the item it still holds
@@ -17046,6 +17067,7 @@ class LibraryScreen(BaseAppScreen):
             # the loaded item merely isn't on is a page turn, not a removal).
             if (
                 not applied_selection_id
+                and not reader_pinned
                 and not controller.retained_items
                 and not self._media_state.reader_session.external_detail
                 and (
@@ -17258,7 +17280,12 @@ class LibraryScreen(BaseAppScreen):
         # comes through here, and it is the one place the Reader's hold on
         # the list highlight is released: from now on the list has moved
         # on and the selection follows the canvas (TASK-15457).
-        self._media_state.highlight_held_by_reader = False
+        # TASK-34000.22 fix round 1 (I-2): unless an authoring form holds
+        # unsaved text -- then the Reader's item is pinned, the hold stays,
+        # the selection keeps naming that item (so its keys stay live) and
+        # Task 1's rule paints no row when it is off the filtered page.
+        if not self._library_media_editor_dirty():
+            self._media_state.highlight_held_by_reader = False
         changed = (
             self._media_state.select_mode
             or self._media_state.row_selection.count > 0
@@ -22868,8 +22895,13 @@ class LibraryScreen(BaseAppScreen):
         # TASK-34000.22: the Media reader's authoring forms are explicit-
         # Save only, like Skills -- nothing to flush, only to veto on. A
         # clean form still lets the settled Reader ride the switch
-        # (TASK-34000.25) and closes below exactly as before.
-        if self._library_media_editor_dirty():
+        # (TASK-34000.25) and closes below exactly as before. Fix round 1
+        # (C-1): NEVER refuse the switch that shows the Reader holding the
+        # draft -- a dirty form behind another destination must always be
+        # reachable again, so a Media press lands on Media with the form
+        # and its draft intact (the keep/reset block below honours it).
+        media_form_dirty = self._library_media_editor_dirty()
+        if media_form_dirty and row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._notify_media_editor_dirty_veto()
             return
         self._artifacts_share_controller.invalidate_pending_presentation()
@@ -22971,7 +23003,13 @@ class LibraryScreen(BaseAppScreen):
         # list. Transient sub-states (edit, delete confirm, analysis edit,
         # Find) still close here, and anything short of a settled local item
         # (pending request, server detail, no detail) resets as before.
-        keep_media_reader = self._rail_switch_keeps_media_reader()
+        # TASK-34000.22 fix round 1 (C-1): a dirty authoring form PINS the
+        # Reader (I-2) -- the only switch that reaches here with one is the
+        # Media press that brings the user back to it, and that press keeps
+        # the Reader, the form and the draft exactly as they were.
+        keep_media_reader = self._rail_switch_keeps_media_reader() or bool(
+            media_form_dirty
+        )
         if keep_media_reader:
             # The reading position is captured on row selection and on a
             # tab change; a rail press is the third way to leave the body.
@@ -22984,11 +23022,12 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.composed_detail = None
             self._media_state.highlights = []
             self._media_state.content_mode = "raw"
-        self._media_state.editing = False
-        self._media_state.edit_draft = None
+        if not media_form_dirty:
+            self._media_state.editing = False
+            self._media_state.edit_draft = None
+            self._media_state.editing_analysis = False
+            self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
-        self._media_state.editing_analysis = False
-        self._media_state.analysis_draft = None
         self._close_library_media_find()
         self._notes_state.filter = ""
         self._notes_state.filter_records = None
@@ -32080,9 +32119,15 @@ class LibraryScreen(BaseAppScreen):
         or discard first" (``_library_media_escape_label``). Only the form's
         own "Discard changes" press (the relabelled Cancel) drops the text.
         A clean form closes in one step exactly as before; the delete
-        confirm has nothing typed and is never vetoed.
+        confirm has nothing typed and is never vetoed -- fix round 1 (M-5):
+        it is cancelled FIRST, so an armed confirm over a dirty form steps
+        back to the form rather than answering with the unsaved copy.
         """
         if self._media_state.bulk_delete_in_flight:
+            return
+        if self._media_state.confirming_delete:
+            self._media_state.confirming_delete = False
+            self._sync_library_media_viewer_or_recompose()
             return
         if self._library_media_editor_dirty():
             self._notify_media_editor_dirty_veto()
@@ -32090,10 +32135,6 @@ class LibraryScreen(BaseAppScreen):
         if self._media_state.editing:
             self._media_state.editing = False
             self._media_state.edit_draft = None
-            self._sync_library_media_viewer_or_recompose()
-            return
-        if self._media_state.confirming_delete:
-            self._media_state.confirming_delete = False
             self._sync_library_media_viewer_or_recompose()
             return
         if self._media_state.editing_analysis:
@@ -33405,6 +33446,19 @@ class LibraryScreen(BaseAppScreen):
 
     def _notify_media_editor_dirty_veto(self) -> None:
         return self._media_controller._notify_media_editor_dirty_veto()
+
+    def _library_media_row_walk_leaves_dirty_form(self, key: str) -> bool:
+        """Whether an Up/Down press from the focused media row would select
+        another item than the Reader's while an authoring form is dirty
+        (TASK-34000.22 fix round 1, M-6)."""
+        target = _adjacent_library_list_row(self.focused, key)
+        if target is None:
+            return False
+        if str(getattr(target, "media_id", "") or "") == str(
+            self._media_state.selected_media_id or ""
+        ):
+            return False
+        return bool(self._library_media_editor_dirty())
 
     @on(Button.Pressed, "#library-media-edit-save")
     def handle_library_media_edit_save(self, event: Button.Pressed) -> None:

@@ -2220,15 +2220,23 @@ class LibraryMediaController:
             self._library_media_selection_timer.stop()
             self._library_media_selection_timer = None
         if canonical_id != current.selected_id:
+            # TASK-34000.22 fix round 1 (I-2): the central guard. While an
+            # authoring form holds unsaved text the Reader's item is PINNED:
+            # no route -- a user gesture (those say why before they get
+            # here) or an automatic one (a typed filter's select-first, a
+            # restored selection, a review-set walk) -- moves it off the
+            # form. Silent here; the gestures toast at their own seams.
+            if self._library_media_editor_dirty():
+                return
             # TASK-34000.24: the "Use in Console" link receipt is per item --
             # opening another item drops it (the conversation reader's
             # per-load rule); a reload of the SAME item (retry, re-entry
             # from Console) keeps a receipt that is still true.
             self._library_media_link_receipt = None
             # TASK-34000.22: the authoring drafts are per item too. A dirty
-            # one never reaches here (every user route refuses first); a
-            # clean one must not be composed over the NEXT item's form,
-            # where it would read as that item's unsaved change.
+            # one is refused just above; a CLEAN one (opened, untouched)
+            # must not be composed over the NEXT item's form, where it
+            # would read as that item's unsaved change.
             self._library_media_edit_draft = None
             self._library_media_analysis_draft = None
         self._selected_media_id = canonical_id
@@ -3348,6 +3356,22 @@ class LibraryMediaController:
                 severity="warning",
                 markup=False,
             )
+        # Fix round 1 (M-4): the refusal shows the form it is about. The
+        # two forms live on different Reader tabs (metadata on Info, the
+        # analysis on Analysis) and both survive a tab switch, so a refusal
+        # for the one NOT on screen switches the Reader to its tab -- the
+        # user then sees the text, Save and Discard changes, never a toast
+        # about a form they cannot find.
+        target_mode = "info" if form == "edit" else "analysis"
+        if (
+            self._library_media_view == "viewer"
+            and self._library_media_reader_session.mode != target_mode
+        ):
+            self._library_media_reader_session = set_mode(
+                self._library_media_reader_session,
+                target_mode,  # type: ignore[arg-type]
+            )
+            self._sync_library_media_viewer_or_recompose()
 
     def _record_library_media_editor_draft(self, write: Callable[[], None]) -> None:
         """Apply one draft write, then resync only when the dirty state flipped.
@@ -3559,6 +3583,13 @@ class LibraryMediaController:
             event: The "Review these" button press.
         """
         event.stop()
+        # TASK-34000.22 fix round 1 (C-1 audit): a review set opens its
+        # first item in the Reader -- refused out loud while an authoring
+        # form holds unsaved text (the central guard would otherwise drop
+        # the open silently and leave a dead button).
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self.run_worker(
             self._review_these_worker(),
             group="library_review_set",
@@ -3575,6 +3606,11 @@ class LibraryMediaController:
         """
         event.stop()
         if getattr(self, "_library_media_bulk_delete_in_flight", False):
+            return
+        # TASK-34000.22 fix round 1 (C-1 audit): same refusal as "Review
+        # these" -- the set would open its first item in the Reader.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
             return
         selection = self._library_media_row_selection
         if not selection.count:
@@ -3604,6 +3640,12 @@ class LibraryMediaController:
             event: The "Sets" toolbar button press.
         """
         event.stop()
+        # TASK-34000.22 fix round 1 (C-1 audit): resuming or switching a
+        # set from the picker moves the Reader; refused out loud up front
+        # rather than opening a picker whose choices would go dead.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self.run_worker(
             self._review_set_picker_worker(),
             group="library_review_set",

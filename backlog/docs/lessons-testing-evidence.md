@@ -1285,6 +1285,22 @@ child pytest, so under load two focus assertions that wait one `pilot.pause()` f
 passed alone three times. This is diagnosis for a local change, as above: it does not make the
 tests run in CI.
 
+## A mutation check against one of two layered guards proves nothing (TASK-34000.22 fix round 1, 2026-10-21)
+
+**Incident.** The review asked for a mutation check on the `on_descendant_focus`
+backstop that stops a refused row click's queued focus bubble from selecting
+the other row. The same round added a central guard one call deeper
+(`_select_library_media_reader_row` refuses while a form is dirty). With the
+backstop deleted the boot stayed GREEN -- the deeper guard caught the same
+call -- and a report written from that run would have called the backstop
+"pinned". Deleting both guards turned the boot RED on the first assertion
+(no toast, the selection moved).
+
+**What to do.** Before claiming a guard is pinned, name every other guard on
+the same path. Mutate the layer under test with the others removed too, or
+test that layer in isolation; a GREEN mutant on a layered path is evidence
+of redundancy, not of coverage. Say which it was in the report.
+
 ## A negative control passed as a pytest plugin never reaches a `private_profile_test` body (TASK-33005.10, 2026-10-17)
 
 **Incident.** Phase 9 Task 12 checked that the rewritten

@@ -146,8 +146,10 @@ def _screen_with_only_a_media_draft(dirty_form: str):
 @pytest.mark.parametrize(
     ("dirty_form", "expected"),
     [
-        ("analysis", ["unsaved analysis"]),
-        ("edit", ["unsaved media details"]),
+        # Fix round 1 (M-8 ruling): the prompt's title already says "unsaved
+        # changes to", so the names do not repeat the word.
+        ("analysis", ["analysis"]),
+        ("edit", ["media details"]),
         ("", []),
     ],
 )

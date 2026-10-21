@@ -849,6 +849,7 @@ than on screen — the Items row at 100x30 and narrower, and the rail row in any
 layout the Reader still has a real exit from. In the three-pane layout the rail
 row is the last stop, and the footer drops the `esc` chip there rather than
 advertise a key that does nothing. No step lands in a text box.
+
 **Unsaved text is never dropped by a key.** While the Analysis form or the
 Edit metadata form holds text that differs from what is saved, Escape keeps
 the form and says so ("Unsaved analysis — Save or Discard changes first." /
@@ -856,9 +857,14 @@ the form and says so ("Unsaved analysis — Save or Discard changes first." /
 reads `esc save or discard first` instead of `esc close`. The form's Cancel
 reads **Discard changes** and is the only way to drop the text; Save is the
 other way out. Switching Reader tabs keeps what you typed, and "‹ Back",
-another Items row, a rail row, the nav bar and Ctrl+Q all refuse the same
-way until you save or discard. An untouched form still closes on one Escape
-or Cancel.
+another Items row (clicked, or reached with Up/Down), a rail row, Export…,
+a review set, the nav bar and Ctrl+Q all refuse the same way until you save
+or discard — and a refusal brings the tab holding the form back on screen.
+The Items filter still filters the list, but it never moves the Reader off
+the form: the item you are editing stays, even when the filter hides its
+row or matches nothing, and Clear brings the list back around it. An
+untouched form still closes on one Escape or Cancel, and Escape over an
+armed "Move to trash" confirm cancels the confirm first.
 Stepping out of the Reader moves focus, not the document: in the three-pane
 layout (verified at 235x52) the Items pane is already showing the list, so
 the item keeps painting beside it and `]`/`[` keep working from the row.
