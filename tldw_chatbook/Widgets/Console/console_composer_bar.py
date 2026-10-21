@@ -516,6 +516,18 @@ def _swap_size_class(widget: Widget, prefix: str, wanted: str) -> None:
     widget.add_class(wanted)
 
 
+def _clear_static_content(widget: Static) -> None:
+    """Empty ``widget`` unless it already renders nothing.
+
+    ``Static.update`` always requests a whole-screen layout, and the voice
+    chip's idle branch re-ran on every 0.2 s run tick (TASK-33620.15.7).
+    """
+    current = widget.content
+    if isinstance(current, (str, Content)) and not str(current):
+        return
+    widget.update(Content(""))
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -2239,7 +2251,12 @@ class ConsoleComposerBar(Horizontal):
         # remove/re-add the same classes and synchronously restyle the node.
         classes = {name for name in strip.classes if not name.startswith(("w-", "h-"))}
         classes.update(("w-auto", "h-1") if visible else ("w-0", "h-0"))
-        strip.set_styles(width=None, height=None)
+        # Clearing a scalar style requests a whole-screen layout even when no
+        # inline rule is set, and this runs on every 0.2 s run tick
+        # (TASK-33620.15.7): clear only rules that exist.
+        stale = [name for name in ("width", "height") if strip.styles.inline.has_rule(name)]
+        if stale:
+            strip.set_styles(**dict.fromkeys(stale))
         strip.set_classes(classes)
         strip.styles.min_width = 0
         strip.styles.max_width = cap
@@ -6312,8 +6329,12 @@ class ConsoleComposerBar(Horizontal):
         # a user looks for it anyway. ✕ stays: it is the only control that
         # is meaningless until something is staged, so it costs nothing at
         # rest and burying it would hide the way to undo a visible thing.
+        # TASK-33620.15.7: every 0.2 s run tick re-applies this label; an
+        # unchanged one must not request a whole-screen reflow.
+        text = escape(resolve_glyph_text(f"📎 {normalized}")) if normalized else ""
+        if indicator.content != text:
+            indicator.update(text)
         if normalized:
-            indicator.update(escape(resolve_glyph_text(f"📎 {normalized}")))
             indicator.styles.display = "block"
             _swap_size_class(indicator, "w-", "w-auto")
             indicator.styles.max_width = 28
@@ -6328,7 +6349,6 @@ class ConsoleComposerBar(Horizontal):
             else:
                 clear_button.tooltip = "Remove the pending attachment."
         else:
-            indicator.update("")
             indicator.styles.display = "none"
             _swap_size_class(indicator, "w-", "w-0")
             clear_button.styles.display = "none"
@@ -6479,7 +6499,7 @@ class ConsoleComposerBar(Horizontal):
             chip.styles.display = "none"
             _swap_size_class(chip, "w-", "w-0")
             chip.styles.min_width = 0
-            chip.update(Content(""))
+            _clear_static_content(chip)
             return
 
         # TASK-24620 / PR-2230 review f3: PREPARING selects its sizing
@@ -6509,7 +6529,7 @@ class ConsoleComposerBar(Horizontal):
             chip.styles.display = "none"
             _swap_size_class(chip, "w-", "w-0")
             chip.styles.min_width = 0
-            chip.update(Content(""))
+            _clear_static_content(chip)
             return
 
         if state == "listening":

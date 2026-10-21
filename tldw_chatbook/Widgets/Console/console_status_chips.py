@@ -216,6 +216,8 @@ class ConsoleStatusText(Static):
         #: index past the visible list and crash the render pass.
         self._cursor_name: str | None = None
         self._rendered_markup: str | None = None
+        #: Cell width of the rendered line; ``None`` until the first render.
+        self._rendered_width: int | None = None
         # Column spans of the VISIBLE segments in the plain line
         # ``(name, start, end)`` -- click/activation target metadata, and
         # the seam tests use to click individual segments.
@@ -284,11 +286,20 @@ class ConsoleStatusText(Static):
 
     def _rerender(self) -> None:
         """Recompose and update the widget when the line actually changed."""
+        previous_width = self._rendered_width
         line = self._render_line()
         if line == self._rendered_markup:
             return
         self._rendered_markup = line
-        self.update(line)
+        # The line's width IS the strip's scroll range, so a changed width
+        # needs a layout pass. A same-width change (a cost tick, a cursor
+        # move, an equal-length run copy) repaints in place: during a run it
+        # used to request a whole-screen reflow per tick (TASK-33620.15.7).
+        width = self.segment_spans[-1][2] if self.segment_spans else 0
+        if "\n" in line:
+            width = None  # Not one line: its height may change too.
+        self._rendered_width = width
+        self.update(line, layout=width is None or width != previous_width)
 
     # -- keyboard ------------------------------------------------------
 

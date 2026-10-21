@@ -467,6 +467,7 @@ class ConsolePromptQueueRegion(Widget):
         self._last_render_key = key
         self._session_id = session_id
         self._presentation = presentation
+        was_visible = self.has_class("-visible")
         self.set_class(presentation.shelf_visible, "-visible")
         try:
             summary = self.query_one("#console-prompt-queue-summary", Static)
@@ -475,37 +476,54 @@ class ConsolePromptQueueRegion(Widget):
             pause = self.query_one("#console-prompt-queue-pause", Button)
         except NoMatches:
             return True
-        summary.update(
+        summary_text = (
             presentation.state_label
             if presentation.primary_action == "turn-recovery" and not presentation.count
             else f"Queue {presentation.count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
             f"{presentation.state_label}"
         )
-        preview.update(
+        preview_text = (
             f' · Next: "{presentation.next_preview}"'
             if presentation.next_preview
             else ""
         )
+        # TASK-33620.15.7: a send moves the revision and the Send-button
+        # fields of this projection on every run, which the shelf does not
+        # draw; only copy the shelf shows may request a whole-screen layout.
+        copy_changed = was_visible != presentation.shelf_visible
+        if summary.content != summary_text:
+            summary.update(summary_text)
+            copy_changed = True
+        if preview.content != preview_text:
+            preview.update(preview_text)
+            copy_changed = True
         if presentation.primary_action == "turn-recovery":
-            manage.label = "Restore"
+            manage_label = "Restore"
             manage.disabled = False
             manage.tooltip = "Restore this unsent turn."
-            pause.label = "Discard"
+            pause_label = "Discard"
             pause.disabled = False
             pause.tooltip = "Discard this unsent turn."
         else:
-            manage.label = "Manage"
+            manage_label = "Manage"
             manage.disabled = presentation.count == 0
             manage.tooltip = "Open the prompt queue manager."
-            pause.label = presentation.pause_label
+            pause_label = presentation.pause_label
             pause.disabled = not presentation.pause_enabled
             pause.tooltip = f"{presentation.pause_label} this session's prompt queue."
-        self.refresh(layout=True)
+        relabel_manage = manage.label != manage_label
+        relabel_pause = pause.label != pause_label
+        manage.label = manage_label
+        pause.label = pause_label
+        if copy_changed or relabel_manage or relabel_pause:
+            self.refresh(layout=True)
         # A Button caches its box model per its OWN layout count, so a new
         # label keeps the old width unless the Button itself is re-laid
         # out: 'Pause' -> 'Keep draining' painted 'Keep' (TASK-33625.4).
-        manage.refresh(layout=True)
-        pause.refresh(layout=True)
+        if relabel_manage:
+            manage.refresh(layout=True)
+        if relabel_pause:
+            pause.refresh(layout=True)
         return True
 
     def on_resize(self) -> None:

@@ -1344,3 +1344,6 @@ Tests/UI/test_library_notes_keep_synced_without_a_root.py
 # first-read yield node, appended at the tail; existing shard slots stay fixed.
 Tests/UI/test_console_composer_state_restyle.py
 Tests/UI/test_console_run_start_yields.py::test_the_fingerprint_reads_its_first_store_in_a_loop_turn_of_its_own
+# TASK-33620.15.7: run-tick layout-request pins (ten widget pins, ~3 s, and one
+# private-profile held-run journey, ~12 s locally).
+Tests/UI/test_console_run_tick_layout_requests.py

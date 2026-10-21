@@ -573,7 +573,9 @@ class ConsoleLeftRail(Vertical):
             return
         widget.sync_state(state)
         header.title = self._character_context_title(state)
-        title.update(header.title)
+        # TASK-33620.15.7: most syncs during a run leave the title unchanged.
+        if title.content != header.title:
+            title.update(header.title)
         title.tooltip = header.title
         self.request_allocation_reconcile()
 
@@ -734,8 +736,12 @@ class ConsoleLeftRail(Vertical):
             line = self.query_one_optional(f"#{section_id}")
             if line is None:
                 continue
+            text = value or "—"
             for row in line.query(".console-model-section-value"):
-                row.update(value or "—")
+                # TASK-33620.15.7: this runs on every 0.2 s run tick; an
+                # unchanged value must not request a whole-screen reflow.
+                if row.content != text:
+                    row.update(text)
                 break
         # TASK-33005.3: the rail line shows the one word; red only when blocked.
         word = summary_state.readiness_label
@@ -1758,6 +1764,30 @@ class ConsoleLeftRail(Vertical):
             logger.opt(exception=True).debug("avatar: off-loop prerender failed")
             return None
         return prerendered
+
+    def character_avatar_is_blank(self) -> bool:
+        """Whether the avatar holder shows only the hidden no-character blank.
+
+        Returns:
+            True when the holder's one child is the empty, display-none
+            ``#console-character-avatar-empty`` Static that a spec with no
+            character and no image builds.
+        """
+        try:
+            holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
+        except (NoMatches, QueryError):
+            return False
+        children = list(holder.children)
+        if len(children) != 1:
+            return False
+        child = children[0]
+        return (
+            isinstance(child, Static)
+            and child.id == "console-character-avatar-empty"
+            and not child.display
+            and isinstance(child.content, str)
+            and not child.content
+        )
 
     async def replace_character_avatar_widget(
         self,

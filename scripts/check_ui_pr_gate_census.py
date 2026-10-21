@@ -530,7 +530,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # state-restyle file (5 mounted tests, about 14 s locally) and one node, the
 # catalog fingerprint's first-read yield (about 4 s); the rest of its file is
 # TASK-33620.15.15's to place. Rebased 2026-10-25 onto dev's 899: 899 + 2 = 901.
-MINIMUM_FILES = 901
+# TASK-33620.15.7 (2026-10-20) appends its run-tick layout-request file, one
+# entry of ~15 s locally, after P1-B's tail: 899 -> 900 (re-based 2026-10-25
+# onto dev e554f25812).
+MINIMUM_FILES = 902
 
 
 def read_census(path: Path) -> list[str]:

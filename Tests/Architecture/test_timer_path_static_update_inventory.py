@@ -187,19 +187,19 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_agent_section",
-        "self.query_one('#console-agent-section-status', Static)",
-    ): "NEEDS-LAYOUT: height:auto agent status line.",
+        "status",
+    ): (
+        "NEEDS-LAYOUT: height:auto agent status line. Equality-gated on "
+        "Static.content (TASK-33620.15.7), so an unchanged line requests "
+        "nothing; a changed one keeps the default layout pass."
+    ),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_agent_section",
-        "self.query_one('#console-agent-section-steps', Static)",
-    ): "NEEDS-LAYOUT: height:auto agent steps line.",
-    (
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_mode_bar",
-        "mode_bar",
+        "steps",
     ): (
-        "NEEDS-LAYOUT: the mode bar's chip row wraps, so its height is content-driven."
+        "NEEDS-LAYOUT: height:auto agent steps line. Equality-gated on "
+        "Static.content (TASK-33620.15.7), as the status line above."
     ),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
@@ -223,7 +223,9 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "row",
     ): (
         "NEEDS-LAYOUT: .console-model-section-value is text-wrap:wrap with "
-        "max-height:3, so the painted row count changes with the value."
+        "max-height:3, so the painted row count changes with the value. "
+        "Equality-gated on Static.content (TASK-33620.15.7): the 0.2 s run "
+        "tick re-applied unchanged values, a whole-screen reflow each."
     ),
     # -- tldw_chatbook/UI/Screens/trajectory_screen.py
     (
@@ -276,7 +278,11 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
         "ConsoleComposerBar.set_pending_attachment_label",
         "indicator",
-    ): ("NEEDS-LAYOUT: attachment indicator is width:auto and display- toggled."),
+    ): (
+        "NEEDS-LAYOUT: attachment indicator is width:auto and display- "
+        "toggled. Equality-gated on Static.content (TASK-33620.15.7): the "
+        "run tick re-applied the empty label on every 0.2 s poll."
+    ),
     (
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
         "ConsoleComposerBar.set_voice_status",
@@ -285,6 +291,17 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NEEDS-LAYOUT: the voice chip's width is computed and assigned "
         "inline on the same path (styles.width / display), so its box "
         "changes with the content it is being handed."
+    ),
+    (
+        "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+        "None._clear_static_content",
+        "widget",
+    ): (
+        "NOT-PER-TICK: the helper IS the equality gate -- an already-empty "
+        "chip returns before update (TASK-33620.15.7); only a chip that "
+        "still shows copy is emptied, once, with the default layout its "
+        "display/width toggle on the same path needs. (Module-level helper, "
+        "hence the None class.)"
     ),
     # -- tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py
     (
@@ -311,18 +328,9 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     # -- tldw_chatbook/Widgets/Console/console_status_chips.py
     #    (TASK-35160: the strip is one text line. The former
     #    sync_run_chip 'chip' row and the _apply_cost_chip_label row
-    #    retired with the chip widgets; the line's _rerender row below
-    #    covers every segment write.)
-    (
-        "tldw_chatbook/Widgets/Console/console_status_chips.py",
-        "ConsoleStatusText._rerender",
-        "self",
-    ): (
-        "NEEDS-LAYOUT: the composed line's width IS the strip's scroll "
-        "range -- a changed line (its equality guard skips unchanged "
-        "ticks) genuinely relayouts the strip, exactly the cost class the "
-        "former chip.refresh(layout=True) carried."
-    ),
+    #    retired with the chip widgets. TASK-33620.15.7: _rerender now
+    #    passes layout= itself -- only a changed line WIDTH, the strip's
+    #    scroll range, lays out -- so it needs no row.)
     # -- tldw_chatbook/Widgets/Console/console_transcript.py
     (
         "tldw_chatbook/Widgets/Console/console_transcript.py",
