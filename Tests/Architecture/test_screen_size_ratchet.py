@@ -107,7 +107,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: this row); with Phase 9, 24332/736, and the row comes down to that so
     #: the decomposition gain is kept. Rebased onto dev 8e879de639, whose
     #: #3177 (TASK-35640) removes 2 lines: 24330/736.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24330, 736),
+    #: Raised 24330 -> 24335 (methods unchanged) 2026-10-20, owner decision
+    #: (a genuine fix raises the row rather than contorting code): TASK-34720's
+    #: P0 crash fix checks the Console owns the screen stack right before
+    #: three dialog pushes (scope picker, character picker, Conversation
+    #: Inspector), two lines each. Dev 2d071d6d71 measured 24329/736; with the
+    #: fix, 24335/736, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

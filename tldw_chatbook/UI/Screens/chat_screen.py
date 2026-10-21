@@ -3456,14 +3456,7 @@ class ChatScreen(BaseAppScreen):
             navigation.report_completion(False)
 
     def _owns_console_screen_stack(self) -> bool:
-        """Return whether this exact Console instance owns the active stack top.
-
-        TASK-34720: also the one rule every Console dialog opener checks just
-        before it pushes. A typed burst on the focused status line queues one
-        request per Enter/Space; the first dialog covers the Console, so the
-        rest are refused instead of stacking (~20 stacked dialogs crashed the
-        app).
-        """
+        """Return whether this exact Console instance owns the active stack top."""
         try:
             stack = self.app.screen_stack
             return bool(stack) and stack[-1] is self
