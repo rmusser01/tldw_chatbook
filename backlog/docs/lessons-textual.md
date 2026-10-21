@@ -552,6 +552,15 @@ bit-for-bit equivalent to querying; the mutation arm (validation weakened
 back to `is_mounted`-only) re-fails the same pre-existing scroll test.
 Related earlier incident: task-2200 ("`is_mounted` ≠ in-the-DOM").
 
+`_pruning` is private Textual state, so recheck its readers on any Textual
+upgrade. TASK-33621.20 (2026-10-20) added one more: the Console transcript
+region's `sync_recovery` skips a region that is being pruned. Textual prunes
+children before their parent, so during a center swap (opening the terminal)
+the recovery card was still in the DOM after its title had gone, and a sync
+then raised `NoMatches` in the console-sync worker, which exits the app.
+`test_a_recovery_sync_during_a_center_swap_never_fails_the_sync` steps the
+event loop into that window and fails if the flag stops covering it.
+
 ---
 
 ## Removing menu borders cannot make too many actions fit
