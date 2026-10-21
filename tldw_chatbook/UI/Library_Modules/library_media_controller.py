@@ -3201,13 +3201,17 @@ class LibraryMediaController:
         browse-state sync, ``compose_content``, the canvas sync and
         ``_build_library_media_active_child``) goes through this one seam.
         While the Reader holds the highlight (``_library_media_reader_holds_
-        highlight``: viewer view, unfiltered scope), the selection keeps
-        naming the Reader's item -- the pending one while a selection loads,
-        else the loaded one -- when the page is still loading or (owner Q2
-        (b)) that item is not on this page; the builder paints no cue for
-        it. Under a user filter or in the list view the TASK-15457 contract
-        stands: the selection follows the canvas, "" included, so a
-        filtered-out row is never opened.
+        highlight``: the viewer view AND the ORDER-based
+        ``highlight_held_by_reader`` flag, set at every open/select door and
+        released only at the user's scope-change seams), the selection
+        keeps naming the Reader's item -- the pending one while a selection
+        loads, else the loaded one -- when the page is still loading or
+        (owner Q2 (b)) that item is not on this page; the builder paints no
+        cue for it. Once the user changes scope after the open (a type
+        choice, a typed query, the filter Clear, a sort or page change) or
+        in the list view, the TASK-15457 contract stands: the selection
+        follows the canvas, "" included, so a filtered-out row is never
+        opened.
         """
         session = self._library_media_reader_session
         held = (

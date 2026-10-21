@@ -1,8 +1,9 @@
 """TASK-34000.18 fix round 2: an open-by-link under a sticky filter.
 
-Outside the PR lane (the lane file is
-``test_library_media_actions_target_opened_item.py``; these three boots are
-its slower siblings). The re-review's probe cases A, B and E: a user filter
+In the PR lane census too, appended at its tail after fix round 2 (the lane
+file proper is ``test_library_media_actions_target_opened_item.py``; these
+boots are its slower siblings, and the one CI guard for a defect the review
+found twice). The re-review's probe cases A, B and E: a user filter
 is applied FIRST, then an item is opened by link (the Search/RAG route keeps
 the current scope, so a filtered-out or off-page item is the common case).
 The round-1 scope-based hold failed all three -- row 0 kept the ``▸`` and
@@ -225,3 +226,37 @@ async def test_case_e_query_filter_then_open_a_non_matching_item_by_link():
         )
 
         await _assert_reader_holds_the_opened_item(host, screen, pilot, service, "2")
+
+
+async def test_a_type_filter_after_the_open_releases_the_hold_while_the_viewer_stays_open():
+    """Re-review R2's parked pin: the user's scope-change seam
+    (``_clear_library_media_selection_for_scope_change``) is the one release
+    point of the ORDER-based hold, and it releases it while the viewer is
+    still the active view -- the Reader keeps showing the opened document,
+    but from this scope change on the selection follows the canvas
+    (TASK-15457: row 0 wears the cue, because the opened item is gone from
+    the page). Mutation-checked: dropping the release at that seam leaves
+    ``highlight_held_by_reader`` True and the selection on the filtered-out
+    item, and this fails."""
+    host, _service = _host(6)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canonical = await _open_and_settle(screen, pilot, "5")
+        assert screen._media_state.highlight_held_by_reader is True
+        assert screen._media_state.selected_media_id == canonical
+
+        await _apply_type_filter(screen, pilot, "video")
+
+        # The viewer is still the stage and still shows document 5 ...
+        assert screen._media_state.view == "viewer"
+        assert screen._media_state.reader_session.loaded_id == canonical
+        assert _reader_title(screen) == "Item 05"
+        # ... but the hold is released and the list has moved on: row 0.
+        assert screen._media_state.highlight_held_by_reader is False
+        assert [str(r.media_id) for r in _rows(screen)] == [
+            "local:media:6", "local:media:4", "local:media:2"
+        ]
+        assert screen._media_state.selected_media_id == "local:media:6"
+        assert [str(r.media_id) for r in _highlighted_rows(screen)] == ["local:media:6"]
+        assert "▸" in _painted(host, _rows(screen)[0].region)

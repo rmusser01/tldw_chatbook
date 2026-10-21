@@ -1132,18 +1132,21 @@ def build_library_media_browse_state(
 
     Args:
         hold_reader_item: Whether the highlight belongs to the item the
-            Reader holds. TASK-34000.18, owner Q2 (b): the screen passes True
-            while the viewer is the active view AND the list scope is the
-            plain unfiltered browse -- then the held item (``loading_id``
-            while a selection is pending, else ``loaded_id``) takes the
-            highlight when it is on the page and suppresses the row-0
-            fallback when it is not (opened by link from another page: a
-            highlight never names a document the Reader isn't showing).
-            False (the default, and what the screen passes for a filtered
-            scope or the list view) keeps the TASK-15457 contract: the
-            selection follows the canvas and falls back to row 0 when the
-            user's filter dropped its row, so "Open in viewer" never opens
-            an invisible item.
+            Reader holds. TASK-34000.18, owner Q2 (b): an ORDER fact, not a
+            scope fact -- the screen passes True while the viewer is the
+            active view AND no user scope change (a type choice, a typed
+            query, the filter Clear, a sort or page change) has happened
+            since the item was opened or selected for the Reader -- then
+            the held item (``loading_id`` while a selection is pending, else
+            ``loaded_id``) takes the highlight when it is on the page and
+            suppresses the row-0 fallback when it is not (opened by link
+            from another page, under any sticky filter: a highlight never
+            names a document the Reader isn't showing). False (the default,
+            and what the screen passes once the user has moved the list on
+            after the open, or for the list view) keeps the TASK-15457
+            contract: the selection follows the canvas and falls back to
+            row 0 when the user's filter dropped its row, so "Open in
+            viewer" never opens an invisible item.
         unfiltered_total: The Library's whole Media count, for the scope
             line's "N of M" (task-32350). ``None`` (the default) means the
             screen has no trustworthy total yet, and the line says "N".
@@ -1183,8 +1186,9 @@ def build_library_media_browse_state(
     # win), else the loaded one -- takes the cue when it is on the page and
     # leaves every row unmarked when it is not (opened by link from an
     # import receipt, a landing "Open" or a Search/RAG result on another
-    # page). For a filtered scope or the list view the TASK-15457 contract
-    # is unchanged: the fallback is row 0.
+    # page, whatever filter was already in force). Once the user changes
+    # scope after the open, or in the list view, the TASK-15457 contract is
+    # unchanged: the fallback is row 0.
     held_id = (loading_id or loaded_id) if hold_reader_item else ""
     if not resolved_selected_id and items:
         if held_id in page_ids:
