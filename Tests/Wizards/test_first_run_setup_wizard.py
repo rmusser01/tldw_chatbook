@@ -11998,6 +11998,10 @@ async def test_tools_step_copy_comes_from_the_shared_gate_table():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        gate_effect_scopes,
+        tool_gate_effect_suffix,
+    )
     from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
@@ -12015,17 +12019,66 @@ async def test_tools_step_copy_comes_from_the_shared_gate_table():
         wizard=wizard,
         config=WizardStepConfig(id="tools", title="Tools", step_number=5),
     )
+    scopes = gate_effect_scopes()
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         entries = list(gateable_builtin_tools())
         names = [str(label.render()) for label in step.query(".setup-tool-name")]
-        assert names == [entry.title for entry in entries]
+        assert names == [
+            entry.title + tool_gate_effect_suffix(scopes[("tools", entry.gate_key)])
+            for entry in entries
+        ]
         for entry in entries:
             rendered = str(
                 step.query_one(f"#setup-tool-desc-{entry.tool_name}", Static).render()
             )
             assert rendered == entry.blurb
+
+
+@pytest.mark.asyncio
+async def test_tools_step_names_carry_effect_scope_from_the_shared_table():
+    """task-35153: the first-run Tools step tells the user WHEN a gate takes
+    effect, from the SAME field the hub pane renders -- never its own copy
+    of the wording. Every gate shown here is next-chat scope (the Console
+    rebuilds its tool catalog each run), so every row's name carries the
+    next-chat suffix."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        gate_effect_scopes,
+        tool_gate_effect_suffix,
+    )
+    from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    scopes = gate_effect_scopes()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # The wizard renders the builtin group; pin that those rows' scope
+        # really is next-chat in the shared table...
+        assert all(
+            scopes[("tools", entry.gate_key)] == EFFECT_SCOPE_NEXT_CHAT
+            for entry in gateable_builtin_tools()
+        )
+        # ...then that every rendered name carries exactly that scope's suffix.
+        names = [str(label.render()) for label in step.query(".setup-tool-name")]
+        assert names, "the step must render one name row per gateable tool"
+        expected_suffix = tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT)
+        assert all(name.endswith(expected_suffix) for name in names), names
 
 
 @pytest.mark.asyncio

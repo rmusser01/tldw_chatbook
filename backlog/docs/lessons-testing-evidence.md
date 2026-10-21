@@ -39,6 +39,12 @@ refreshes; that remains the separate lesson below.
 
 **What to do.** A gated Tests/UI test that reaches any config read runs under `@private_profile_test` (it takes `request`), like the other Console tests in the census. That also makes it run under pytest locally, so the red/green check needs no standalone runner.
 
+## A seam migration that sweeps one test file leaves siblings green by luck (TASK-35153, 2026-10-20)
+
+**Incident.** task-32804.7 rerouted `all_tool_gates()` from per-key `get_cli_setting` reads to one `load_cli_config_and_ensure_existence()` load; its follow-up commit (68dc7d0e14) migrated the three gate tests it broke in `Tests/UI/test_mcp_workbench.py`. Three sibling tests in `Tests/UI/test_mcp_servers_mode.py` still patched only `get_cli_setting` and kept passing for weeks — against the developer's real config — because their expected gate states happened to match a fresh config's defaults; the stale patches surfaced only when task-35153 changed the label text under them.
+
+**What to do.** When a read changes its config seam, grep every test file that patches the OLD seam for the same call path, not just the files whose tests went red: a stale patch keeps asserting whatever the real config says, which is a pass by coincidence, not evidence. Patch the seam the code reads (`load_cli_config_and_ensure_existence` since .7), so the test is hermetic.
+
 ## set_timer and set_interval run their callbacks in different tasks (TASK-34982, 2026-10-18)
 
 **Incident.** A test meant to stop the Console poll's timer in the middle of a row removal passed on the unfixed code twice. Both versions drove the paint with `app.set_timer(...)`, and in Textual 8.2.8 `set_timer` wraps its callback in `call_next`, so the paint ran on the app's own pump and stopping the timer cancelled nothing. In the first, the removal was not even the timer's: `set_messages` had already queued its own refresh on the transcript's pump, which removed the row first. The poll uses `set_interval`, which runs the callback inside the timer's own task; only then did the test fail on dev. A `pilot.pause()` while the row's Unmount was held also hung the test for 30 s, because Pilot waits for a callback from every mounted pump.

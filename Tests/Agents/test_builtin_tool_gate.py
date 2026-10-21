@@ -594,6 +594,107 @@ def test_only_externally_published_gates_are_flagged_restart_required(monkeypatc
     assert [g.key for g in gates if g.restart_required] == [WEB_DEEP_SEARCH_GATE_KEY]
 
 
+def test_all_tool_gates_rows_carry_an_effect_scope_from_one_table(monkeypatch):
+    """task-35153: every gate row names WHEN flipping it takes effect.
+
+    The scope is the truth the hub pane, the Settings Tools & MCP category
+    and the first-run Tools step all render; it lives HERE, on the row,
+    not in per-surface copy. From code: every provider is rebuilt per
+    Console agent run (next chat); the single restart gate is
+    ``web_deep_search_enabled`` -- the one `[tools]` key also read by
+    ``MCP/local_server_tools.py::build_server_local_provider()``, which
+    runs once when the external MCP server starts (``MCP/server.py``).
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        EFFECT_SCOPE_RESTART,
+        LOCAL_TOOLS_MASTER_KEY,
+        all_tool_gates,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import (
+        ASK_USER_GATE_KEY,
+        WEB_DEEP_SEARCH_GATE_KEY,
+    )
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    _patch_gate_config(monkeypatch)
+
+    gates = all_tool_gates()
+    valid = {EFFECT_SCOPE_NEXT_CHAT, EFFECT_SCOPE_RESTART}
+    assert all(gate.effect_scope in valid for gate in gates), [
+        (gate.key, gate.effect_scope) for gate in gates
+    ]
+
+    # Pin the one restart gate, by name.
+    assert [
+        gate.key for gate in gates if gate.effect_scope == EFFECT_SCOPE_RESTART
+    ] == [WEB_DEEP_SEARCH_GATE_KEY]
+
+    # Representative next-chat gates, one per kind: a builtin row, the local
+    # group's master switch, and a default-ON local gate.
+    by_key = {gate.key: gate for gate in gates}
+    assert by_key[_GATEABLE_BUILTINS[0].gate_key].effect_scope == EFFECT_SCOPE_NEXT_CHAT
+    assert by_key[LOCAL_TOOLS_MASTER_KEY].effect_scope == EFFECT_SCOPE_NEXT_CHAT
+    assert by_key[ASK_USER_GATE_KEY].effect_scope == EFFECT_SCOPE_NEXT_CHAT
+
+    # The pre-task boolean is DERIVED from the field, never independent.
+    assert [gate.key for gate in gates if gate.restart_required] == [
+        WEB_DEEP_SEARCH_GATE_KEY
+    ]
+
+
+def test_tool_gate_effect_suffix_renders_one_short_label_per_scope():
+    """task-35153: one short human string per scope (TASK-35018/35019 copy
+    rules), rendered as the ONE suffix every surface appends."""
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_LABELS,
+        EFFECT_SCOPE_NEXT_CHAT,
+        EFFECT_SCOPE_RESTART,
+        tool_gate_effect_suffix,
+    )
+
+    assert set(EFFECT_SCOPE_LABELS) == {EFFECT_SCOPE_NEXT_CHAT, EFFECT_SCOPE_RESTART}
+    assert all(label and not label.isupper() for label in EFFECT_SCOPE_LABELS.values())
+    assert tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT) == " (next chat)"
+    assert tool_gate_effect_suffix(EFFECT_SCOPE_RESTART) == " (restart to apply)"
+    # An unknown scope renders nothing rather than a wrong promise.
+    assert tool_gate_effect_suffix("nonsense") == ""
+
+
+def test_gate_effect_scopes_is_config_free_and_covers_every_gate(monkeypatch):
+    """task-35153: the scope table is ONE assignment the rows read from.
+
+    Config-free on purpose: the first-run wizard renders scope suffixes
+    from it without a disk read, and the assignment can never drift from
+    ``all_tool_gates()`` because the rows take their scope from this map.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_RESTART,
+        _gate_key_pairs,
+        all_tool_gates,
+        gate_effect_scopes,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("the scope table must not read config")
+
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", _boom
+    )
+
+    scopes = gate_effect_scopes()
+    assert set(scopes) == set(_gate_key_pairs())
+    assert scopes[("tools", WEB_DEEP_SEARCH_GATE_KEY)] == EFFECT_SCOPE_RESTART
+
+    _patch_gate_config(monkeypatch)
+    assert {
+        (gate.section, gate.key): gate.effect_scope for gate in all_tool_gates()
+    } == scopes
+
+
 def test_tool_gate_breadcrumb_names_the_tool_gates_pane(monkeypatch):
     """task-32284 AC#4: the Permissions legend's gate-off count says WHERE
     the gates live -- "the built-in server detail" never named the pane."""
