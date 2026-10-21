@@ -722,6 +722,7 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     deferred refresh finishes.
     """
     import functools
+    import itertools
     import sys
     import threading
     import traceback
@@ -768,12 +769,12 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     # until this fires, since the test cannot run to release it.
     watchdog = threading.Timer(5, expire)
     monkeypatch.setattr(ChatScreen, _MOUNT_REBUILD_STARTS[start], rebuild_then_step)
-    fetched_after_release = []  # skill discovery's context fetches
+    fetches = []  # when skill discovery fetched its context: before, in or after the hold
     service = app.skills_scope_service
     get_context = service.get_context
 
     async def observed_get_context(*args, **kwargs):
-        fetched_after_release.append(release.is_set())
+        fetches.append("after" if release.is_set() else "hold" if held.is_set() else "before")
         return await get_context(*args, **kwargs)
 
     monkeypatch.setattr(service, "get_context", observed_get_context)
@@ -784,13 +785,25 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             async with asyncio.timeout(5):
                 while not held.is_set():
                     await asyncio.sleep(0.01)
+            # The step's refresh must defer under the hold: a decorator retry,
+            # or skill discovery waiting without having fetched.
+            expected = {
+                "mount": "_adapt_console_workspace_to_width",
+                "roleplay": "_sync_console_identity_surfaces",
+            }.get(start)
             deferred, discovery_waited = set(), False
-            for _ in range(15):  # the mount's timers (<= 0.3 s), workers and polls
+            deadline = asyncio.get_running_loop().time() + 2
+            for tick in itertools.count():  # >= 0.75 s: the mount's timers, workers, polls
                 deferred.update(getattr(console, "_console_config_retries", None) or ())
                 discovery_waited = discovery_waited or any(
                     worker.group == "console-skill-discovery" and not worker.is_finished
                     for worker in console.workers
                 )
+                seen = (expected is None or expected in deferred) and (
+                    discovery_waited or start != "view-start"
+                )
+                if (tick >= 15 and seen) or asyncio.get_running_loop().time() > deadline:
+                    break
                 await asyncio.sleep(0.05)
             waited = release.is_set()
             release.set()
@@ -798,21 +811,16 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             assert not waited, "the Console mount waited for the config rebuild:\n" + "".join(
                 blocked[-14:]
             )
-            # The step's refresh deferred under the hold: a decorator retry, or
-            # skill discovery waiting without having fetched.
-            expected = {
-                "mount": "_adapt_console_workspace_to_width",
-                "roleplay": "_sync_console_identity_surfaces",
-            }.get(start)
             assert expected is None or expected in deferred, deferred
             assert discovery_waited or start != "view-start"
-            assert False not in fetched_after_release, "skill discovery fetched in the hold"
-            # Deferred, not dropped: every retry runs and discovery fetches.
+            assert "hold" not in fetches, "skill discovery fetched in the hold"
+            # Deferred, not dropped: every retry runs, and discovery fetches
+            # unless it already had before the hold began.
             async with asyncio.timeout(5):
                 while (
                     getattr(console, "_console_config_retries", None)
                     or not console._console_attach_reconciled
-                    or True not in fetched_after_release
+                    or not {"before", "after"} & set(fetches)
                     or any(
                         worker.group == "console-skill-discovery" and not worker.is_finished
                         for worker in console.workers

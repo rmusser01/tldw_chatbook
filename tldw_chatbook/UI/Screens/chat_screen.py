@@ -21509,8 +21509,8 @@ class ChatScreen(BaseAppScreen):
         and a pure terminal resize triggers neither, so without this hook crossing the
         100/84-column thresholds mid-session left the grid in its stale (possibly
         broken) layout until some unrelated state change happened to rebuild it.
-        Guarded on the width BAND so a resize drag does not rebuild the (store-
-        reading) effective rail state on every event.
+        Guarded on the width BAND so a resize drag does not rebuild the
+        (store-reading) effective rail state on every event.
         """
         band = console_rail_width_band(event.size.width)
         if band == self._last_console_workspace_width_band:
