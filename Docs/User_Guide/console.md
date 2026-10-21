@@ -501,10 +501,11 @@ fails without playing a truncated file.
 
 An entry that opens a dialog (Provider, Model, System prompt, Assistant,
 Scope, the cost figure, and the composer menu's **Library access…**) opens
-one dialog however fast it is pressed. Closing a dialog returns focus to the
-row, so if you go on typing there, each Space or Enter presses the entry
-again: presses that arrive while its dialog is opening or open are ignored,
-and once the dialog closes the next press opens it again.
+one dialog however fast it is pressed: presses that arrive while its dialog
+is opening or open are ignored, and once the dialog closes the next press
+opens it again. Closing a dialog opened from the status row returns focus to
+the row, so if you go on typing there, each Space or Enter presses that
+entry again.
 
 ### Long conversations
 
