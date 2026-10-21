@@ -458,7 +458,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-35597 raised it further: the five Tools-hub suites were made
 # PR-gate-lane safe and re-censused (3 whole files + 112 node ids) on top of
 # the 430 above.
-MINIMUM_FILES = 545
+# TASK-36036/36037 append four entries without changing dev slots or limits.
+MINIMUM_FILES = 549
 
 
 def read_census(path: Path) -> list[str]:

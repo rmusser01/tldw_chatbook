@@ -1,7 +1,7 @@
 ---
 id: TASK-36037
 title: Preserve unfinished Evals dataset names when snippet imports complete
-status: In Progress
+status: Done
 created_date: 2026-10-21 16:13
 labels:
 - evals
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-21-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-21 18:54
+updated_date: 2026-10-21 19:13
 ---
 
 ## Description
@@ -41,10 +41,10 @@ Reason: This is routine preservation of existing dataset-editor state within its
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Successful TXT, CSV and JSON snippet imports preserve the exact unfinished dataset-name edit, including invalid or whitespace-containing text, without implicitly renaming the stored dataset.
-- [ ] #2 Imported snippets, counts, groups and warnings refresh correctly while the name draft remains intact; ordinary imports without a draft keep their behavior.
-- [ ] #3 When the name field is focused at import completion, its editing focus, exact caret position and selection range are preserved; the update does not move focus to the rail.
-- [ ] #4 Explicit Rename retains existing empty-name/collision validation and updates the stored name, heading and catalog; cancelled or failed imports retain the name draft. Mounted private-profile real-SQLite regressions cover those outcomes through actual import-worker completion.
+- [x] #1 Successful TXT, CSV and JSON snippet imports preserve the exact unfinished dataset-name edit, including invalid or whitespace-containing text, without implicitly renaming the stored dataset.
+- [x] #2 Imported snippets, counts, groups and warnings refresh correctly while the name draft remains intact; ordinary imports without a draft keep their behavior.
+- [x] #3 When the name field is focused at import completion, its editing focus, exact caret position and selection range are preserved; the update does not move focus to the rail.
+- [x] #4 Explicit Rename retains existing empty-name/collision validation and updates the stored name, heading and catalog; cancelled or failed imports retain the name draft. Mounted private-profile real-SQLite regressions cover those outcomes through actual import-worker completion.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,17 @@ Reason: preserve existing widget-local name state and explicit Rename; no storag
 3. Verify explicit Rename validation and stored name/heading/catalog updates, cancelled/failed import preservation and ordinary no-draft imports. Update Evals architecture documentation and run targeted controls and scoped static checks.
 4. Obtain independent task review. Controller admits selected regressions into required CI, checks combined integration, then completes notes and criteria from actual evidence.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Snippet imports now recompose only a read-only result child from the existing combined-list return value. The live name Input, Rename row, heading and Import button survive, preserving exact invalid/whitespace draft text, focus, caret and selection. Explicit Rename remains the only writer and retains validation/catalog updates; no extra database read or draft store was added.
+
+Changed snippet_editor.py, new test_evals_snippet_import_drafts.py and Evals architecture documentation. No stylesheet, schema, dependency, import policy or view-model boundary change. Shared CI admits every core TXT/CSV/JSON case and retains all prior coverage/limits.
+
+ADR required: no. Existing ADR-033/150/161 govern this bounded correction.
+
+Evidence: final six mounted private-profile regressions pass in 108.70s, two token/component governance controls pass, and independent Superpowers spec/quality review is Approved with no Critical/Important findings. Shared CI contracts: 121 pass; six new gated cases collect. Both changed Python files pass Ruff lint/format, UTF8/compile and whitespace checks. Six existing controls stopped before their bodies in source-profile fixture admission and are not counted as passing. No full suite, production native-terminal or OS-picker claim; hosted results are tracked on the PR.
+
+[Qualification and structured evidence](../../Docs/superpowers/qa/2026-10-21-textual-bulk-and-import-fixes.md).
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

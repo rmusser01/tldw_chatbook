@@ -902,3 +902,14 @@ Tests/UI/test_screen_navigation.py::test_navigation_flush_that_never_returns_doe
 Tests/UI/test_screen_navigation.py::test_navigation_timeout_does_not_cancel_the_in_flight_save
 Tests/UI/test_screen_navigation.py::test_broken_screen_content_degrades_instead_of_killing_a_running_app
 Tests/UI/test_screen_navigation.py::test_nav_bar_overflow_menu_reaches_undigitized_destinations
+
+# TASK-36036/36037: append four entries; retain all545 dev slots,
+# thirteen shards and existing limits. These entries occupy shards13,1,2,3.
+# TASK-36036: admitted toggle retains its captured batch.
+Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-toggle]
+# TASK-36036: admitted confirmed deletion retains its captured batch.
+Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_same_and_cross_verb_overlap[delete-delete]
+# TASK-36037: every TXT/CSV/JSON draft/caret/selection case stays gated.
+Tests/UI/test_evals_snippet_import_drafts.py::test_import_preserves_live_name_edit
+# TASK-36036: pending mark/clear gestures cannot erase batch ownership.
+Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_mark_and_clear_gestures
