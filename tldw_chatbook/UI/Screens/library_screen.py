@@ -9460,13 +9460,20 @@ class LibraryScreen(BaseAppScreen):
         the hidden screen (three of them relied entirely on the
         real-unmount auto-cancel and had no explicit stop anywhere).
 
-        Deliberately NOT done here: cache wipes, generation bumps, or
-        authority-flag flips. Those exist in ``on_unmount`` because a
-        FRESH instance must not trust a dead visit's state; a suspended
-        instance is live, and a background result landing on it while
-        hidden simply means fresher data at resume. Rejecting in-flight
-        work at suspend would re-create the stranded-"Loading" class this
-        design avoids.
+        Deliberately NOT done here: cache wipes or authority-flag flips.
+        Those exist in ``on_unmount`` because a FRESH instance must not
+        trust a dead visit's state; a suspended instance is live, and a
+        background result landing on it while hidden simply means fresher
+        data at resume. Rejecting in-flight work at suspend would
+        re-create the stranded-"Loading" class this design avoids.
+
+        One generation IS bumped here (TASK-34000.9): the Notes autosave
+        generation, through ``_invalidate_library_note_autosave``. That
+        generation is checked only BEFORE a save starts
+        (``library_note_autosave.note_save_starts``), so it fences off a
+        save a just-fired timer had queued but not begun -- which would
+        otherwise write behind the covering dialog -- while a save already
+        in flight still lands. The resume re-arms whatever is still dirty.
 
         No super() call -- Textual's dispatcher invokes every handler
         along the MRO separately for this event (the on_mount contract).

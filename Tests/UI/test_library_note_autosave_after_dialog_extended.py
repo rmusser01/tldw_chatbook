@@ -141,17 +141,28 @@ async def test_a_dialog_on_the_media_row_does_not_save_a_parked_note(
                 body = await _open_note(screen, pilot, _TITLE, profile.note_id)
                 await _type_at_end(pilot, body, " parked")
                 screen.query_one("#library-row-browse-media", Button).press()
+                # Fix round 2: F1 pressed the instant the editor left the DOM
+                # was swallowed while the Media route was still settling
+                # (reviewer run: "timed out waiting for F1 help to open").
+                # Wait for the route to be mounted and for focus to have
+                # settled on it before the key.
                 await _until(
                     pilot,
-                    lambda: not screen.query("#library-note-body"),
-                    "the rail to leave Notes",
+                    lambda: (
+                        bool(screen.query(".library-media-route"))
+                        and not screen.query("#library-note-body")
+                        and screen.focused is not None
+                    ),
+                    "the Media route to settle",
                 )
+                await pilot.pause()
                 parked = screen._library_note_session.snapshot
                 assert parked is not None and parked.dirty
                 assert screen._notes_state.autosave_timer is None
 
                 await _open_help(pilot, app, screen, profile)
                 await _close_dialog(pilot, app, screen)
+                await pilot.pause()  # the resume handler has run by now
                 timer_after_dialog = screen._notes_state.autosave_timer
                 await pilot.pause(_MAX_WAIT + 1.0)  # past any re-armed delay
                 row_while_parked = profile.note(profile.note_id)
