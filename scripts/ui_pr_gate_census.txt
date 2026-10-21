@@ -23,7 +23,12 @@ Tests/UI/test_console_archive_switcher_controls.py
 Tests/UI/test_console_auto_rag_on_send.py
 Tests/UI/test_console_browser_search_echo.py
 Tests/UI/test_console_character_picker_debounce.py
-Tests/UI/test_console_chip_focus_contract.py
+# TASK-35992: exchange slots 25/61 (jobs 6/2); every other slot stays put.
+# Raw per-occurrence replay of runs 39550959500/39559121390 reduces UI2's
+# worst observed test load 19.37 -> 16.79 min; UI6 becomes 14.51 min.
+# Job setup is additional; TASK-35834's global margin criteria remain open.
+# R2 F8 (C8): the quit summary's duration saves on Enter or on leaving the field.
+Tests/UI/test_settings_session_summary_save.py
 Tests/UI/test_console_conversation_row_wrap.py
 Tests/UI/test_console_dictionaries_inspector.py
 Tests/UI/test_console_edit_modal_keystroke_guard.py
@@ -86,8 +91,7 @@ Tests/UI/test_console_composer_run_controls.py::test_palette_stop_command_stops_
 Tests/UI/test_console_composer_run_controls.py::test_enter_on_each_idle_composer_button_runs_its_own_action
 
 Tests/UI/test_console_settings_core_first.py
-# R2 F8 (C8): the quit summary's duration saves on Enter or on leaving the field.
-Tests/UI/test_settings_session_summary_save.py
+Tests/UI/test_console_chip_focus_contract.py
 Tests/UI/test_console_settings_hidden_fields.py
 Tests/UI/test_console_settings_model_change.py
 # Capture review items 9-11: Console Behavior's one frame, one control column,

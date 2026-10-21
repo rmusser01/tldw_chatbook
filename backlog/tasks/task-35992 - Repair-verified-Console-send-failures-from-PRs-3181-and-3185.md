@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 06:59'
+updated_date: '2026-10-21 08:03'
 labels:
   - console
   - bug
@@ -35,6 +35,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #8 Mounted approval projection journeys begin only after the current Console attachment is reconciled and answerable; their original card, count, navigation and decision assertions remain enforced.
 - [x] #9 Windows late chat-create projection journeys keep test-owned worker gates held until explicit release, preserve the close/navigation and sibling-decision assertions, and retire held workers during cleanup within the existing test deadline.
 - [x] #10 The replacement send-repair task has a unique filename/frontmatter ID and consistent live references in the combined dev and PR task tree, with renumbering provenance preserving its original identity.
+- [x] #11 The UI gate retains its exact census and existing shard count, test/job timeouts, dependencies and required aggregation, with the UI2 allocation reduced by a measured balance correction; hosted outcomes and remaining global margin limits stay explicit.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,9 +49,10 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 6. For CI UI10, witness completed and answerable Console attachment before mounting approval journeys, reproduce the incomplete-attachment legacy behavior, and rerun the original assertions.
 7. Instrument the Windows late-projection baseline failure; replace test-owned five-second self-expiry with explicit event release under existing test deadline/finally cleanup, verify close and navigation paths and failure cleanup, then review.
 8. Resolve the CI integration collision by renumbering this younger task and all live references, retaining ownership provenance, and verifying uniqueness against the combined dev/PR task tree.
-9. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
+9. Diagnose the hosted UI2 job-cap cancellation from comparable raw shard logs; balance measured whole-file slots without changing coverage, dependencies, counts or limits; verify census/queue contracts and request independent review.
+10. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
 ADR required: no
-ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md apply.
+ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md and backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
 <!-- SECTION:PLAN:END -->
 
@@ -240,3 +242,52 @@ identical executable ASTs and have zero Ruff diagnostics; changed ranges are
 formatted and diff checks pass. Independent scoped review reports no blocking
 findings. This metadata repair does not require repeating unrelated UI suites;
 new hosted CI remains the final integration gate.
+
+
+### UI2 job-budget follow-up
+
+Run 39559121390/job 119086478771 was cancelled at the unchanged 20-minute
+job limit after 97% of UI2, with no test assertion failure reported. GitHub's
+annotation explicitly names the 20m0s maximum. The preceding behavior-identical
+head 430757403e passed UI2's 176 cases in 1033.85s pytest / 18m05s job time;
+both runs checked out merge refs based on dev 906497d9b4. This is accumulated
+shard cost on slower hosted execution, not an established product failure or
+an infrastructure error that warrants a blind retry.
+
+Raw timings from all ten preceding shards and seven completed current shard
+logs (including the cancelled prefix) were replayed by occurrence, preserving
+repeated filenames and validating progress-path order against each selection.
+The stock replay's known repeated-filename issue is already recorded by
+TASK-35834; no replay-tool change is bundled here. Completed entries of the
+cancelled prefix contribute observed costs; unrun entries retain the other
+run's measurements. Whole-file session-summary-save costs up to 155.42s while
+the static strip-focus contract costs less than a second.
+
+These two whole-file entries trade census slots 25/61, hence jobs 6/2, and the
+session-summary criterion comment travels with its suite. All 408 entries
+remain unique and run once; the other eight ordered shard selections are
+identical. Per-occurrence worst replay drops UI2 from 19.370 to 16.789 pytest
+minutes; UI6 rises from 11.929 to 14.510. Observed complete-job overhead tops
+out at 97.153s; allowing 120s projects 18.789 and 16.510 job minutes. These are
+placement estimates, not hosted pass claims. All other predicted loads stay
+unchanged, including the 17.763-minute pytest maximum on job 4.
+
+The ten-shard matrix, 20-minute job / 180-second test limits, minimal
+dependencies, serial execution, test bodies, P0 entries, S1 block positions
+and required failed-lane aggregation remain unchanged. TASK-35834's broader
+node-distribution, three-minute global margin and three-run qualification
+criteria remain open; this is a measured interim balance repair. ADR required:
+no; the existing ADR-103 placement and aggregation policy is preserved.
+
+
+Verification: 383 focused CI tests pass (101.19s): census failure/coverage
+checks, derived workflow contracts, shard replay/count statements, Console P0
+coverage and queue-pressure contracts. The standalone census checker passes
+408/floor 408; exact Counter/order assertions and diff checks pass. Independent
+review recomputed the occurrence timings, overhead and two projections,
+confirmed the exact eight unchanged shard sequences and isolated/pure nature
+of the moved suites, and found no actionable findings. New-placement hosted
+timing and collection/import composition remain pending, so this is not
+claimed as a hosted pass or global margin qualification. At this checkpoint
+all nine other UI shards on the preceding head passed; PR Fast Lane was still
+running. No full suite was run.
