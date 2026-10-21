@@ -4,9 +4,12 @@ The post-UI-ready pre-import thread imports ``FIRST_SEND_MODULES`` while a
 send on the UI thread may import the same modules. Python gives each module
 its own import lock. If two modules import each other at module level and the
 two threads enter the cycle at different modules, each holds one lock and
-waits for the other; CPython breaks that deadlock by handing one thread the
-other's partially initialised module, which surfaces as an ``AttributeError``
-or ``ImportError`` in the send.
+waits for the other. CPython (3.12) detects that deadlock and raises
+``_DeadlockError``, a ``RuntimeError`` ("deadlock detected by _ModuleLock"),
+from the import in the thread that would close the cycle; if that thread is
+the send's, the send fails with it. Only a thread that merely waits for a
+module to finish initialising is handed the partial module instead, which
+surfaces as an ``AttributeError`` or ``ImportError``.
 
 So the test takes the modules the warm-up really imports (a fresh interpreter
 imports the app and the initial Console route, as at UI-ready, then the list

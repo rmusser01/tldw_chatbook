@@ -21,11 +21,15 @@ TASK-33620.15.14: run first, the warm-up pushed every screen import back by
 its own time, so a Library click one second after the Console's first frame
 found Library cold in 8 of 8 launches (0 of 8 on origin/dev) and imported
 about 200 modules on the UI loop; after the routes, a first navigation sees
-origin/dev's timing. A send racing the
-warm-up blocks on Python's per-module import lock no longer than its own
-import would have taken, and ``Tests/UI/test_console_first_send_import_cycles.py``
-keeps the list free of module-level import cycles, which two threads could
-otherwise deadlock on.
+origin/dev's timing.
+
+The thread parks before each import while accepted Console work owns the
+loop, so a send races the warm-up only when it arrives mid-import. A send that
+needs the module being imported blocks on Python's per-module import lock no
+longer than its own import would have taken; one that needs a different module
+shares the GIL with that import instead.
+``Tests/UI/test_console_first_send_import_cycles.py`` keeps the list free of
+module-level import cycles, which two threads could otherwise deadlock on.
 
 Keep the list to modules the send path really imports, in the order it does;
 ``Tests/UI/test_console_first_send_preimport.py`` checks that each is still
