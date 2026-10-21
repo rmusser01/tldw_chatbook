@@ -1,10 +1,11 @@
 ---
 id: TASK-35900
 title: Repair verified Console send failures from PRs 3181 and 3185
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
+updated_date: '2026-10-21 02:39'
 labels:
   - console
   - bug
@@ -29,7 +30,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #3 Recovery actions release only their matching paused retrieval owner and allow empty or matching drafts while preserving later edits and attachments.
 - [x] #4 Never-answerable dispatch confirmations terminate without silently disabling persisted project instructions.
 - [x] #5 Repeated qualification avoids reparsing unchanged evidence but observes evidence replacement and fresh native qualification on every authority check.
-- [ ] #6 Targeted regression tests and changed-file static checks pass; replacement PR and superseded PR closures credit Csavoldi.
+- [x] #6 Targeted regression tests and changed-file static checks pass; replacement PR and superseded PR closures credit Csavoldi.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -72,3 +73,8 @@ The first group is refused by the existing image-capability test setup before re
 
 
 The exact UI resend test that exposed #3185's bad enum import was also run. On this Windows host, both replacement and untouched dev fail earlier at the same `llama.cpp unavailable` transcript wait (23.72s and 22.63s call times). This is a seventh baseline-reproduced adjacent failure, not a passing UI claim. The direct recovery/real-controller tests cover the corrected import and release path. Local evidence remains in the ignored/untracked test directories and is not shipped.
+
+
+### Publication closeout
+
+Published replacement PR #3189: https://github.com/rmusser01/tldw_chatbook/pull/3189 . Closed #3181 and #3185 only after replacement creation succeeded, with links and explicit thanks to @Csavoldi. The replacement description credits discovery, reproductions, root-cause investigation and original patches; implementation commit `b2e5e95076` includes `Co-authored-by: Csavoldi <clemsavoldi@gmail.com>`. CI remains the merge gate; no merge or auto-merge was requested or performed.
