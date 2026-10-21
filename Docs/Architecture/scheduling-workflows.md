@@ -46,6 +46,17 @@ and later arrivals cannot retarget it. A batch retains the existing per-row
 success/failure count and failed rows remain unread for retry. Review-plus-outbox
 transactions and each row's owner still belong to `SchedulingService` (ADR-018).
 
+Reminder bulk toggle and confirmed deletion share one synchronous workbench
+admission before worker submission. The batch freezes each row's ID and owner,
+and toggle also freezes its desired enabled value. Further bulk gestures and
+mark/clear gestures receive a busy refusal until mutation and refresh submission
+settle; cursor navigation remains available. Completion removes only the captured
+marks and preserves the existing per-row success/refusal/failure counts. Worker
+submission failure retains marks for retry, and every settlement releases
+admission. Service ownership, transfer guards and offline outcomes remain under
+ADR-018; this screen-local guard does not establish physical cancellation of a
+remote request or extend the batch lifetime beyond the workbench.
+
 ## What can be scheduled
 
 - **Reminders** — one-time or cron-recurring; notification dispatch.

@@ -1,7 +1,7 @@
 ---
 id: TASK-36036
 title: Keep admitted Schedules reminder bulk actions and newer marks intact
-status: To Do
+status: In Progress
 created_date: 2026-10-21 16:12
 labels:
 - scheduling
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-21-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-21 18:32
 ---
 
 ## Description
@@ -43,3 +46,16 @@ Reason: A bounded UI operation/selection ownership correction retains Scheduling
 - [ ] #3 Completion cannot erase selection changes made after admission; newer marks remain available, or selection-changing gestures are clearly refused while the batch is pending.
 - [ ] #4 Deterministic mounted keyboard/confirmation tests with the existing private-profile and real SQLite services cover toggle/delete overlap, newer marks, ordinary completion and refusal/failure controls while preserving existing local/server and transfer guards.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR paths: backlog/decisions/018-local-server-hybrid-scheduled-tasks.md; backlog/decisions/033-application-session-state-ownership.md
+Reason: bounded correction of UI admission/selection ownership; preserve SchedulingService, storage, per-row owner checks, server/offline/transfer and shutdown contracts. ADR-116 remains Proposed context.
+
+1. Add deterministic mounted keyboard/confirmation regressions using the existing private-profile and real SQLite services. Prove same-verb toggle/delete overlap and newer marks fail before product edits; use controlled server-client awaits without claiming remote physical cancellation.
+2. Admit one reminder bulk mutation synchronously, freeze intended IDs/owners/operation, clearly refuse overlapping mutations and selection changes while pending, and release admission on successful, refused, failed or scheduling-error settlement. Keep cursor navigation and existing service policies intact.
+3. Cover ordinary and partial refusal/failure outcomes and post-settlement retry. Update scheduling architecture documentation; use targeted affected tests and scoped static checks only.
+4. Obtain independent task review, then let the controller admit selected new regressions into the required UI census and run combined integration/CI checks. Complete task notes and criteria only after all evidence is available.
+<!-- SECTION:PLAN:END -->
