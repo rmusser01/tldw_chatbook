@@ -500,6 +500,9 @@ jobs:
     # heaviest shard carries 15.2 pytest min at nine, 13.7 at ten and 12.4 at
     # eleven, plus ~1.1-1.7 min of setup: ten is the fewest that still leaves
     # one hung test's report room under the cap (~15.4 + 3.3 of 20).
+    # TASK-35834 runs thirteen shards: measured worst-case replays plus 110s
+    # setup and 15% variance project <=1000s, below the 1020s acceptance cap.
+    # Complete duration rows let replay charge function selectors by node.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -508,7 +511,7 @@ jobs:
       # Report every shard, so one red shard does not hide another.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
 
     steps:
       - uses: actions/checkout@v4
@@ -538,6 +541,7 @@ jobs:
           echo "Gating shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} Tests/UI entries."
           pytest "${SHARD[@]}" \
             --timeout=180 \
+            --durations=0 --durations-min=0 \
             --tb=short
 
   console-p0-gate:

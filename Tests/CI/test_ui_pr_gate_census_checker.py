@@ -9,10 +9,11 @@ Each test below drives `main()` through one rejection with a temporary census
 and asserts both the exit status and the diagnostic, so a future edit that
 silently stops rejecting is caught.
 """
+
 from __future__ import annotations
 
+import ast
 import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,13 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_ui_pr_gate_census.py"
 
 
-def _checker(tmp_path: Path, lines: list[str], *, floor: int | None = None,
-             root: Path | None = None):
+def _checker(
+    tmp_path: Path,
+    lines: list[str],
+    *,
+    floor: int | None = None,
+    root: Path | None = None,
+):
     """Load a fresh checker module pointed at a throwaway census.
 
     Args:
@@ -62,8 +68,12 @@ def _tree(tmp_path: Path, *rel: str) -> Path:
 def test_a_valid_census_passes(tmp_path, capsys):
     """The positive control: without it a checker that always fails looks correct."""
     root = _tree(tmp_path, "Tests/UI/test_a.py", "Tests/UI/test_b.py")
-    m = _checker(tmp_path, ["# comment", "", "Tests/UI/test_a.py", "Tests/UI/test_b.py"],
-                 floor=2, root=root)
+    m = _checker(
+        tmp_path,
+        ["# comment", "", "Tests/UI/test_a.py", "Tests/UI/test_b.py"],
+        floor=2,
+        root=root,
+    )
     assert m.main() == 0
     assert "OK:" in capsys.readouterr().out
 
@@ -71,14 +81,17 @@ def test_a_valid_census_passes(tmp_path, capsys):
 def test_comments_and_blank_lines_are_not_counted_as_entries(tmp_path):
     """A census padded with comments must not satisfy the floor."""
     root = _tree(tmp_path, "Tests/UI/test_a.py")
-    m = _checker(tmp_path, ["# one", "", "  ", "# two", "Tests/UI/test_a.py"],
-                 floor=2, root=root)
+    m = _checker(
+        tmp_path, ["# one", "", "  ", "# two", "Tests/UI/test_a.py"], floor=2, root=root
+    )
     assert m.main() == 1
 
 
 def test_a_duplicate_entry_is_rejected(tmp_path, capsys):
     root = _tree(tmp_path, "Tests/UI/test_a.py")
-    m = _checker(tmp_path, ["Tests/UI/test_a.py", "Tests/UI/test_a.py"], floor=1, root=root)
+    m = _checker(
+        tmp_path, ["Tests/UI/test_a.py", "Tests/UI/test_a.py"], floor=1, root=root
+    )
     assert m.main() == 1
     assert "duplicate entry" in capsys.readouterr().err
 
@@ -93,8 +106,12 @@ def test_a_path_outside_tests_ui_is_rejected(tmp_path, capsys):
 def test_a_censused_file_that_no_longer_exists_is_rejected(tmp_path, capsys):
     """The case the gate exists for: a rename silently shrinks what runs."""
     root = _tree(tmp_path, "Tests/UI/test_a.py")
-    m = _checker(tmp_path, ["Tests/UI/test_a.py", "Tests/UI/test_renamed_away.py"],
-                 floor=1, root=root)
+    m = _checker(
+        tmp_path,
+        ["Tests/UI/test_a.py", "Tests/UI/test_renamed_away.py"],
+        floor=1,
+        root=root,
+    )
     assert m.main() == 1
     assert "listed file does not exist" in capsys.readouterr().err
 
@@ -307,7 +324,10 @@ def test_a_renamed_parametrize_id_fails_the_census(tmp_path, capsys):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_PARAM_SOURCE, encoding="utf-8")
     m = _checker(
-        tmp_path, ["Tests/UI/test_params.py::test_stacked[escape-shout]"], floor=1, root=root
+        tmp_path,
+        ["Tests/UI/test_params.py::test_stacked[escape-shout]"],
+        floor=1,
+        root=root,
     )
     assert m.main() == 1
     assert "no parametrize id" in capsys.readouterr().err
@@ -321,14 +341,17 @@ def _overlaps(targets):
 
 
 def test_disjoint_pytest_targets_have_no_overlap():
-    assert _overlaps(
-        [
-            "Tests/CI",
-            "Tests/UI/test_a.py",
-            "Tests/UI/test_b.py::test_x",
-            "Tests/UI/test_b.py::test_y[1]",
-        ]
-    ) == []
+    assert (
+        _overlaps(
+            [
+                "Tests/CI",
+                "Tests/UI/test_a.py",
+                "Tests/UI/test_b.py::test_x",
+                "Tests/UI/test_b.py::test_y[1]",
+            ]
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -456,7 +479,9 @@ def test_a_target_inside_another_listed_target_is_named(targets):
 
 
 def test_prefix_without_a_node_boundary_is_not_an_overlap():
-    assert _overlaps(["Tests/UI/test_b.py::test_x", "Tests/UI/test_b.py::test_xy"]) == []
+    assert (
+        _overlaps(["Tests/UI/test_b.py::test_x", "Tests/UI/test_b.py::test_xy"]) == []
+    )
 
 
 def test_dead_defines_test_is_gone():
@@ -464,3 +489,37 @@ def test_dead_defines_test_is_gone():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert not hasattr(module, "defines_test")
+
+
+def test_split_model_defaults_keeps_every_test_function_gated_once():
+    root = SCRIPT.parents[1]
+    path = "Tests/UI/test_settings_model_defaults_rows.py"
+    tree = ast.parse((root / path).read_text(encoding="utf-8"))
+    expected = {
+        path + "::" + node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+    }
+    entries = [
+        line.strip()
+        for line in (root / "scripts/ui_pr_gate_census.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    selected = [entry for entry in entries if entry.split("::", 1)[0] == path]
+    assert len(selected) == len(expected)
+    assert set(selected) == expected  # function selectors retain all parameter cases
+    # Reading the actual matrix prevents a split that still deals every row
+    # function back into one job, even though the census has no duplicates.
+    import yaml
+
+    jobs = yaml.safe_load(
+        (root / ".github/workflows/derived-artifacts.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    total = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
+    assert (
+        len({index % total for index, entry in enumerate(entries) if entry in expected})
+        > 1
+    )

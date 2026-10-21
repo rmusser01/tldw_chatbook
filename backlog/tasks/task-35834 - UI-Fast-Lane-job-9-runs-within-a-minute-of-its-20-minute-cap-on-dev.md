@@ -1,7 +1,7 @@
 ---
 id: TASK-35834
 title: UI Fast Lane job 9 runs within a minute of its 20-minute cap on dev
-status: To Do
+status: In Progress
 created_date: 2026-10-20 13:59
 labels:
 - follow-up
@@ -12,6 +12,9 @@ references:
 - scripts/ui_pr_gate_census.txt
 - scripts/ui_lane_shard_replay.py
 - .github/workflows/derived-artifacts.yml
+assignee:
+- '@codex'
+updated_date: 2026-10-21 00:03
 ---
 
 ## Description
@@ -38,3 +41,18 @@ Further qualification: [run 39455910928](https://github.com/rmusser01/tldw_chatb
 - [ ] #2 Over at least three PR runs after the change, every UI Fast Lane job keeps at least 3 minutes under its 20-minute cap
 - [ ] #3 `scripts/ui_lane_shard_replay.py`'s estimate is checked against measured shard times at that census, and corrected or documented if it still scores node-id entries by whole-file seconds (it was off by up to 6 minutes per shard on #3169's census, 2026-10-20)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md (existing). Reason: tune the existing serial round-robin census and its diagnostic estimator; preserve dependencies, triggers, required aggregation and timeout contracts. 1. Preserve PR3182 head8e6b1ee timing evidence; measure actual per-occurrence costs and setup overhead, and identify heavy files. 2. Add failing replay controls for repeated file occurrences and node-level timing; correct estimator without changing gated assertions. 3. Replace measured heavy whole-file entries with complete function-level coverage, rebalance using measured costs, and validate exact collected-node preservation. Keep20-minute job and180-second test limits; add matrix capacity only if measured budgets require it, updating existing count statements. 4. Run targeted CI controls and static checks; request independent Superpowers review and fix findings. Add work to PR3182 and rebase onto current dev with force-with-lease. 5. Obtain at least three successful post-change PR run attempts with all UI jobs at most1020seconds; compare replay against actual census and publish qualification. Address PR feedback, mark Done only after every criterion is evidenced.
+<!-- SECTION:PLAN:END -->
+
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented complete16-function coverage of model-defaults rows (same23 collected parameter nodes), a measured13-shard deal with430 census entries, full duration logging, and replay attribution for repeated files and unequal node costs. The92-entry Phase7 block is rebalanced without dropping any prior selector or assertion; job20m/test180s limits, dependencies and required aggregation remain unchanged. Existing ADR-103 is amended with dated capacity evidence; no new ADR required.
+
+Four replay regressions and the split-coverage guard failed correctly before their fixes. Replay14PASS; six affected CI files390PASS with one stale matrix-size pin, then the corrected pin1PASS. Exact collection and census430/floor430 pass. Old-log node estimates retain documented partial-duration limitations; corrected exact-census baseline estimates differ from observed shard progress by at most33seconds. Static verification, independent Superpowers review, current-dev rebase and three hosted qualification attempts are still pending; acceptance remains unchecked until evidenced. See Docs/superpowers/qa/2026-10-20-ui-lane-headroom.md and companion evidence JSON.
+<!-- SECTION:NOTES:END -->

@@ -108,12 +108,12 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane runs its census as shards (TASK-34353; ten since
-  TASK-33007), the Console P0 gate is a third lane (TASK-33621.27), and the PR
+  grown since: the UI lane runs its census as shards (TASK-34353; thirteen since
+  TASK-35834), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
   tracking tests and the Dreams and Guardian boundary contracts are jobs of
   their own (TASK-34916, TASK-34929, TASK-34986), so an ordinary unlabeled,
-  non-GGUF PR now runs sixteen test runners at once, seventeen with perf-guard
+  non-GGUF PR now runs nineteen test runners at once, twenty with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -268,3 +268,21 @@ passed the cap. Over 20 PR runs (2026-10-18/19) `dev`'s 41 alone took median
 17.5 / max 20.0 min; the 52 alone ran in 266.9 s serial in the job's install set.
 One more runner per PR: that makes sixteen concurrent test runners per PR, then
 the aggregate.
+
+
+2026-10-20 (TASK-35834): thirteen UI shards replace ten, retaining the serial
+round-robin checker, all gated tests, dependencies, 20-minute job cap,
+180-second test timeout and fail-closed aggregation. TASK-35834: thirteen UI
+shards. The current total is nineteen concurrent test runners per PR, twenty
+with perf-guard. Historical counts above retain their dates.
+
+The model-defaults whole-file selector becomes all 16 function selectors,
+including every parameter case (415 -> 430 census entries). Only the existing
+92-entry Phase 7 block is rebalanced; its first entry stays fixed. Two green
+runs' worst file/node costs project 995s pytest at ten shards, 829s at twelve,
+774s at thirteen and 797s at fourteen. Adding 110s setup and 15% runner variance
+makes thirteen the smallest evaluated layout below the 1020s acceptance cap
+(1000s). More shards are not monotonically better. All duration phases are
+logged to correct node attribution; unknown costs in older top-25 logs share
+only the unmeasured file remainder. Hosted qualification, including three
+post-change PR attempts, is recorded in the TASK-35834 QA report.

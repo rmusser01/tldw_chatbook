@@ -157,7 +157,7 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     # A different count re-deals every entry: replay before changing it.
     # TASK-33007 (PR #3057): ten, by the same replay once Phase 7's 92 census
     # entries joined (heaviest shard 15.2 pytest min at nine, 13.7 at ten).
-    assert strategy["matrix"]["shard"] == list(range(1, 11))
+    assert strategy["matrix"]["shard"] == list(range(1, 14))
     assert job["timeout-minutes"] == 20
 
     install = next(

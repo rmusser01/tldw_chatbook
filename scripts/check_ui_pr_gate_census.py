@@ -453,7 +453,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-35865..35870 add seven representative mounted regressions and retain
 # all 408 prior entries. Measured whole-file slot swaps preserve every node,
 # the ten shards and all time limits; TASK-35834 headroom work stays open.
-MINIMUM_FILES = 415
+# TASK-35834: lane now runs thirteen. The model-defaults whole-file selector
+# becomes all 16 function selectors (+15); see its coverage guard in Tests/CI.
+MINIMUM_FILES = 430
 
 
 def read_census(path: Path) -> list[str]:
