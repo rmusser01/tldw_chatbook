@@ -480,6 +480,7 @@ from ...Library.library_media_reader_state import (
     begin_selection,
     enter_external_detail,
     leave_external_detail,
+    reader_action_target,
     set_mode,
     set_more_open,
 )
@@ -3170,6 +3171,21 @@ class LibraryMediaController:
                 return f"local:media:{backing_id}", backing_id
         return None
 
+    def _library_media_reader_target_id(self) -> str:
+        """The item a Reader-scoped action acts on (TASK-34000.18).
+
+        Read later, Move to trash, Edit metadata › Save, the analysis save
+        and the highlight writes act on the item the Reader SHOWS
+        (``reader_session.loaded_id``), never on the list highlight, which
+        can sit on row 0 after an open-by-link. See
+        ``library_media_reader_state.reader_action_target``.
+        """
+        return reader_action_target(
+            self._library_media_reader_session,
+            self._selected_media_id,
+            self._library_media_view,
+        )
+
     def _navigate_to_media(self, media_id: str | int) -> None:
         """Open the Library media viewer for ``media_id``.
 
@@ -3530,7 +3546,7 @@ class LibraryMediaController:
                 highlight" action.
         """
         event.stop()
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return
         try:
@@ -3615,7 +3631,7 @@ class LibraryMediaController:
                 action.
         """
         event.stop()
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         highlight_id = getattr(event.button, "highlight_id", "")
         if not media_id or not highlight_id:
             return
@@ -3826,6 +3842,7 @@ class LibraryMediaController:
         link_receipt, link_undo_offered = self._library_media_visible_link_receipt(
             viewer_state.media_id
         )
+        delete_target_title = self._library_media_delete_target_title(viewer_state)
         viewer = LibraryMediaViewer(
             viewer_state,
             editing=self._library_media_editing,
@@ -3882,10 +3899,25 @@ class LibraryMediaController:
             # ``_sync_library_media_viewer_state``).
             link_receipt=link_receipt,
             link_undo_offered=link_undo_offered,
+            # TASK-34000.18 AC#3: the trash confirm names the Reader's item.
+            delete_target_title=delete_target_title,
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
         return viewer
+
+    def _library_media_delete_target_title(self, viewer_state: Any) -> str:
+        """The title the trash confirm names (TASK-34000.18 AC#3).
+
+        The loaded detail's title -- what ``#library-media-viewer-title``
+        paints, and what an Edit › Save just rewrote -- while the Reader
+        holds an item; "" (the "this item" fallback) when it holds none.
+        Not ``reader_session.loaded_title``: an open-by-link seeds that
+        slot with the bare record id, and an edit never updates it.
+        """
+        if not self._library_media_reader_session.loaded_id:
+            return ""
+        return str(getattr(viewer_state, "title", "") or "")
 
     def _library_media_image_preview_projection(
         self, *, build_widget: bool = True
@@ -4060,11 +4092,13 @@ class LibraryMediaController:
         link_receipt, link_undo_offered = self._library_media_visible_link_receipt(
             viewer_state.media_id
         )
+        delete_target_title = self._library_media_delete_target_title(viewer_state)
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
             and viewer.link_receipt == link_receipt
             and viewer.link_undo_offered == link_undo_offered
+            and viewer.delete_target_title == delete_target_title
             and viewer.back_visible == back_visible
             and viewer.trash_list_open == trash_list_open
             and viewer.editing == self._library_media_editing
@@ -4147,6 +4181,7 @@ class LibraryMediaController:
             viewer.trash_list_open = trash_list_open
             viewer.link_receipt = link_receipt
             viewer.link_undo_offered = link_undo_offered
+            viewer.delete_target_title = delete_target_title
             # TASK-31745: the backing id follows the selection like any other
             # compose input (the state's own rename fields are in the compare
             # above, so a stale id here could never outlive them).
@@ -4667,7 +4702,7 @@ class LibraryMediaController:
         Shared by the "Read later" button and the ``l`` accelerator so both
         read the last-fetched saved state and dispatch the same worker.
         """
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return
         detail = (
@@ -4775,7 +4810,7 @@ class LibraryMediaController:
                 "Save" action.
         """
         event.stop()
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             self._library_media_editing_analysis = False
             self.refresh(recompose=True)

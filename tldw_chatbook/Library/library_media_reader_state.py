@@ -432,3 +432,31 @@ def leave_external_detail(
         error=None,
         external_detail=False,
     )
+
+
+def reader_action_target(
+    session: LibraryMediaReaderSessionState, selected_id: str, view: str
+) -> str:
+    """Return the one identity a Reader-scoped action acts on (TASK-34000.18).
+
+    Read later, Move to trash, Edit metadata › Save, the analysis save and
+    the highlight writes all belong to the item the Reader SHOWS. The list
+    highlight is a different fact: it follows the page, falls back to row
+    0 when the selection is not on the page, and can lag an open-by-link.
+    Reading the selection made those actions act on row 1 of the list
+    while the Reader showed the item the user opened from an import
+    receipt, a landing "Open" or a Search/RAG result.
+
+    Args:
+        session: The current Reader session.
+        selected_id: The list selection (``selected_media_id``).
+        view: The Media canvas view (``"viewer"``, ``"list"``, ``"trash"``).
+
+    Returns:
+        ``session.loaded_id`` while the viewer is the active view and an item
+        is loaded (an external server detail's loaded id counts), otherwise
+        ``selected_id``. Never None: an empty selection stays "".
+    """
+    if view == "viewer" and session.loaded_id:
+        return session.loaded_id
+    return selected_id

@@ -385,7 +385,17 @@ _BUDGETS: dict[str, int] = {
     # withheld (other item / registry unavailable / workspace inactive), so
     # the Undo handler can tell an unreadable registry from a moved
     # workspace; the visibility rule now reads it.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4898,
+    # 2026-10-20, TASK-34000.18 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value): 4898 -> 4933 (+35).
+    # origin/dev 4de437a5c5 was ALREADY at 4812 against the old 4769 row
+    # (one of dev's own pre-existing ratchet reds); the clarify batch
+    # measured 4898 on 32caa91c1a. This task added `_library_media_reader_
+    # target_id` -- the one identity every Reader-scoped action reads
+    # (+14, docstring included), the trash confirm's `delete_target_title`
+    # threaded through the Reader build and the unchanged-compare (+5) and
+    # its resolver `_library_media_delete_target_title` (+13), plus the
+    # import and three one-line reads. No code was moved or reflowed to fit.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4933,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

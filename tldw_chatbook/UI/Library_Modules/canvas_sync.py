@@ -631,7 +631,10 @@ def _sync_library_canvas(
             # filtering the selected item out left the canvas highlighting
             # row 0 while "Open in viewer" still opened the filtered-out
             # item (task-15457 review round 1, Critical 1).
-            screen._media_state.selected_media_id = media_state.selected_id
+            # TASK-34000.18: through the one adopter -- a sync fired before
+            # the page lands (zero rows) must not clear the item the Reader
+            # holds, or the landing page falls back to row 0.
+            screen._adopt_library_media_highlight(media_state)
             sync_args = (media_state,)
             sync_kwargs = screen._library_media_canvas_presentation()
         elif kind == "media-trash":

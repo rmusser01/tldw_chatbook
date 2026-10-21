@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃12026-10-20 20:06:54 [WARNING ] huggingface_hub.utils._http:904 - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to e.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation       Collapse      ││                                                                                                                        │ │
+│ │     Import…                    ││     Browse…                                                                                                            │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  ││ Import a file, a whole folder, or a URL. Supported: PDF documents, Word/Office documents, audio/video files, e-books,  │ │
+│ │ ▊ Search Library…        ▎▊x▎  ││ images, plain text files, web pages.                                                                                 ▄ │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  ││                                                                                                                        │ │
+│ │                                ││ Imported items are searchable in your Library and can be used as context in chat.                                      │ │
+│ │ ─────────────────────────────  ││                                                                                                                        │ │
+│ │ Browse                    ▾    ││ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ │
+│ │    Media (5) — your files      ││ │ ▶ Import behavior · analysis off                                                                                  │  │ │
+│ │    Conversations (0)           ││ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │ │
+│ │    Notes (0)                   ││                                                                                                                        │ │
+│ │    Prompts (0) — reuse         ││ Title (optional)                       Author (optional)                      Keywords (optional)                      │ │
+│ │    Skills (1) — AI add-ons     ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │ │
+│ │    Collections (0)             ││ ▊ Defaults to source name            ▎ ▊ e.g. Ada Lovelace                  ▎ ▊ comma-separated                     ▎  │ │
+│ │    Search / RAG — find all     ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
+│ │ ─────────────────────────────  ││                                                                                                                        │ │
+│ │ Artifacts                 ▾    ││ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│ │    All artifacts               ││                                                                                                                        │ │
+│ │    Chatbooks                   ││ Queue                                                                                                                  │ │
+│ │    Reports                     ││                                                                                                                        │ │
+│ │    Dreams                      ││ This queue: 5 done                                                                                                     │ │
+│ │ ─────────────────────────────  ││                                                                                                                        │ │
+│ │ Create                    ▾    ││ import-docs — 5 files · now · 5 done                                                                                   │ │
+│ │    New note                    ││ ✓ done · paper-retrieval-practice.md · 4s                                                                              │ │
+│ │    New prompt                  ││   Imported paper-retrieval-practice.md                                                                               ▂ │ │
+│ │    New skill                   ││                                                                                                                        │ │
+│ │ ─────────────────────────────  ││     Open in Library                                                                                                    │ │
+│ │ Study                     ▾    ││                                                                                                                        │ │
+│ │    Study decks (0)             ││ ✓ done · meeting-notes.txt · 3s                                                                                        │ │
+│ │    Flashcards due: 0           ││   Imported meeting-notes.txt                                                                                           │ │
+│ │    Quizzes (0)                 ││                                                                                                                        │ │
+│ │ ─────────────────────────────  ││     Open in Library                                                                                                    │ │
+│ │ Import / Export           ▾    ││                                                                                                                        │ │
+│ │  ▸ Import…                     ││ ✓ done · reading-list.txt · 3s                                                                                         │ │
+│ │    Export                    ▇ ││   Imported reading-list.txt                                                                                            │ │
+│ │  ▾ scroll for more             ││  ▼ more — scroll for the rest                                                                                          │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter check this path | esc back | r retry | / search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

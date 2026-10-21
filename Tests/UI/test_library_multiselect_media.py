@@ -2177,6 +2177,9 @@ def _single_delete_confirm_fake(
         ),
         _delete_library_media_item=_noop_delete_item,
         refresh=lambda **k: None,
+        # TASK-34000.18: the confirm reads the Reader's target, not the list
+        # selection; this fake has no Reader, so the two coincide.
+        _library_media_reader_target_id=lambda: selected_media_id,
     )
     return _bind_media_mutation_seams(fake)
 

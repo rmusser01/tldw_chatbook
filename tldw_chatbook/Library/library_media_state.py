@@ -1162,7 +1162,16 @@ def build_library_media_browse_state(
     reference_now = now if now is not None else datetime.now(timezone.utc)
     page_ids = {str(item["id"]) for item in items}
     resolved_selected_id = selected_id if selected_id in page_ids else ""
-    if not resolved_selected_id and items:
+    # TASK-34000.18 (owner ruling, Q2 (b)): a highlight must never name a
+    # document the Reader isn't showing. When the Reader holds an item that
+    # is NOT on this page (opened by link from an import receipt, a landing
+    # "Open" or a Search/RAG result, then a page turn), no row takes the
+    # cue; the list-view default (row 0 while nothing is loaded) is unchanged.
+    if (
+        not resolved_selected_id
+        and items
+        and not (loaded_id and loaded_id not in page_ids)
+    ):
         resolved_selected_id = str(items[0]["id"])
     rows = tuple(
         LibraryMediaRow(

@@ -262,7 +262,11 @@ see its own row below) is a second bulk action next to "Export selected".
 Pressing it swaps the strip for a confirmation naming the count — "Delete N
 selected items? You can undo right away, or restore later from Trash." —
 with "Delete" / "Cancel", the same in-place armed-button pattern
-as the media viewer's own single-item "Delete" (never a popup modal).
+as the media viewer's own single-item "Delete" (never a popup modal). The
+viewer's confirmation names the one item it will move — "Move
+"team-handbook" to Trash? You can undo right away, or restore later from
+Trash." — so you can tell which document is about to go even when the
+Items list has another row highlighted.
 Confirming moves every checked item to trash (the same soft-delete the
 viewer's Delete uses) and updates the list and the rail's "Media N" count
 immediately; if any item fails, the rest of the batch still completes and a
@@ -568,7 +572,14 @@ still spans the pane.
 | "Use in Console" | Stages this item as context for your next Console message, linking it to the active workspace on the way if it is not a member yet — the same one-press link that notes and conversations do. A receipt under the toolbar says which workspace by name ("Linked to Local Default · staged in Console", or "Already linked to …" when it was a member already) with an **Undo link** beside it that removes the membership a press in this reader session added (a link made by Search ▸ evidence ▸ `u` has no Undo there; remove it from the workspace's own sources). An Undo pressed after the active workspace changed says so instead of removing anything. The receipt stands only while that workspace is the active one; after a switch it is withheld and the next press links into the new workspace. `c` does the same from the keyboard. If the link itself fails, nothing is staged and the message names the workspace and the next step; a raw workspace id is never shown. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line, never off the fold. The button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
-| "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+| "Move to trash" | Two-step, title-specific confirmation: the armed copy reads "Move "team-handbook" to Trash? You can undo right away, or restore later from Trash.", naming the item the Reader shows. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+Read later, Edit metadata › Save, Move to trash and Use in Console all act on
+the item the Reader shows, whichever row the Items list has highlighted. That
+matters after opening an item by link — an import receipt's "Open in
+Library", a landing "Open", or a Search/RAG result: the list cursor lands on
+that item (and on no row at all if it is not on the current page), and the
+actions never fall back to the first row.
 
 The primary row holds five actions (Find, Note, Read later, Use in Console,
 More). On a Reader too narrow to fit all five side by side — counting

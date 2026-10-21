@@ -96,6 +96,30 @@ def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:
     return READER_EMPTY_FAILED_COPY if list_failed else READER_EMPTY_COPY
 
 
+def library_media_delete_confirm_copy(title: str) -> str:
+    """Return the single-item trash confirmation copy (TASK-34000.18 AC#3).
+
+    The confirm names the item it is about to trash, so a user who opened
+    an item by link (and whose list cursor may sit elsewhere) can tell
+    which document is about to go. The second sentence is the Trash path
+    promise the bulk confirm makes too (task-4025 AC3) and is unchanged.
+    Rendered with ``markup=False`` -- a title holding ``[b]`` paints
+    literally.
+
+    Args:
+        title: The Reader's loaded title, or "" when it has none.
+
+    Returns:
+        ``Move "<title>" to Trash? …`` or, with no title, ``Move this item to
+        Trash? …``.
+    """
+    subject = f'"{title}"' if title else "this item"
+    return (
+        f"Move {subject} to Trash? You can undo right away, or restore later "
+        "from Trash."
+    )
+
+
 class LibraryMediaViewer(PostRecomposeCallback, Vertical):
     """Render the full Library media item: metadata, content, and actions.
 
@@ -184,11 +208,16 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         speaker_rename_media_id: int | None = None,
         link_receipt: str = "",
         link_undo_offered: bool = False,
+        delete_target_title: str = "",
         **kwargs: Any,
     ) -> None:
         """Hold the viewer's compose inputs.
 
         Args:
+            delete_target_title: The title of the item the trash confirm
+                would move -- the Reader's loaded item, never the list
+                row (TASK-34000.18 AC#3). "" renders the "this item"
+                fallback. See ``library_media_delete_confirm_copy``.
             link_receipt: The workspace-link receipt line the last "Use in
                 Console" press earned ("Linked to Local Default · staged in
                 Console"), or "" when none stands (TASK-34000.24). The
@@ -271,6 +300,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.speaker_rename_media_id = speaker_rename_media_id
         self.link_receipt = link_receipt
         self.link_undo_offered = link_undo_offered
+        self.delete_target_title = delete_target_title
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -405,9 +435,11 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # now exists (the media list toolbar's "Trash" action), so the
             # copy names the durable recovery path exactly like the bulk
             # confirm does -- one promise, two entry points.
+            # TASK-34000.18 AC#3: and it names the ITEM -- the Reader's
+            # loaded title, so an item opened by link is never confirmed
+            # under a cursor that sits on another row.
             yield Static(
-                "Delete this media? You can undo right away, or restore "
-                "later from Trash.",
+                library_media_delete_confirm_copy(self.delete_target_title),
                 id="library-media-delete-confirm-copy",
                 markup=False,
             )

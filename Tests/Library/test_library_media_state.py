@@ -1060,3 +1060,50 @@ def test_preview_pane_follows_the_selection_not_the_first_row() -> None:
 
     assert "Analysed: yes" in state.preview_lines, state.preview_lines
     assert "Analysed: no" in other.preview_lines, other.preview_lines
+
+
+def _two_row_page_state(*, selected_id: str, loaded_id: str) -> LibraryMediaCanvasState:
+    return build_library_media_browse_state(
+        build_media_browse_result(
+            MediaBrowseScope(),
+            {
+                "items": [
+                    summary_row(id=1, media_type="article"),
+                    summary_row(id=2, media_type="article"),
+                ],
+                "total": 2,
+                "limit": 20,
+                "offset": 0,
+            },
+        ),
+        type_options=("All",),
+        selected_id=selected_id,
+        loaded_id=loaded_id,
+        now=NOW,
+    )
+
+
+def test_an_opened_item_off_the_page_highlights_no_row_but_an_empty_reader_still_defaults_to_row_0() -> None:
+    """TASK-34000.18, owner Q2 (b): a highlight must never name a document
+    the Reader isn't showing. An item opened by link that is not on the
+    current page leaves every row unselected; the list-view default (row 0
+    when nothing is loaded) is unchanged -- the negative control."""
+    off_page = _two_row_page_state(
+        selected_id="local:media:9", loaded_id="local:media:9"
+    )
+
+    assert off_page.selected_id == ""
+    assert [row.selected for row in off_page.rows] == [False, False]
+    assert off_page.preview_lines == ()
+
+    nothing_loaded = _two_row_page_state(selected_id="local:media:9", loaded_id="")
+
+    assert nothing_loaded.selected_id == "local:media:1"
+    assert [row.selected for row in nothing_loaded.rows] == [True, False]
+
+    # A loaded item that IS on the page still takes the highlight when the
+    # selection is stale or empty.
+    on_page = _two_row_page_state(selected_id="", loaded_id="local:media:2")
+
+    assert on_page.selected_id == "local:media:1"
+    assert [row.loaded for row in on_page.rows] == [False, True]

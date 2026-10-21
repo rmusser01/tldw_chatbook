@@ -424,3 +424,54 @@ def test_external_server_session_cannot_collide_with_local_id() -> None:
     assert left.selected_id is None
     assert left.loaded_id is None
     assert left.request_generation > external.request_generation
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.18: one identity for "the item the Reader shows"
+# ---------------------------------------------------------------------------
+
+
+def test_reader_action_target_is_the_loaded_item_in_the_viewer() -> None:
+    """A reader-scoped action (Read later, trash, Edit Save) acts on the item
+    the Reader paints, not on whichever row the list has highlighted."""
+    from tldw_chatbook.Library.library_media_reader_state import (
+        reader_action_target,
+    )
+
+    loaded = _loaded_local(3, "Gamma")
+
+    assert reader_action_target(loaded, "local:media:1", "viewer") == "local:media:3"
+
+
+def test_reader_action_target_is_the_selection_in_the_list_view() -> None:
+    from tldw_chatbook.Library.library_media_reader_state import (
+        reader_action_target,
+    )
+
+    loaded = _loaded_local(3, "Gamma")
+
+    assert reader_action_target(loaded, "local:media:1", "list") == "local:media:1"
+
+
+def test_reader_action_target_falls_back_to_the_selection_with_nothing_loaded() -> None:
+    from tldw_chatbook.Library.library_media_reader_state import (
+        reader_action_target,
+    )
+
+    empty = LibraryMediaReaderSessionState()
+    pending = begin_selection(empty, "local:media:2", 2, "Beta")
+
+    assert reader_action_target(empty, "local:media:1", "viewer") == "local:media:1"
+    assert reader_action_target(pending, "local:media:2", "viewer") == "local:media:2"
+
+
+def test_reader_action_target_counts_an_external_detail_as_loaded() -> None:
+    from tldw_chatbook.Library.library_media_reader_state import (
+        reader_action_target,
+    )
+
+    external = enter_external_detail(
+        LibraryMediaReaderSessionState(), "9", "Server media 9"
+    )
+
+    assert reader_action_target(external, "local:media:1", "viewer") == "server:media:9"

@@ -15852,7 +15852,7 @@ class LibraryScreen(BaseAppScreen):
                         )
                     elif shell.canvas_kind == "media":
                         media_state = self._build_library_media_state()
-                        self._media_state.selected_media_id = media_state.selected_id
+                        self._adopt_library_media_highlight(media_state)
                         yield LibraryMediaCanvas(
                             media_state,
                             actions=self._media_controller,
@@ -16916,6 +16916,29 @@ class LibraryScreen(BaseAppScreen):
 
         return LibraryMediaController._restore_library_media_scope(state)
 
+    def _adopt_library_media_highlight(self, media_state: Any) -> None:
+        """Write the list's resolved highlight into the selection -- unless
+        the builder found NO row for an item the Reader holds.
+
+        TASK-34000.18: the browse controller syncs once on ``request`` (no
+        page yet) and again when the page lands. The first sync built the
+        list from zero rows, resolved the highlight to "" and wrote that
+        over the selection the open-by-link had just set, so the landing
+        page then fell back to row 0 -- the ``▸`` on "team-handbook" beside
+        a Reader showing the opened item. The selection keeps naming the
+        Reader's item while the page is loading or (owner Q2 (b)) while that
+        item is simply not on this page; the builder paints no cue for it.
+        An empty Reader still takes the builder's answer, "" included.
+        """
+        session = self._media_state.reader_session
+        held = (
+            session.selected_id
+            if session.pending_request is not None
+            else session.loaded_id
+        )
+        if media_state.selected_id or not held:
+            self._media_state.selected_media_id = media_state.selected_id
+
     def _reset_library_media_reader_to_no_selection(self) -> None:
         """Clear the Reader to its no-selection placeholder (task-32043).
 
@@ -17039,7 +17062,7 @@ class LibraryScreen(BaseAppScreen):
                 sync_surfaces=False,
             )
         media_state = self._build_library_media_state()
-        self._media_state.selected_media_id = media_state.selected_id
+        self._adopt_library_media_highlight(media_state)
         focused = self.focused
         focused_id = getattr(focused, "id", None)
         pager_focus_ids = {
@@ -24626,6 +24649,9 @@ class LibraryScreen(BaseAppScreen):
         self, media_id: str
     ) -> tuple[str, int | str] | None:
         return self._media_controller._library_media_reader_identity(media_id)
+
+    def _library_media_reader_target_id(self) -> str:
+        return self._media_controller._library_media_reader_target_id()
 
     def _required_library_media_backing_id(self, media_id: str) -> int:
         """Return one positive local mutation id or fail before persistence."""
@@ -33304,7 +33330,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._media_state.bulk_delete_in_flight:
             return
-        media_id = self._media_state.selected_media_id
+        # TASK-34000.18: the form is prefilled from the Reader's item, so the
+        # write targets that same item, not the list highlight.
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             self._media_state.editing = False
             self.refresh(recompose=True)
@@ -33502,7 +33530,8 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._media_state.bulk_delete_in_flight:
             return
-        media_id = self._media_state.selected_media_id
+        # TASK-34000.18: the item the Reader shows, not the list highlight.
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             self._media_state.confirming_delete = False
             self.refresh(recompose=True)
@@ -35970,11 +35999,20 @@ class LibraryScreen(BaseAppScreen):
                 self._media_state.reader_session = leave_external_detail(
                     self._media_state.reader_session
                 )
-            self._media_state.selected_media_id = record_id
+            # TASK-34000.18: canonicalise at the door. Every by-link route
+            # (the import receipt's "Open in Library", the landing hub's
+            # recent "Open", the deep-link entry) hands this branch a BARE
+            # id; page rows are always ``local:media:N``, so a bare
+            # selection was never on the page and the browse builder fell
+            # back to row 0 while the Reader showed the opened item --
+            # and Read later / trash / Edit Save then acted on row 0.
+            reader_identity = self._library_media_reader_identity(record_id)
+            self._media_state.selected_media_id = (
+                reader_identity[0] if reader_identity is not None else record_id
+            )
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._cancel_pending_review_set_resume()
             self._media_state.view = "viewer"
-            reader_identity = self._library_media_reader_identity(record_id)
             if reader_identity is not None:
                 canonical_id, backing_id = reader_identity
                 self._media_state.reader_session = begin_selection(

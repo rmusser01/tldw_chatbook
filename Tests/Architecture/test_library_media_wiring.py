@@ -33,7 +33,7 @@ docstring's own note on the collision).
 
 **Task 2 (controller PR)** adds the full-cluster ownership / same-name-
 delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
-checks (``_MEDIA_CLUSTER_METHOD_NAMES``, 140 names) plus a
+checks (``_MEDIA_CLUSTER_METHOD_NAMES``, 141 names) plus a
 constructor-binding coverage check (``_MEDIA_CONTROLLER_BOUND_NAMES``, 92
 names) carried from the prompts series, which added it because the skills
 series shipped a silent production regression precisely in that gap (a moved
@@ -322,6 +322,7 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_library_media_live_focus_is_allowed",
     "_library_media_preview_request_is_current",
     "_library_media_reader_identity",
+    "_library_media_reader_target_id",
     "_library_media_request_matches_current_authority",
     "_library_media_semantic_row_is_current",
     "_library_media_successful_focus_is_allowed",
@@ -669,8 +670,11 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
         n for n in _MEDIA_CLUSTER_METHOD_NAMES if "media" not in n.lower()
     ]
     assert not not_media_named, f"non-media-named cluster entries: {not_media_named!r}"
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 140, (
-        f"expected 140 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-10-20, TASK-34000.18: 140 -> 141, ``_library_media_reader_target_id``
+    # (the one identity every Reader-scoped action reads), born on the
+    # controller with its one-line screen delegator.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 141, (
+        f"expected 141 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -679,7 +683,7 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
 
 @pytest.mark.unit
 def test_media_controller_owns_its_cluster() -> None:
-    """Every one of the 140 moved names is a callable on the controller.
+    """Every one of the 141 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     ``test_prompts_controller_owns_its_cluster``.
@@ -698,7 +702,7 @@ def test_media_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_media_handlers() -> None:
-    """Every one of the 140 moved names is a one-line screen delegator that
+    """Every one of the 141 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 3
     staticmethods, to the module-level controller CLASS) -- unless a later
     cleanup task pruned it.
@@ -751,7 +755,7 @@ def test_the_canvas_owned_rows_are_movers_that_landed_on_the_canvas() -> None:
     assert len(_MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS) == 16
     assert _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS <= set(
         _MEDIA_CLUSTER_METHOD_NAMES
-    ), "a canvas-owned row is not one of the 140 moved names"
+    ), "a canvas-owned row is not one of the 141 moved names"
     assert not (
         _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS
         & _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED

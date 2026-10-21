@@ -3158,6 +3158,32 @@ async def test_confirm_copies_and_receipt_point_at_trash():
         )
         assert "restore later from Trash" in copy
         assert "no Trash view" not in copy
+        # TASK-34000.18 AC#3: with no title handed in, the generic subject.
+        assert copy.startswith("Move this item to Trash?"), copy
+
+    class _NamedViewerApp(ConsolidatedCSSApp):
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+        def compose(self):
+            yield LibraryMediaViewer(
+                build_library_media_viewer_state(
+                    {"id": "1", "title": "One", "type": "pdf", "content": "x"}
+                ),
+                confirming_delete=True,
+                delete_target_title="One [b]bold[/b]",
+                id="library-media-viewer",
+            )
+
+    app = _NamedViewerApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        copy = str(
+            app.query_one("#library-media-delete-confirm-copy", Static).renderable
+        )
+        # TASK-34000.18 AC#3: the confirm names the item, literally (markup
+        # off), and keeps the Trash-path promise.
+        assert copy.startswith('Move "One [b]bold[/b]" to Trash?'), copy
+        assert "restore later from Trash" in copy
 
 
 # ---------------------------------------------------------------------------
