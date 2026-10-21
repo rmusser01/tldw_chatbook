@@ -90,6 +90,9 @@ read, removed binding, or incompatible root cannot be bypassed through the cache
 The binding's effective `fs_read` permission is a narrowing floor for excerpt
 delivery: Blocked refuses and Ask requires review even when index search is
 otherwise Allowed.
+A conditional Ask uses existing one-call review options and exact run/call-ID
+provenance at dispatch. A saved search grant, a sibling call stamp or a forged
+broader decision cannot satisfy that floor or persist a new standing grant.
 Carry the requesting run's frozen/accumulated exclusion floor into keyword and
 semantic selection; a live registry read alone cannot restore access removed for
 that run. If exact bounded semantic filtering is unavailable, use keyword search.
@@ -126,6 +129,24 @@ tool output already disclosed into a conversation or provider request.
 Management actions compare expected scope/job state before effects, so a delayed
 Enable cannot undo Clear and an old Clear cannot remove a later generation.
 
+Explicit Clear reclaims validated v2 derived payload across the binding's old
+root and authority generations after revoking current access. Keep durable
+control epochs/claim tombstones and stable lifetime files. Inventory and acquire
+native lifetimes deterministically outside registry fences; code-owned namespace
+metadata is cleanup ownership only, never file authority. Fresh v2 caches enable
+incremental auto-vacuum before table creation and compact in bounded in-place
+steps, preserving DB identity. Migration never forces VACUUM or replaces the DB.
+[SQLite auto-vacuum](https://www.sqlite.org/pragma.html#pragma_auto_vacuum) and
+[incremental vacuum](https://www.sqlite.org/pragma.html#pragma_incremental_vacuum)
+describe that storage mode; they do not prove the application's quota accounting.
+Process smaller namespaces first and reserve whole-DB journal/record headroom
+against all binding-owned bytes before cleanup. Insufficient space or unproven
+legacy state remains Off with a truthful retryable outcome. No nonexistent
+maintenance-disposal route is advertised. Tests must show a normally admitted
+near-capacity generation can be cleared and indexing enabled again without
+losing revocation history or exceeding the journal/temp-inclusive quota.
+
+
 The first release indexes local UTF-8 project text. Remote/SSH indexing and
 binary/media extraction require separate designs. Settings owns management;
 Console shows status and a route to Settings. Library controls stay distinct.
@@ -139,6 +160,17 @@ a bounded memory reader for that pinned lifetime. Ordinary preference reloads do
 not change it; profile changes and restore/rollback invalidate old readiness.
 Unknown or lost admission refuses execution. Existing config/admission counters
 and unverified catalog records are not authority identities.
+Retain the actual execution pin per management/query operation and continuously
+from writer dispatch through native DB owner-thread exit and scanner retirement.
+An idle service keeps no forever lease that would block maintenance. Frozen idle
+identity/status is eligibility data only; later operations reacquire and verify
+the admitted selector/activation identity outside authority fences.
+The frozen authority callback and service projections introduce no config, receipt
+or cache-stat reads inside those fences. Existing mandatory per-store activation
+revalidation remains required when entering the separately admitted cache
+operation beneath the registry fence. It is not replaced with an unchecked
+borrow or skipped to optimize the critical section; its established metadata
+checks can extend lock duration, so no hard real-time fence bound is claimed.
 
 A stable private native lifetime lease per binding spans writer dispatch, native
 DB closure, writer-thread exit and scanner process retirement. The scanner
@@ -156,6 +188,26 @@ stable lease/control object, which remains declared, accounted, device-local
 and excluded from ordinary backup. This single-writer/lifetime witness grants no
 file or activation permission. Existing authority and admission gates still
 apply. Platform inheritance and hard-parent-death tests qualify the native seam.
+
+Production cache namespaces use
+`project_index/<opaque binding hash>/<complete-key namespace>/workspace_project_index.db`.
+The stable accounting hash includes workspace and binding IDs under the admitted
+private data root, so prior authority generations remain in the same bounded
+accounting group. Each authority has its own stable
+`<sha256(data_authority_id)>.lifetime.lock` under that parent; these are stable
+across locator/root changes and retained by Clear. Complete-key generation
+namespaces still include the data authority. Counting prior-generation bytes
+never grants authority or compatible readiness. Actual storage/activation pins
+prevent concurrent generation replacement while native work remains. This makes
+obsolete generation bytes and native control objects part of one explicit
+bounded per-binding accounting domain. Unknown or
+unbounded entries fail admission. No ownership is inferred from a project locator.
+The earlier flat unreleased scaffolding is not inferred, migrated or deleted;
+its state cannot be advertised as production-ready. Cache schema v2 uses an
+explicit additive migration for authority witnesses and per-job scan membership.
+A v1 claim without the issued lifetime-capability contract cannot obtain retirement
+proof merely because a new lease acquisition succeeds.
+
 Windows lease acquisition uses nonzero data access and share mode zero;
 attribute-only access is not an exclusion witness. Inheritance keeps a reference
 to the same file object. [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew),
@@ -193,3 +245,6 @@ an alternate disclosure path after binding access changes.
 
 Implementation task records and plans must link this ADR and include
 storage/recovery qualification before the index is enabled in production.
+
+### Settings execution handoff
+Index cards carry exact workspace and selected-binding data; any root/status admission is captured in background workers. Binding ID alone is not file authority. Console reuses safe modal dismissal and the existing Workspaces-category Settings navigation contract; no binding deep-link or new navigation API is introduced. Existing row replacement and per-binding job/epoch/visit fences remain required. See the keyword plan and retained UI contract probe.
