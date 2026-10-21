@@ -216,6 +216,30 @@ pool, queue), measure the reclaim's own pause and its distribution, not only
 the memory bound and the total. Compare the worst single pause with the worst
 pause the baseline had for the same work.
 
+## Fit a pause to its fixed and per-item terms before redesigning its cadence (TASK-33620.15.9, 2026-10-20)
+
+**Incident.** The idle heap compaction (unfreeze, full collection, freeze)
+was the longest UI-loop pause on the branch, and the owner asked for it to be
+no longer than dev's worst automatic generation-2 pass (202 ms of CPU). Four
+designs were proposed: compact only past a size bound, spread the reclaim
+over idle slices, abort if input arrives, and wait longer before compacting.
+The first two assumed the pass could be split or made smaller; the other
+two only change how often a key meets it. A short probe on CPython 3.12.11
+showed the pass could be neither split nor shrunk. After `gc.unfreeze()`, frozen garbage
+survived `gc.collect(0)` and `gc.collect(1)` (0 ms each) and died only in
+`gc.collect(2)`, whose time followed the whole heap: 36 ms at 231K objects,
+56 ms at 1.03M, about the same with or without the garbage. A fit of the live
+round's 27 compactions gave 235 ms plus 1.27 ms per 1K objects freed, and
+none ran under 235 ms. The fixed term alone was above the bound, so none of
+the four designs could meet it, and the task went back to the owner.
+
+**What to do.** Before redesigning when or how often a pause runs, fit its
+measured length to a fixed term and a per-item term, and check whether the
+runtime can split the operation at all. A probe that times each candidate
+slice and checks what it actually reclaims takes minutes. If the fixed term
+alone exceeds the target, changing the cadence cannot help; only removing
+the operation can.
+
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.
