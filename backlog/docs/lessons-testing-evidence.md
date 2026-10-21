@@ -166,6 +166,23 @@ Textual sets `_pruning` on every node of a removed subtree synchronously, inside
 - Keep only the guards that a negative control shows are needed.
 - Re-run the head-vs-dev comparison on the final head, after the last fix commit, not just once after the rebase.
 
+## Two size ratchets with similar names: checking one says nothing about the other (TASK-33620.15.7, 2026-10-21)
+
+**Incident.** The branch added 37 lines and one method to `chat_screen.py`. Its
+gate report said "`test_module_size_ratchet` has 7 failures, identical on dev,
+none in a touched file", which was true. But `chat_screen.py` has no row in
+that file. Its ceiling is in `Tests/Architecture/test_screen_size_ratchet.py`,
+which the report never ran and `./scripts/preflight.sh` does not run either.
+That ratchet failed on the branch (24372 lines against 24335, 737 methods
+against 736). The review caught it; CI's core-tests job would have.
+
+**What to do.** If a change touches `chat_screen.py` or `library_screen.py`, run
+`Tests/Architecture/test_screen_size_ratchet.py` yourself after the final
+rebase. A green preflight does not cover it, and neither does the module-size
+ratchet. Meeting the ceiling by moving the new code into its region module
+(here, the avatar caption sync into `Console_Modules/left_rail.py`) also left
+the screen 23 lines smaller.
+
 ## A faster mount can turn another test's latent race into a frequent failure (TASK-33620.15.7, 2026-10-20)
 
 **Incident.** Cutting the Console's whole-screen reflows per send from a median
