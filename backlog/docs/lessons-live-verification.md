@@ -4381,3 +4381,10 @@ browser-session object is independently live and available; discard the result
 without replay. Keep revoked, expired, replaced, unavailable and foreign-session
 controls refused, and leave unrelated authority exceptions on their original
 failure paths. A later passing natural run alone did not disprove this race.
+
+
+## Windows pytest needs a private temporary parent (PR3181/3185 replacement, 2026-10-20)
+
+**Incident.** The replacement review initially could not collect targeted tests: the native privacy walker rejected the existing Windows Temp parent as `shared_writable_parent` (mode 0o766). Moving a test profile below that same parent did not fix the ancestor failure. A profile under the managed worktree, whose ancestors were independently verified through `platform_files.os.stat`, collected and passed.
+
+**What worked.** Create an owned test-only parent using `platform_files.os.mkdir(path, 0o700)`, then set `TMP`, `TEMP`, and `TLDW_TEST_CONFIG_ROOT` beneath it before pytest starts. Use separate bootstrap roots for concurrent test processes. Keep the real profile and existing directory ACLs untouched; changing a privacy guard to get collection past this error would discard the condition under test. On Windows the native facade supplies ACL-derived modes and file change times; stdlib stat's creation time does not substitute for ChangeTime in cache invalidation tests.

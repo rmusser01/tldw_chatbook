@@ -21,6 +21,8 @@ This document describes the Console (`chat` destination): the screen layout, the
 
 Supporting modules: `console_chat_fork.py` (fork/branch), `console_prompt_queue_coordinator.py` (bounded prompt queue, ADR-098), `console_fleet_wake.py`, `console_interrupt_rounds.py`, `console_dispatch_checkpoint.py` (crash recovery).
 
+Frozen automatic Library preparation is delegated to `Chat/console_library_preparation.py` through the controller's unchanged entry point. Controller and runtime retain ownership of preparation transitions, timeout configuration and recovery.
+
 Character presentation uses `UI/Console_Modules/character_context.py`. Stock active displays carry the original current-owner closure through the one-second run scope check into the same finite inner batch as idle display; direct/custom actions retain fresh no-argument dispatch. A stock display whose previous exact scope fingerprint names a different open conversation can skip the preliminary change-detection read: the existing stock reader selector must qualify first, and the unchanged refresh still validates fresh pair/groups/pair metadata and current ownership before publication. Missing/invalidated fingerprints, unchanged conversations, forced/direct and custom routes keep their original change detection. The existing two-second display memo, invalidation, source checks and physical callback retirement remain separate contracts (ADR126/230).
 
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
@@ -30,6 +32,8 @@ Finite preparation callbacks temporarily use at most1ms interpreter thread hando
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
+
+Project-instruction authority callbacks run directly when already on Textual's owning thread; worker callbacks use `call_from_thread` synchronously. A dispatch confirmation that never becomes answerable is cancelled after its finite notice deadline, preserving the chat's project-instruction preference. Once-mounted decisions retain the existing detached-view pause contract. Unsent-turn Restore/Discard releases only the exact refused turn's retrieval-paused preparation; newer preparations and authored input remain owned by their own flows. Refusal and unexpected settlement diagnostics record status/error categories without draft, instruction, provider-error or endpoint bodies.
 
 ## Send lifecycle (dataflow)
 
@@ -87,6 +91,7 @@ Notable keys: `workspace_root` (compatibility-only for Console file authority �
 
 | Case | Behavior |
 | --- | --- |
+| Unsent-turn Restore/Discard cleanup fails | Safe warning; recovery stays available. Transient echo deletion precedes cancellation publication, so retry retires the echo and continuation before removing recovery. |
 | Hook blocks a manual send | Run state BLOCKED; no durable user row; hook-origin SYSTEM row explains why |
 | Approval card unanswered + timeout 0 | Waits indefinitely; cancel still works; headless runs fail closed per key |
 | Approval round trip raises | Per-run decision stamps were cleared at entry — no stale prior-turn `approve_once` can leak |

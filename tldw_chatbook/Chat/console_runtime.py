@@ -413,10 +413,13 @@ class _ConsoleTurnRefusedError(RuntimeError):
     logged or re-raised exception does not repeat it.
     """
 
-    def __init__(self, message: str, *, reason: str = "") -> None:
+    def __init__(
+        self, message: str, *, reason: str = "", preparation_id: str | None = None
+    ) -> None:
         super().__init__(message)
         #: The code-owned copy the unsent-turn shelf states; may be empty.
         self.reason = reason
+        self.preparation_id = preparation_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,6 +435,7 @@ class ConsoleTurnRecoveryEntry:
     #: strip can say so; empty when the turn ended for another reason.
     reason: str = field(default="", repr=False)
     source_claim: Any = field(default=None, repr=False)
+    preparation_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -486,6 +490,9 @@ class _ProjectDispatchDecision:
     retry_attempts: int = 0
     answerable_seconds_remaining: float = 0.0
     answerable_since: float | None = None
+    #: Bound invisible decisions; detached time after first projection stays paused.
+    created_monotonic: float = field(default_factory=time.monotonic)
+    ever_answerable: bool = False
 
 
 def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
@@ -2224,7 +2231,12 @@ class ConsoleRuntime:
                     remaining = decision.answerable_seconds_remaining
                     if decision.answerable_since is not None:
                         remaining -= time.monotonic() - decision.answerable_since
-                if decision.answerable_since is not None and remaining <= 0:
+                if (
+                    decision.answerable_since is not None and remaining <= 0
+                ) or (
+                    not decision.ever_answerable
+                    and time.monotonic() - decision.created_monotonic >= timeout
+                ):
                     self.resolve_project_instruction_dispatch(
                         decision.decision_id, "cancel"
                     )
@@ -2467,6 +2479,7 @@ class ConsoleRuntime:
             head.projected_generation = generation
             if isinstance(head, _ProjectDispatchDecision):
                 head.answerable_since = time.monotonic()
+                head.ever_answerable = True
 
     # -- app-owned staged evidence --------------------------------------
 
@@ -2957,6 +2970,7 @@ class ConsoleRuntime:
             raise _ConsoleTurnRefusedError(
                 "Console turn was refused before durable acceptance.",
                 reason=str(getattr(result, "visible_copy", "") or ""),
+                preparation_id=held_preparation_id,
             )
         run_state_for = getattr(controller, "run_state_for", None)
         run_state = (
@@ -3067,6 +3081,36 @@ class ConsoleRuntime:
             )
         )
 
+    def _release_retrieval_pause(self, entry: ConsoleTurnRecoveryEntry) -> None:
+        """Cancel only this recovery's exact, still-paused retrieval owner."""
+        from .console_turn_preparation import (
+            ConsolePreparationPauseKind,
+            ConsoleTurnPreparationState,
+        )
+
+        store, controller = self._chat_store, self._chat_controller
+        if store is None or controller is None or entry.preparation_id is None:
+            return
+        if entry.source_claim is not None and not store.received_turn_matches_session(
+            entry.source_claim
+        ):
+            return
+        preparation = store.preparation_for_session(entry.session_id)
+        if (
+            preparation is not None
+            and preparation.preparation_id == entry.preparation_id
+            and preparation.state is ConsoleTurnPreparationState.PAUSED
+            and preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+        ):
+            # Legacy preparations restore their old draft on cancellation.
+            # Shelf actions must preserve the composer's current contents.
+            live_draft = store.session_draft(entry.session_id)
+            try:
+                controller.cancel_library_preparation(preparation.preparation_id)
+            finally:
+                if store.session_draft(entry.session_id) != live_draft:
+                    store.set_session_draft(entry.session_id, live_draft)
+
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
         """Re-stage one exact recovery into its still-live owning session."""
         entry = self._turn_recoveries[turn_id]
@@ -3079,8 +3123,10 @@ class ConsoleRuntime:
             entry.source_claim
         ):
             raise RuntimeError("Recovery owner changed.")
-        if store.session_draft(entry.session_id):
+        live_draft = store.session_draft(entry.session_id)
+        if live_draft and live_draft != entry.draft:
             raise RuntimeError("Recovery live draft changed; refusing ambiguous merge.")
+        self._release_retrieval_pause(entry)
         store.restore_transferred_pending_attachments(
             entry.session_id, entry.attachments
         )
@@ -3090,9 +3136,11 @@ class ConsoleRuntime:
 
     def discard_turn_recovery(self, turn_id: str) -> bool:
         """Release one recovery's sensitive references."""
-        entry = self._turn_recoveries.pop(turn_id, None)
+        entry = self._turn_recoveries.get(turn_id)
         if entry is None:
             return False
+        self._release_retrieval_pause(entry)
+        self._turn_recoveries.pop(turn_id)
         turns = self._recovery_turns_by_session.get(entry.session_id, [])
         if turn_id in turns:
             turns.remove(turn_id)
@@ -3101,7 +3149,11 @@ class ConsoleRuntime:
         return True
 
     def _record_turn_recovery(
-        self, record: _ConsoleTurnCustodyRecord, *, reason: str = ""
+        self,
+        record: _ConsoleTurnCustodyRecord,
+        *,
+        reason: str = "",
+        preparation_id: str | None = None,
     ) -> None:
         request = record.request
         if (
@@ -3120,6 +3172,7 @@ class ConsoleRuntime:
             insertion_order=self._recovery_order,
             reason=reason,
             source_claim=record.received_claim,
+            preparation_id=preparation_id,
         )
         self._turn_recoveries[entry.turn_id] = entry
         self._recovery_turns_by_session.setdefault(entry.session_id, []).append(
@@ -3165,6 +3218,11 @@ class ConsoleRuntime:
                         exc.reason
                         if isinstance(exc, _ConsoleTurnRefusedError)
                         else ""
+                    ),
+                    preparation_id=(
+                        exc.preparation_id
+                        if isinstance(exc, _ConsoleTurnRefusedError)
+                        else None
                     ),
                 )
             logger.warning(

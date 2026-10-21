@@ -32,3 +32,21 @@ CI evidence (2026-10-20). Two throwaway branches each ran only the P0 gate job, 
 - [ ] #1 The test identifies each full sync by something that outlives its frame (not `id(frame)`), and 25 consecutive single-node runs on dev pass
 - [ ] #2 The line-231 mode (the held sync never yields within 5 s; seen on dev in CI, 1 of 10) is root-caused and fixed
 <!-- AC:END -->
+
+
+## Implementation Notes
+
+Partial repair in PR #3189 (2026-10-21): run 39566575303, job 119110873891
+reproduced the original line-243 frame-address collision on head 8952057f6d.
+The test now identifies live FULL invocations by fresh PY_START tokens retained
+past PY_RETURN; no original frame is retained and the replay/ownership/custody
+assertions and deadlines remain. An exact-observer probe using real
+sys.monitoring/asyncio primitives reproduced one raw frame address for 26
+returns: the base predicate rejects the valid replay, while the repair's 26
+tokens distinguish it. These are observer completions, not 25 full dev tests.
+
+Both acceptance criteria remain unchecked. The original five-case Windows
+file failed earlier at the preparation reader-entry wait (246.53s total),
+and the untouched replay source failed the same earlier wait (57.40s).
+The separately filed original line-231 mode is not fixed or claimed here;
+25 consecutive complete single-node dev runs have not been established.

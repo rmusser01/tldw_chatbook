@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import ctypes
 import platform
+import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from tldw_chatbook.Utils.platform_files import os
 
 
 def release_capability(
@@ -225,15 +228,46 @@ def _platform_contract(identity: Mapping[str, str | int]) -> bool:
     return False
 
 
+_EvidenceStamp = tuple[int, int, int, int, int]
+_EVIDENCE_CACHE: tuple[Path, _EvidenceStamp, _Evidence] | None = None
+_EVIDENCE_CACHE_LOCK = threading.Lock()
+
+
+def _evidence_stamp(info: os.stat_result) -> _EvidenceStamp:
+    # The native Windows facade supplies change time, rather than creation time.
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _load_evidence() -> _Evidence:
+    """Reuse parsing only while the same installed evidence generation remains."""
+    global _EVIDENCE_CACHE
+    path = Path(__file__).with_name("native_qualification.json")
+    with _EVIDENCE_CACHE_LOCK:
+        stamp = _evidence_stamp(os.stat(path, follow_symlinks=False))
+        cached = _EVIDENCE_CACHE
+        if cached is not None and cached[:2] == (path, stamp):
+            return cached[2]
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            if _evidence_stamp(os.fstat(stream.fileno())) != stamp:
+                raise OSError("qualification_evidence_changed")
+            raw = stream.read()
+            if _evidence_stamp(os.fstat(stream.fileno())) != stamp:
+                raise OSError("qualification_evidence_changed")
+        evidence = _Evidence.model_validate_json(raw)
+        if _evidence_stamp(os.stat(path, follow_symlinks=False)) != stamp:
+            raise OSError("qualification_evidence_changed")
+        _EVIDENCE_CACHE = (path, stamp, evidence)
+        return evidence
+
+
 def _qualified_identity(
     operation: str, identity: dict[str, str | int]
 ) -> tuple[bool, str]:
     try:
-        raw = Path(__file__).with_name("native_qualification.json").read_text()
+        evidence = _load_evidence()
     except OSError:
         return False, "qualification_unavailable"
-    try:
-        evidence = _Evidence.model_validate_json(raw)
     except ValidationError:
         return False, "qualification_evidence_invalid"
     if evidence.schema_version != 1 or any(

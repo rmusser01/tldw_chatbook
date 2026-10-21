@@ -73,6 +73,15 @@ async def _seed_console(app, pilot):
     await _wait(pilot, lambda: app._initial_screen_pushed)
     console = await _navigate(app, pilot, "chat", expect="ChatScreen")
     await _wait(pilot, lambda: bool(list(console.query("#console-native-composer"))))
+    # A composed screen may still be reconciling; legacy rounds are not replayed.
+    runtime = console._console_runtime()
+    await _wait(
+        pilot,
+        lambda: app.screen is console
+        and runtime.view is console
+        and console._console_attach_reconciled
+        and runtime.has_answerable_view(),
+    )
     controller = console._ensure_console_chat_controller()
     store = console._console_chat_store
     session_id = store.active_session_id
@@ -498,9 +507,6 @@ async def _verify_chat_create_confirmation_has_its_own_kind_and_review_route(
             await _stop_workers(controller, workers, pilot)
 
 
-_CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS = 5
-
-
 async def _verify_late_chat_create_projection_spares_the_active_sibling(
     request, tmp_path
 ):
@@ -534,6 +540,8 @@ async def _verify_late_chat_create_projection_transition(
         console, controller, store, source_id = await _seed_console(app, pilot)
         entered = threading.Event()
         release = threading.Event()
+        # The test deadline bounds these holds; finally releases both on failure.
+        # A shorter wall timer can expire during valid native Windows UI work.
         results = {}
         errors = []
         marshalled = threading.Event()
@@ -556,12 +564,10 @@ async def _verify_late_chat_create_projection_transition(
             )
             if is_source_clear:
                 clear_entered.set()
-                assert clear_release.wait(
-                    _CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS
-                )
+                clear_release.wait()
             if payload and payload.get("session_id") == source_id:
                 entered.set()
-                assert release.wait(_CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS)
+                release.wait()
             original_marshal(payload)
             if payload and payload.get("session_id") == source_id:
                 marshalled.set()

@@ -316,14 +316,17 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 their doubles mirror ``RAGService.search``, not this
                 override. Any new base-class search kwarg has to be added
                 here too.
-            query_embedding: Precomputed query embedding, forwarded to
-                ``RAGService.search`` (task-34390). See the base method for
-                semantics -- semantic searches only, ``ValueError``
-                otherwise; ``None`` embeds per call exactly as before.
+            query_embedding: Reserved compatibility parameter. The public base
+                search computes embeddings itself; a non-None value raises
+                ValueError rather than silently ignoring a supplied vector.
 
         Returns:
             Search results, optionally reranked
         """
+        if query_embedding is not None:
+            raise ValueError(
+                "query_embedding is not supported by the public RAG search"
+            )
         start_time = time.time()
 
         # Handle experiment profile selection
@@ -357,7 +360,6 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             score_threshold=score_threshold,
             metadata_allowlist=metadata_allowlist,
             keyword_source_types=keyword_source_types,
-            query_embedding=query_embedding,
         )
 
         # Apply reranking if enabled. Reranking must NEVER fail a search:

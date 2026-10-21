@@ -260,6 +260,14 @@ class LibraryLocalRagSearchService:
     def __init__(self, app_instance: Any) -> None:
         self._app = app_instance
 
+    async def prewarm(self) -> Any:
+        """Resolve the shared runtime before spending a caller's search budget.
+
+        Returns:
+            The shared runtime, or None when dependencies or setup are unavailable.
+        """
+        return await self._resolve_rag_runtime()
+
     async def search(
         self,
         query: str,

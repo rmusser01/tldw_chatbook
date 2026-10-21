@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import inspect
+import sqlite3
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.widgets import Button, TextArea
 
 from Tests.private_profile import private_profile_test
@@ -2019,3 +2020,46 @@ async def test_shelf_pause_after_shelf_resume_lets_the_queued_turn_finish(
             if message.role is ConsoleMessageRole.ASSISTANT
         ]
         assert [message.status for message in replies] == ["complete", "complete"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["restore", "discard"])
+async def test_recovery_storage_failure_is_nonfatal_and_retains_inputs_in_worker(
+    monkeypatch, operation
+) -> None:
+    runtime, store, entries = _runtime_with_two_recoveries()
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+    loaded = []
+    controller = _recovery_ui_controller(runtime, fake, calls, loaded)
+
+    def storage_failure(_entry):
+        raise sqlite3.OperationalError("private-path-and-draft-sentinel")
+
+    monkeypatch.setattr(runtime, "_release_retrieval_pause", storage_failure)
+    app = App()
+    async with app.run_test():
+        worker = app.run_worker(
+            controller.handle_primary_intent(
+                "session-a",
+                action=f"turn-recovery:{operation}:turn-a",
+                expected_revision=0,
+            )
+        )
+        await worker.wait()
+
+    assert runtime.recoveries_for_session("session-a") == entries
+    assert store.session_draft("session-a") == ""
+    assert store.pending_attachments("session-a") == []
+    assert loaded == []
+    assert calls["focused"] == []
+    assert calls["notified"] == [
+        (
+            "That unsent turn could not be restored safely."
+            if operation == "restore"
+            else "That unsent turn could not be discarded safely. Try again.",
+            "warning",
+        )
+    ]
+    assert "private-path-and-draft-sentinel" not in repr(calls["notified"])

@@ -7,6 +7,25 @@
 
 **What to do.** Retain every progress occurrence, all duration phases and each run's exact census. Top-25 reports do not fully time parameterized functions; label the unmeasured remainder and measure hosted job setup separately. Bind evidence hashes to canonical Git blob bytes (LF/UTF8), since Windows checkout newlines and upstream-only comments can change file hashes without changing the selected tests.
 
+
+## A returned frame address cannot identify a later invocation (TASK-35713, PR #3189, 2026-10-21)
+
+**Incident.** Required Console P0 run 39566575303 rejected a valid FULL replay:
+its narrowed invocation returned False, then FULL returned True at the same
+numeric frame address. The test retained `id(frame)` after the frame had died;
+CPython reused that address. The exact base observer and replay predicate
+reproduced the problem with real monitoring/asyncio primitives: 26 returns
+shared one raw address, so the predicate rejected the successful replay.
+
+**What to do.** Assign a fresh token on PY_START, look it up by frame address
+only while that invocation is live, and remove the lookup on PY_RETURN.
+Retain the token across completions. This preserves the existing no-frame-
+retention observation contract; retaining original frames can itself alter
+lifetime behavior. The repaired observer distinguished all 26 completions.
+This proves the witness repair; it does not establish the separately filed
+first-wait mode or 25 complete dev-run qualification in TASK-35713.
+
+
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
 **Incident.** PR #3176's admission-sensitive job failed the headless-delivery
@@ -17,6 +36,16 @@ starts the view's poll after reconciliation. The Console paths were unchanged
 against dev, and the unchanged exact test passed locally. This was a distinct
 signature from TASK-34789's earlier WaitForScreenTimeout reports; it does not
 identify the particular native deferral in that hosted run.
+
+**PR #3189 follow-up, 2026-10-20 local.** UI10 failed at the initial legacy
+approval-card mount wait, before its count assertions. Its seed helper had the
+same composer-only readiness assumption. Matched real-controller/runtime probes
+confirmed that an unscoped approval armed before reconciliation is announced
+headless and is not retained for a later remount; reconcile first and the card
+mounts. The fix witnesses the exact current screen/runtime view, attachment
+completion and answerability before seeding. The hosted log did not capture
+reconciliation state, so this demonstrates the setup hazard rather than proving
+that particular hosted scheduling history.
 
 **What to do.** A post-attachment assertion first witnesses the existing
 attachment-complete state for the current screen, as the neighboring public
@@ -6108,6 +6137,14 @@ diagnostic inventory. The missing local inventory check cost another complete
 CI cycle. Inspect added logger statements with the checker's `--statements`
 mode, regenerate the reviewed inventory, and run the derived-artifact checks
 before pushing; passing feature and packaging tests does not cover that pin.
+
+**PR #3189 follow-up (2026-10-21).** All 16 behavior lanes passed, including
+ten UI shards and Console P0, before the aggregate rejected two unrefreshed
+owner rows. Two new bounded controller diagnostics and two unchanged Library
+diagnostics moved into an extracted module were missing from the pin. Review
+the statement/argument provenance even for an extraction, regenerate with the
+sanctioned command, and verify the artifact itself; feature tests and a privacy
+review alone do not establish generated-artifact consistency.
 
 **Hybrid-fusion cluster (TASK-3996) Task 5, 2026-08-09.** The new notes/conversations
 keyword sub-legs opened SQLite directly:
@@ -21011,3 +21048,29 @@ screen keybindings to accommodate a test.
 ## Copy numbered pytest receipts before subsequent runs retire them (TASK-35869)
 
 During the Textual follow-up gate on 2026-10-20, the Evals report referenced original-code child receipts under pytest-74/75. By final review the normal numbered-temp rotation retained pytest-82/83/84, so the controller could independently inspect named final logs and reproduce baseline lint, but could not reinspect those early raw RED logs. Contemporaneous reports remain evidence, with this qualification disclosed. Copy the needed RED/GREEN receipt to a named artifact outside the rotating pytest directory before later targeted runs; do not disable retention, bypass private-temp permissions, or replay product tests only to recreate an aged-out log.
+
+## Recovery failure tests must reach the real mutation boundary
+
+**PR #3189 / TASK-35992, 2026-10-20.** A test that made the cancellation entry
+point raise proved recovery retention but missed that stock saved-chat cleanup
+published CANCELLED before SQLite deletion. With the real connection set to
+`PRAGMA query_only=ON`, Discard failed after that publication; retry removed the
+recovery while leaving its echo in the next provider request. New real-SQLite
+Restore/Discard cases reproduce the partial state and verify retry removes the
+echo and continuation, while separate real Textual workers verify the error
+cannot terminate the app. Inject persistent failures at the actual write boundary
+and check the next successful operation, not only the immediate exception.
+
+
+## Artificial worker holds must survive the UI work they protect
+
+**PR #3189 / TASK-35992, 2026-10-20.** The Windows late chat-create
+projection journey stopped at `marshalled.is_set()`. Instrumentation showed
+the source worker's five-second event wait returning false at 9.281 seconds;
+the test reached its explicit release at 16.141 seconds, 11.86 seconds after
+entry. The captured worker `AssertionError` prevented publication, hiding the
+expired test gate behind a later projection timeout. Test-owned source/clear
+holds now wait for explicit release; their existing `finally` releases both
+before worker retirement, and the test/process deadline remains the bound.
+Preserve the original navigation, Close and sibling-decision assertions.
+An early app-startup failure is not evidence that held-worker cleanup passed.

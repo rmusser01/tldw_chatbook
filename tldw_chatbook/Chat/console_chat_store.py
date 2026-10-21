@@ -5624,7 +5624,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         *,
         expected_state: ConsoleTurnPreparationState,
     ) -> ConsoleTurnPreparation | None:
-        """Cancel one exact precommit owner and restore its transient inputs."""
+        """Cancel one precommit owner only after transient cleanup succeeds."""
 
         transition = ConsolePreparationTransition(
             preparation_id=preparation_id,
@@ -5642,8 +5642,12 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             updated = apply_preparation_transition(current, transition)
             if updated is current:
                 return None
-            self._preparations_by_session[session_id] = updated
-            self._preparations_by_id[updated.preparation_id] = updated
+            transient_id = current.transient_user_message_id
+            if (
+                transient_id is not None
+                and self._message_session_index.get(transient_id) == session_id
+            ):
+                self.delete_message(transient_id)
             session = self._sessions.get(session_id)
             if session is not None:
                 if current.origin == "manual" and (
@@ -5661,12 +5665,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     session.id,
                     current.pre_send_conversation_id,
                 )
-            transient_id = current.transient_user_message_id
-            if (
-                transient_id is not None
-                and self._message_session_index.get(transient_id) == session_id
-            ):
-                self.delete_message(transient_id)
+            self._preparations_by_session[session_id] = updated
+            self._preparations_by_id[updated.preparation_id] = updated
             return updated
 
     def remove_preparation(
