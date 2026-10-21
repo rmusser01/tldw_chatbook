@@ -30,6 +30,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Chat.console_chat_controller as controller_module
+import tldw_chatbook.Chat.console_configuration_capture as capture_module
 import tldw_chatbook.Workspaces.environment_status as env_mod
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -98,35 +100,62 @@ def _canned_gatherers(monkeypatch, root: str) -> None:
     )
 
 
-def _spy_turn_configuration_builds(controller) -> list[str]:
+def _spy_turn_configuration_builds(controller, monkeypatch) -> list[str]:
     """Record every full turn-configuration build the Environment panel causes.
 
-    Wraps the live controller instance's builder entry point
-    (``resolve_turn_execution_context`` delegates to it). A build counts when
+    Wraps all three entry points into the builder: the live controller
+    instance's ``resolve_turn_configuration_snapshot`` (what
+    ``resolve_turn_execution_context`` delegates to), its
+    ``resolve_runtime_turn_configuration_snapshot``, and the module-level
+    ``capture_console_turn_configuration`` producer -- so a regression that
+    skips the outer method and calls an inner one directly is still caught.
+    One build is recorded once, at its outermost entry. A build counts when
     the Environment controller's module is on the calling stack -- i.e. it was
     made on account of an Environment refresh, poll or landing -- and the
     record names the thread it ran on.
     """
-    original = controller.resolve_turn_configuration_snapshot
     main = threading.main_thread().ident
     builds: list[str] = []
+    depth = threading.local()
 
-    def spy(session_id, *args, **kwargs):
+    def _environment_on_stack() -> bool:
         frame = sys._getframe(1)
-        on_account_of_environment = False
-        while frame is not None:
-            if frame.f_code.co_filename.replace("\\", "/").endswith(
-                _ENVIRONMENT_MODULE
-            ):
-                on_account_of_environment = True
-                break
-            frame = frame.f_back
-        del frame
-        if on_account_of_environment:
-            builds.append("ui-loop" if threading.get_ident() == main else "worker")
-        return original(session_id, *args, **kwargs)
+        try:
+            while frame is not None:
+                if frame.f_code.co_filename.replace("\\", "/").endswith(
+                    _ENVIRONMENT_MODULE
+                ):
+                    return True
+                frame = frame.f_back
+            return False
+        finally:
+            del frame
 
-    controller.resolve_turn_configuration_snapshot = spy
+    def _wrap(original):
+        def spy(*args, **kwargs):
+            level = getattr(depth, "level", 0)
+            if level == 0 and _environment_on_stack():
+                builds.append("ui-loop" if threading.get_ident() == main else "worker")
+            depth.level = level + 1
+            try:
+                return original(*args, **kwargs)
+            finally:
+                depth.level = level
+
+        return spy
+
+    controller.resolve_turn_configuration_snapshot = _wrap(
+        controller.resolve_turn_configuration_snapshot
+    )
+    controller.resolve_runtime_turn_configuration_snapshot = _wrap(
+        controller.resolve_runtime_turn_configuration_snapshot
+    )
+    for module in (controller_module, capture_module):
+        monkeypatch.setattr(
+            module,
+            "capture_console_turn_configuration",
+            _wrap(module.capture_console_turn_configuration),
+        )
     return builds
 
 
@@ -162,7 +191,7 @@ async def test_rail_open_completion_and_poll_never_build_a_turn_configuration(
             "harness precondition: the Console has an active session, so the "
             "root accessor reaches the controller rather than UNKNOWN_ROOT"
         )
-        builds = _spy_turn_configuration_builds(chat_controller)
+        builds = _spy_turn_configuration_builds(chat_controller, monkeypatch)
 
         # Rail open, through the real accelerator (notify_rail_opened).
         await screen.action_toggle_console_inspector_rail()
@@ -186,15 +215,43 @@ async def test_rail_open_completion_and_poll_never_build_a_turn_configuration(
         assert screen._console_environment.snapshot.git.root == root
 
 
+def _admitting_per_workspace(root: str, asked: list) -> SimpleNamespace:
+    """Consent whose answer names the workspace it was asked about."""
+
+    def admit_turn(workspace_id):
+        asked.append(workspace_id)
+        return SimpleNamespace(
+            ready_roots=(root, f"{root}/admitted-for-{workspace_id}"),
+            ready_aliases=("alias-one", "alias-two"),
+            skipped_roots=(),
+        )
+
+    return SimpleNamespace(admit_turn=admit_turn)
+
+
 @pytest.mark.asyncio
 async def test_the_narrow_root_read_equals_the_full_snapshots_roots(tmp_path):
-    """Displayed content is unchanged: same roots as the full turn snapshot."""
+    """Displayed content is unchanged: same roots as the full turn snapshot.
+
+    The consent answer embeds the workspace it was asked about, so the two
+    reads agree only when both ask about the session's own workspace.
+    """
     root = str(tmp_path)
     async with _console_with_admitted_root(root) as (pilot, screen):
         chat_controller = screen._ensure_console_chat_controller()
         active = chat_controller.store.active_session_id
-        full = chat_controller.resolve_turn_execution_context(active).workspace_roots
+        own_workspace = chat_controller.store.session_workspace_id(active)
+        asked: list = []
+        chat_controller.app.change_review_consent_service = _admitting_per_workspace(
+            root, asked
+        )
 
-        assert full == (root,)
-        assert screen._review_selection._console_change_review_workspace_roots() == full
+        full = chat_controller.resolve_turn_execution_context(active).workspace_roots
+        asked_by_full = list(asked)
+        asked.clear()
+        narrow = screen._review_selection._console_change_review_workspace_roots()
+
+        assert full == (root, f"{root}/admitted-for-{own_workspace}")
+        assert narrow == full
+        assert asked == asked_by_full == [own_workspace]
         assert screen._console_environment_root() == root
