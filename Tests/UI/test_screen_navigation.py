@@ -211,6 +211,21 @@ from tldw_chatbook.runtime_policy.server_parity_state import (
     ServerParityStateRepositories,
 )
 
+# task-35597: this suite is the PR-gate lane's navigation floor, and nearly
+# every node here constructs a real TldwCli. Under
+# isolate_test_environment's per-test TLDW_CONFIG_PATH redirect the guarded
+# config reads on those construction paths fail closed with
+# RecoveryRequired("raw_source_selection_changed") (ADR-126 admission; the
+# config source is bound to the session bootstrap sandbox at conftest
+# import time), which is why 108 of 141 nodes failed a plain one-process
+# run. Keeping the collection-time bootstrap profile is the established
+# in-lane mechanism for censused app-constructing suites (60+ files carry
+# this marker; the per-test alternative the file already uses where a case
+# needs its own writable profile is @private_profile_test, kept below).
+# Lane-time cost of the private-profile alternative was the decider: 108
+# child-interpreter boots at 5-20 s each would overrun any shard budget.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 PRIMARY_ROUTE_IDS = [
     "chat",

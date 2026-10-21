@@ -138,7 +138,14 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         assert tuple(label for _key, label in shortcuts) == tuple(expected_labels)
 
 
+# task-35597: the app-constructing tests below keep the collection-time
+# bootstrap profile (same ADR-126 admission reason as the censused settings
+# suites): under isolate_test_environment's per-test TLDW_CONFIG_PATH
+# redirect, the guarded config reads on these mount paths fail closed with
+# RecoveryRequired("raw_source_selection_changed") before any assertion
+# runs. The @private_profile_test cases above already isolate per child.
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> None:
     app = _build_test_app()
     app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
@@ -412,6 +419,7 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful(request):
             assert label not in help_text
 
 
+@pytest.mark.bootstrap_profile
 def test_f1_help_has_contract_content_for_every_category():
     """TASK-23110: every category's F1 help body carries the save contract,
     ownership, and verbs -- no category may open an empty (title-only)
@@ -419,7 +427,9 @@ def test_f1_help_has_contract_content_for_every_category():
     app = _build_test_app()
     screen = SettingsScreen(app)
     members = tuple(SettingsCategoryId)
-    assert len(members) == 30
+    # task-35597: re-pinned 30 -> 33 (three categories landed since the pin;
+    # the loop below covers each new member, only the count had gone stale).
+    assert len(members) == 33
     for category in members:
         state = screen._workbench_help_state(category)
         body = state.render_text()
@@ -465,6 +475,7 @@ def test_f1_help_has_contract_content_for_every_category():
                 assert len(carriers) == 1, (category, value)
 
 
+@pytest.mark.bootstrap_profile
 def test_f1_help_video_gen_states_a_coherent_write_contract():
     """Review finding 6 (TASK-23110): Video Gen mutates like Image Gen --
     its help must not pair a draft badge with read-only-ownership copy."""
@@ -481,6 +492,7 @@ def test_f1_help_video_gen_states_a_coherent_write_contract():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_f1_help_renders_literal_brackets_in_notes():
     """Review finding 7 (TASK-23110): the help body must not eat literal
     bracket text as Textual markup -- Agents' boundary copy contains
@@ -503,6 +515,7 @@ async def test_f1_help_renders_literal_brackets_in_notes():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_f1_help_panel_body_carries_category_contract_when_mounted():
     """TASK-23110 (review round): the contract notes must survive the REAL
     F1 flow, not just the builder.
@@ -585,6 +598,7 @@ _SAVE_STUB_TOAST = "has no save action yet"
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_advertised_capabilities_match_real_action_branches():
     """Drift guard (task-1340 review): advertised keys must track REAL code.
 
@@ -670,6 +684,7 @@ async def test_advertised_capabilities_match_real_action_branches():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_stacked_revert_dialogs_revert_only_once():
     """Two queued confirms must not double the revert (double toast)."""
     app = _build_test_app()
