@@ -40,7 +40,7 @@ can sync with a tldw server you configure).
 | Ctrl+6 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
-| Ctrl+9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and audit. |
+| Ctrl+9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and history. |
 | Ctrl+0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
 | F2 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
 | F3 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |

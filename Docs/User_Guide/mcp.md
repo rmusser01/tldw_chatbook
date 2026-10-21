@@ -1,4 +1,4 @@
-# MCP — MCP servers, tools, permissions, auth, and audit
+# MCP — MCP servers, tools, permissions, auth, and history
 
 ## Watchlists privacy boundary
 
@@ -56,7 +56,7 @@ your shell before connecting.
 5. **Try a tool.** Press `2` (Tools), arrow onto the tool, and press `t`
    to open the Test Tool panel — a form built from the tool's schema (or
    a raw-JSON box when the schema is too complex). An Ask-gated tool asks
-   once per run; the run is recorded in Audit (`4`).
+   once per run; the run is recorded in History (`4`).
 
 To remove a server, select its row in Servers mode and use **Delete**
 (a two-step confirm; Escape backs out). **Import…** accepts a

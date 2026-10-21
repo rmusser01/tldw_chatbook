@@ -43,13 +43,15 @@ Copy-only pass, scheme C (rename only what does not read cold). Chips: Servers/T
 
 Test evidence (worktree .worktrees/tools-hub-followups, .venv/bin/python): test_mcp_workbench.py 348 passed / 1 flake (test_selecting_different_profile_while_armed_disarms passes standalone); test_mcp_inspector.py 295 passed; test_mcp_permissions_mode.py 62 passed; test_mcp_gate_label_layout.py (paint) 8 passed; test_destination_shells.py tools-hub subset (-k 'tools_hub or purpose or mode_chip') 17 passed. Pre-existing red verified identical on stashed baseline vs this change (same failure sets, diff empty): test_destination_shells.py full (65 env failures, RecoveryRequired bootstrap), test_settings_tools_hub.py (5), test_settings_footer_hints.py (7), test_product_maturity_phase6_recovery_docs.py (1), test_latest_dev_core_app_usability_smoke.py (3), test_mcp_compact_readability.py (6, stale #mcp-purpose pins from the retired standalone screen). Docs contracts: test_mcp_documentation_contract.py + test_user_guide_conflict_markers.py 76 passed. No ADR needed: copy-only change inside an existing surface, no boundary/storage/contract decision.
 
+Follow-up review (2026-10-20): the plan's step-5 test-file updates proved unnecessary — no stale pins existed; the reviewer re-ran all four step-5 suites green.
+
 Files: tldw_chatbook/UI/MCP_Modules/mcp_workbench.py, tldw_chatbook/UI/MCP_Modules/mcp_inspector.py, tldw_chatbook/UI/Screens/settings_tools_hub.py, Tests/UI/test_destination_shells.py, Tests/UI/test_product_maturity_phase6_recovery_docs.py, Tests/UI/test_latest_dev_core_app_usability_smoke.py, Docs/User_Guide/mcp.md, Docs/User_Guide/console/agent-runs-and-tools.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Tools-hub mode chips and purpose lines now read in plain language (Audit renamed to History; Servers/Tools/Permissions kept), with tooltips, cross-mode copy, and user-guide quotes updated to match — copy-only; keys, ids, and routes untouched.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
