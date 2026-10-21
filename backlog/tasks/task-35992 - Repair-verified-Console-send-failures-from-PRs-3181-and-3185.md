@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 08:50'
+updated_date: '2026-10-21 10:28'
 labels:
   - console
   - bug
@@ -37,6 +37,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #10 The replacement send-repair task has a unique filename/frontmatter ID and consistent live references in the combined dev and PR task tree, with renumbering provenance preserving its original identity.
 - [x] #11 The UI gate retains its exact census and existing shard count, test/job timeouts, dependencies and required aggregation, with the UI2 allocation reduced by a measured balance correction; hosted outcomes and remaining global margin limits stay explicit.
 - [x] #12 The changed-source replay regression distinguishes the held narrowed sync from later FULL invocations independently of recycled frame addresses, preserving original source-currentness, task, custody, draft and deadline assertions; the separately filed first-wait mode remains explicitly unclaimed.
+- [x] #13 The committed production diagnostic inventory reproduces the reviewed logger owners and statements introduced or moved by this PR, with sink topology, privacy classifications and checker policy preserved.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,7 +53,8 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 8. Resolve the CI integration collision by renumbering this younger task and all live references, retaining ownership provenance, and verifying uniqueness against the combined dev/PR task tree.
 9. Diagnose the hosted UI2 job-cap cancellation from comparable raw shard logs; balance measured whole-file slots without changing coverage, dependencies, counts or limits; verify census/queue contracts and request independent review.
 10. Repair the hosted P0 replay witness using per-invocation tokens assigned on original PY_START and retired on PY_RETURN; verify the original lifecycle without retaining frames or changing product code/deadlines, and record the separately open TASK-35713 first-wait mode.
-11. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
+11. Review the required diagnostic-inventory drift by exact statement comparison and bounded argument provenance; regenerate only the intended owner rows, retain sink/privacy/checker policy, and verify the checker and targeted inventory contracts before independent review.
+12. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
 ADR required: no
 ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md and backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
@@ -339,3 +341,64 @@ it is not evidence and was replaced with the app-free AST probe. Fresh scoped
 independent requesting-code-review found no actionable correctness or weakened
 assertion findings. Changed-file Ruff has zero diagnostics, formatting and
 diff checks pass; hosted P0 remains the integration gate.
+
+
+### CI diagnostic inventory reconciliation
+
+Required run 39572669933 on reviewed head `530028c416` passed all 16 test
+lanes, including all ten UI shards and Console P0, plus Perf and all three
+Eval recovery platforms. The final aggregate (job 119161424095) failed only
+`Production diagnostic inventory matches the source tree`. Pin regeneration
+was omitted when the original logging changes/extraction landed; this is
+source-to-artifact drift, not an infrastructure failure. No rerun was used to
+mask it.
+
+The hosted report and original local checker both identify exactly two rows:
+controller 67/efe331917e699ea9c765 -> 69/3583c9aa681f2416bfbe and the new
+Library preparation helper 2/b646dda71b39ee8886bc. Exact `--statements` review
+against inventory pin commit `e51383886bc607840425b65261dfaa64a415c78d` shows
+two controller additions from original implementation `b2e5e95076`: a submit
+warning with the code-owned accepted boolean/status enum or fixed
+accepted/refused strings, and accepted-turn settlement failure with exception
+class name only. The helper's retrieval-failure exception class and fixed
+pause error code already existed in that commit's controller routine; the
+prior extraction preserves their AST after self-to-controller renaming.
+Independent source/history review reproduced the target digests and confirmed
+no draft, result body, path, ID, exception body, bound context or traceback is
+introduced. Existing unresolved privacy candidates are not reclassified safe.
+
+After that review, the sanctioned `--write` command refreshed only those two
+owner records. All other owner rows, sink topology, path-privacy candidates,
+classification rules, exclusions and schema metadata compare identical to
+the committed pin. No production source, checker, coverage or deadline change.
+ADR required: no; generated evidence is reconciled under the existing gate.
+
+The actual failed hosted merge was `ce55114e6e0f039aa312bfd01c836666de247844`
+(head 530028c416 plus dev `e639b720caf6913a19bbf1ac6ceaf1dc5808ddc5`). Local
+merge-tree reconstruction reproduces its exact tree
+`f693ff7c9256887bd6a97a889b05120d9c152e73`; its original manifest blob is the
+same as the branch's (`d31db1bcd6c9c5d52eb7df2ea9ae01d172bba4af`). The six
+upstream production-file differences are already covered by that hosted scan.
+The updated combined preview is checked before publication to preserve that
+upstream source population and its independent inventory entries.
+
+Evidence is retained under `.tmp-replacement-tests`: the hosted aggregate
+log, exact statement-review report, local red report, sanctioned write output,
+and focused inventory-contract output. No full suite was run.
+
+
+Focused validation for this generated-artifact repair: 9 original inventory,
+metadata-only, path-projection, ordering, movement/content/multiplicity and sink
+contract cases passed in 123.78s. The original full-source inventory subprocess
+now passes (111.53s); generation took 112.48s. A local CLI-only 900-second test
+allowance was supplied for this slow native host; no committed test or CI limit
+changed. Task-ID and diff checks pass. The exact three-file patch contains no
+Python source or checker edit. Independent statement/manifest review finds no
+remaining privacy or correctness issue; exact committed-head and combined-tree
+checks precede push/re-arm.
+
+The prior hosted balancing follow-up is also now measured: run 39572669933
+UI2 passed 168 cases in 1027.73s pytest / 1085s job time; UI6 passed 164 in
+852.61s / 944s. Both keep their original 20-minute job caps. This is one hosted
+run, not TASK-35834's three-run/global-margin qualification. Raw logs are in
+`.tmp-replacement-tests/ui-budget-evidence/39572669933`.

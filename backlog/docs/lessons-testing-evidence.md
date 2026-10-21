@@ -6138,6 +6138,14 @@ CI cycle. Inspect added logger statements with the checker's `--statements`
 mode, regenerate the reviewed inventory, and run the derived-artifact checks
 before pushing; passing feature and packaging tests does not cover that pin.
 
+**PR #3189 follow-up (2026-10-21).** All 16 behavior lanes passed, including
+ten UI shards and Console P0, before the aggregate rejected two unrefreshed
+owner rows. Two new bounded controller diagnostics and two unchanged Library
+diagnostics moved into an extracted module were missing from the pin. Review
+the statement/argument provenance even for an extraction, regenerate with the
+sanctioned command, and verify the artifact itself; feature tests and a privacy
+review alone do not establish generated-artifact consistency.
+
 **Hybrid-fusion cluster (TASK-3996) Task 5, 2026-08-09.** The new notes/conversations
 keyword sub-legs opened SQLite directly:
 `sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)`. The choice was deliberate and
