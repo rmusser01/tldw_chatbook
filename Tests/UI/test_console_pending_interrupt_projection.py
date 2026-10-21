@@ -507,9 +507,6 @@ async def _verify_chat_create_confirmation_has_its_own_kind_and_review_route(
             await _stop_workers(controller, workers, pilot)
 
 
-_CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS = 5
-
-
 async def _verify_late_chat_create_projection_spares_the_active_sibling(
     request, tmp_path
 ):
@@ -543,6 +540,8 @@ async def _verify_late_chat_create_projection_transition(
         console, controller, store, source_id = await _seed_console(app, pilot)
         entered = threading.Event()
         release = threading.Event()
+        # The test deadline bounds these holds; finally releases both on failure.
+        # A shorter wall timer can expire during valid native Windows UI work.
         results = {}
         errors = []
         marshalled = threading.Event()
@@ -565,12 +564,10 @@ async def _verify_late_chat_create_projection_transition(
             )
             if is_source_clear:
                 clear_entered.set()
-                assert clear_release.wait(
-                    _CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS
-                )
+                clear_release.wait()
             if payload and payload.get("session_id") == source_id:
                 entered.set()
-                assert release.wait(_CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS)
+                release.wait()
             original_marshal(payload)
             if payload and payload.get("session_id") == source_id:
                 marshalled.set()

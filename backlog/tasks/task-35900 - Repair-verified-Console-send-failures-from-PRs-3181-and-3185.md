@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 05:18'
+updated_date: '2026-10-21 05:40'
 labels:
   - console
   - bug
@@ -33,6 +33,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #6 Targeted regression tests and changed-file static checks pass; replacement PR and superseded PR closures credit Csavoldi.
 - [x] #7 Recovery action storage failures remain nonfatal in the real UI worker, retain the unsent recovery, show content-free retry guidance, and retire the exact transient echo and continuation before recovery removal on retry.
 - [x] #8 Mounted approval projection journeys begin only after the current Console attachment is reconciled and answerable; their original card, count, navigation and decision assertions remain enforced.
+- [x] #9 Windows late chat-create projection journeys keep test-owned worker gates held until explicit release, preserve the close/navigation and sibling-decision assertions, and retire held workers during cleanup within the existing test deadline.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,7 +45,8 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 4. Keep the controller within its existing size ratchet by mechanically delegating the retrieval preparation routine to a focused helper; run targeted suites, lint/format changed Python, review the complete diff, and update subsystem documentation.
 5. Add a real-Textual-worker regression for Restore/Discard storage failures, retain recoveries on failure, surface bounded retry guidance, and verify saved-chat SQLite failures leave cancellation retryable without leaking discarded text into later provider history before pre-merge review.
 6. For CI UI10, witness completed and answerable Console attachment before mounting approval journeys, reproduce the incomplete-attachment legacy behavior, and rerun the original assertions.
-7. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
+7. Instrument the Windows late-projection baseline failure; replace test-owned five-second self-expiry with explicit event release under existing test deadline/finally cleanup, verify close and navigation paths and failure cleanup, then review.
+8. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
 ADR required: no
 ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
@@ -155,3 +157,47 @@ diagnostics (16 existing diagnostics unchanged); formatting, diff and task-ID
 checks pass. Auto-merge was disabled and the branch pulled with rebase before
 editing, as required by the queue. Re-arm only on the reviewed new head after
 thread checks; combined CI remains the final merge gate.
+
+
+### Windows late chat-create projection baseline
+
+The user authorized repairing the separate Windows baseline after the CI
+attachment fix. A mounted closing-journey trace establishes the cause:
+the source entered its artificial hold at 4.281s, its five-second wait returned
+false at 9.281s, and its worker reported `AssertionError` at 9.719s. Valid sibling
+creation and Close reached the explicit release at 16.141s, 11.86s after entry.
+The later `marshalled.is_set()` wait hid that earlier test-worker failure.
+
+The source and queued-clear holds now wait for explicit release. The existing
+`finally` sets both events before restoring the callback and retiring workers.
+The existing test/process deadline remains the outer bound; observer waits,
+worker joins, Close/navigation transitions and sibling payload/decision
+assertions are unchanged. This is a test synchronization repair with no
+production changes. ADR required: no; the existing attachment/lifecycle
+contract is preserved. The measured trap is recorded in the testing lessons.
+
+
+The original complete affected file now passes: 13 passed, 2 warnings in
+649.33s (all six real mounted journeys, including both Close/navigation late
+projection paths and the legacy approval journey). The command used
+`--timeout=900`, the same local diagnostic allowance used for baseline
+comparisons; no committed deadline was widened. This establishes the targeted
+Windows behavior, not that this slow host completes the aggregate within the
+default 300s budget. No full suite was run.
+
+
+Forced-failure controls reached each actual held gate, raised from the owner
+test while its release event was unset, then ran the original `finally` and
+`_stop_workers`: all workers were retired for both source and clear holds.
+Clear passed in the initial parametrized run (109.74s call); source passed
+serially (1 passed, 1 deselected, 114.61s total, 106.57s call). The earlier
+source attempt failed during `_seed_console`/storage teardown before reaching
+the gate (`raw_resources_not_retired`); it is not counted as cleanup evidence.
+These diagnostic probes remain local, outside the committed test collection.
+
+Independent requesting-code-review found no actionable findings in the gate
+repair. Changed-file Ruff comparison retains exactly 16 existing diagnostics
+and introduces none; changed-range formatting, diff and task-ID checks pass.
+The source/clear behavior and cleanup evidence satisfy AC9. Combined hosted CI
+remains the integration gate; existing unrelated baseline cases above remain
+separate and are not counted green.

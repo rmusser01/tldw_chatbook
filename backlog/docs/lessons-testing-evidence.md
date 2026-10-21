@@ -21033,3 +21033,17 @@ Restore/Discard cases reproduce the partial state and verify retry removes the
 echo and continuation, while separate real Textual workers verify the error
 cannot terminate the app. Inject persistent failures at the actual write boundary
 and check the next successful operation, not only the immediate exception.
+
+
+## Artificial worker holds must survive the UI work they protect
+
+**PR #3189 / TASK-35900, 2026-10-20.** The Windows late chat-create
+projection journey stopped at `marshalled.is_set()`. Instrumentation showed
+the source worker's five-second event wait returning false at 9.281 seconds;
+the test reached its explicit release at 16.141 seconds, 11.86 seconds after
+entry. The captured worker `AssertionError` prevented publication, hiding the
+expired test gate behind a later projection timeout. Test-owned source/clear
+holds now wait for explicit release; their existing `finally` releases both
+before worker retirement, and the test/process deadline remains the bound.
+Preserve the original navigation, Close and sibling-decision assertions.
+An early app-startup failure is not evidence that held-worker cleanup passed.
