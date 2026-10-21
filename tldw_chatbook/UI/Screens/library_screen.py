@@ -9776,6 +9776,9 @@ class LibraryScreen(BaseAppScreen):
                         self._media_state.selected_media_id,
                         immediate=True,
                     )
+                    # TASK-34000.18 fix round 2: a restored selection is
+                    # the Reader's item too.
+                    self._media_state.highlight_held_by_reader = True
             self.run_worker(
                 self._refresh_library_media_detail(
                     self._media_state.selected_media_id,
@@ -16697,8 +16700,10 @@ class LibraryScreen(BaseAppScreen):
         """Resolve the Reader's target identity to its positive int id.
 
         TASK-34000.18 fix round 1 (I-3): every caller is Reader-scoped -- the
-        speaker legend's rename id and its can-rename gate, the rename
-        result's identity check, the Reader's legend rows -- and a rename
+        Reader's speaker-rename id, the rename result's identity check and
+        the Reader's legend rows (the LIST canvas's own presentation,
+        ``_library_media_canvas_presentation``, resolves the list selection
+        itself; its preview is off, so that value is inert) -- and a rename
         persisted against the LIST selection wrote the Reader's transcript
         onto another record whenever the two diverged (a pending row
         click, an off-page open). So this reads
@@ -16943,6 +16948,8 @@ class LibraryScreen(BaseAppScreen):
             request_generation=session.request_generation + 1,
             mode=session.mode,
         )
+        # TASK-34000.18 fix round 2: nothing held, nothing to hold for.
+        self._media_state.highlight_held_by_reader = False
         self._media_state.selected_media_id = ""
         self._media_state.view = "list"
         self._media_state.detail = None
@@ -17206,6 +17213,12 @@ class LibraryScreen(BaseAppScreen):
 
     def _clear_library_media_selection_for_scope_change(self) -> None:
         """End page-local selection before changing the exact Media scope."""
+        # TASK-34000.18 fix round 2: every user scope change -- a type
+        # choice, a typed query, the filter Clear, a sort or page change --
+        # comes through here, and it is the one place the Reader's hold on
+        # the list highlight is released: from now on the list has moved
+        # on and the selection follows the canvas (TASK-15457).
+        self._media_state.highlight_held_by_reader = False
         changed = (
             self._media_state.select_mode
             or self._media_state.row_selection.count > 0
@@ -31960,6 +31973,8 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.reader_session
         )
         self._media_state.view = "list"
+        # TASK-34000.18 fix round 2: the list is the stage again.
+        self._media_state.highlight_held_by_reader = False
         self._media_state.editing = False
         self._media_state.confirming_delete = False
         self._media_state.editing_analysis = False
@@ -35998,6 +36013,10 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.selected_media_id = (
                 reader_identity[0] if reader_identity is not None else record_id
             )
+            # Fix round 2: opened for the Reader -- it holds the highlight
+            # until the user's next scope change (the user's filter is
+            # left exactly as it is).
+            self._media_state.highlight_held_by_reader = True
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._cancel_pending_review_set_resume()
             self._media_state.view = "viewer"

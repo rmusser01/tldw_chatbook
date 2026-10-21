@@ -85,7 +85,10 @@ from tldw_chatbook.UI.Library_Modules.library_media_state import (
 #: instead of quietly resizing the shim surface this file checks.
 #: 2026-10-19, TASK-34000.24: 82 -> 83, ``link_receipt`` (the Reader's
 #: "Use in Console" workspace-link receipt; shim ``_library_media_link_receipt``).
-_EXPECTED_MEDIA_STATE_FIELD_COUNT = 83
+#: 2026-10-20, TASK-34000.18 fix round 2: 83 -> 84, ``highlight_held_by_reader``
+#: (the order-based hold: the Reader holds the list highlight from an open or
+#: select until the user's next scope change), placed beside ``editing``.
+_EXPECTED_MEDIA_STATE_FIELD_COUNT = 84
 
 #: The 2 WIRING attributes the state PR deliberately left on
 #: ``LibraryScreen`` (the ``_conversation_reader_controller``/``_library_

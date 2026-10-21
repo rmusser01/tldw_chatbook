@@ -483,6 +483,17 @@ class LibraryMediaState:
     # hands back a cached Mapping cannot make a fresh open look "already
     # rendered" and strand the viewer on its loading line.
     composed_detail: Mapping[str, Any] | None = None
+    # TASK-34000.18 (fix round 2): the Reader HOLDS the list highlight -- an
+    # ORDER fact, not a scope fact. Set the moment an item is opened or
+    # selected for the Reader (open-by-link, a row select, the receipt's
+    # Open, a restored selection); released only at the user's scope-change
+    # seams (``_clear_library_media_selection_for_scope_change``: a type
+    # choice, a typed query, the filter Clear, a sort or page change), when
+    # the Reader is reset to no selection, and on the viewer exit. While held
+    # and the held item is not on the page, no row wears the cue and the
+    # selection keeps naming the Reader's item (owner Q2 (b)); a scope change
+    # AFTER the open is the list moving on (TASK-15457: row 0).
+    highlight_held_by_reader: bool = False
     editing: bool = False
     confirming_delete: bool = False
     highlights: list[dict[str, Any]] = field(default_factory=list)

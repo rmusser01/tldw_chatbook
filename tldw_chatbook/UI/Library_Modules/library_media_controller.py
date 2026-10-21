@@ -2022,7 +2022,19 @@ class LibraryMediaController:
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         """Return controller-owned inputs shared by every Media canvas path."""
         controller = self._library_media_browse_controller
-        backing_id = self._library_media_selected_backing_id()
+        # TASK-34000.18 fix round 2 (minor): this is the LIST canvas's own
+        # presentation (its preview is ``show_preview: False`` below, so the
+        # value is inert today) -- it reads the list selection, not the
+        # Reader's target the viewer resolves through
+        # ``_library_media_selected_backing_id``.
+        raw_backing_id = (
+            self._library_media_backing_id(self._selected_media_id)
+            if self._selected_media_id
+            else None
+        )
+        backing_id = (
+            raw_backing_id if type(raw_backing_id) is int and raw_backing_id > 0 else None
+        )
         db = getattr(self.app_instance, "media_db", None)
         can_rename = self._library_media_can_rename_speakers(db, backing_id)
         return {
@@ -2210,6 +2222,9 @@ class LibraryMediaController:
             self._library_media_link_receipt = None
         self._selected_media_id = canonical_id
         self._library_media_view = "viewer"
+        # TASK-34000.18 fix round 2: selected for the Reader -- it holds the
+        # highlight until the user's next scope change.
+        self._library_media_highlight_held_by_reader = True
         self._library_media_reader_session = begin_selection(
             current,
             canonical_id,
@@ -3210,23 +3225,25 @@ class LibraryMediaController:
     def _library_media_reader_holds_highlight(self) -> bool:
         """Whether the list highlight belongs to the item the Reader holds.
 
-        TASK-34000.18 fix round 1 (I-1/I-2). True only while the viewer is
-        the active view AND the list scope is the plain unfiltered browse:
-        there, an item the page does not show was reached through the
-        Reader (an import receipt, a landing "Open", a Search/RAG result on
-        another page), and owner Q2 (b) says no row may wear the cue for a
-        document the Reader isn't showing. A user FILTER that drops the
-        held row is the list moving on (TASK-15457): the selection follows
-        the canvas to row 0 so "Open in viewer" opens a visible item. In
-        this tree's three-pane shell Back never leaves the viewer view, so
-        the view alone cannot tell the two apart -- the scope does.
+        TASK-34000.18 fix round 2: an ORDER fact. ``highlight_held_by_reader``
+        is set when an item is opened or selected for the Reader (open-by-
+        link, a row select, the receipt's Open, a restored selection) and
+        released only at the user's scope-change seams
+        (``_clear_library_media_selection_for_scope_change``), the Reader's
+        reset to no selection and the viewer exit. So an open made AFTER a
+        filter is the Reader moving on: no row wears the cue for an item
+        the page does not show, the selection equals the Reader's item and
+        the keys act on it (owner Q2 (b), the brief's Search/RAG route). A
+        filter applied AFTER the open is the list moving on: the selection
+        follows the canvas to row 0 (TASK-15457, its pin unchanged). The
+        scope itself is never read -- round 1's scope-based guess failed
+        under any sticky filter -- and the user's filter is never cleared
+        by an open. Only meaningful while the viewer is the active view.
         """
-        if self._library_media_view != "viewer":
-            return False
-        applied = self._library_media_browse_controller.applied_scope
-        if applied is None:
-            return True
-        return not applied.query and applied.media_type is None
+        return (
+            self._library_media_view == "viewer"
+            and bool(self._library_media_highlight_held_by_reader)
+        )
 
     def _library_media_reader_target_id(self) -> str:
         """The item a Reader-scoped action acts on (TASK-34000.18).

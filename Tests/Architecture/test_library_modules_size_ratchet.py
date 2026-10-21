@@ -402,7 +402,13 @@ _BUDGETS: dict[str, int] = {
     # one predicate `_library_media_reader_holds_highlight` (+22) decides
     # whether the Reader holds the highlight (viewer view AND unfiltered
     # scope), read by the builder input (+2) and the adopter.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4989,
+    # 2026-10-20, TASK-34000.18 fix round 2 (same owner decision): 4989 ->
+    # 5006 (+17). The hold is ORDER-based now: the predicate reads the
+    # `highlight_held_by_reader` state field instead of the scope (docstring
+    # +4), the row-select seam sets it (+3), and the list canvas's own
+    # presentation resolves the list selection itself (+10) rather than the
+    # Reader's target.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5006,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
