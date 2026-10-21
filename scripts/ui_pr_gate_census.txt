@@ -973,3 +973,9 @@ Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_
 Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_fields_and_editing_context[create_flashcard]
 Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_deck]
 Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_flashcard]
+# TASK-33620.15.3 (2026-10-20): the idle heap re-freeze. The mounted Console
+# requests at a paint and a settle, and nothing runs from Enter to the
+# provider call (about 10 s locally; the leak-bound tests run in perf-guard).
+# Rebased onto dev e2cffbed60 (2026-10-22): appended at the tail, so no dev
+# entry changes shard.
+Tests/UI/test_console_idle_heap_refreeze.py

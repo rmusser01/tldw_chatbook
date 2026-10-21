@@ -469,7 +469,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # tail so every existing entry keeps its round-robin shard
 # (derived-artifacts.yml: a mid-file insert re-deals every later entry).
 # TASK-36130..36132 append fifteen concrete nodes after dev's 588 selectors.
-MINIMUM_FILES = 603
+# TASK-33620.15.3 (2026-10-20; rebased onto dev e2cffbed60 2026-10-22)
+# appends the idle heap re-freeze's mounted Console file at the tail
+# (about 10 s locally): 588 + 1 = 589.
+MINIMUM_FILES = 604
 
 
 def read_census(path: Path) -> list[str]:

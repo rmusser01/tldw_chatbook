@@ -67,6 +67,17 @@ jobs:
             Tests/Utils/test_ui_responsiveness_stall_persist.py \
             -v --timeout=300
 
+      # TASK-33620.15.3 (2026-10-20): ADR-198's GC policy and its idle heap
+      # re-freeze. The leak-bound tests (the real collector and real Textual
+      # widgets, each with a negative control) ran only in the full-tree runs,
+      # so a PR that broke the compaction bound would merge with every PR
+      # check green. About 15 s together.
+      - name: Run GC policy and idle re-freeze tests
+        run: |
+          pytest Tests/Performance/test_gc_policy.py \
+            Tests/Performance/test_gc_idle_refreeze.py \
+            -v --timeout=300
+
       # task-24461: the ADR-097 boot budgets ran ONLY in the slow full suite,
       # so for three review cycles running they were re-breached within ~24h of
       # every paydown and each breach was found by a periodic review rather
