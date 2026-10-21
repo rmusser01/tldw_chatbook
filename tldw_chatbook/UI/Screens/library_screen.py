@@ -16694,15 +16694,21 @@ class LibraryScreen(BaseAppScreen):
         return can_rename
 
     def _library_media_selected_backing_id(self) -> int | None:
-        """Resolve the selected Media list identity to its positive int id.
+        """Resolve the Reader's target identity to its positive int id.
 
-        ``self._media_state.selected_media_id`` is the canonical ``"local:media:<id>"``
-        list identity, not a bare id -- ``_library_media_backing_id``
-        (already used by every real mutation path in this screen) does the
-        actual resolution; this just narrows its ``int | str`` result to
-        "a usable id, or None".
+        TASK-34000.18 fix round 1 (I-3): every caller is Reader-scoped -- the
+        speaker legend's rename id and its can-rename gate, the rename
+        result's identity check, the Reader's legend rows -- and a rename
+        persisted against the LIST selection wrote the Reader's transcript
+        onto another record whenever the two diverged (a pending row
+        click, an off-page open). So this reads
+        ``_library_media_reader_target_id()``: the loaded item while the
+        viewer is open, the selection otherwise. The canonical
+        ``"local:media:<id>"`` is resolved by ``_library_media_backing_id``
+        (already used by every real mutation path in this screen); this
+        just narrows its ``int | str`` result to "a usable id, or None".
         """
-        media_id = self._media_state.selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return None
         backing_id = self._library_media_backing_id(media_id)
@@ -16917,27 +16923,7 @@ class LibraryScreen(BaseAppScreen):
         return LibraryMediaController._restore_library_media_scope(state)
 
     def _adopt_library_media_highlight(self, media_state: Any) -> None:
-        """Write the list's resolved highlight into the selection -- unless
-        the builder found NO row for an item the Reader holds.
-
-        TASK-34000.18: the browse controller syncs once on ``request`` (no
-        page yet) and again when the page lands. The first sync built the
-        list from zero rows, resolved the highlight to "" and wrote that
-        over the selection the open-by-link had just set, so the landing
-        page then fell back to row 0 -- the ``▸`` on "team-handbook" beside
-        a Reader showing the opened item. The selection keeps naming the
-        Reader's item while the page is loading or (owner Q2 (b)) while that
-        item is simply not on this page; the builder paints no cue for it.
-        An empty Reader still takes the builder's answer, "" included.
-        """
-        session = self._media_state.reader_session
-        held = (
-            session.selected_id
-            if session.pending_request is not None
-            else session.loaded_id
-        )
-        if media_state.selected_id or not held:
-            self._media_state.selected_media_id = media_state.selected_id
+        return self._media_controller._adopt_library_media_highlight(media_state)
 
     def _reset_library_media_reader_to_no_selection(self) -> None:
         """Clear the Reader to its no-selection placeholder (task-32043).
@@ -34672,7 +34658,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._media_state.generating_analysis:
             return
-        media_id = self._media_state.selected_media_id
+        # TASK-34000.18 fix round 1 (I-3): the content below is the loaded
+        # detail's, so the result is saved to the Reader's item.
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return
         resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)

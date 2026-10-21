@@ -3174,16 +3174,24 @@ async def test_confirm_copies_and_receipt_point_at_trash():
                 id="library-media-viewer",
             )
 
-    app = _NamedViewerApp()
-    async with app.run_test() as pilot:
+    app = _NamedViewerApp(); app_width = 120
+    async with app.run_test(size=(app_width, 40)) as pilot:
         await pilot.pause()
-        copy = str(
-            app.query_one("#library-media-delete-confirm-copy", Static).renderable
-        )
-        # TASK-34000.18 AC#3: the confirm names the item, literally (markup
-        # off), and keeps the Trash-path promise.
+        await pilot.pause()
+        widget = app.query_one("#library-media-delete-confirm-copy", Static)
+        copy = str(widget.renderable)
+        # TASK-34000.18 AC#3: the confirm names the item and keeps the
+        # Trash-path promise.
         assert copy.startswith('Move "One [b]bold[/b]" to Trash?'), copy
         assert "restore later from Trash" in copy
+        # Fix round 1 (minor): literally -- the PAINTED text carries the
+        # brackets, which ``markup=True`` would have swallowed as a bold tag.
+        strips = list(app.screen._compositor.render_strips())
+        painted = "\n".join(
+            strips[y].crop(widget.region.x, widget.region.right).text.rstrip()
+            for y in range(widget.region.y, min(widget.region.bottom, len(strips)))
+        )
+        assert 'Move "One [b]bold[/b]" to Trash?' in painted, painted
 
 
 # ---------------------------------------------------------------------------

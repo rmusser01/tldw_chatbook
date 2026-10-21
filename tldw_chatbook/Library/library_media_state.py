@@ -1119,6 +1119,7 @@ def build_library_media_browse_state(
     sort_choices_visible: bool = False,
     loading_id: str = "",
     loaded_id: str = "",
+    hold_reader_item: bool = False,
     review_dismiss_receipt_name: str = "",
     analyze_receipt_total: int = 0,
     analyze_receipt_done: int = 0,
@@ -1130,6 +1131,19 @@ def build_library_media_browse_state(
     """Project one exact Media page without filtering, sorting, or slicing it.
 
     Args:
+        hold_reader_item: Whether the highlight belongs to the item the
+            Reader holds. TASK-34000.18, owner Q2 (b): the screen passes True
+            while the viewer is the active view AND the list scope is the
+            plain unfiltered browse -- then the held item (``loading_id``
+            while a selection is pending, else ``loaded_id``) takes the
+            highlight when it is on the page and suppresses the row-0
+            fallback when it is not (opened by link from another page: a
+            highlight never names a document the Reader isn't showing).
+            False (the default, and what the screen passes for a filtered
+            scope or the list view) keeps the TASK-15457 contract: the
+            selection follows the canvas and falls back to row 0 when the
+            user's filter dropped its row, so "Open in viewer" never opens
+            an invisible item.
         unfiltered_total: The Library's whole Media count, for the scope
             line's "N of M" (task-32350). ``None`` (the default) means the
             screen has no trustworthy total yet, and the line says "N".
@@ -1163,16 +1177,20 @@ def build_library_media_browse_state(
     page_ids = {str(item["id"]) for item in items}
     resolved_selected_id = selected_id if selected_id in page_ids else ""
     # TASK-34000.18 (owner ruling, Q2 (b)): a highlight must never name a
-    # document the Reader isn't showing. When the Reader holds an item that
-    # is NOT on this page (opened by link from an import receipt, a landing
-    # "Open" or a Search/RAG result, then a page turn), no row takes the
-    # cue; the list-view default (row 0 while nothing is loaded) is unchanged.
-    if (
-        not resolved_selected_id
-        and items
-        and not (loaded_id and loaded_id not in page_ids)
-    ):
-        resolved_selected_id = str(items[0]["id"])
+    # document the Reader isn't showing. While the Reader is open, the item
+    # it holds -- the pending one while a selection is loading (fix round
+    # 1, I-1: ``begin_selection`` keeps the OLD loaded id, which must not
+    # win), else the loaded one -- takes the cue when it is on the page and
+    # leaves every row unmarked when it is not (opened by link from an
+    # import receipt, a landing "Open" or a Search/RAG result on another
+    # page). For a filtered scope or the list view the TASK-15457 contract
+    # is unchanged: the fallback is row 0.
+    held_id = (loading_id or loaded_id) if hold_reader_item else ""
+    if not resolved_selected_id and items:
+        if held_id in page_ids:
+            resolved_selected_id = held_id
+        elif not held_id:
+            resolved_selected_id = str(items[0]["id"])
     rows = tuple(
         LibraryMediaRow(
             media_id=str(item["id"]),

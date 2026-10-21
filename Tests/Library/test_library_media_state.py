@@ -1062,7 +1062,13 @@ def test_preview_pane_follows_the_selection_not_the_first_row() -> None:
     assert "Analysed: no" in other.preview_lines, other.preview_lines
 
 
-def _two_row_page_state(*, selected_id: str, loaded_id: str) -> LibraryMediaCanvasState:
+def _two_row_page_state(
+    *,
+    selected_id: str,
+    loaded_id: str,
+    loading_id: str = "",
+    hold_reader_item: bool = True,
+) -> LibraryMediaCanvasState:
     return build_library_media_browse_state(
         build_media_browse_result(
             MediaBrowseScope(),
@@ -1078,7 +1084,9 @@ def _two_row_page_state(*, selected_id: str, loaded_id: str) -> LibraryMediaCanv
         ),
         type_options=("All",),
         selected_id=selected_id,
+        loading_id=loading_id,
         loaded_id=loaded_id,
+        hold_reader_item=hold_reader_item,
         now=NOW,
     )
 
@@ -1101,9 +1109,43 @@ def test_an_opened_item_off_the_page_highlights_no_row_but_an_empty_reader_still
     assert nothing_loaded.selected_id == "local:media:1"
     assert [row.selected for row in nothing_loaded.rows] == [True, False]
 
-    # A loaded item that IS on the page still takes the highlight when the
-    # selection is stale or empty.
+    # Fix round 1 (minor): a held item that IS on the page takes the
+    # highlight itself when the selection is stale or empty -- the cue sits on
+    # the document the Reader shows, never on row 0 beside it.
     on_page = _two_row_page_state(selected_id="", loaded_id="local:media:2")
 
-    assert on_page.selected_id == "local:media:1"
+    assert on_page.selected_id == "local:media:2"
+    assert [row.selected for row in on_page.rows] == [False, True]
     assert [row.loaded for row in on_page.rows] == [False, True]
+
+
+def test_a_pending_off_page_open_highlights_no_row_even_while_an_on_page_item_is_still_loaded() -> None:
+    """Fix round 1, I-1: while the by-link open of an off-page item is
+    pending, ``begin_selection`` keeps the OLD loaded id. The builder must
+    treat the held item as ``loading_id or loaded_id``, so the old on-page
+    item does not win the fallback and paint ``▸`` on a document the Reader
+    is about to leave (the reviewer's probe: selected 9, loaded 1, loading
+    9 returned row 0)."""
+    pending = _two_row_page_state(
+        selected_id="local:media:9",
+        loaded_id="local:media:1",
+        loading_id="local:media:9",
+    )
+
+    assert pending.selected_id == ""
+    assert [row.selected for row in pending.rows] == [False, False]
+    assert [row.loaded for row in pending.rows] == [True, False]
+
+
+def test_the_list_view_keeps_the_task_15457_contract_when_the_held_item_is_filtered_out() -> None:
+    """Fix round 1, I-2: when the highlight is NOT the Reader's to hold (the
+    screen passes False for a user filter that dropped the held row, and for
+    the list view), the selection follows the canvas: a held id the page no
+    longer renders falls back to row 0, so "Open in viewer" never opens an
+    invisible item."""
+    filtered_out = _two_row_page_state(
+        selected_id="local:media:4", loaded_id="local:media:4", hold_reader_item=False
+    )
+
+    assert filtered_out.selected_id == "local:media:1"
+    assert [row.selected for row in filtered_out.rows] == [True, False]

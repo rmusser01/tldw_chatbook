@@ -1942,6 +1942,8 @@ class LibraryMediaController:
                 else ""
             ),
             loaded_id=self._library_media_reader_session.loaded_id or "",
+            # TASK-34000.18: see ``_library_media_reader_holds_highlight``.
+            hold_reader_item=self._library_media_reader_holds_highlight(),
             # task-32350: the rail's unfiltered Media total, for the scope
             # line's "N of M".
             unfiltered_total=self._library_media_unfiltered_total,
@@ -3171,6 +3173,61 @@ class LibraryMediaController:
                 return f"local:media:{backing_id}", backing_id
         return None
 
+    def _adopt_library_media_highlight(self, media_state: Any) -> None:
+        """Write the list's resolved highlight into the selection -- unless
+        the Reader is showing an item the builder found no row for.
+
+        TASK-34000.18: the browse controller syncs once on ``request`` (no
+        page yet) and again when the page lands. The first sync built the
+        list from zero rows, resolved the highlight to "" and wrote that
+        over the selection the open-by-link had just set, so the landing
+        page then fell back to row 0 -- the ``▸`` on "team-handbook" beside
+        a Reader showing the opened item. Every highlight writer (the
+        browse-state sync, ``compose_content``, the canvas sync and
+        ``_build_library_media_active_child``) goes through this one seam.
+        While the Reader holds the highlight (``_library_media_reader_holds_
+        highlight``: viewer view, unfiltered scope), the selection keeps
+        naming the Reader's item -- the pending one while a selection loads,
+        else the loaded one -- when the page is still loading or (owner Q2
+        (b)) that item is not on this page; the builder paints no cue for
+        it. Under a user filter or in the list view the TASK-15457 contract
+        stands: the selection follows the canvas, "" included, so a
+        filtered-out row is never opened.
+        """
+        session = self._library_media_reader_session
+        held = (
+            session.selected_id
+            if session.pending_request is not None
+            else session.loaded_id
+        )
+        if (
+            media_state.selected_id
+            or not held
+            or not self._library_media_reader_holds_highlight()
+        ):
+            self._selected_media_id = media_state.selected_id
+
+    def _library_media_reader_holds_highlight(self) -> bool:
+        """Whether the list highlight belongs to the item the Reader holds.
+
+        TASK-34000.18 fix round 1 (I-1/I-2). True only while the viewer is
+        the active view AND the list scope is the plain unfiltered browse:
+        there, an item the page does not show was reached through the
+        Reader (an import receipt, a landing "Open", a Search/RAG result on
+        another page), and owner Q2 (b) says no row may wear the cue for a
+        document the Reader isn't showing. A user FILTER that drops the
+        held row is the list moving on (TASK-15457): the selection follows
+        the canvas to row 0 so "Open in viewer" opens a visible item. In
+        this tree's three-pane shell Back never leaves the viewer view, so
+        the view alone cannot tell the two apart -- the scope does.
+        """
+        if self._library_media_view != "viewer":
+            return False
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is None:
+            return True
+        return not applied.query and applied.media_type is None
+
     def _library_media_reader_target_id(self) -> str:
         """The item a Reader-scoped action acts on (TASK-34000.18).
 
@@ -3750,8 +3807,7 @@ class LibraryMediaController:
                 id="library-media-trash-canvas",
             )
         media_state = self._build_library_media_state()
-        if media_state.selected_id or self._library_media_view == "list":
-            self._selected_media_id = media_state.selected_id
+        self._adopt_library_media_highlight(media_state)
         return LibraryMediaCanvas(
             media_state,
             actions=self,

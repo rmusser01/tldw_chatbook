@@ -395,7 +395,14 @@ _BUDGETS: dict[str, int] = {
     # threaded through the Reader build and the unchanged-compare (+5) and
     # its resolver `_library_media_delete_target_title` (+13), plus the
     # import and three one-line reads. No code was moved or reflowed to fit.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4933,
+    # 2026-10-20, TASK-34000.18 fix round 1 (same owner decision): 4933 ->
+    # 4989 (+56). `_adopt_library_media_highlight` moved onto the controller
+    # (+32 with its docstring; the screen keeps a one-line delegator) so
+    # `_build_library_media_active_child` routes through it too, and the
+    # one predicate `_library_media_reader_holds_highlight` (+22) decides
+    # whether the Reader holds the highlight (viewer view AND unfiltered
+    # scope), read by the builder input (+2) and the adopter.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4989,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

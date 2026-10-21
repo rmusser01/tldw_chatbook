@@ -322,3 +322,223 @@ async def test_a_landing_recent_open_and_a_rag_open_land_on_the_same_identity():
         assert screen._media_state.reader_session.loaded_id == "local:media:4"
         assert [str(row.media_id) for row in _highlighted_rows(screen)] == [rag]
         assert _reader_title(screen) == TITLES["4"]
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1
+# ---------------------------------------------------------------------------
+
+
+def _many_items(count: int = 25) -> list[dict[str, object]]:
+    """Production-shaped rows, newest first on the page (ids 25..6 on page 1)."""
+    return [
+        {
+            "id": str(index),
+            "title": f"Item {index:02d}",
+            "type": "document",
+            "last_modified": f"2026-07-{(index % 28) + 1:02d}T{index % 24:02d}:00:00Z",
+            "author": "fixture",
+            "url": f"file:///fixture/{index}.md",
+            "keywords": ["fixture"],
+            "content": f"Item {index} body text for the Reader.",
+            "version": 1,
+        }
+        for index in range(1, count + 1)
+    ]
+
+
+async def _open_and_settle(screen, pilot, record_id: str, *, rows: int) -> str:
+    canonical = f"local:media:{record_id.rsplit(':', 1)[-1]}"
+    await screen._open_library_item_by_id("media", record_id)
+    await _wait_for_selector(screen, pilot, "#library-media-row-0")
+    browse = screen._library_media_browse_controller
+
+    def landed() -> bool:
+        session = screen._media_state.reader_session
+        return (
+            session.loaded_id == canonical
+            and session.pending_request is None
+            and not browse.loading
+            and browse.applied_scope is not None
+            and browse.applied_scope == browse.requested_scope
+            and len(_rows(screen)) == rows
+        )
+
+    await _wait_for_condition(pilot, landed, message=f"open of {record_id!r} never settled")
+    for _ in range(4):
+        await pilot.pause()
+    return canonical
+
+
+async def test_an_off_page_open_after_an_on_page_item_paints_no_highlight_and_read_later_targets_it():
+    """Fix round 1, I-1 (owner Q2 (b)): 25 items, page size 20. Open an
+    ON-page item so the Reader holds one, then open an OFF-page item by bare
+    id (the Search/RAG "result on page 2" route). No row paints ``▸``; the
+    selection names the opened item; ``l`` saves it -- checked in the
+    service's record, the test app's DB."""
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, _two_conversations(), media=_many_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        first = await _open_and_settle(screen, pilot, "20", rows=20)
+        page_ids = [str(row.media_id) for row in _rows(screen)]
+        assert first in page_ids
+        assert [str(row.media_id) for row in _highlighted_rows(screen)] == [first]
+        off_page = next(
+            f"{index}" for index in range(1, 26) if f"local:media:{index}" not in page_ids
+        )
+
+        opened = await _open_and_settle(screen, pilot, off_page, rows=20)
+        assert opened not in page_ids
+        assert screen._media_state.reader_session.loaded_id == opened
+        assert screen._media_state.selected_media_id == opened
+        assert _highlighted_rows(screen) == [], [
+            str(row.media_id) for row in _highlighted_rows(screen)
+        ]
+        painted_rows = [_painted(host, row.region) for row in _rows(screen)]
+        assert not any("▸" in text for text in painted_rows), painted_rows
+        assert _reader_title(screen) == f"Item {int(off_page):02d}"
+
+        await pilot.press("l")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(service.read_it_later_calls),
+            message="l never reached the service for the off-page item",
+        )
+        assert service.read_it_later_calls[-1] == {
+            "action": "save",
+            "media_id": int(off_page),
+        }
+        assert _reader_title(screen) == f"Item {int(off_page):02d}"
+
+
+async def test_speaker_rename_id_follows_the_reader_during_a_pending_selection():
+    """Fix round 1, I-3: while a row click is pending (its detail gated), the
+    Reader still shows the previous item; the viewer's speaker-rename id --
+    what ``rename_meeting_speaker`` would persist against -- is the Reader's
+    item, not the pending selection."""
+    from Tests.UI.test_library_media_reader_flow import ControlledDetailMediaService
+    from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    items = _five_media_items()
+    _seed_conversations(app, _two_conversations(), media=items)
+    service = ControlledDetailMediaService(items)
+    app.media_reading_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        service.release(3)
+        # The canonical (Search/RAG) spelling: the gated fake resolves the
+        # service id by integer only and has no legacy string fallback.
+        canonical = await _open_by_link(screen, pilot, "local:media:3")
+        viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        assert viewer.speaker_rename_media_id == 3
+
+        # A row click on item 1 whose detail is held open by the gate.
+        await pilot.click("#library-media-row-0")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.reader_session.pending_request is not None
+            and screen._media_state.selected_media_id == "local:media:1",
+            message="row click never left a pending selection",
+        )
+        assert screen._media_state.reader_session.loaded_id == canonical
+        assert _reader_title(screen) == TITLES["3"]
+        screen._sync_library_media_viewer_or_recompose()
+        await pilot.pause()
+        viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        assert viewer.speaker_rename_media_id == 3, viewer.speaker_rename_media_id
+        assert screen._library_media_selected_backing_id() == 3
+        service.release(1)
+
+
+async def test_receipt_open_in_library_then_l_saves_the_opened_item(tmp_path):
+    """Fix round 1 (minor): the receipt-unmount focus path. A real tmp file
+    through the real ingest coordinator and a real file-backed
+    ``MediaDatabase``; the receipt's "Open in Library" button is clicked
+    (so focus leaves a control that is about to unmount), then ``l`` is
+    pressed at once. Read later must act on the opened item -- read back
+    from the real DB."""
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+    from Tests.UI.test_library_shell import (
+        _INGEST_POLL_ATTEMPTS,
+        _INGEST_POLL_INTERVAL,
+        _LibraryIngestCanvasHarness,
+        _open_library_ingest_canvas,
+        _wait_for_widget_state,
+    )
+
+    db = MediaDatabase(tmp_path / "receipt-open.db", client_id="t34000-18-receipt")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        screen.query_one("#library-ingest-path", Input).value = str(source)
+        await pilot.pause()
+        screen.query_one("#library-ingest-start", Button).press()
+        await _wait_for_widget_state(
+            screen,
+            pilot,
+            "#library-ingest-path",
+            lambda widget: isinstance(widget, Input) and widget.value == "",
+            what="the ingest path Input never cleared after submit",
+        )
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = harness.library_ingest_jobs.jobs()
+            if jobs and jobs[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(f"job never reached DONE: {harness.library_ingest_jobs.jobs()}")
+        media_id = jobs[0].media_id
+        assert isinstance(media_id, int) and media_id > 0
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        open_button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-open-ingest-job-1"
+        )
+
+        # The user's gesture: click the receipt's button (scrolled into view
+        # first -- the queue sits under the form at 160x45), then press ``l``
+        # while focus is still on a control the open is about to unmount.
+        open_button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.click("#library-ingest-open-ingest-job-1")
+        canonical = f"local:media:{media_id}"
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.reader_session.loaded_id == canonical
+            and screen._media_state.reader_session.pending_request is None
+            and bool(screen.query("#library-media-read-later")),
+            message="the receipt's Open in Library never settled the Reader",
+        )
+        await pilot.pause()
+        await pilot.press("l")
+
+        def saved() -> list[int]:
+            rows = db.execute_query(
+                "SELECT media_id FROM MediaReadItLaterState WHERE is_read_it_later = 1"
+            ).fetchall()
+            return [int(row[0]) for row in rows]
+
+        await _wait_for_condition(
+            pilot,
+            lambda: saved() == [media_id],
+            message=lambda: f"read-later rows after l: {saved()!r}",
+        )
+        assert screen._media_state.selected_media_id == canonical
+        assert "tides" in _reader_title(screen).lower()
