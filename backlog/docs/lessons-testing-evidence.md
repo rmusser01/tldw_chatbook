@@ -21011,3 +21011,15 @@ screen keybindings to accommodate a test.
 ## Copy numbered pytest receipts before subsequent runs retire them (TASK-35869)
 
 During the Textual follow-up gate on 2026-10-20, the Evals report referenced original-code child receipts under pytest-74/75. By final review the normal numbered-temp rotation retained pytest-82/83/84, so the controller could independently inspect named final logs and reproduce baseline lint, but could not reinspect those early raw RED logs. Contemporaneous reports remain evidence, with this qualification disclosed. Copy the needed RED/GREEN receipt to a named artifact outside the rotating pytest directory before later targeted runs; do not disable retention, bypass private-temp permissions, or replay product tests only to recreate an aged-out log.
+
+## Recovery failure tests must reach the real mutation boundary
+
+**PR #3189 / TASK-35900, 2026-10-20.** A test that made the cancellation entry
+point raise proved recovery retention but missed that stock saved-chat cleanup
+published CANCELLED before SQLite deletion. With the real connection set to
+`PRAGMA query_only=ON`, Discard failed after that publication; retry removed the
+recovery while leaving its echo in the next provider request. New real-SQLite
+Restore/Discard cases reproduce the partial state and verify retry removes the
+echo and continuation, while separate real Textual workers verify the error
+cannot terminate the app. Inject persistent failures at the actual write boundary
+and check the next successful operation, not only the immediate exception.

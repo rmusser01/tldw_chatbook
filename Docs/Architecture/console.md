@@ -21,6 +21,8 @@ This document describes the Console (`chat` destination): the screen layout, the
 
 Supporting modules: `console_chat_fork.py` (fork/branch), `console_prompt_queue_coordinator.py` (bounded prompt queue, ADR-098), `console_fleet_wake.py`, `console_interrupt_rounds.py`, `console_dispatch_checkpoint.py` (crash recovery).
 
+Frozen automatic Library preparation is delegated to `Chat/console_library_preparation.py` through the controller's unchanged entry point. Controller and runtime retain ownership of preparation transitions, timeout configuration and recovery.
+
 Character presentation uses `UI/Console_Modules/character_context.py`. Stock active displays carry the original current-owner closure through the one-second run scope check into the same finite inner batch as idle display; direct/custom actions retain fresh no-argument dispatch. A stock display whose previous exact scope fingerprint names a different open conversation can skip the preliminary change-detection read: the existing stock reader selector must qualify first, and the unchanged refresh still validates fresh pair/groups/pair metadata and current ownership before publication. Missing/invalidated fingerprints, unchanged conversations, forced/direct and custom routes keep their original change detection. The existing two-second display memo, invalidation, source checks and physical callback retirement remain separate contracts (ADR126/230).
 
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
@@ -89,6 +91,7 @@ Notable keys: `workspace_root` (compatibility-only for Console file authority â€
 
 | Case | Behavior |
 | --- | --- |
+| Unsent-turn Restore/Discard cleanup fails | Safe warning; recovery stays available. Transient echo deletion precedes cancellation publication, so retry retires the echo and continuation before removing recovery. |
 | Hook blocks a manual send | Run state BLOCKED; no durable user row; hook-origin SYSTEM row explains why |
 | Approval card unanswered + timeout 0 | Waits indefinitely; cancel still works; headless runs fail closed per key |
 | Approval round trip raises | Per-run decision stamps were cleared at entry â€” no stale prior-turn `approve_once` can leak |

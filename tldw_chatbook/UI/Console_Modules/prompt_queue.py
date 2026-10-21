@@ -744,7 +744,8 @@ class ConsolePromptQueueUIController:
         if operation == "restore":
             try:
                 self._restore_turn_recovery(turn_id)
-            except (KeyError, RuntimeError):
+            except Exception:
+                # Storage cleanup may fail; keep recovery available for retry.
                 self._notify(
                     "That unsent turn could not be restored safely.", "warning"
                 )
@@ -754,7 +755,15 @@ class ConsolePromptQueueUIController:
             await self._sync_ui()
             self._focus_composer()
             return
-        if not self._discard_turn_recovery(turn_id):
+        try:
+            discarded = self._discard_turn_recovery(turn_id)
+        except Exception:
+            self._notify(
+                "That unsent turn could not be discarded safely. Try again.", "warning"
+            )
+            await self._sync_ui()
+            return
+        if not discarded:
             self._notify("That unsent turn is no longer available.", "warning")
         await self._sync_ui()
 

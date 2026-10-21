@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -3454,3 +3455,90 @@ def test_a_viewless_send_builds_the_mounted_sends_selection():
         assert _send_fields(viewless) == _send_fields(mounted)
     assert mounted.system_prompt == "Kestrel settings prompt."
     assert controller._provider_selection_for_session(blank.id).max_tokens is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ("restore", "discard"))
+async def test_saved_recovery_cleanup_can_retry_after_sqlite_failure(tmp_path, action):
+    from Tests.Chat.test_console_automatic_library_preparation import (
+        _PolicyCoordinator,
+        _RagService,
+        _StreamingFence,
+    )
+    from Tests.console_provider_doubles import persisted_console_store
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicyDefaults
+
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db",
+        library_policy_defaults=ConsoleLibraryPolicyDefaults(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        ),
+    )
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    session = store.create_session(title="Saved recovery")
+    gateway, service = _StreamingFence(), _RagService()
+    app = SimpleNamespace(
+        library_rag_search_service=service,
+        local_chat_conversation_service=ChatConversationService(store.persistence.db),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime = ensure_console_runtime(app)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    connection = store.persistence.db.get_connection()
+    try:
+        first = await controller.submit_draft("initial saved turn")
+        assert first.accepted and session.persisted_conversation_id
+        service.error = RuntimeError("retrieval unavailable")
+        request = ConsoleTurnCustodyRequest(
+            turn_id="saved-recovery",
+            session_id=session.id,
+            draft="held second turn",
+            configuration=controller.resolve_runtime_turn_configuration_snapshot(
+                session.id
+            ),
+        )
+        runtime.accept_turn(request)
+        with pytest.raises(RuntimeError, match="refused before durable acceptance"):
+            await runtime.wait_for_turn(request.turn_id)
+        await asyncio.sleep(0)
+        preparation = store.preparation_for_session(session.id)
+        entry = runtime.recoveries_for_session(session.id)[0]
+        recover = getattr(runtime, f"{action}_turn_recovery")
+
+        connection.execute("PRAGMA query_only=ON")
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                recover(request.turn_id)
+        finally:
+            connection.execute("PRAGMA query_only=OFF")
+
+        assert store.preparation_for_session(session.id) is preparation
+        assert preparation.state is ConsoleTurnPreparationState.PAUSED
+        assert runtime.recoveries_for_session(session.id) == (entry,)
+        assert preparation.transient_user_message_id in {
+            message.id for message in store.messages_for_session(session.id)
+        }
+        assert preparation.preparation_id in controller._prepared_send_continuations
+        assert store.session_draft(session.id) == ""
+
+        recover(request.turn_id)
+        assert runtime.recoveries_for_session(session.id) == ()
+        assert store.preparation_for_session(session.id) is None
+        assert preparation.preparation_id not in controller._prepared_send_continuations
+        assert preparation.transient_user_message_id not in {
+            message.id for message in store.messages_for_session(session.id)
+        }
+        assert store.session_draft(session.id) == (
+            request.draft if action == "restore" else ""
+        )
+        service.error = None
+        following = await controller.submit_draft("following send")
+        assert following.accepted
+        assert "held second turn" not in repr(gateway.messages)
+    finally:
+        connection.execute("PRAGMA query_only=OFF")
+        await runtime.dispose()
+        store.persistence.db.close_connection()

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 02:17'
-updated_date: '2026-10-21 02:39'
+updated_date: '2026-10-21 03:00'
 labels:
   - console
   - bug
@@ -31,6 +31,7 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 - [x] #4 Never-answerable dispatch confirmations terminate without silently disabling persisted project instructions.
 - [x] #5 Repeated qualification avoids reparsing unchanged evidence but observes evidence replacement and fresh native qualification on every authority check.
 - [x] #6 Targeted regression tests and changed-file static checks pass; replacement PR and superseded PR closures credit Csavoldi.
+- [x] #7 Recovery action storage failures remain nonfatal in the real UI worker, retain the unsent recovery, show content-free retry guidance, and retire the exact transient echo and continuation before recovery removal on retry.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,8 +40,9 @@ Consolidate the verified discoveries and original patches by Csavoldi into one s
 1. Add failing regression coverage for owning-thread dispatch, real EnhancedRAGServiceV2 search, bounded cold-start preparation, recovery ownership, invisible confirmation expiry, and evidence-cache invalidation.
 2. Apply the verified thread/RAG fixes; separate bounded initialization from search; cancel invisible confirmations without changing persisted user preferences; release only the recovery's matching retrieval preparation.
 3. Cache parsed qualification evidence by a verified file generation while keeping native qualification verdicts fresh for every authorization call.
-4. Run targeted suites, lint/format changed Python, review the complete diff, and update subsystem documentation.
-5. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
+4. Keep the controller within its existing size ratchet by mechanically delegating the retrieval preparation routine to a focused helper; run targeted suites, lint/format changed Python, review the complete diff, and update subsystem documentation.
+5. Add a real-Textual-worker regression for Restore/Discard storage failures, retain recoveries on failure, surface bounded retry guidance, and verify saved-chat SQLite failures leave cancellation retryable without leaking discarded text into later provider history before pre-merge review.
+6. Publish a replacement PR crediting Csavoldi; close #3181 and #3185 with replacement links after publication succeeds.
 ADR required: no
 ADR path: N/A; existing backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/126-complete-local-backup-and-recovery.md apply.
 Reason: repair existing send/recovery and qualification contracts without changing storage, permissions, persisted consent, or provider boundaries.
@@ -55,7 +57,7 @@ Unsent-turn recovery carries the exact preparation ID, preserves empty/matching 
 
 Targeted red/green evidence: the real Textual/stock-composition test reproduced blocked durable acceptance before the thread fix; four thread/boundary cases pass after it. Nine RAG startup/search cases pass, including stalled startup, cancellation and retry. Runtime ownership/confirmation selection: 83 passed, plus 10 affected cases after cancellation-failure hardening; removing the preparation-ID guard in memory fails the newer-owner protection test. Qualification: 23 passed, including nine new cache regressions, 11 original malformed-evidence cases and three native publication cases. One unrelated symlink test requires Windows symlink privilege and was not changed.
 
-Independent read-only review found no actionable findings. All 11 changed/new Python files introduce zero Ruff diagnostics compared with dev (69 existing diagnostics unchanged); new files and changed ranges are formatted, and git diff --check passes. Architecture docs and the Windows private-test-parent lesson are updated. Wider adjacent-run and baseline comparison results are recorded below before publication closeout.
+The initial independent read-only review found no actionable findings. All 11 changed/new Python files introduce zero Ruff diagnostics compared with dev (69 existing diagnostics unchanged); new files and changed ranges are formatted, and git diff --check passes. Architecture docs and the Windows private-test-parent lesson are updated. Wider adjacent-run and baseline comparison results are recorded below before publication closeout.
 
 ADR required: no. Existing ADR-069, ADR-126 and ADR-230 govern these restored contracts; no schema, dependency, persisted-consent or authority-policy change is introduced.
 
@@ -77,4 +79,36 @@ The exact UI resend test that exposed #3185's bad enum import was also run. On t
 
 ### Publication closeout
 
-Published replacement PR #3189: https://github.com/rmusser01/tldw_chatbook/pull/3189 . Closed #3181 and #3185 only after replacement creation succeeded, with links and explicit thanks to @Csavoldi. The replacement description credits discovery, reproductions, root-cause investigation and original patches; implementation commit `b2e5e95076` includes `Co-authored-by: Csavoldi <clemsavoldi@gmail.com>`. CI remains the merge gate; no merge or auto-merge was requested or performed.
+Published replacement PR #3189: https://github.com/rmusser01/tldw_chatbook/pull/3189 . Closed #3181 and #3185 only after replacement creation succeeded, with links and explicit thanks to @Csavoldi. The replacement description credits discovery, reproductions, root-cause investigation and original patches; implementation commit `b2e5e95076` includes `Co-authored-by: Csavoldi <clemsavoldi@gmail.com>`. At publication, CI remained the merge gate and no merge or auto-merge had been requested or performed.
+
+
+### Pre-merge review and hardening
+
+The user requested the requesting-code-review skill followed by rebase and merge,
+and explicitly substituted that independent review for Qodo on this merge.
+The fresh review reproduced two connected saved-chat failures: SQLite cleanup
+could escape a fatal Textual worker, and premature CANCELLED publication could
+make retry discard leave an echo that entered the next provider request.
+
+Restore/Discard now contain storage failures at the shelf action boundary with
+content-free warnings and retained recovery. Cancellation deletes the transient
+echo and restores session state before publishing CANCELLED under the existing
+lock; failed deletion leaves the original paused owner retryable. Four new
+regressions were observed red and then green: two real Textual workers and two
+real saved-chat SQLite failure/retry cases, including subsequent provider history.
+
+The frozen retrieval preparation routine moved without behavioral changes to
+`Chat/console_library_preparation.py` to respect the existing controller size
+ratchet. The controller delegates through its unchanged entry point; its budget
+was lowered to 29,050 lines, and the store remains at 22,338. No new ADR is needed
+for this mechanical delegation or repair of existing cancellation contracts.
+
+Final targeted verification: 110 passed, 125 deselected; the three previously
+baseline-reproduced automatic-preparation cases were explicitly excluded. The
+controller/store architecture checks passed four cases. Independent final review
+passed 19 focused cases, verified the moved routine's normalized AST equivalence,
+and reported no remaining findings and ready to merge subject to CI/thread gates.
+Across all 16 changed/new Python files, Ruff introduces zero diagnostics (236
+baseline/current diagnostics). New helper/tests are formatted; diff and task-ID
+checks pass. No full test suite was run. Console architecture and the real-write
+failure-injection lesson document the corrected boundary.
