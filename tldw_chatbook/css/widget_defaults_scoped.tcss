@@ -470,6 +470,13 @@
         padding: 0 1;
     }
 
+    MCPPermissionsMode #mcp-perm-explainer {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
     MCPPermissionsMode #mcp-perm-server-profiles-slot {
         height: auto;
         min-height: 0;
