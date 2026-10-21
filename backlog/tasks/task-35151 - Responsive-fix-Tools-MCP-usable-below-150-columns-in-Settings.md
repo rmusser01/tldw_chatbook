@@ -19,7 +19,7 @@ The workbench grid needs roughly 66 columns; Settings' detail pane gives about t
 - [x] #1 Tools & MCP category is usable at 120 columns
 - [x] ADR-148 responsive triad honors Settings pane widths
 - [x] Handoff/layout test runs at (120,30)
-- [ ] #2 Tools & MCP category is usable at 120 columns,ADR-148 responsive triad honors Settings pane widths,Handoff/layout test runs at (120,30)
+- [x] #2 Tools & MCP category is usable at 120 columns,ADR-148 responsive triad honors Settings pane widths,Handoff/layout test runs at (120,30)
 <!-- AC:END -->
 
 ## Implementation Plan
