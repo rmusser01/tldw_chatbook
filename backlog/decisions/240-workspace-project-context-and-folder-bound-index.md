@@ -1,6 +1,6 @@
 # ADR-240: Workspace project context and folder bound indexing
 
-Status: Proposed
+Status: Accepted (user approved the design on 2026-10-20)
 Date: 2026-10-20
 Design: [Workspace aware project context](../../Docs/superpowers/specs/2026-10-20-workspace-aware-project-context-design.md)
 Related Task: N/A (design requested before implementation task selection)
@@ -128,6 +128,5 @@ and revocation tests. Its storage and semantic cost are bounded and optional.
 Current-file validation adds query latency, but a fast stale cache cannot become
 an alternate disclosure path after binding access changes.
 
-Implementation task records and plans must link this ADR, preserve its proposed
-status until design approval, and include storage/recovery qualification before
-the index is enabled in production.
+Implementation task records and plans must link this ADR and include
+storage/recovery qualification before the index is enabled in production.

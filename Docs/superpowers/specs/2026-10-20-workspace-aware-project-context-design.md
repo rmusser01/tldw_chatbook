@@ -1,8 +1,16 @@
 # Workspace aware project context and optional folder indexing
 
 Date: 2026-10-20
-Status: Draft for user review
-Related decision: [ADR-240](../../../backlog/decisions/240-workspace-project-context-and-folder-bound-index.md) (Proposed)
+Status: Approved by user on 2026-10-20
+Related decision: [ADR-240](../../../backlog/decisions/240-workspace-project-context-and-folder-bound-index.md) (Accepted)
+
+Implementation plans, in delivery order:
+
+1. [Workspace guidance](../plans/2026-10-20-workspace-project-guidance.md)
+2. [Optional keyword indexing](../plans/2026-10-20-workspace-project-keyword-index.md)
+3. [Optional semantic indexing](../plans/2026-10-20-workspace-project-semantic-index.md)
+
+Reference: [Codex CLI source inspection](2026-10-20-codex-cli-project-context-reference.md).
 
 ## Intent and agreed requirements
 
