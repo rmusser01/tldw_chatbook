@@ -4767,6 +4767,117 @@ async def test_boot_with_mcp_default_tab_lands_on_settings_tools_hub(request):
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_mcp_deep_link_with_explicit_context_lands_on_tools_hub(request):
+    """task-35156: an explicit deep-link context on the "mcp" alias must
+    still land on Settings > Tools & MCP. The alias's default context
+    (``{"category": "tools"}``) used to be REPLACED wholesale by any caller
+    context, so ``NavigateToScreen("mcp", {"mode": "audit"})`` arrived with
+    no ``category`` key and ``SettingsScreen.apply_navigation_context``
+    ignored it -- the deep link silently landed on the generic category.
+    The default now merges UNDER the caller's keys (in-app sibling of
+    ``test_boot_with_mcp_default_tab_lands_on_settings_tools_hub``, which
+    pins the bare-route boot side; private-profile marker for the same
+    real-app reason).
+    """
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        # The navigation handler drops requests posted before the initial
+        # screen is pushed; wait for it like the boot sibling waits.
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and not app._initial_screen_pushed:
+            await pilot.pause(0.02)
+
+        app.post_message(NavigateToScreen("mcp", {"mode": "audit"}))
+
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "SettingsScreen" and app.screen.query(
+                "#settings-tools-hub"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "SettingsScreen"
+        settings = app.screen
+        assert settings.active_category == SettingsCategoryId.TOOLS.value
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        assert pane.workbench is not None
+        # The caller's mode lands too: the hub pane applies the initial view
+        # state at the end of the workbench's initial reload worker (see
+        # test_panel_view_state_round_trip), so poll for the mode.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and pane.workbench.active_mode != "audit":
+            await pilot.pause(0.01)
+        assert pane.workbench.active_mode == "audit"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_tools_settings_deep_link_with_profile_payload_lands(request):
+    """task-35156: a permissions deep link with a tool-policy profile triple
+    rides the "tools_settings" alias with no ``category`` key of its own --
+    the merged default must select the Tools & MCP category AND the profile
+    payload must land in the hub pane's initial view state (mode
+    "permissions" plus the profile link), not be dropped by replacement.
+    """
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and not app._initial_screen_pushed:
+            await pilot.pause(0.02)
+
+        app.post_message(
+            NavigateToScreen(
+                "tools_settings",
+                {
+                    "mode": "permissions",
+                    "tool_policy_profile_id": "research",
+                    "profile_revision": 3,
+                    "profile_policy_digest": "a" * 64,
+                },
+            )
+        )
+
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "SettingsScreen" and app.screen.query(
+                "#settings-tools-hub"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "SettingsScreen"
+        settings = app.screen
+        assert settings.active_category == SettingsCategoryId.TOOLS.value
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        assert pane.workbench is not None
+        deadline = time.monotonic() + 5.0
+        while (
+            time.monotonic() < deadline
+            and pane.workbench.active_mode != "permissions"
+        ):
+            await pilot.pause(0.01)
+        assert pane.workbench.active_mode == "permissions"
+        # The profile triple survives the merge into the pane's applied
+        # state -- the whole point of the deep link (ADR-240 spec A4).
+        assert settings._tools_hub_initial_view_state == {
+            "mode": "permissions",
+            "tool_policy_profile_id": "research",
+            "profile_revision": 3,
+            "profile_policy_digest": "a" * 64,
+        }
+
+
+@pytest.mark.asyncio
 async def test_search_all_palette_command_lands_on_library_with_honest_toast():
     """RAG UX v2 PR-1, Task 2: the "Search All Content" quick-action palette
     command dispatches through the "search" alias (Task 1), so it must
@@ -5163,6 +5274,105 @@ async def test_navigation_survives_screen_mount_failure(monkeypatch):
     await app.handle_screen_navigation(NavigateToScreen("mcp"))
 
     assert notifications, "the user must be told the destination failed to open"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_legacy_alias_explicit_context_merges_default_under_caller_keys(
+    request,
+    monkeypatch,
+):
+    """task-35156: a legacy alias's default navigation context must merge
+    UNDER a caller's explicit context -- caller keys win, only omitted keys
+    are filled -- instead of being replaced by it. ``NavigateToScreen("mcp",
+    {"mode": "audit"})`` used to arrive at Settings with no ``category``, so
+    ``apply_navigation_context`` ignored the whole payload; the same latent
+    bug class sat on every ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` alias.
+
+    Unit seam of ``test_mcp_deep_link_with_explicit_context_lands_on_tools_hub``
+    (which drives the real app): a fake destination records exactly what
+    ``apply_navigation_context`` received. Private-profile marker for the
+    same real-app-construction reason as the boot sibling.
+    """
+    from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_MODE
+
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+
+    applied: list[dict] = []
+
+    class FakeDestinationScreen:
+        def __init__(self, app_instance):
+            pass
+
+        def apply_navigation_context(self, context):
+            applied.append(dict(context))
+
+    class FakeSettingsScreen(FakeDestinationScreen):
+        screen_name = "settings"
+
+    class FakeLibraryScreen(FakeDestinationScreen):
+        screen_name = "library"
+
+    def fake_resolve(target):
+        if target in {"mcp", "tools_settings", "customize"}:
+            return "settings", "settings", FakeSettingsScreen
+        return "library", "library", FakeLibraryScreen
+
+    def fake_switch_screen(screen):
+        # ``App._screen_stack`` is a read-only property over
+        # ``_screen_stacks[current_mode]``; a real switch leaves the new
+        # screen as the stack top, which the ownership check reads.
+        app._screen_stacks[app._current_mode] = [screen]
+        return asyncio.sleep(0)
+
+    class FakeOutgoingScreen:
+        screen_name = "chat"
+
+        # ``current_tab``/``focus_mode`` reactives refresh the visible screen
+        # through the monkeypatched ``App.screen`` property.
+        def refresh(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: FakeOutgoingScreen())
+    )
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    # Non-reusable routes skip the installed-instance reuse/retain seams.
+    monkeypatch.setattr(
+        "tldw_chatbook.app_navigation.resolve_screen_route", lambda target: None
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+
+    results: list[bool] = []
+
+    async def navigate(route: str, context: dict | None = None) -> None:
+        await app.handle_screen_navigation(
+            NavigateToScreen(route, context, on_completion=results.append)
+        )
+
+    # Bare alias (the ctrl+9 compat action): the default applies alone.
+    await navigate("mcp")
+    assert applied == [{"category": "tools"}]
+
+    # Explicit context omits the default's key: the default fills in UNDER
+    # the caller's own keys.
+    await navigate("mcp", {"mode": "audit"})
+    assert applied[-1] == {"category": "tools", "mode": "audit"}
+
+    # The same merge holds for the Library aliases (e.g. a future deep link
+    # carrying a query onto the retired standalone "search" route).
+    await navigate("search", {"query": "x"})
+    assert applied[-1] == {LIBRARY_NAV_CONTEXT_MODE: "search", "query": "x"}
+
+    # When the caller supplies the SAME key the default carries, the
+    # caller's value wins -- the merge fills only omitted keys, never
+    # overrides ("customize" defaults to Theme; this link asks Appearance).
+    await navigate("customize", {"category": "appearance"})
+    assert applied[-1] == {"category": "appearance"}
+
+    # Every navigation completed (the fakes never veto or fail).
+    assert results == [True, True, True, True]
 
 
 @pytest.mark.asyncio
