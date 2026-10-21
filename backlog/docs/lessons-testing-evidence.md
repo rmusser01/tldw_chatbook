@@ -134,6 +134,27 @@ Textual sets `_pruning` on every node of a removed subtree synchronously, inside
 - Keep only the guards that a negative control shows are needed.
 - Re-run the head-vs-dev comparison on the final head, after the last fix commit, not just once after the rebase.
 
+## A faster mount can turn another test's latent race into a frequent failure (TASK-33620.15.7, 2026-10-20)
+
+**Incident.** Cutting the Console's whole-screen reflows per send from a median
+of 27.5 to 13 made `test_typing_with_nothing_focused_focuses_the_draft_first`
+fail more often: interleaved, 20 runs each, 5 failures on dev against 12 on the
+branch. Single runs pass and fail on both trees, so "same red as dev" read
+plausibly true. A `sitecustomize` probe (on `PYTHONPATH`, so it reaches the
+`private_profile_test` child) that logged the stack of every
+`Screen.set_focus(composer)` showed the cause: `ChatScreen.on_mount` arms
+`set_timer(0.2, _restore_console_workbench_focus)`, and the test cleared focus
+as soon as its mount helper returned. The cheaper mount now returned before
+that timer more often, and the timer refocused the draft after the test's
+`set_focus(None)`.
+
+**What to do.** When a flaky failure is in both trees, compare its rate,
+interleaved and over 20 or more runs, before calling it pre-existing. A
+performance change can move a test's own race without changing the product's
+behaviour; trace what actually wrote the asserted state. Then make the test
+wait for the event it races (here, the timer's task finishing), not for a
+fixed sleep: 31 of 32 runs passed after that, 8 of 8 on dev.
+
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
 **Incident.** PR #3176's admission-sensitive job failed the headless-delivery
