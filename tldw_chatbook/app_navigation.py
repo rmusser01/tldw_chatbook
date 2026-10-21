@@ -459,8 +459,7 @@ class NavigationMixin:
             # Swallow the request; the user can re-issue it once the app is
             # interactive.
             logger.info(
-                f"Ignoring navigation to {requested_screen}: "
-                "initial screen not yet mounted"
+                f"Ignoring navigation to {requested_screen}: initial screen not yet mounted"
             )
             return False
 
@@ -490,9 +489,7 @@ class NavigationMixin:
             )
             return False
 
-        screen_name, current_tab_value, screen_class = (
-            self._resolve_screen_navigation_target(requested_screen)
-        )
+        screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
         logger.info(f"Navigating to screen: {requested_screen}")
 
         # NOT ``self.screen`` (TASK-16300): with a pushed screen on top --
@@ -918,10 +915,13 @@ class NavigationMixin:
                         )
 
             navigation_context = getattr(message, "screen_context", {}) or {}
-            if not navigation_context:
-                navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(
-                    requested_screen, {}
-                )
+            # task-35156: a legacy alias's default context merges UNDER the
+            # caller's explicit one (caller keys win; omitted keys filled) --
+            # wholesale replacement dropped "category" from "mcp" deep links.
+            navigation_context = {
+                **self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(requested_screen, {}),
+                **navigation_context,
+            }
             prepared = None
             try:
                 if message.require_character_inspection_admission:
