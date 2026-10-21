@@ -66,6 +66,25 @@ def test_reads_the_sessions_own_workspace_admitted_roots():
     assert asked == ["ws-1", "ws-2"]
 
 
+def test_roots_are_strings_as_the_snapshot_coerces_them():
+    """Equal to the snapshot's ``workspace_roots`` by construction, not by luck.
+
+    ``ConsoleTurnConfigurationSnapshot`` stores ``str(root)`` for every
+    admitted root; the panel compares the root it asked for against the one
+    it landed, so a ``Path`` here and a ``str`` there would read as a change.
+    """
+    from pathlib import PurePosixPath
+
+    controller = _controller(
+        consent=_consent({"ws-1": (PurePosixPath("/w/one"), "/w/two")}, [])
+    )
+
+    roots = resolve_session_workspace_roots(controller, "s1")
+
+    assert roots == ("/w/one", "/w/two")
+    assert all(type(root) is str for root in roots)
+
+
 def test_no_consent_service_or_a_raising_one_is_no_roots():
     assert resolve_session_workspace_roots(_controller(consent=None), "s1") == ()
 

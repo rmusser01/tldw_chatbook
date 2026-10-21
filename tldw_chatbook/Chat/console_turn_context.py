@@ -55,7 +55,7 @@ def capture_change_review_admission(
 
 def resolve_session_workspace_roots(
     controller: Any, session_id: str
-) -> tuple[Any, ...]:
+) -> tuple[str, ...]:
     """Read one session's consent-admitted workspace roots, and nothing else.
 
     The value ``controller.resolve_turn_execution_context(session_id)
@@ -76,8 +76,9 @@ def resolve_session_workspace_roots(
         session_id: The session whose workspace roots to read.
 
     Returns:
-        The consent-admitted roots; empty when consent is off, nothing is
-        bound, or the consent service is absent or raised.
+        The consent-admitted roots as strings, coerced exactly as the
+        snapshot's ``workspace_roots`` are; empty when consent is off,
+        nothing is bound, or the consent service is absent or raised.
 
     Raises:
         KeyError: ``session_id`` is not one of the controller's sessions (the
@@ -89,7 +90,7 @@ def resolve_session_workspace_roots(
     roots, _aliases, _skipped = capture_change_review_admission(
         controller.app, workspace_id
     )
-    return roots
+    return tuple(str(root) for root in roots)
 
 
 def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> str:

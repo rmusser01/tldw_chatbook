@@ -7800,8 +7800,8 @@ class ChatScreen(BaseAppScreen):
 
         - a root string -- gather against it;
         - ``None`` -- the workspace was ASKED and binds no folder
-          (``resolve_turn_execution_context(...).workspace_roots`` returned
-          the empty tuple). The controller lands an explicit UNBOUND
+          (``resolve_session_workspace_roots(...)`` returned the empty
+          tuple). The controller lands an explicit UNBOUND
           snapshot for this, so the previous root's counts/branch/"Commit or
           push" cannot survive a switch;
         - ``UNKNOWN_ROOT`` -- the root could not be DETERMINED. The layers
