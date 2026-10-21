@@ -280,9 +280,7 @@ def _unattributed_tokens(monkeypatch, screen):
 
 
 def _cache_warmed(monkeypatch, screen):
-    import time
-
-    screen._console_chat_controller.ttl = (time.monotonic() + 300, True)
+    screen._console_chat_controller.ttl = (config_sync._clock() + 300, True)
 
 
 def _tool_count(monkeypatch, screen):
@@ -606,3 +604,41 @@ def test_streamed_chunks_alone_do_not_project_but_settled_usage_does(clock):
     assert _tick(screen) == 1
     screen._console_chat_store.display += 1  # Late usage on the stopped row.
     assert _tick(screen) == 1, "late usage after the run did not project"
+
+
+def test_an_input_that_cannot_be_read_projects_rather_than_raising(clock):
+    """An input read that raises is a change, not a crash of the poll tick.
+
+    The tick is a screen worker with ``exit_on_error``: a raise here ends the
+    app. The parent's tick read the same values inside the cost chip's
+    best-effort build, so a failing read is answered by projecting, and
+    keeps projecting until the inputs read again.
+    """
+    screen = _settled(clock)
+    store = screen._console_chat_store
+
+    def unknown_session(session_id: str) -> int:
+        raise KeyError(session_id)
+
+    store.session_settings_revision = unknown_session
+    assert _tick(screen) == 1
+    assert _tick(screen) == 1, "an unreadable input was taken as unchanged"
+    del store.session_settings_revision
+    assert _tick(screen) == 1  # Readable again: a change from unreadable.
+    assert _tick(screen) == 0
+
+
+def test_the_cache_ttl_second_counts_down_on_the_cadence_clock(clock):
+    """The warm cache's displayed second is read on the cadence's own clock.
+
+    Read on the real clock, a test's two ticks could straddle a real second
+    and the second tick would project; on the cadence clock the countdown
+    moves only when that clock does, here before the backstop is due.
+    """
+    screen = _settled(clock)
+    screen._console_chat_controller.ttl = (clock.now + 300.25, True)
+    assert _tick(screen) == 1  # The cache warming is itself a change.
+    assert _tick(screen) == 0
+    clock.now += 0.5  # 300 s left on display becomes 299.
+    assert _tick(screen) == 1, "the TTL's displayed second did not project"
+    assert _tick(screen) == 0

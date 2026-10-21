@@ -248,12 +248,12 @@ def _cost_inputs(
     move the payload revision. The display revision also moves on every
     streamed chunk (the speech fence), so it counts only while the chat has
     no run in flight -- where a Stop's late usage lands. The cache TTL
-    contributes its displayed second while warm.
+    contributes its displayed second while warm, on the cadence's clock.
     """
     warm_until, had_activity = controller.cache_ttl_snapshot(session_id)
     remaining = None
     if had_activity and warm_until is not None:
-        remaining = max(int(warm_until - time.monotonic()), -1)
+        remaining = max(int(warm_until - _clock()), -1)
     return (
         None if in_flight else store.display_projection_revision(session_id),
         store.payload_revision(session_id),
@@ -381,10 +381,16 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
         whole-sync replay here); True when it rendered or was not needed.
     """
     cadence = _cadence(screen)
-    objects, values = _projection_inputs(screen)
+    try:
+        objects, values = _projection_inputs(screen)
+    except Exception:  # noqa: BLE001 -- the tick worker exits the app on a raise.
+        # An unreadable input is a change: project (the parent's tick read
+        # these inside the cost chip's best-effort build), and record none.
+        objects, values = (), None
     requested = cadence.requested
     unchanged = (
-        requested == cadence.served
+        values is not None
+        and requested == cadence.served
         and values == cadence.values
         and len(objects) == len(cadence.objects)
         and all(now is then for now, then in zip(objects, cadence.objects))
