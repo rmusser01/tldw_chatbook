@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 17:58'
-updated_date: '2026-10-20 11:05'
+updated_date: '2026-10-21 00:48'
 labels:
   - console
   - tests
@@ -134,4 +134,6 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
   - Tests/UI/test_console_send_disabled_state.py: branch 8 of 10, dev 8 of 10. `test_active_run_block_shows_wait_reason` is red on both. `test_enter_hotkey_still_sends_when_send_is_enabled` (TASK-35850) is red on dev only this time, and `test_idle_stop_button_has_no_unreachable_tooltip` on the branch only. Neither calls code this branch changes. Run alone as a pair, three times per tree, dev failed both every time and the branch failed both in 2 of 3. Filed as TASK-35883.
 - **Filed from the review:** TASK-35880 (a booted-Console pilot for the product's own delayed control-bar replay, a gap that predates this task), TASK-35881 (a sync that always defers costs every caller the full 15 s bound), and TASK-35882 (re-check the UI Fast Lane shard minutes once CI has timed the two new pilots).
 - **No live run.** Only test code and backlog docs change; no product code, CSS or visible behaviour does, so there is nothing new to verify in the running app.
+
+**Merge evidence (2026-10-20).** Evidence head 06a608d2cf (this note is committed on top of it) on dev 2d071d6d71 (up to date at the last fetch). All six ACs met, and the review's blocking item is fixed. The two new helper tests fail on the pre-pass helper and pass now; on dev they fail at setup, since dev has no retry bound. The stale-proof replay fails on dev's helper. Compared by test id with dev: projection file 31/32 vs 26/27 (TASK-35662 on both); resend UI file 17/17 vs 15/15; send-disabled file 8/10 vs 8/10, with every red tracked (TASK-35850, TASK-35883). ruff is clean on the three test files. No product module, CSS or ratchet-tracked file changed, so the ui-ready census, boot CSS budget and module-size rows are unaffected. ./scripts/preflight.sh passes.
 <!-- SECTION:NOTES:END -->
