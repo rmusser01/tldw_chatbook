@@ -21,6 +21,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     PermissionProfileContext,
     PermRow,
     ToolPolicyProfileOption,
+    _GATE_VS_PERMISSION_EXPLAINER,
     format_tool_state_label,
     state_text,
     tool_state_kind,
@@ -381,6 +382,25 @@ async def test_kill_switch_scope_hint_states_built_in_blast_radius(request):
             "Also blocks the app's own built-in tools (calculator, "
             "date/time, file and note tools)."
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_gate_vs_permission_explainer_renders_at_top_of_mode(request):
+    """task-35154 (spec amendment A7 item 2): users flip a tool gate in
+    Servers, watch this matrix not change, and conclude it is broken --
+    because the two layers do different jobs. The mode must open with ONE
+    plain-language sentence stating the split: a tool whose Servers gate is
+    off does not exist for Console agents, so its Allow/Ask/Off here
+    governs nothing. Pinned verbatim (same discipline as the kill-switch
+    hint above); it renders as the canvas's FIRST child, above the
+    profile selector, so it is read before the matrix."""
+    app = PermissionsModeApp()
+    async with app.run_test():
+        canvas = app.query_one(MCPPermissionsMode)
+        explainer = app.query_one("#mcp-perm-explainer", Static)
+        assert str(explainer.renderable) == _GATE_VS_PERMISSION_EXPLAINER
+        assert canvas.children[0] is explainer
 
 
 @pytest.mark.asyncio
