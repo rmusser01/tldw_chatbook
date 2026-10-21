@@ -2574,7 +2574,7 @@ async def test_workflows_empty_state_offers_real_authoring_with_disabled_run():
     [
         # ADR-240: the retired "mcp" row moved to the pane-level
         # test_tools_hub_labels_server_first_workbench_columns below (the
-        # "Model Context Protocol" purpose copy now lives in the Settings
+        # pane purpose copy now lives in the Settings
         # Tools & MCP pane, #tools-hub-purpose, not a shell wrapper).
         ("acp", "Agent Client Protocol"),
         ("settings", "Global preferences"),
@@ -2694,7 +2694,7 @@ async def test_tools_hub_labels_server_first_workbench_columns(request):
 
         purpose = pane.query_one("#tools-hub-purpose", Static)
         assert (
-            "MCP (Model Context Protocol) lets chatbook use external tools — "
+            "What your agents can use, what asks first, and what they did — "
             "most people never need to change anything here."
             in _static_text(purpose)
         )
@@ -2954,14 +2954,15 @@ async def test_tools_hub_permissions_and_tools_tooltips_are_current(request):
         tools_chip = pane.query_one("#mcp-mode-tools", Button)
         permissions_chip = pane.query_one("#mcp-mode-permissions", Button)
         audit_chip = pane.query_one("#mcp-mode-audit", Button)
-        assert tools_chip.tooltip == "Tools mode: browse and test scoped MCP tools."
+        assert tools_chip.tooltip == "Tools mode: browse and test what your agents can use."
         assert permissions_chip.tooltip == (
-            "Permissions mode: set Allow / Ask / Off per tool. "
-            "Space cycles the selected row."
+            "Permissions mode: choose what agents may use freely and what "
+            "asks you first (Allow / Ask / Off). Space cycles the selected row."
         )
         assert "arrives in a later phase" not in str(audit_chip.tooltip).lower()
         assert audit_chip.tooltip == (
-            "Audit mode: review MCP tool execution history and drill into a call's detail."
+            "History mode: review what your agents ran — tool execution "
+            "history and a call's detail."
         )
 
 
@@ -3002,7 +3003,8 @@ async def test_tools_hub_mode_chip_syncs_to_restored_mode(request):
 @private_profile_test
 async def test_tools_hub_mode_chip_syncs_on_inspector_hub_action(request):
     """I2 follow-up: inspector hub actions also change the mode without going
-    through `ToolsHubPanel.activate_mode()` -- "Open tool catalog"/"Open audit"
+    through `ToolsHubPanel.activate_mode()` -- "Open tool catalog"/"Open
+    history"
     call `MCPWorkbench.set_mode()` directly from
     `on_mcp_inspector_hub_action_requested`. The chip highlight must follow
     that path too, not just click/keybinding/restore, so `set_mode` itself is
@@ -3665,7 +3667,9 @@ async def test_legacy_tools_settings_route_opens_tools_hub_not_global_settings(r
 
         pane = screen.query_one("#settings-tools-hub", ToolsHubPanel)
         purpose = pane.query_one("#tools-hub-purpose", Static)
-        assert "Model Context Protocol" in _static_text(purpose)
+        # TASK-35155: the purpose line now answers the three user questions
+        # in plain words (the MCP expansion moved out with the jargon pass).
+        assert "what asks first" in _static_text(purpose)
         assert "global preferences" not in _static_text(purpose)
 
 

@@ -221,10 +221,11 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             mcp_text = _screen_text(app)
             # task-2241: the plain-English explainer leads the pane (the
             # old jargon purpose line is deleted; the mode chips already
-            # enumerate what the surface manages).
+            # enumerate what the surface manages). TASK-35155: the explainer
+            # now answers the three user questions in plain words.
             assert (
-                "MCP (Model Context Protocol) lets chatbook use external "
-                "tools — most people never need to change anything here." in mcp_text
+                "What your agents can use, what asks first, and what they "
+                "did — most people never need to change anything here." in mcp_text
             )
             assert "scoped tools" not in mcp_text
             assert (

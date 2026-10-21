@@ -431,12 +431,12 @@ MCP_HUB_MODES: dict[str, dict[str, str]] = {
         "button_id": "mcp-mode-permissions",
         "placeholder": "",
     },
-    # T7 (MCP Hub Phase 5): Audit mode now hosts the real `MCPAuditMode`
-    # canvas (see compose()) -- "placeholder" is unused for it, same as
-    # "servers"/"tools"/"permissions" above, kept "" for shape parity. This
-    # was the last MCP_HUB_MODES entry still on the generic phase-placeholder
-    # path; compose()'s placeholder-rendering loop is gone along with it.
-    "audit": {"label": "Audit", "button_id": "mcp-mode-audit", "placeholder": ""},
+    # T7 (MCP Hub Phase 5): Audit mode hosts the real `MCPAuditMode` canvas
+    # (see compose()); "placeholder" is unused here, kept "" for shape parity.
+    # TASK-35155: chip copy says "History" -- the canvas is the log of what
+    # tool calls did and the app already calls it "execution history"; the
+    # mode KEY stays "audit" (keys/ids/routes are not copy).
+    "audit": {"label": "History", "button_id": "mcp-mode-audit", "placeholder": ""},
 }
 
 _LEGACY_SECTIONS = [
