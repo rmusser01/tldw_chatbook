@@ -239,6 +239,15 @@ async def test_idle_voice_and_attachment_resyncs_request_no_layout(monkeypatch) 
         with requests.counting() as calls:
             composer.set_pending_attachment_label("notes.txt · 12 B", count=1)
         assert "Static#console-attachment-indicator" in _names(calls)
+        # Positive control: a chip that was showing copy is emptied by idle.
+        chip = composer.query_one("#console-voice-status", Static)
+        composer.set_voice_status("listening", elapsed_seconds=3)
+        await pilot.pause()
+        assert chip.display and str(chip.content)
+        with requests.counting() as calls:
+            composer.set_voice_status("idle")
+        assert "Static#console-voice-status" in _names(calls)
+        assert not chip.display and str(chip.content) == ""
 
 
 async def test_unchanged_send_reason_resync_requests_no_layout(monkeypatch) -> None:
@@ -257,6 +266,13 @@ async def test_unchanged_send_reason_resync_requests_no_layout(monkeypatch) -> N
         with requests.counting() as calls:
             composer.sync_action_state(**running)
         assert _names(calls) == []
+        # Positive control: a changed reason is new copy for the strip.
+        with requests.counting() as calls:
+            composer.sync_action_state(**{**running, "queue_blocked_reason": "Full"})
+        assert "Static#console-send-disabled-reason" in _names(calls)
+        assert str(composer.query_one("#console-send-disabled-reason").render()) == (
+            "Full"
+        )
 
 
 # -- ConsoleStatusText: the run/cost line --------------------------------
@@ -319,6 +335,19 @@ async def test_inspector_change_lays_out_only_changed_fact_rows(monkeypatch) -> 
         with requests.counting() as calls:
             summary.sync_state(unrelated)
         assert _names(calls) == []
+        # Positive control: a blocked provider changes the Run fact alone.
+        blocked = _inspector_state(
+            rows=(
+                *_inspector_state().rows[:2],
+                ConsoleDisplayRow("Provider", "blocked", status="blocked"),
+            )
+        )
+        with requests.counting() as calls:
+            summary.sync_state(blocked)
+        assert _names(calls) == ["Static#console-send-authority-run"]
+        assert str(summary.query_one("#console-send-authority-run").render()) == (
+            "Run: Blocked"
+        )
 
 
 # -- ConsolePromptQueueRegion: Send-button fields the shelf does not draw --
@@ -357,7 +386,9 @@ async def test_undrawn_queue_projection_change_requests_no_layout(monkeypatch) -
         assert _names(calls) == []
         # Positive control: a relabelled button re-lays itself out (TASK-33625.4).
         with requests.counting() as calls:
-            region.sync_presentation("session-1", _queue(revision=3, pause_label="Resume"))
+            region.sync_presentation(
+                "session-1", _queue(revision=3, pause_label="Resume")
+            )
         assert "Button#console-prompt-queue-pause" in _names(calls)
 
 
