@@ -41,6 +41,15 @@ def test_tools_category_id_exists_and_mcp_defaults_retired():
         _ = SettingsCategoryId.MCP_DEFAULTS
 
 
+# task-35597: every test that mounts a harness app or a _build_test_app
+# product keeps the collection-time bootstrap profile. The workbench and
+# its reload workers read config through the guarded loader; under
+# isolate_test_environment's per-test TLDW_CONFIG_PATH redirect the bound
+# config participant no longer matches and admission fails closed with
+# RecoveryRequired("raw_source_selection_changed") -- the same ADR-126
+# signature the censused settings suites (test_settings_configuration_hub)
+# already opt out of with this marker.
+@pytest.mark.bootstrap_profile
 async def test_panel_mounts_workbench_and_mode_chips():
     host = _PanelHarnessApp()
     async with host.run_test() as pilot:
@@ -59,7 +68,16 @@ async def test_panel_mounts_workbench_and_mode_chips():
         assert "is-active" in panel.query_one("#mcp-mode-permissions").classes
 
 
-async def test_panel_view_state_round_trip():
+@private_profile_test
+async def test_panel_view_state_round_trip(request):
+    # task-35597: this one case rides the private-profile child runner on
+    # top of the bootstrap marker. In a shared lane process any earlier
+    # app-mounting test warms the in-process config cache, the workbench's
+    # initial reload then completes while the rail's Mount is still pending,
+    # and MCPRail.sync_state's recompose races that mount (Textual Select
+    # NoMatches on '#label'). A fresh child interpreter starts cold, which
+    # is the only timing this harness reliably survives; the assertions are
+    # unchanged.
     host = _PanelHarnessApp(initial_view_state={"mode": "audit"})
     async with host.run_test() as pilot:
         panel = host.query_one("#settings-tools-hub", ToolsHubPanel)
@@ -89,6 +107,7 @@ async def test_panel_view_state_round_trip():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_registers_tools_category_and_mounts_pane(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -97,7 +116,12 @@ async def test_settings_registers_tools_category_and_mounts_pane(request):
         settings = _active_destination_screen(host)
         summaries = {s.category: s.title for s in settings._category_summaries()}
         assert summaries.get(SettingsCategoryId.TOOLS) == "Tools & MCP"
-        assert SettingsCategoryId.MCP_DEFAULTS not in summaries
+        # The retired MCP-defaults category must stay retired: the enum
+        # member itself is gone (pinned by
+        # test_tools_category_id_exists_and_mcp_defaults_retired), so pin the
+        # retirement by VALUE here -- a resurrected "mcp-defaults" id would
+        # reappear in the summaries even under a different member name.
+        assert "mcp-defaults" not in {c.value for c in summaries}
         await _open_settings_category(pilot, "#settings-category-tools")
         await pilot.pause()
 
@@ -107,6 +131,7 @@ async def test_settings_registers_tools_category_and_mounts_pane(request):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mode_keys_and_verb_keys_dispatch_only_in_tools_category():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -179,6 +204,7 @@ async def test_screen_verb_actions_reach_pane_with_focus_outside(request, tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_footer_shortcuts_follow_active_mode():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

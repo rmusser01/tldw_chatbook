@@ -66,7 +66,15 @@ async def _close_production_app(app) -> None:
         pass
 
 
+# task-35597: the app/harness-constructing tests below keep the
+# collection-time bootstrap profile (same ADR-126 config-participant
+# admission reason as the censused settings suites): under
+# isolate_test_environment's per-test TLDW_CONFIG_PATH redirect the guarded
+# config reads on these mount paths fail closed with
+# RecoveryRequired("raw_source_selection_changed") before any assertion
+# runs. The @private_profile_test case above already isolates per child.
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_production_routes_own_and_preserve_contextual_footer_hints():
     """Exercise footer ownership through the full production application."""
     app = _build_test_app()
@@ -263,6 +271,7 @@ class _MinimalScreenHost(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_base_app_screen_composes_footer_status():
     """Every BaseAppScreen carries its own AppFooterStatus instance."""
     host = _MinimalScreenHost()
@@ -299,6 +308,7 @@ class _DefaultScreenFooterHost(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_registration_updates_the_screens_own_footer():
     """chat_screen's registration must land on ITS instance, not the app's
     default-screen one; text carries the Console's own "Ctrl+Shift+F focus".
@@ -369,6 +379,7 @@ async def test_tools_hub_registration_updates_the_screens_own_footer(request):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_registration_survives_screen_recompose():
     """Screen-level recompose (settings' recompose=True reactives, library/
     chat `refresh(recompose=True)`) replaces the footer widget; the
@@ -402,6 +413,7 @@ async def test_registration_survives_screen_recompose():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_registration_updates_the_screens_own_footer():
     """task-264 review Important: Library's `u` hint (previously rendered by
     the retired Textual Footer's show=True binding) must reach its own
@@ -489,6 +501,7 @@ def test_library_note_footer_shortcut_contract_is_exact():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_registration_updates_the_screens_own_footer():
     """task-264 review Important: Settings' footer hints must reach its own
     footer via registration. task-1340: the advertised set is per-category
@@ -526,6 +539,41 @@ _CSS_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
 # first parsed selector.
 _FOOTER_SECTION_START = "/* --- Window Footer Widget --- */"
 _FOOTER_SECTION_END = "/* --- End of Window Footer Widget --- */"
+_TOKEN_DEF = re.compile(r"^\s*(\$[A-Za-z0-9_-]+)\s*:\s*([^;]+);", re.MULTILINE)
+
+
+def _design_token_literals() -> dict[str, str]:
+    """``$ds-*`` token definitions from core/_variables.tcss (ADR-150)."""
+    text = (_CSS_ROOT / "core" / "_variables.tcss").read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return dict(_TOKEN_DEF.findall(text))
+
+
+def _resolve_design_tokens(value: str, definitions: dict[str, str]) -> str:
+    """Resolve ``$ds-*`` references in a declaration value to literals.
+
+    ae9093a714 migrated _widgets.tcss to ``$ds-*`` tokens while
+    AppFooterStatus.BUNDLED_CSS deliberately keeps raw literals (it must
+    style stylesheet-less harnesses, where the ``$ds-*`` aliases do not
+    exist -- see the KEEP-IN-SYNC comment in AppFooterStatus.py and the
+    same reasoning in settings_tools_hub.py's DEFAULT_CSS). Comparing the
+    two sides therefore has to resolve the bundle's tokens first: geometry
+    parity is the contract, not spelling. Only ``$ds-*`` names defined in
+    _variables.tcss are resolved, and only while the chain stays inside
+    that file -- anything else (Textual theme variables like ``$text``)
+    passes through verbatim so both sides still compare equal on it.
+    """
+    parts = []
+    for part in value.split():
+        seen = set()
+        while part.startswith("$ds-") and part not in seen:
+            seen.add(part)
+            replacement = definitions.get(part)
+            if replacement is None or "$" in replacement:
+                break
+            part = replacement
+        parts.append(part)
+    return " ".join(parts)
 
 
 def _parse_css_blocks(css_text: str) -> dict[str, dict[str, str]]:
@@ -567,6 +615,29 @@ def _footer_section_blocks(css_path: Path) -> dict[str, dict[str, str]]:
     return _parse_css_blocks(section)
 
 
+def _built_bundle_footer_blocks(bundle_path: Path) -> dict[str, dict[str, str]]:
+    """The footer rules of the BUILT bundle, located structurally.
+
+    task-35597: the build deliberately strips source prose from the bundle
+    (build_css ``without_source_comments``, policy pinned by
+    Tests/UI/test_css_generated_comments.py since ae9093a714), so the
+    bundle can never carry the footer section markers the SOURCE carries.
+    The footer selector set is taken from the source's marker-bounded
+    section, then those selectors' merged blocks are extracted from the
+    whole built bundle -- the same "carries the same footer declarations"
+    claim, without re-introducing prose the build removes on purpose.
+    """
+    footer_selectors = set(
+        _footer_section_blocks(_CSS_ROOT / "components" / "_widgets.tcss")
+    )
+    bundle_blocks = _parse_css_blocks(bundle_path.read_text(encoding="utf-8"))
+    return {
+        selector: declarations
+        for selector, declarations in bundle_blocks.items()
+        if selector in footer_selectors
+    }
+
+
 def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[str]:
     """Every BUNDLED_CSS declaration missing/different in the bundle blocks.
 
@@ -574,8 +645,12 @@ def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[s
     declares the same ids unscoped, so the scope prefix is stripped before
     matching. BUNDLED_CSS is allowed to be a SUBSET (the bundle carries
     extras); a declaration present in BUNDLED_CSS but absent or different in
-    the bundle is drift.
+    the bundle is drift. Bundle-side ``$ds-*`` tokens are resolved to their
+    _variables.tcss literals first (see ``_resolve_design_tokens``): the
+    KEEP-IN-SYNC contract is geometry parity, and the two sides spell the
+    same value differently by design.
     """
+    definitions = _design_token_literals()
     divergences = []
     for selector, declarations in _parse_css_blocks(
         AppFooterStatus.BUNDLED_CSS
@@ -589,6 +664,8 @@ def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[s
             continue
         for prop, value in declarations.items():
             bundle_value = bundle_declarations.get(prop)
+            if bundle_value is not None:
+                bundle_value = _resolve_design_tokens(bundle_value, definitions)
             if bundle_value != value:
                 divergences.append(
                     f"{bundle_selector} {{ {prop}: {value} }} vs bundle "
@@ -615,9 +692,15 @@ def test_default_css_matches_the_live_bundle_source():
 def test_built_bundle_carries_the_footer_rules():
     """The BUILT bundle (tldw_cli_modular.tcss, what production loads) must
     carry the same footer declarations -- catches an edited _widgets.tcss
-    that was never rebuilt into the bundle."""
+    that was never rebuilt into the bundle.
+
+    task-35597: the footer block is located structurally (selectors from
+    the source's marker-bounded section) because the build intentionally
+    strips source comments from the bundle (ae9093a714, pinned by
+    test_css_generated_comments.py) -- the markers only exist in the source.
+    """
     divergences = _default_css_divergences(
-        _footer_section_blocks(_CSS_ROOT / "tldw_cli_modular.tcss")
+        _built_bundle_footer_blocks(_CSS_ROOT / "tldw_cli_modular.tcss")
     )
     assert divergences == [], (
         "The built bundle's footer block diverged from AppFooterStatus."
