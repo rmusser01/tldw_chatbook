@@ -170,11 +170,30 @@ def test_legacy_tab_ids_still_switch_through_route_aliases():
 
 def test_tab_navigation_provider_copy_uses_shell_vocabulary():
     assert "global preferences" in TabNavigationProvider.TAB_HELP_TEXT[TAB_SETTINGS]
-    assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_MCP]
-    assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_TOOLS_SETTINGS]
+    # task-35152: the retired MCP routes describe their real landing
+    # (Settings > Tools & MCP), not a standalone MCP destination.
+    assert "Tools & MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_MCP]
+    assert "Tools & MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_TOOLS_SETTINGS]
     # RAG UX v2 PR-1, Task 2: the retired standalone Search screen means this
     # copy must say where "search" actually lands now.
     assert "Library" in TabNavigationProvider.TAB_HELP_TEXT[TAB_SEARCH]
+
+
+def test_palette_offers_tools_and_mcp_deeplink_command():
+    """task-35152 / ADR-240: the retired MCP destination keeps its
+    popular-row slot, but under its own label -- a second "Switch to
+    Settings" beside the Settings destination's own helped nobody. The
+    entry posts the legacy "mcp" route, which
+    ``LEGACY_ROUTE_NAV_CONTEXTS`` lands on Settings' Tools category."""
+    commands = TabNavigationProvider.FOLDED_ROUTE_COMMANDS
+    routes = [route for route, _, _ in commands]
+    assert TAB_MCP in routes
+    mcp_command = next(item for item in commands if item[0] == TAB_MCP)
+    assert mcp_command[1] == "Tab Navigation: Switch to Tools & MCP"
+    assert "Tools & MCP" in mcp_command[2]
+    # Routing is unchanged: the route must pass through unaliased so the
+    # legacy deep-link map ({"category": "tools"}) handles it.
+    assert TabNavigationProvider.route_for_tab(TAB_MCP) == "mcp"
 
 
 def test_palette_offers_library_skills_deeplink_command():
@@ -183,7 +202,7 @@ def test_palette_offers_library_skills_deeplink_command():
     posts the legacy "skills" route, which
     ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` already lands on the Skills rail
     row (covered by ``test_screen_navigation``'s deep-link test)."""
-    commands = TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+    commands = TabNavigationProvider.FOLDED_ROUTE_COMMANDS
     routes = [route for route, _, _ in commands]
     assert "skills" in routes
     skills_command = next(item for item in commands if item[0] == "skills")
@@ -196,7 +215,7 @@ def test_palette_offers_library_skills_deeplink_command():
 def test_library_and_skills_palette_entries_are_distinguishable():
     from tldw_chatbook.app import TabNavigationProvider
 
-    subroutes = TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+    subroutes = TabNavigationProvider.FOLDED_ROUTE_COMMANDS
     skills = next(item for item in subroutes if item[0] == "skills")
     # The skills deep-link command text must be distinct from the generic
     # "Library" destination command so a first-time user can tell them apart.
