@@ -10891,6 +10891,8 @@ class ChatScreen(BaseAppScreen):
                 group="console-retrieval-scope-save",
             )
 
+        if not self._owns_console_screen_stack():  # TASK-34720: one dialog
+            return
         self.app.push_screen(
             ConsoleScopePickerModal(
                 target_label,
@@ -11060,6 +11062,8 @@ class ChatScreen(BaseAppScreen):
         supplies them, via ``project_instruction_ui.
         project_instruction_context_kwargs``.
         """
+        if not self._owns_console_screen_stack():  # TASK-34720: one dialog
+            return
         from ...Widgets.Console.console_conversation_inspector import (
             ConsoleConversationInspector,
         )
@@ -11190,6 +11194,8 @@ class ChatScreen(BaseAppScreen):
                 "No characters saved yet — import a card in Roleplay first.",
                 severity="information",
             )
+            return
+        if not self._owns_console_screen_stack():  # TASK-34720: one dialog
             return
         self.app.push_screen(
             ConsoleCharacterPickerModal(
