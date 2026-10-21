@@ -1,5 +1,7 @@
 # K1 implementation report
 
+Retention note: all command-output filenames cited below are retained as named entries with original byte hashes in [k1-evidence.json](k1-evidence.json); raw .log files are ignored by repository policy. The report body preserves the implementer's original evidence record.
+
 Status: implemented, targeted verification complete with two independently reproduced inherited census failures; ready for parent independent review. Commit: `8bdb4be36df66222dc5f13ed6257ff86eb539b14` (`feat(workspaces): add folder-bound project index storage`).
 
 Source: `33fa199eca7fd44ba1dd991b5086a87786bb6e66`; branch `codex/workspace-project-keyword-index`; managed worktree `C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui`. ADR240 and the reconciled task-1 brief govern this foundation. No scanner/service/tool/UI/semantic implementation, profile configuration, dependency installation, push, or original-checkout edits. Root-owned Backlog/plan/spec/ADR/execution artifacts were not staged.

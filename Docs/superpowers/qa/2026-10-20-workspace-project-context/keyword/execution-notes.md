@@ -9,7 +9,7 @@ Implementation base: 43054ffa6f02ef4ffc57c0e49ce5b169a5dd5e23. Branch: codex/wor
 ## Evidence
 
 - Unmodified Workspace DB and registry baseline: 90 passed, 1 warning in 162.31s. Targeted selection only. Existing pytest-asyncio setup and Pydantic deprecation warnings remain known limits.
-- K1 storage/authority: commit8bdb4be36d independently approved for spec and quality. Final amended selection25passed1inheritedwarning46.74s. Covering183passed10platformskips4failed422.43s; two K1 failures corrected, two untouched census failures reproduced on exact33fa199 export2failed148.23s. New-file Ruff/format/whitespace pass;25existing Ruff findings unchanged. [Report](task-1-report.md), [review](task-1-review.md), [final focused output](k1-final-focused.log), [baseline reproduction](k1-baseline-census.log).
+- K1 storage/authority: commit8bdb4be36d independently approved for spec and quality. Final amended selection25passed1inheritedwarning46.74s. Covering183passed10platformskips4failed422.43s; two K1 failures corrected, two untouched census failures reproduced on exact33fa199 export2failed148.23s. New-file Ruff/format/whitespace pass;25existing Ruff findings unchanged. [Report](task-1-report.md), [review](task-1-review.md), [retained focused, covering, baseline and TDD output](k1-evidence.json).
 - K2 scanner, K3 lifecycle, K4 tool search, K5 Settings/release: pending.
 
 ## Qualification limits
