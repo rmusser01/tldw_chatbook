@@ -72,7 +72,10 @@ from tldw_chatbook.Constants import (
     TAB_PERSONAS,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnCustodyRequest,
+    resolve_session_workspace_roots,
+)
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
@@ -804,14 +807,19 @@ def _review_selection_agent_conversation_id(screen: Any) -> str | None:
 
 
 def _review_selection_workspace_roots(screen: Any) -> tuple[str, ...] | None:
-    """Resolve the active turn's current workspace roots."""
+    """Resolve the active turn's current workspace roots.
+
+    Read narrowly (TASK-33620.15.1.3): the Environment panel asks on the UI
+    loop at every rail open, run completion, poll tick and landing, and the
+    full turn snapshot this used to build cost 0.2-1.4 s each time.
+    """
     controller = screen._console_chat_controller
     if controller is None:
         return None
     active = controller.store.active_session_id
     if not active:
         return None
-    return controller.resolve_turn_execution_context(active).workspace_roots
+    return resolve_session_workspace_roots(controller, active)
 
 
 def _review_selection_run_active(screen: Any) -> bool:

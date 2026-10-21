@@ -53,6 +53,45 @@ def capture_change_review_admission(
     return (), (), ()
 
 
+def resolve_session_workspace_roots(
+    controller: Any, session_id: str
+) -> tuple[Any, ...]:
+    """Read one session's consent-admitted workspace roots, and nothing else.
+
+    The value ``controller.resolve_turn_execution_context(session_id)
+    .workspace_roots`` carries: the runtime-owned controller has no turn-context
+    provider, and its snapshot takes its roots from this same admission read
+    for the session's own workspace. Building that whole snapshot to keep one
+    field (RAG profile depth through storage admission, the MCP definition
+    maximum, the skill catalog, project authority, ...) held the UI loop
+    0.2-1.4 s every time the Console Environment panel asked for its root --
+    on Inspect-rail open, at each run completion and on every 10 s poll
+    (TASK-33620.15.1.3); the admission read alone measured 1-12 ms.
+
+    An installed turn-context provider owns the whole snapshot, roots
+    included, so its snapshot is still asked.
+
+    Args:
+        controller: The Console chat controller owning ``session_id``.
+        session_id: The session whose workspace roots to read.
+
+    Returns:
+        The consent-admitted roots; empty when consent is off, nothing is
+        bound, or the consent service is absent or raised.
+
+    Raises:
+        KeyError: ``session_id`` is not one of the controller's sessions (the
+            full snapshot build raised for it too).
+    """
+    if getattr(controller, "_turn_context_provider", None) is not None:
+        return controller.resolve_turn_execution_context(session_id).workspace_roots
+    workspace_id = controller.store.session_workspace_id(session_id)
+    roots, _aliases, _skipped = capture_change_review_admission(
+        controller.app, workspace_id
+    )
+    return roots
+
+
 def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> str:
     """Read the owning workspace's named profile, preserving legacy defaults."""
     try:

@@ -338,16 +338,32 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     native_messages = object()
     screen._ensure_console_chat_store = lambda: store
     active_status = next(iter(FEEDBACK_ACTIVE_RUN_STATUSES))
+    # TASK-33620.15.1.3: the roots are read narrowly -- the session's own
+    # workspace through the app's Change Review consent service -- never by
+    # building a whole turn snapshot.
     chat_controller = SimpleNamespace(
-        store=SimpleNamespace(active_session_id="session"),
+        store=SimpleNamespace(
+            active_session_id="session",
+            session_workspace_id=lambda session_id: ("workspace", session_id),
+        ),
         run_state=SimpleNamespace(status=active_status),
         _agent_conversation_id=lambda session_id: (conversation_id, session_id),
         run_active_for_workspace=lambda root: ("active", root),
-        resolve_turn_execution_context=lambda session_id: SimpleNamespace(
-            workspace_roots=(roots, session_id)
-        ),
     )
     screen._console_chat_controller = chat_controller
+    # The runtime binds its own app onto the controller it is handed.
+    monkeypatch.setattr(
+        chat_controller.app,
+        "change_review_consent_service",
+        SimpleNamespace(
+            admit_turn=lambda workspace_id: SimpleNamespace(
+                ready_roots=(roots, workspace_id),
+                ready_aliases=(),
+                skipped_roots=(),
+            )
+        ),
+        raising=False,
+    )
     screen._ensure_console_chat_controller = lambda: chat_controller
     screen._ensure_console_agent_bridge = lambda: SimpleNamespace(
         runs_db=runs_db,
@@ -379,7 +395,10 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     )
     assert controller._run_active_accessor() is True
     assert controller._run_active_for_root("root") == ("active", "root")
-    assert controller._workspace_roots_accessor() == (roots, "session")
+    assert controller._workspace_roots_accessor() == (
+        roots,
+        ("workspace", "session"),
+    )
     assert controller._agent_runs_db_accessor() is runs_db
     assert controller._capture_policy_bindings_accessor("session", "conversation") == (
         bindings,
