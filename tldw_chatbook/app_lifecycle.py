@@ -693,6 +693,9 @@ class LifecycleMixin:
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        from .Workspaces.project_index.runtime import close_project_index_service
+
+        await close_project_index_service(self)
         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         await self._shutdown_workflow_session()
         self._mcp_local_config_saves_closed = True

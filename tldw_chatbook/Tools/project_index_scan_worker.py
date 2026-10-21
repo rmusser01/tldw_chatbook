@@ -535,4 +535,12 @@ def run_project_scan_worker(stdin: BinaryIO, stdout: BinaryIO) -> int:
 
 
 if __name__ == "__main__":
+    # The raw inherited reference is deliberately never closed/unlocked by
+    # Python cleanup. Native exit retires it, even before Init/containment.
+    if len(sys.argv) == 2:
+        from tldw_chatbook.Workspaces.project_index.lifetime import retain_inherited
+
+        _lifetime_capability = retain_inherited(sys.argv[1])
+    elif len(sys.argv) != 1:
+        raise SystemExit(2)
     raise SystemExit(run_project_scan_worker(sys.stdin.buffer, sys.stdout.buffer))

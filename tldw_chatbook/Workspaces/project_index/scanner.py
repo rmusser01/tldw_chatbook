@@ -54,6 +54,7 @@ class ProjectScanner:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self.lifetime = None
         self.retired = True
         self.worker_pid = 0
         self.process_returncode = None
@@ -93,7 +94,8 @@ class ProjectScanner:
             # directly; -I -S excludes cwd, environment Python paths and .pth/site.
             # Only this installed code location enters bootstrap argv, never the
             # admitted project locator, exclusions, policy or file bodies.
-            process = subprocess.Popen(
+            spawn = subprocess.Popen if self.lifetime is None else self.lifetime.spawn
+            process = spawn(
                 [
                     getattr(sys, "_base_executable", sys.executable),
                     "-I",
@@ -102,6 +104,7 @@ class ProjectScanner:
                     "import runpy,sys;sys.path.insert(0,"
                     + repr(str(Path(__file__).resolve().parents[3]))
                     + ");runpy.run_module('tldw_chatbook.Tools.project_index_scan_worker',run_name='__main__')",
+                    *([] if self.lifetime is None else [str(self.lifetime.handle)]),
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,

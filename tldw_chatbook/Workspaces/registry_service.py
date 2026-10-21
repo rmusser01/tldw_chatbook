@@ -17,8 +17,12 @@ import sqlite3
 import sys
 import threading
 from types import ModuleType
-from typing import Any, ContextManager, Protocol
+from typing import TYPE_CHECKING, Any, ContextManager, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
+
+if TYPE_CHECKING:
+    from .project_index.models import IndexAuthorityReader, IndexAuthorityFence
+
 
 from loguru import logger
 
@@ -651,6 +655,7 @@ class LocalWorkspaceRegistryService:
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or registry_now_iso
         self._mutation_generation = 0
+        self._project_index_listeners: set[Callable[[str], None]] = set()
         self._change_review_binding_owner: _ChangeReviewBindingOwner | None = None
         self._receipt_token_factory = receipt_token_factory or (
             lambda: token_urlsafe(32)
@@ -2646,7 +2651,23 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
 
-    def project_index_authority_adapters(self, current_data_authority: Callable[[], str]):
+    def subscribe_project_index_changes(
+        self, listener: Callable[[str], None]
+    ) -> Callable[[], None]:
+        """Subscribe to post-commit hints; durable fences remain authoritative."""
+        self._project_index_listeners.add(listener)
+        return lambda: self._project_index_listeners.discard(listener)
+
+    def _notify_project_index_change(self, binding_id: str) -> None:
+        for listener in tuple(self._project_index_listeners):
+            try:
+                listener(binding_id)
+            except Exception:  # noqa: BLE001 - observers cannot roll back a committed mutation.
+                logger.debug("Project index invalidation observer failed")
+
+    def project_index_authority_adapters(
+        self, current_data_authority: Callable[[], str]
+    ) -> tuple[IndexAuthorityReader, IndexAuthorityFence]:
         """Bind code-owned profile authority to exact-key readers and short fences.
 
         Composition supplies a live admitted data/restore generation reader.
@@ -2787,6 +2808,7 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
+        self._notify_project_index_change(safe_binding.binding_id)
         stored = self.get_runtime_binding(safe_binding.binding_id)
         if stored is None:
             raise WorkspaceRegistryServiceError("Runtime binding save failed.")
@@ -3154,6 +3176,7 @@ class LocalWorkspaceRegistryService:
         if cursor.rowcount == 0:
             raise BindingNotFound(safe_binding_id)
         self._bump_mutation_generation()
+        self._notify_project_index_change(safe_binding_id)
 
     def set_folder_binding_access(
         self, binding_id: str, *, allow_write: bool

@@ -81,6 +81,24 @@ class ProjectIndexKey:
                 raise ValueError("invalid_index_key")
 
     @property
+    def binding_namespace(self) -> str:
+        """Stable owner across locator/root changes; never infer it from a path."""
+        return hashlib.sha256(
+            json.dumps(
+                (self.workspace_id, self.binding_id),
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+
+    @property
+    def lifetime_name(self) -> str:
+        """Authority-scoped native object, distinct from accounting ownership."""
+        return (
+            hashlib.sha256(self.data_authority_id.encode()).hexdigest()
+            + ".lifetime.lock"
+        )
+
+    @property
     def namespace(self) -> str:
         values = (
             self.data_authority_id,
