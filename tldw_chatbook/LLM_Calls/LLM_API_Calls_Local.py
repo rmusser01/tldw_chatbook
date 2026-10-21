@@ -333,7 +333,11 @@ def _chat_with_openai_compatible_local_server(
             def stream_generator():
                 try:
                     for line in response.iter_lines(decode_unicode=True):
-                        if line and line.strip():
+                        # SSE spec (WHATWG section 3): a line starting with ':'
+                        # is a comment frame (server heartbeat, e.g.
+                        # ": keep-alive") and must be ignored, never passed
+                        # through as content.
+                        if line and line.strip() and not line.startswith(':'):
                             yield line + "\n\n"  # Pass through raw SSE line
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logging.error(
