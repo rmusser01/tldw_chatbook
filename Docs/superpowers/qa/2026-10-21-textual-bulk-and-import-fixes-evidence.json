@@ -15,7 +15,8 @@
     "Tests/UI/test_schedules_bulk_admission.py": "60c2a5093da57405270db771d952d9a54e922c465acf12e1c8316c80f8077efa",
     "Tests/UI/test_evals_snippet_import_drafts.py": "9316f53fab92bb9f89343b5f89ae7d642524ccd3d271f10bdc26c7fe7c7c2c6e",
     "scripts/ui_pr_gate_census.txt": "452f742b482b36354856facd26eec1be1a6a3143b81b2926fff9cfcd116546b3",
-    "scripts/check_ui_pr_gate_census.py": "d8a136f99cf53db8627a98b6f5cb52e7731269e8304fbb6fc307ceb8c09b4d76"
+    "scripts/check_ui_pr_gate_census.py": "d8a136f99cf53db8627a98b6f5cb52e7731269e8304fbb6fc307ceb8c09b4d76",
+    "Docs/security/production-diagnostic-inventory.json": "c4782e6266061d0a9b54bce20782e7a7e76d40e6c72a438a9e3da18b08ae9eb6"
   },
   "task36036_focused": {
     "initial_focused": [
@@ -1330,5 +1331,44 @@
     "No full suite, external HTTP/server atomicity or physical cancellation claim",
     "No production native terminal or OS file-picker journey",
     "Inherited pytest-asyncio/Pydantic warnings and existing Schedules/checker full-file formatter debt retained"
-  ]
+  ],
+  "ci_followup": {
+    "initial_head": "66bc8d6bf235d83d29d78ac8f01532beb7cc5895",
+    "run": 39660610647,
+    "console_flake": {
+      "documented_owner": "TASK-35645; TASK-34789 mapped-learning side thread",
+      "affected_files_unchanged_against_current_dev": true,
+      "exact_native_parameter": "passed in44.85s",
+      "UI_shard7_rerun": "success",
+      "not_claimed_fixed": true
+    },
+    "diagnostic_inventory": {
+      "only_changed_owner": "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
+      "calls": [
+        32,
+        33
+      ],
+      "digest": [
+        "db4904d58b553c5b3111",
+        "b1e6c5cad5edc5c931f6"
+      ],
+      "task494_total": [
+        7716,
+        7717
+      ],
+      "sinks_unchanged": true,
+      "reviewed_arguments": [
+        "task.id becomes captured task_id in the two existing errors",
+        "new submission failure uses fixed schedules-bulk-toggle/delete group"
+      ],
+      "verification": {
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "seconds": 118.99,
+        "receipt_sha256": "2153de2343cf883d1f43cdaeee94b5a896c2c7cf52c9831ac0c4c58287eca290"
+      }
+    },
+    "application_test_census_workflow_sources_unchanged": true
+  }
 }

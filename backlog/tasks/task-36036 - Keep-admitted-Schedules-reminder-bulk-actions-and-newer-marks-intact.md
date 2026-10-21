@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-21-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-21 19:13
+updated_date: 2026-10-21 21:51
 ---
 
 ## Description
@@ -58,8 +58,8 @@ Reason: bounded correction of UI admission/selection ownership; preserve Schedul
 2. Admit one reminder bulk mutation synchronously, freeze intended IDs/owners/operation, clearly refuse overlapping mutations and selection changes while pending, and release admission on successful, refused, failed or scheduling-error settlement. Keep cursor navigation and existing service policies intact.
 3. Cover ordinary and partial refusal/failure outcomes and post-settlement retry. Update scheduling architecture documentation; use targeted affected tests and scoped static checks only.
 4. Obtain independent task review, then let the controller admit selected new regressions into the required UI census and run combined integration/CI checks. Complete task notes and criteria only after all evidence is available.
+CI continuation: reconcile the reviewed production-diagnostic inventory for the two captured-ID log arguments and one fixed-group submission-error log. Preserve sink topology and source/runtime behavior; verify the exact inventory/topology guard, obtain scoped Superpowers review, then close the task and check fresh current-head CI. ADR required: no; existing reviewed diagnostic inventory policy applies, with no logging sink or data-boundary change.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
@@ -72,4 +72,5 @@ ADR required: no. Existing ADR-018/033 apply; ADR-116 remains Proposed context. 
 Evidence: all 14 distinct new regression nodes have passing receipts (12 unchanged passing nodes plus the two corrected notification-drain controls), four service controls pass, and independent Superpowers spec/quality review is Approved with no Critical/Important findings. Shared CI contracts: 121 pass; six new gated cases collect. Scoped lint/new-test formatting/UTF8/compile/whitespace checks pass. Eight existing plain UI controls stopped before their bodies in source-profile fixture admission; existing formatter/warning debt remains qualified rather than suppressed. Hosted results are tracked on the PR.
 
 [Qualification and structured evidence](../../Docs/superpowers/qa/2026-10-21-textual-bulk-and-import-fixes.md).
+CI follow-up: reviewed every diagnostic statement delta before regenerating Docs/security/production-diagnostic-inventory.json. Two existing ID logs now use the captured task_id; one submission-error log adds only the two fixed worker-group labels. One owner changes 32->33 calls; task494 total 7716->7717; no sink topology or application/test/census/workflow change. The exact production-inventory/sink-topology test passes 1 in 118.99s. The separate unchanged Console Stop-shown flake is documented under [TASK-35645](./task-35645%20-%20Console-screen-refreshes-on-the-UI-loop-wait-out-a-config-rebuild.md) and passed the exact native control plus failed-job rerun; no claim that its underlying timing issue is repaired. Qualification updated; scoped Superpowers review and fresh hosted CI are tracked on the PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

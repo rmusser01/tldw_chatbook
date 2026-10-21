@@ -18,7 +18,7 @@ Existing ADRs [018](../../../backlog/decisions/018-local-server-hybrid-scheduled
 | Schedules candidate | 14 distinct new nodes have passing receipts: 12 unchanged passing nodes from the initial batch plus 2 corrected notification-drain controls. The initial complete run was 12 passed / 2 failed, not all green. |
 | SchedulingService controls | 4 pass: offline update/delete bookkeeping and transfer refusal. |
 | Evals fresh RED | TXT/CSV/JSON each lose the exact unfinished draft after successful real import-worker completion: 3 intended failures. |
-| Evals final candidate | 6 passed in 108.70s: three formats, failed/cancelled imports, explicit Rename validation/DB/heading/catalog updates, and overflowing table/pinned Import. Initial batch was5 passed / 1 test timing failure; keyboard edits replaced immediate repeated clicks before the final run. |
+| Evals final candidate | 6 passed in 108.70s: three formats, failed/cancelled imports, explicit Rename validation/DB/heading/catalog updates, and overflowing table/pinned Import. Initial batch was 5 passed / 1 test timing failure; keyboard edits replaced immediate repeated clicks before the final run. |
 | UI token/component governance | 2 passed, including Python style ratchet. |
 | CI census/workflow contracts | 121 passed; new required selectors collect 6 cases. |
 | Worker/markup inventories | Both pass, no new exceptions. |
@@ -33,6 +33,14 @@ Independent Superpowers task reviews both approve spec compliance and code quali
 Four selectors append to the census: admitted toggle, admitted confirmed deletion, all three Evals format/draft cases, and pending mark/clear refusal. All 430 prior entries and positions remain identical, with 434 total. New indices 430–433 occupy UI shards 2–5; thirteen shards, 20-minute job caps, 180-second per-test limits, dependencies and aggregate protection are unchanged.
 
 For placement only, the earlier current-census hosted run 39565331697 measured those jobs at 799/756/624/813 seconds. Native representative costs are 27.621/30.206/53.658/28.091 seconds. A conservative 2.6x addition projects 871/835/764/887 seconds, below the 1200-second cap. This estimate is not fresh hosted performance qualification; the PR run is authoritative.
+
+## CI follow-up
+
+The initial required run 39660610647 reported the existing Console mapped-learning Stop-visibility timing failure and a stale production-diagnostic inventory. The Console test/fixture/ChatScreen are unchanged from current dev; [TASK-35645](../../../backlog/tasks/task-35645%20-%20Console-screen-refreshes-on-the-UI-loop-wait-out-a-config-rebuild.md) already records the exact Stop-shown flake. The exact failed parameter passed natively (1 pass / 44.85s), and the failed-job rerun passed UI shard 7. These receipts do not claim the underlying existing timing flake is repaired.
+
+The inventory drift is one Schedules owner: 32 calls/digest `db4904d58b553c5b3111` to 33 calls/digest `b1e6c5cad5edc5c931f6`. Statement review confirms two existing ID diagnostics now use the captured `task_id` instead of `task.id`, plus `logger.exception("Could not start reminder bulk action {}", group)` with the two fixed bulk worker-group labels. No user content, secret, path, new destination or sink topology is added by those arguments. The inventory is a recording, not blanket privacy approval for existing exception capture.
+
+Regenerated the pin with `python scripts/check_persistent_diagnostic_inventory.py --write`. The exact production-inventory/sink-topology test then passes (1 pass / 118.99s). No application source, test, UI census, limit or workflow is changed by this follow-up; fresh hosted checks are tracked on the PR. Original logs, statement review and native controls remain archived with the other receipts.
 
 ## Verification limits
 
