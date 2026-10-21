@@ -66,6 +66,19 @@ depends on (an idle pass, a worker pool, a boot stagger), list what it now
 runs ahead of, and measure the first use of each of those at the earliest
 moment a user could reach it, not only the path you sped up.
 
+## A fix that swallows an exception can break dev's pin that the exception is raised (TASK-33621.20, 2026-10-20)
+
+**Incident.** A fix for a center-swap race (ea160fd859) guarded `ProviderContinuationTranscriptRegion.sync_recovery` twice. It returned while the region was being pruned, and it also swallowed `NoMatches` when a card was missing. The branch's own tests went green. Dev's `Tests/UI/test_console_trace_call_recovery.py` pins the opposite for a live region: it removes the card and expects `pytest.raises(NoMatches)`. Its 4 cases failed with "DID NOT RAISE".
+
+The branch's last head-vs-dev comparison had run before that commit, so it missed this. It also missed dev's `test_console_recovery_live_bindings.py` (4 cases, `AttributeError`): a later commit read `controller.store`, which that test's controller double does not have.
+
+Textual sets `_pruning` on every node of a removed subtree synchronously, inside `remove()`. The pruning check alone was the fix: with it removed, the swap test failed with `NoMatches`. The broad `except` was redundant.
+
+**What to do.**
+- Before swallowing an exception, grep the tests for `raises(<that exception>)` around the code.
+- Keep only the guards that a negative control shows are needed.
+- Re-run the head-vs-dev comparison on the final head, after the last fix commit, not just once after the rebase.
+
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
 **Incident.** PR #3176's admission-sensitive job failed the headless-delivery
