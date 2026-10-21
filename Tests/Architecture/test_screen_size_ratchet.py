@@ -122,10 +122,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the exact measurement, never above it.
     #: Raised 2026-10-20 by TASK-33620.15.1 (owner rule: a fix over a size
     #: ratchet raises the row with a dated comment rather than contorting
-    #: code): rebased 2026-10-23 onto dev's 24341/736 row above, +2 lines for the config-sync cadence's hooks (the
-    #: sync's entry mark, the poll's mark, the stop render and the module's
-    #: import, net of the function-local imports it replaces), whose logic
-    #: lives in Console_Modules/config_sync.py.
+    #: code): dev 2d071d6d71 measures 24329; the config-sync cadence's hooks
+    #: add 3 (the sync's entry mark, the poll's mark, the stop render and the
+    #: module's import, net of the function-local import it replaces), whose
+    #: logic lives in Console_Modules/config_sync.py. Rebased 2026-10-22 onto
+    #: dev 7700c63a68, which measures 24335 (TASK-34720's row above): 24338,
+    #: the row's new exact measurement.
+    #: Rebased 2026-10-23 onto dev, which measures 24341 (TASK-33620.15.3's row
+    #: above): +3 for the cadence hooks; the row is the exact measurement.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24344, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
