@@ -6,7 +6,12 @@ Design: [Workspace aware project context](../../Docs/superpowers/specs/2026-10-2
 Related guidance tasks: [TASK-35930](<../tasks/task-35930 - Guide-project-questions-toward-admitted-workspace-files.md>),
 [TASK-35931](<../tasks/task-35931 - Allow-mixed-Console-grounding-without-forced-Library-attribution.md>),
 [TASK-35932](<../tasks/task-35932 - Qualify-workspace-guidance-with-preserved-Library-choices.md>).
-Optional keyword and semantic indexing remain separate planned deliverables.
+Related keyword tasks: [TASK-36002](<../tasks/task-36002 - Store-folder-bound-keyword-cache-and-durable-authority-contracts.md>),
+[TASK-36003](<../tasks/task-36003 - Scan-project-folders-in-bounded-resumable-pages.md>),
+[TASK-36004](<../tasks/task-36004 - Own-keyword-index-jobs-refresh-recovery-and-revocation.md>),
+[TASK-36005](<../tasks/task-36005 - Search-keyword-indexes-through-admitted-read-only-file-tools.md>),
+[TASK-36006](<../tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md>).
+Keyword indexing is in implementation; semantic indexing remains a separate planned deliverable.
 Related decisions: ADR-030 derived-index lifecycle, ADR-079 Console Library
 authority, ADR-082 private scratch, ADR-101 pinned workers, ADR-102 run-admitted
 roots, ADR-126 recovery, ADR-174 binding exclusions

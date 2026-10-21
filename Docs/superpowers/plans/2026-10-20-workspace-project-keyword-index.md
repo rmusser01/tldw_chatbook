@@ -67,7 +67,7 @@ Keep the existing one-shot agent tool-worker protocol unchanged.
 
 ## K1 Versioned cache and authority contracts
 
-**Files:** Create `models.py`, `DB/Workspace_Project_Index_DB.py`, and project-index `recovery.py`; extend `Workspaces/recovery.py`, `DB/private_sqlite.py`, `Backup_Recovery/participants.py`, `DB/Workspace_DB.py`, and `Workspaces/registry_service.py`. Add the next Workspace DB migration through its canonical runner. Create `Tests/DB/test_workspace_project_index_db.py`, `Tests/Backup_Recovery/test_workspace_project_index_owner.py`, and `Tests/Workspaces/project_index_support.py`; extend the existing Workspace DB/registry migration tests.
+**Files:** Create `models.py`, `DB/Workspace_Project_Index_DB.py`, and project-index `recovery.py`; extend `Workspaces/recovery.py`, `DB/private_sqlite.py`, `Backup_Recovery/participants.py`, `DB/Workspace_DB.py`, `DB/recovery_operations.py`, and `Workspaces/registry_service.py`. Add the next Workspace DB migration through its canonical runner. Create `Tests/DB/test_workspace_project_index_db.py`, `Tests/Backup_Recovery/test_workspace_project_index_owner.py`, and `Tests/Workspaces/project_index_support.py`; extend the existing Workspace DB/registry migration tests.
 
 **Interfaces:** Define frozen records with no generic owner names accepted from user data:
 
@@ -204,7 +204,7 @@ shutdown, independently of whether a Console view exists.
 
 ## K4 Permission bounded index search through local tools
 
-**Files:** Extend `service.py`, `models.py`, `Agents/local_tool_provider.py`, `Chat/console_agent_bridge.py`, and `Tools/workspace_file_roots.py`. Create `Tests/Agents/test_project_index_tool.py` and extend `Tests/Chat/test_console_workspace_folder_note_contract.py`.
+**Files:** Extend `service.py`, `models.py`, `Agents/local_tool_provider.py`, `Chat/console_agent_bridge.py`, `Chat/console_chat_controller.py`, and `Tools/workspace_file_roots.py`. Create `Tests/Agents/test_project_index_tool.py` and extend `Tests/Chat/test_console_workspace_folder_note_contract.py`.
 
 **Interfaces:** Consume K1's `IndexCandidate(relative_path: str, file_identity: str,
 content_sha256: str, line_start: int, line_end: int, rank: int)`,
@@ -264,3 +264,13 @@ The user selected Subagent-driven execution. The
 [pre-implementation review](../qa/2026-10-20-workspace-project-context/plan-review.md)
 records the durable authority/job fence, refreshed scanner admission, per-run
 search floor, and stale-action CAS corrections included here.
+
+## Execution clarifications from current-source preflight (2026-10-21)
+
+The approved behavior and ADR-240 remain unchanged. K1 also owns the exact Workspace recovery catalog successor in `DB/recovery_operations.py`, preserving frozen v8 and qualifying the next canonical schema. K4 wires the actual provider constructor in `console_chat_controller.py`, preparing service/scopes off the UI thread.
+
+K1 defines code-only `ProjectIndexLiveReader = Callable[[IndexCandidate], FileCapture | None]` on `ProjectIndexSearchAuthority`. K2 implements `ProjectScanner.capture_file(authority: ProjectIndexAuthority, relative_path: str, *, stop: threading.Event) -> FileCapture | None` through one bounded private Capture request in the new index protocol. One worker capture helper supplies identity, SHA256 and strict UTF-8 from the same descriptor/read for both scans and live validation. It checks ancestors/reparse/exclusions, no-follow opening where supported, pre/open/post identity and the 1MiB+1 read ceiling. No frontier enumeration or durable writer claim is used for query capture.
+
+K4 issues the adapter only after search plus effective fs_read review, retaining that run's exact admitted root/chain/guard, frozen/accumulated exclusion floor, cancellation/time/output budgets and current narrow restrictions. Short registry admission/disclosure fences never span worker I/O. The ordinary one-shot WorkspaceToolExecutor protocol/result contract and remote bundle are unchanged. Pure recovery imports must not load ChunkingService/runtime; parent chunking uses explicit 400-word/100-overlap arguments. Registry fencing uses explicit `transaction(immediate=True)` without nested kernel transactions. Clear retains advanced durable CAS history even while Off.
+
+Existing Workspace DB and registry baseline: 90 passed, 1 inherited warning in 162.31s. Keyword implementation uses a separate branch from guidance43054ffa6f and its own private test TEMP; no full sweep, saved Library migration or semantic work is authorized.
