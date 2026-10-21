@@ -242,6 +242,9 @@ $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
 
+$ds-agentic-mcp-row-share: 8fr;
+$ds-agentic-mcp-compact-row-share: 9fr;
+
 $ds-wizards-voice-long-share: 21fr;
 $ds-wizards-voice-mid-share: 14fr;
 $ds-wizards-voice-short-share: 11fr;
@@ -3497,6 +3500,42 @@ ListItem.personas-library-row.is-active.-highlight {
 #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
   width: $ds-fr-2;
   min-width: $ds-size-20;
+}
+
+
+#mcp-hub-row {
+  width: $ds-agentic-mcp-row-share;
+  min-width: $ds-size-0;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
+}
+
+#mcp-hub-grid.mcp-compact #mcp-hub-row {
+  width: $ds-agentic-mcp-compact-row-share;
+  min-width: $ds-size-46;
+}
+
+
+#mcp-hub-grid.mcp-stacked {
+  layout: vertical;
+}
+
+
+#mcp-hub-grid.mcp-stacked #mcp-hub-row {
+  width: $ds-width-full;
+  min-width: $ds-size-40;
+  height: $ds-height-fill;
+  min-height: $ds-size-2;
+}
+
+#mcp-hub-grid.mcp-stacked #mcp-hub-canvas {
+  min-width: $ds-size-24;
+}
+
+#mcp-hub-grid.mcp-stacked #mcp-hub-inspector {
+  width: $ds-width-full;
+  height: $ds-percent-40;
+  min-height: $ds-size-1;
 }
 
 

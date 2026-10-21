@@ -42,6 +42,17 @@ _TABLE_COLUMNS = ("Tool", "State", "Tags")
 # are rebuilt from scratch on every `update_matrix()` call.
 _TABLE_COLUMNS_NO_TAGS = _TABLE_COLUMNS[:-1]
 
+# task-35151: one-shot mount-echo sentinel -- the same per-instance pattern
+# MCPRail's selects use (see `_ECHO_CONSUMED` in mcp_rail.py for the full
+# rationale). A `Select(allow_blank=False)` ALWAYS posts one Changed for its
+# constructor-time first option on mount, and that echo can be DELIVERED
+# after a deep link has already selected a non-default profile (reverting
+# it to "default"); consuming exactly one matching echo per Select instance
+# drops the echo while a genuine default -> X -> default round trip still
+# dispatches. Local twin of the rail's sentinel so the two stay consumable
+# independently.
+_ECHO_CONSUMED = object()
+
 # UX batch item 10: tool rows are indented two spaces under their pinned
 # "Server default — X" row -- Console/Library hierarchy idiom (label prefix
 # only; row keys are unaffected).
@@ -626,12 +637,17 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         yield Static(
             "Tool policy profile", id="mcp-perm-tool-profile-label", markup=False
         )
-        yield Select(
+        profile_select = Select(
             [("default · local", "default")],
             value="default",
             id="mcp-perm-tool-profile",
             allow_blank=False,
         )
+        # task-35151: pin the mount-echo value this instance was actually
+        # constructed with -- `on_select_changed` consumes at most one
+        # matching Changed per instance (see `_ECHO_CONSUMED` above).
+        profile_select._mcp_mount_echo_value = "default"
+        yield profile_select
         # Wave C (F8): populated by `set_profile_hint()` -- hidden while
         # empty (the default profile needs no Console-context caveat).
         hint = Static("", id="mcp-perm-profile-hint", markup=False)
@@ -1154,6 +1170,19 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         if event.select.id != "mcp-perm-tool-profile" or self._profile_select_sync:
             return
         event.stop()
+        # task-35151: one-shot per-instance mount-echo guard -- see
+        # `_ECHO_CONSUMED` at module top and MCPRail's identical pattern.
+        # The first Changed a Select instance ever posts is its constructor
+        # echo (a user can't interact before mount); consuming at most one
+        # matching event per instance drops exactly the echo, so a late
+        # delivery can no longer revert a deep-linked profile to "default",
+        # while a genuine default -> X -> default round trip still
+        # dispatches.
+        echo_value = getattr(event.select, "_mcp_mount_echo_value", _ECHO_CONSUMED)
+        if echo_value is not _ECHO_CONSUMED:
+            event.select._mcp_mount_echo_value = _ECHO_CONSUMED
+            if event.value == echo_value:
+                return
         if event.value is Select.BLANK:
             return
         self.post_message(self.ToolPolicyProfileSelected(str(event.value)))

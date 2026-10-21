@@ -365,6 +365,12 @@ $ds-watchlists-artifacts-detail-share: 8fr;
 $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
+/* task-35151: the MCP hub triad's rail+canvas row wrapper share of the
+   grid -- rail + canvas fractions (3fr+5fr base, 2fr+7fr compact) rolled
+   up so nesting the row preserves each pane's exact prior share of the
+   grid (8fr base = 3+5, 9fr compact = 2+7). */
+$ds-agentic-mcp-row-share: 8fr;
+$ds-agentic-mcp-compact-row-share: 9fr;
 /* TASK-33003.22 (ADR-161 §3.10): the first-run voice radio's row shares
    (features/_wizards.tcss), single-consumer feature geometry named like
    the groups above. Each share follows its labels' width: "No voice for
