@@ -347,7 +347,11 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                     else experiment_profile.rag_config.search.score_threshold
                 )
 
-        # Perform base search
+        # Perform base search. ``query_embedding`` is deliberately NOT
+        # forwarded: the base ``RAGService.search`` signature has no such
+        # parameter (it computes its own embedding), so forwarding it raised
+        # ``TypeError: got an unexpected keyword argument 'query_embedding'``
+        # and failed every hybrid retrieval routed through this class.
         results = await super().search(
             query=query,
             top_k=top_k,
@@ -357,7 +361,6 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             score_threshold=score_threshold,
             metadata_allowlist=metadata_allowlist,
             keyword_source_types=keyword_source_types,
-            query_embedding=query_embedding,
         )
 
         # Apply reranking if enabled. Reranking must NEVER fail a search:

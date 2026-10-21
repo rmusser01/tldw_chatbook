@@ -486,6 +486,13 @@ class _ProjectDispatchDecision:
     retry_attempts: int = 0
     answerable_seconds_remaining: float = 0.0
     answerable_since: float | None = None
+    #: Absolute failsafe clock: a decision whose card NEVER mounted must not
+    #: wedge its turn forever. ``answerable_since`` only advances while the
+    #: card is up and can be paused/reset by projection retries, so an
+    #: invisible card froze the countdown entirely and the agent run hung
+    #: at "Generating" until the app was killed.
+    created_monotonic: float = field(default_factory=time.monotonic)
+    ever_answerable: bool = False
 
 
 def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
@@ -2225,8 +2232,35 @@ class ConsoleRuntime:
                     if decision.answerable_since is not None:
                         remaining -= time.monotonic() - decision.answerable_since
                 if decision.answerable_since is not None and remaining <= 0:
+                    # The answerable window expired unseen: resolve as
+                    # "disable" so the refusal PERSISTS for this destination.
+                    # "cancel" here left no state behind, so every later turn
+                    # re-prompted and paid this timeout again.
+                    logger.warning(
+                        "Console project-instruction dispatch card timed out "
+                        "unanswered; disabling project instructions for this "
+                        "session's destination."
+                    )
                     self.resolve_project_instruction_dispatch(
-                        decision.decision_id, "cancel"
+                        decision.decision_id, "disable"
+                    )
+                    break
+                if (
+                    not decision.ever_answerable
+                    and time.monotonic() - decision.created_monotonic > timeout
+                ):
+                    # The card never mounted for the user: nothing can answer
+                    # this decision, and the answerable-window clock above
+                    # will never start. Resolve as "disable" -- unlike
+                    # "cancel" it PERSISTS the refusal for this destination,
+                    # so later turns are not re-prompted into the same wedge.
+                    logger.warning(
+                        "Console project-instruction dispatch card never became "
+                        "answerable; disabling project instructions for this "
+                        "session's destination instead of wedging the turn."
+                    )
+                    self.resolve_project_instruction_dispatch(
+                        decision.decision_id, "disable"
                     )
                     break
                 decision.completed.wait(
@@ -2467,6 +2501,7 @@ class ConsoleRuntime:
             head.projected_generation = generation
             if isinstance(head, _ProjectDispatchDecision):
                 head.answerable_since = time.monotonic()
+                head.ever_answerable = True
 
     # -- app-owned staged evidence --------------------------------------
 
@@ -2954,6 +2989,10 @@ class ConsoleRuntime:
                 is not None
             )
         ):
+            logger.warning(
+                "console turn refused before durable acceptance | "
+                f"reason={str(getattr(result, 'visible_copy', '') or '')!r}"
+            )
             raise _ConsoleTurnRefusedError(
                 "Console turn was refused before durable acceptance.",
                 reason=str(getattr(result, "visible_copy", "") or ""),
@@ -3067,6 +3106,42 @@ class ConsoleRuntime:
             )
         )
 
+    def _release_retrieval_pause(self, session_id: str) -> None:
+        """Cancel one session's retrieval-paused preparation, best-effort.
+
+        A failed Library retrieval pauses the turn's preparation and refuses
+        the send; the shelf's Restore/Discard only managed the kept draft,
+        so the dead pause kept refusing every later send for that session
+        ("A turn is already preparing") until an app restart. Releasing the
+        RETRIEVAL pause here turns either shelf action into an escape
+        hatch. Other pause kinds keep their dedicated flows.
+        """
+        from .console_chat_models import (
+            ConsolePreparationPauseKind,
+            ConsoleTurnPreparationState,
+        )
+
+        store = self._chat_store
+        controller = self._chat_controller
+        if store is None or controller is None:
+            return
+        try:
+            preparation = store.preparation_for_session(session_id)
+        except Exception:  # noqa: BLE001 -- release must never break the action
+            return
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind is not ConsolePreparationPauseKind.RETRIEVAL
+        ):
+            return
+        try:
+            controller.cancel_library_preparation(preparation.preparation_id)
+        except Exception:  # noqa: BLE001 -- best-effort; the pause may already be gone
+            logger.opt(exception=True).warning(
+                "Console turn-recovery release of retrieval pause failed."
+            )
+
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
         """Re-stage one exact recovery into its still-live owning session."""
         entry = self._turn_recoveries[turn_id]
@@ -3079,8 +3154,14 @@ class ConsoleRuntime:
             entry.source_claim
         ):
             raise RuntimeError("Recovery owner changed.")
-        if store.session_draft(entry.session_id):
+        live_draft = store.session_draft(entry.session_id)
+        if live_draft is not None and live_draft != entry.draft:
+            # A DIFFERENT draft is ambiguous; the kept-draft refusal case
+            # (the recovery entry was recorded by the same refusal that
+            # kept this exact draft in the composer) is an exact match and
+            # must restore, not refuse.
             raise RuntimeError("Recovery live draft changed; refusing ambiguous merge.")
+        self._release_retrieval_pause(entry.session_id)
         store.restore_transferred_pending_attachments(
             entry.session_id, entry.attachments
         )
@@ -3093,6 +3174,7 @@ class ConsoleRuntime:
         entry = self._turn_recoveries.pop(turn_id, None)
         if entry is None:
             return False
+        self._release_retrieval_pause(entry.session_id)
         turns = self._recovery_turns_by_session.get(entry.session_id, [])
         if turn_id in turns:
             turns.remove(turn_id)

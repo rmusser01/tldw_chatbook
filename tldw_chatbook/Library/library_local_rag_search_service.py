@@ -260,6 +260,20 @@ class LibraryLocalRagSearchService:
     def __init__(self, app_instance: Any) -> None:
         self._app = app_instance
 
+    async def prewarm(self) -> Any:
+        """Initialize the shared RAG runtime early; safe to call repeatedly.
+
+        First-use construction loads the embeddings model (seconds on CPU).
+        Callers on timed paths (the Console's send-time Library retrieval)
+        await this OUTSIDE their budget so the budget only ever measures a
+        warm search; when the runtime is already cached this is a no-op.
+        Returns the runtime or None (missing deps / failed construction).
+        """
+        try:
+            return await self._resolve_rag_runtime()
+        except Exception:  # noqa: BLE001 -- warmup must never raise
+            return None
+
     async def search(
         self,
         query: str,

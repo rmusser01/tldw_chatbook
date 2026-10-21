@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ctypes
 import platform
+import threading
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
@@ -225,16 +227,45 @@ def _platform_contract(identity: Mapping[str, str | int]) -> bool:
     return False
 
 
+#: Parsed evidence cache: the qualification JSON is static per install, but
+#: hot paths (the Console environment poll's per-skill trust capture) call
+#: ``_qualified_identity`` thousands of times per minute, and re-reading +
+#: pydantic-validating the file on every call starved the event loop badly
+#: enough to hang live agent turns (caught twice in faulthandler dumps on
+#: the parse line). Keyed by (mtime, size); a replaced file re-parses once.
+_EVIDENCE_CACHE: tuple[tuple[float, int], "_Evidence | None"] | None = None
+_EVIDENCE_CACHE_LOCK = threading.Lock()
+
+_EVIDENCE_PATH = Path(__file__).with_name("native_qualification.json")
+
+
+def _load_evidence() -> "_Evidence | None":
+    global _EVIDENCE_CACHE
+    try:
+        stat = _EVIDENCE_PATH.stat()
+        stamp = (stat.st_mtime, stat.st_size)
+    except OSError:
+        return None
+    with _EVIDENCE_CACHE_LOCK:
+        cached = _EVIDENCE_CACHE
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+    try:
+        parsed: _Evidence | None = _Evidence.model_validate_json(
+            _EVIDENCE_PATH.read_text()
+        )
+    except (OSError, ValidationError):
+        parsed = None
+    with _EVIDENCE_CACHE_LOCK:
+        _EVIDENCE_CACHE = (stamp, parsed)
+    return parsed
+
+
 def _qualified_identity(
     operation: str, identity: dict[str, str | int]
 ) -> tuple[bool, str]:
-    try:
-        raw = Path(__file__).with_name("native_qualification.json").read_text()
-    except OSError:
-        return False, "qualification_unavailable"
-    try:
-        evidence = _Evidence.model_validate_json(raw)
-    except ValidationError:
+    evidence = _load_evidence()
+    if evidence is None:
         return False, "qualification_evidence_invalid"
     if evidence.schema_version != 1 or any(
         row.protocol != _QUALIFICATION_PROTOCOL
@@ -251,15 +282,36 @@ def _qualified_identity(
     return False, "operation_not_qualified"
 
 
+#: Per-(operation, root) TTL cache. ``qualified_for`` probes the filesystem
+#: (pinned directory + identity realpaths) per call; the Console environment
+#: poll calls it for every skill trust field on every tick, and the repeated
+#: probing was the event-loop stall seen in diagnostics. Qualification only
+#: changes on reinstall/remount, so a short TTL is safe.
+_QUALIFIED_TTL_SECONDS = 60.0
+_qualified_cache: dict[tuple[str, str], tuple[float, tuple[bool, str]]] = {}
+_qualified_cache_lock = threading.Lock()
+
+
 def qualified_for(operation: str, root: Path) -> tuple[bool, str]:
     """Match installed test evidence and current identity without writing probes."""
     from .native_files import pinned_directory
 
+    key = (operation, str(root))
+    now = time.monotonic()
+    with _qualified_cache_lock:
+        hit = _qualified_cache.get(key)
+        if hit is not None and now - hit[0] < _QUALIFIED_TTL_SECONDS:
+            return hit[1]
     try:
         with pinned_directory(root) as fd:
-            return _qualified_identity(operation, native_identity(fd))
+            verdict = _qualified_identity(operation, native_identity(fd))
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return False, "qualification_unavailable"
+        verdict = (False, "qualification_unavailable")
+    with _qualified_cache_lock:
+        _qualified_cache[key] = (now, verdict)
+        while len(_qualified_cache) > 512:
+            _qualified_cache.pop(next(iter(_qualified_cache)))
+    return verdict
 
 
 def _release_for_roots(

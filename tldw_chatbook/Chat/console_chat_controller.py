@@ -7400,10 +7400,17 @@ class ConsoleChatController:
             scope=self._automatic_scope_for_authority(authority),
         )
         error_code: str | None = None
+        service = getattr(self.app, "library_rag_search_service", None)
+        search = getattr(service, "search", None)
+        prewarm = getattr(service, "prewarm", None)
+        if callable(prewarm):
+            # First-use RAG construction loads the embeddings model (seconds
+            # on CPU); it must not eat the search budget below, or the first
+            # library-enabled send of a session deterministically pauses on
+            # a timeout while the service finishes initializing behind it.
+            await prewarm()
         try:
             async with asyncio.timeout(self._library_preparation_timeout):
-                service = getattr(self.app, "library_rag_search_service", None)
-                search = getattr(service, "search", None)
                 if not callable(search):
                     raise RuntimeError("library service unavailable")
                 kwargs: dict[str, object] = {
@@ -7426,15 +7433,23 @@ class ConsoleChatController:
         except TimeoutError:
             result = None
             error_code = "library_retrieval_timeout"
-        except Exception:
+        except Exception as retrieval_error:
             result = None
             error_code = "library_retrieval_failed"
+            logger.opt(exception=True).warning(
+                f"console library retrieval raised | "
+                f"{type(retrieval_error).__name__}"
+            )
 
         results = tuple(getattr(result, "results", ()) or ()) if result else ()
         status = str(getattr(result, "status", "") or "") if result else ""
         if error_code is None and status not in {"ready", "empty"}:
             error_code = "library_retrieval_failed"
         if error_code is not None:
+            logger.warning(
+                f"console library retrieval paused | error_code={error_code} "
+                f"status={status!r} result_type={type(result).__name__}"
+            )
             paused = self.store.compare_and_set_preparation(
                 preparation.session_id,
                 ConsolePreparationTransition(
@@ -9295,6 +9310,15 @@ class ConsoleChatController:
                 if result.accepted
                 else "refused"
             )
+            if not result.accepted or result.terminal_status in {
+                ConsoleRunStatus.BLOCKED,
+                ConsoleRunStatus.FAILED,
+            }:
+                logger.warning(
+                    f"console submit not accepted | accepted={result.accepted} "
+                    f"terminal={getattr(result.terminal_status, 'value', '')} "
+                    f"copy={result.visible_copy!r}"
+                )
             return result
 
     async def _submit_draft_lifecycle(
@@ -13192,6 +13216,11 @@ class ConsoleChatController:
             )
             service = getattr(self.app, "library_rag_search_service", None)
             search = getattr(service, "search", None)
+            prewarm = getattr(service, "prewarm", None)
+            if callable(prewarm):
+                # Same cold-start rule as the preparation path: the model
+                # load happens outside the timed search budget.
+                await prewarm()
             if not callable(search):
                 raise _DispatchRecoveryRefusal(
                     "Library retrieval is unavailable for retry."
@@ -29008,6 +29037,10 @@ class ConsoleChatController:
             bound_claim is not None
             and not self.store.received_turn_is_current(bound_claim)
         ) or (received is not None and received is not bound_claim):
+            logger.warning(
+                f"console send refused: a turn is already preparing | "
+                f"session={target_id or ''}"
+            )
             return ConsoleSubmitResult(
                 False, False, "A turn is already preparing.", session_id=target_id
             )
