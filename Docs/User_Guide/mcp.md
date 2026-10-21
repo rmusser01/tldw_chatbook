@@ -231,8 +231,10 @@ decide MCP availability independently.
 
 Select the built-in server's row in Servers mode; its detail pane has a
 **Tool gates** group under the existing enable/expose checkboxes. Each gate
-is a button that spells its own state out in text — `Read file: off ▸`,
-`Read file: on ▸` — and presses toggle it the same optimistic-then-revert
+is a button that spells its own state out in text — `Read file (next
+chat): off ▸`, `Read file (next chat): on ▸` — with the parenthesized
+suffix naming when the gate takes effect (next chat, or restart to apply
+for `web_deep_search`); presses toggle it the same optimistic-then-revert
 way the local master switch above does; the tool's plain-language name
 and one-line description are the same copy the first-run setup wizard
 shows. The group is split into two subheadings:
@@ -261,8 +263,10 @@ Every gate here saves immediately and reads back the real config value
 after saving — the label you end up looking at is what is really stored,
 never an optimistic guess. **When a change takes effect:** every gate in
 this group applies to the *next Console agent run* — each run builds its
-tool catalog fresh — so no app restart is needed. The one caveat, called
-out in its own note under the group, is `web_deep_search`: when `[mcp]
+tool catalog fresh — so no app restart is needed; that is what each row's
+`(next chat)` suffix states. The one caveat, called
+out in its own note under the group and in its row's `(restart to apply)`
+suffix, is `web_deep_search`: when `[mcp]
 expose_local_tools` is on, it is also published to *external* MCP clients,
 and that list is built when the built-in server starts, so that half
 follows the next client launch. This pane is still labeled as the

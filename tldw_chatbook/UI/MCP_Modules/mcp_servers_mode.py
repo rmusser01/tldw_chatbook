@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_MASTER_KEY,
     ToolGate,
     all_tool_gates,
+    tool_gate_effect_suffix,
 )
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
@@ -214,14 +215,22 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 _TOOL_GATE_ID_PREFIX = "mcp-gate-"
 
 
-def _tool_gate_label(title: str, enabled: bool) -> str:
+def _tool_gate_label(title: str, enabled: bool, effect_scope: str) -> str:
     """Render one gate Button's state-carrying label.
 
     Qodo #2600 #15: factored out of `_gate_button()` because the press
     handler repaints the SAME label optimistically -- two renderings of
     "on"/"off" would be two chances to drift.
+
+    task-35153: the label also carries the gate's effect scope as a suffix
+    ("Read file (next chat): on ▸"), read from the row's shared
+    `effect_scope` field -- the same field the first-run wizard renders,
+    so a gate can never promise "next chat" here and "restart" there.
     """
-    return f"{escape_markup(title)}: {'on' if enabled else 'off'} ▸"
+    return (
+        f"{escape_markup(title)}{tool_gate_effect_suffix(effect_scope)}: "
+        f"{'on' if enabled else 'off'} ▸"
+    )
 
 
 # task-3240 (spec §5) / task-32284: the adapted apply note -- NOT
@@ -1356,7 +1365,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         is_master = (gate.section, gate.key) == ("console", LOCAL_TOOLS_MASTER_KEY)
         button_type = MCPLocalMasterButton if is_master else Button
         button = button_type(
-            _tool_gate_label(gate.title, gate.enabled),
+            _tool_gate_label(gate.title, gate.enabled, gate.effect_scope),
             id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
             classes="console-action-secondary",
             compact=True,
@@ -1393,7 +1402,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self._tool_gates_by_id[button_id] = replace(gate, enabled=enabled)
             for button in self.query(f"#{button_id}"):
                 button.enabled, button.config_path = enabled, config_path
-                button.label = _tool_gate_label(gate.title, enabled)
+                button.label = _tool_gate_label(gate.title, enabled, gate.effect_scope)
         for status in self.query("#mcp-gate-local-master-status"):
             status.update(message)
             status.set_class(error, "ds-text-error")
@@ -1708,7 +1717,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 else (not gate.enabled, None)
             )
             self._tool_gates_by_id[button_id] = replace(gate, enabled=requested)
-            event.button.label = _tool_gate_label(gate.title, requested)
+            event.button.label = _tool_gate_label(
+                gate.title, requested, gate.effect_scope
+            )
             if is_master:
                 event.button.enabled = requested
             if is_master and self.submit_local_master is not None:

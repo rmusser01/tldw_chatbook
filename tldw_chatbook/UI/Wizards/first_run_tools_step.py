@@ -32,9 +32,22 @@ class ToolsStep(SetupStep):
     """Enable built-in tools (all default OFF; risk-tagged ones still ask per call)."""
 
     def compose_step(self) -> ComposeResult:
+        from tldw_chatbook.Agents.builtin_tool_gate import (
+            gate_effect_scopes,
+            tool_gate_effect_suffix,
+        )
         from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
         self._entries = list(gateable_builtin_tools())
+        # task-35153: each row's name carries its effect-scope suffix from
+        # the shared scope table (config-free) -- the same field the MCP
+        # hub's Tool gates pane renders, so the two surfaces cannot promise
+        # different apply timings for the same gate.
+        scope_suffixes = {
+            key: tool_gate_effect_suffix(scope)
+            for (section, key), scope in gate_effect_scopes().items()
+            if section == "tools"
+        }
         # Re-run prefill: resurface whatever gates are already on instead of
         # always showing OFF. First-run behavior is unchanged, since a fresh
         # app_config has no "tools" section and tool_gates comes back empty.
@@ -62,7 +75,10 @@ class ToolsStep(SetupStep):
                         id=f"setup-tool-{entry.tool_name}",
                     )
                     with Vertical(classes="setup-tool-text"):
-                        yield Label(title, classes="setup-tool-name")
+                        yield Label(
+                            f"{title}{scope_suffixes.get(entry.gate_key, '')}",
+                            classes="setup-tool-name",
+                        )
                         yield Static(
                             desc,
                             id=f"setup-tool-desc-{entry.tool_name}",

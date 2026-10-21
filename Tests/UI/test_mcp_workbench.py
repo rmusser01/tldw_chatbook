@@ -385,8 +385,11 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         master_row = app.query_one("#mcp-gate-local_tools_enabled", Button)
         # task-32284: the row is a toggle Button whose label carries the
         # state in text, so the label is the name plus ": on ▸"/": off ▸".
+        # task-35153: ... plus the gate's effect-scope suffix from the
+        # shared `effect_scope` field, before the state.
         assert str(master_row.label) == (
-            "Local workspace, web, and Watchlists tools (master switch): on ▸"
+            "Local workspace, web, and Watchlists tools (master switch)"
+            " (next chat): on ▸"
         )
         master_row.scroll_visible(animate=False, force=True, immediate=True)
         master_row.focus()

@@ -896,21 +896,30 @@ async def test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_an
     ("Read file: on ▸"), not Checkboxes -- Textual's ToggleButton draws the
     same `X` glyph in both states, so the old rows carried their state in
     colour alone.
+
+    task-35153: every row also carries its effect-scope suffix, read from
+    the shared field (see test_tool_gate_buttons_carry_the_shared_effect_
+    scope_suffix). Config patched at the loader seam
+    (`load_cli_config_and_ensure_existence`) -- task-32804.7 made
+    `all_tool_gates()` read both sections from one config load, so a
+    `get_cli_setting` patch never reaches it (same migration the workbench
+    gate tests got in 68dc7d0e14).
     """
     import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import LOCAL_TOOLS_MASTER_KEY
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     first_builtin_key = _GATEABLE_BUILTINS[0].gate_key
-
-    def fake_get_cli_setting(section, key=None, default=None):
-        if key == first_builtin_key:
-            return True
-        if key == "local_tools_enabled":
-            return True
-        return default
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    loader_config = {
+        "tools": {first_builtin_key: True},
+        "console": {LOCAL_TOOLS_MASTER_KEY: True},
+    }
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: loader_config,
+    )
 
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -933,7 +942,7 @@ async def test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_an
 
         first_entry = _GATEABLE_BUILTINS[0]
         first_button = app.query_one(f"#mcp-gate-{first_builtin_key}", Button)
-        assert str(first_button.label) == f"{first_entry.title}: on ▸"
+        assert str(first_button.label) == f"{first_entry.title} (next chat): on ▸"
         assert str(first_button.tooltip) == first_entry.blurb
 
         master_button = app.query_one("#mcp-gate-local_tools_enabled", Button)
@@ -941,12 +950,14 @@ async def test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_an
         assert "Local workspace, web, and Watchlists tools (master switch)" in str(
             master_button.label
         )
+        assert "(next chat)" in str(master_button.label)
 
         web_deep_search_button = app.query_one(
             f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Button
         )
         # not overridden -> default off, and the label says so in text
         assert str(web_deep_search_button.label).endswith(": off ▸")
+        assert "(restart to apply)" in str(web_deep_search_button.label)
 
         note = str(app.query_one("#mcp-gate-toggles-note", Static).renderable)
         assert "next Console agent run" in note
@@ -965,24 +976,88 @@ async def test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_an
 
 
 @pytest.mark.asyncio
+async def test_tool_gate_buttons_carry_the_shared_effect_scope_suffix(monkeypatch):
+    """task-35153: each gate Button's label names WHEN the gate takes
+    effect, read from the row's `effect_scope` field -- the same field the
+    first-run wizard renders -- never from per-surface copy. The optimistic
+    repaint after a press must keep the suffix too."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        EFFECT_SCOPE_RESTART,
+        LOCAL_TOOLS_MASTER_KEY,
+        all_tool_gates,
+        tool_gate_effect_suffix,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    loader_config = {"tools": {}, "console": {LOCAL_TOOLS_MASTER_KEY: True}}
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: loader_config,
+    )
+
+    app = CanvasApp()
+    async with app.run_test(size=(150, 50)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        gates = {gate.key: gate for gate in all_tool_gates()}
+        buttons = {
+            str(button.id or "").removeprefix("mcp-gate-"): button
+            for button in app.query("#mcp-detail-tool-gates Button")
+        }
+        assert set(buttons) == set(gates)
+        for key, button in buttons.items():
+            expected = tool_gate_effect_suffix(gates[key].effect_scope)
+            assert expected in str(button.label), (key, str(button.label))
+
+        # One of each scope, spelled from the shared label table.
+        assert (
+            tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT)
+            in str(buttons["read_file_enabled"].label)
+        )
+        assert (
+            tool_gate_effect_suffix(EFFECT_SCOPE_RESTART)
+            in str(buttons[WEB_DEEP_SEARCH_GATE_KEY].label)
+        )
+
+        # The optimistic repaint on press keeps the suffix (Qodo #2600 #15's
+        # label helper is the single rendering, scope included).
+        deep = buttons[WEB_DEEP_SEARCH_GATE_KEY]
+        await pilot.click(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}")
+        await pilot.pause()
+        assert "(restart to apply)" in str(deep.label)
+        assert str(deep.label).endswith(": on ▸")
+
+
+@pytest.mark.asyncio
 async def test_local_group_dependents_are_disabled_while_master_is_off(monkeypatch):
     """Fix round 1 (Important 1). With the master switch off, every OTHER
     local-group gate renders `disabled=True` and a dependency note
-    explains why -- without this, an enabled web_deep_search with the
+    explains why -- without it, an enabled web_deep_search with the
     master off LOOKS live (two apparently-independent checkboxes) but
-    stays unreachable until the master is also on."""
+    stays unreachable until the master is also on.
+
+    task-35153 seam fix: patched at the loader seam -- task-32804.7 made
+    `all_tool_gates()` read both sections from one config load, so the
+    former `get_cli_setting` patch never reached it.
+    """
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import LOCAL_TOOLS_MASTER_KEY
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        if key == LOCAL_TOOLS_MASTER_KEY:
-            return False
-        if key == WEB_DEEP_SEARCH_GATE_KEY:
-            return True  # its OWN gate is on -- master off still blocks it
-        return default
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    loader_config = {
+        "tools": {WEB_DEEP_SEARCH_GATE_KEY: True},  # its OWN gate is on...
+        "console": {LOCAL_TOOLS_MASTER_KEY: False},  # ...master off blocks it
+    }
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: loader_config,
+    )
 
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -1154,17 +1229,29 @@ async def test_gate_row_state_is_spelled_out_and_follows_the_saved_value(monkeyp
     only the colour differs), so a click that really did flip the config
     left the row looking identical. Here the saved value round-trips
     through the same rebuild the workbench's resync performs.
+
+    task-35153: the label carries the effect-scope suffix from the shared
+    field; the seam is the loader (`load_cli_config_and_ensure_existence`)
+    since task-32804.7 -- the former `get_cli_setting` patch never reached
+    `all_tool_gates()`.
     """
     import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        tool_gate_effect_suffix,
+    )
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
     saved: dict[str, object] = {}
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        return saved.get(key, default)
+    def fake_loader(*_args, **_kwargs):
+        return {"tools": dict(saved), "console": {}}
 
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", fake_loader
+    )
+    suffix = tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT)
 
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:
@@ -1173,7 +1260,7 @@ async def test_gate_row_state_is_spelled_out_and_follows_the_saved_value(monkeyp
         await pilot.pause()
 
         row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
-        assert str(row.label) == f"{entry.title}: off ▸"
+        assert str(row.label) == f"{entry.title}{suffix}: off ▸"
 
         await pilot.click(f"#mcp-gate-{entry.gate_key}")
         await pilot.pause()
@@ -1187,7 +1274,7 @@ async def test_gate_row_state_is_spelled_out_and_follows_the_saved_value(monkeyp
         await pilot.pause()
 
         row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
-        assert str(row.label) == f"{entry.title}: on ▸"
+        assert str(row.label) == f"{entry.title}{suffix}: on ▸"
 
 
 @pytest.mark.asyncio
@@ -1960,16 +2047,25 @@ async def test_two_gate_presses_before_a_resync_request_opposite_values(monkeypa
     The cached gate AND the Button label are now updated optimistically;
     `MCPWorkbench._save_tool_gate()` resyncs on failure too, so a rejected
     write still repaints the persisted truth.
+
+    task-35153: labels carry the effect-scope suffix; config patched at the
+    loader seam (`load_cli_config_and_ensure_existence`) because
+    task-32804.7 routed `all_tool_gates()` through one config load.
     """
     import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        tool_gate_effect_suffix,
+    )
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
     monkeypatch.setattr(
         config_module,
-        "get_cli_setting",
-        lambda section, key=None, default=None: False,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {"tools": {}, "console": {}},
     )
+    suffix = tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT)
 
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:
@@ -1978,12 +2074,12 @@ async def test_two_gate_presses_before_a_resync_request_opposite_values(monkeypa
         await pilot.pause()
 
         row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
-        assert str(row.label) == f"{entry.title}: off ▸"
+        assert str(row.label) == f"{entry.title}{suffix}: off ▸"
 
         # No `show_detail()` rebuild in between: the save is still in flight.
         row.press()
         await pilot.pause()
-        assert str(row.label) == f"{entry.title}: on ▸"
+        assert str(row.label) == f"{entry.title}{suffix}: on ▸"
         row.press()
         await pilot.pause()
 
@@ -1991,7 +2087,7 @@ async def test_two_gate_presses_before_a_resync_request_opposite_values(monkeypa
             (entry.gate_key, True),
             (entry.gate_key, False),
         ]
-        assert str(row.label) == f"{entry.title}: off ▸"
+        assert str(row.label) == f"{entry.title}{suffix}: off ▸"
 
 
 @pytest.mark.asyncio
@@ -2001,16 +2097,26 @@ async def test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected(
     """The optimistic flip above is only safe because the rebuild
     (`show_detail()` -> `_rebuild_tool_gate_buttons()` -> `all_tool_gates()`)
     reads persisted config -- which is what `MCPWorkbench._save_tool_gate()`
-    now runs on its FAILURE paths too, not just on success."""
+    now runs on its FAILURE paths too, not just on success.
+
+    task-35153: labels carry the effect-scope suffix; config patched at the
+    loader seam (`load_cli_config_and_ensure_existence`) because
+    task-32804.7 routed `all_tool_gates()` through one config load.
+    """
     import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        tool_gate_effect_suffix,
+    )
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
     monkeypatch.setattr(
         config_module,
-        "get_cli_setting",
-        lambda section, key=None, default=None: False,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {"tools": {}, "console": {}},
     )
+    suffix = tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT)
 
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2022,7 +2128,7 @@ async def test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected(
         await pilot.pause()
         assert (
             str(app.query_one(f"#mcp-gate-{entry.gate_key}", Button).label)
-            == f"{entry.title}: on ▸"
+            == f"{entry.title}{suffix}: on ▸"
         )
 
         # The save failed -- nothing was persisted, so the resync rebuild
@@ -2032,7 +2138,7 @@ async def test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected(
 
         assert (
             str(app.query_one(f"#mcp-gate-{entry.gate_key}", Button).label)
-            == f"{entry.title}: off ▸"
+            == f"{entry.title}{suffix}: off ▸"
         )
 
 

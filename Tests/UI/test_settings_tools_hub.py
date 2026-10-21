@@ -563,3 +563,54 @@ async def test_category_switch_away_and_back_restores_hub_view_state(
         assert remounted.workbench.active_mode == "audit"
         assert audit_chip.has_class("is-active")
         assert remounted.get_view_state()["mode"] == "audit"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_tools_category_gate_rows_carry_the_shared_effect_scope_suffix(
+    request, tmp_path
+):
+    """task-35153: the Settings ▸ Tools & MCP category's Servers ▸ built-in
+    detail renders the per-gate effect-scope suffixes from the shared
+    `ToolGate.effect_scope` field -- the same field the hub pane and the
+    first-run wizard render -- with `web_deep_search` the one restart gate.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    app = _build_test_app()
+    # A real (fake-seam) hub service: the workbench's initial load worker
+    # reads app_instance.unified_mcp_service, and the real service raises
+    # RecoveryRequired in this sandbox (pre-existing env block, see
+    # baseline-failures.txt) -- the handoff test stubs the same seam.
+    app.unified_mcp_service = PermissionsHubService(
+        tmp_path / "mcp_permissions.json"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(150, 45)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+
+        # Wait for the initial snapshot collection, then open the built-in
+        # server's detail (the only source whose pane carries gate rows).
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not pane.workbench._snapshots:
+            await pilot.pause(0.01)
+        await pane.workbench._select_server_key("builtin:tldw_chatbook")
+        await pilot.pause(0.2)
+
+        labels = [
+            str(button.label)
+            for button in pane.query("#mcp-detail-tool-gates Button")
+        ]
+        assert labels, "the built-in detail must render one Button per gate"
+        assert any("(next chat)" in label for label in labels), labels
+        deep = [
+            label
+            for label in labels
+            if label.startswith("Deep web research (web_deep_search)")
+        ]
+        assert deep and "(restart to apply)" in deep[0], labels
