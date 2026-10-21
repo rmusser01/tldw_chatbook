@@ -140,7 +140,9 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    - the Console says it is not busy. It is busy from Enter until the run
      settles, and whenever it is not the top screen;
    - no user input has arrived for 2 s. A `TextualAppGuards` mixin stamps
-     every input event.
+     every input event twice: when it is posted to the app, and when the app
+     dispatches it. A key still waiting in the app's queue therefore counts
+     as input (TASK-33620.15.10).
 
    A busy Console drops the request and asks again when it next settles.
 2. **Collect the unfrozen heap in full before each re-freeze**
@@ -242,6 +244,34 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
   UI-loop CPU. Origin/dev's automatic generation-2 passes in the same round
   took a median of 192 ms and at most 264 ms. Dev's passes can land in a
   send window; the compactions ran only at idle.
+- **A compaction cannot be made shorter than a full pass over the whole heap
+  (TASK-33620.15.9, 2026-10-20).** The owner asked for its pause to be no
+  longer than origin/dev's worst automatic generation-2 pass while keeping
+  this amendment's send-window gain. CPython has no way to do that.
+  `gc.unfreeze()` moves the whole permanent generation, boot heap included,
+  into generation 2. Collections of generations 0 and 1 never reach it, and a
+  generation-2 collection is one pass that cannot be interrupted. On 3.12.11,
+  frozen cyclic garbage survived `gc.collect(0)` and `gc.collect(1)` after
+  `gc.unfreeze()` and died only in `gc.collect(2)`. That pass took about as
+  long with no garbage as with it, and its cost grew with the whole heap. The
+  same holds on 3.13 and 3.14.5+ (see Python versions below). Live, in
+  TASK-33620.15.3's round 9, all 27 compactions took at least 235 ms of
+  UI-loop CPU. Fitting their CPU to the objects they freed gives 235 ms plus
+  1.27 ms per 1K objects, and the boot heap alone is about 625K objects.
+  Origin/dev's worst automatic generation-2 pass in the same round took 202
+  ms. So any design that freezes the Console's heap pays at least one
+  whole-heap pass to reclaim the garbage it strands. Spreading that pass
+  across idle slices, compacting less often, or waiting longer before it
+  cannot bring it under 202 ms. The bound can be met only by not freezing
+  after boot. Collecting the unfrozen heap at idle without freezing it meets
+  it, but keeps almost none of the gain. Dev's generation-2 passes follow
+  allocation (97 of 139 in round 9 came exactly 11 generation-1 collections
+  after the one before, CPython's minimum), and a send window allocates enough
+  for two to five of them. Even a collection run exactly at Enter would have
+  removed only 8 of the 45 passes in round 9's dev send windows: median
+  generation-2 CPU per window 189 -> about 162 ms, against 189 -> 77 ms with
+  the re-freeze. The owner's ruling between the current cadence and dropping
+  the re-freeze is pending (TASK-33620.15.9).
 - The "boot-era garbage becomes permanent" consequence above is now temporary:
   the first compaction reclaims it.
 - Re-freezing ends CPython's habit, noted in the measured result above, of
@@ -269,7 +299,9 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
     evidence in the task notes rather than as a timing assertion.
 - `Tests/Performance/test_gc_idle_refreeze.py` (amendment): the re-freeze's
   full collect then freeze; scheduling (quiet period, busy owner, departed
-  owner, stale timers, errors); the compaction budget; the input tap; and,
+  owner, stale timers, errors); the compaction budget; the input tap,
+  including a key posted to the app but not yet dispatched (negative
+  control: with the stamp at dispatch only, a maintenance runs); and,
   with the real collector and real Textual widgets, that a frozen
   switched-away transcript survives a full collection (negative control),
   that a compaction reclaims it, and that the frozen set stays bounded over
