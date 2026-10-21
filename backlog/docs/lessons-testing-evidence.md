@@ -91,6 +91,12 @@ refreshes; that remains the separate lesson below.
 
 **What to do.** A memo of anything derived from config needs the installed mapping (`config._CONFIG_CACHE`, compared with `is`) in its key, as well as `current_config_identity()`. Test it with a real file edit plus `force_reload=True`, not a patched cache.
 
+## A `builtins.__import__` hook never sees `from package import submodule` load the submodule (TASK-33620.15.5, 2026-10-20)
+
+**Incident.** The run-start branch's guard test recorded every import statement a harness send ran (by hooking `builtins.__import__`) and failed on any lazy module that the first-send warm-up did not list. Parent packages of listed modules counted as covered. It passed, and review pointed out the blind spot: for `from tldw_chatbook.Chat import x`, the hook is called with the package name and `fromlist=("x",)`, and the import system loads `tldw_chatbook.Chat.x` itself (`_handle_fromlist`), past the hook. The hook therefore recorded only the covered package. Once fromlist names that resolve to loaded submodules were also recorded, the guard went red at once on a real miss: the composer's `from ...Chat import console_voice_input`, run by every harness send. Dropping that recording turns the guard's non-vacuity assertion red.
+
+**What to do.** An import-recording hook must also record `f"{package}.{name}"` for each fromlist name that is in `sys.modules` after the call. Pin one known fromlist submodule import in the test so the path cannot silently go vacuous.
+
 ## A plain gated Tests/UI test that reads config fails in CI too (TASK-34982, 2026-10-19)
 
 **Incident.** Locally every plain (non-private-profile) Tests/UI test errored at setup with `RecoveryRequired: raw_source_selection_changed`, and the working assumption was that CI ran the same files cleanly. A new gated test drove a real `ConsoleTranscript.refresh_messages()`, whose row reconcile reads config (`get_cli_setting`). In UI Fast Lane (7) it failed with that same error twice, and the merge queue evicted the PR. The test's three neighbours, which read no config, passed.
