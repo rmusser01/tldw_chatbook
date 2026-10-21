@@ -190,11 +190,13 @@ async def test_the_items_filter_never_moves_the_reader_off_a_dirty_form(monkeypa
 async def test_row_press_keys_tab_and_back_refuse_or_keep_a_dirty_form(monkeypatch):
     """I-3 (100x30: the Library pane is collapsed, the Items list and the
     "‹ Back" control both render). Another row's press and an Up/Down walk
-    onto another item each refuse with one toast; Tab across rows is the
-    silent backstop (focus moves, nothing is selected); Back refuses with one
-    toast. The selection never leaves the Reader's item and the text stays.
-    Mutation-checked: dropping the ``on_descendant_focus`` backstop lets the
-    refused click's queued focus bubble select the other row."""
+    onto another item each refuse with one toast; Shift+Tab onto the other
+    row moves focus there and selects nothing, silently -- the ONE guard at
+    ``_select_library_media_reader_row`` refuses the focus move's settle
+    select (fix round 2 replaced the ``on_descendant_focus`` clause with it);
+    Back refuses with one toast. The selection never leaves the Reader's
+    item and the text stays. Mutation-checked: dropping that central guard
+    lets the refused click's queued focus bubble select the other row."""
     host, app, _service = _host()
     toasts = _record_toasts(monkeypatch, app)
     async with host.run_test(size=(100, 30)) as pilot:
@@ -226,11 +228,13 @@ async def test_row_press_keys_tab_and_back_refuse_or_keep_a_dirty_form(monkeypat
         assert screen.focused is rows[1]
         _reader_holds_the_dirty_analysis(screen, area)
 
-        # Tab: the silent backstop -- focus moves on, nothing is selected.
+        # Shift+Tab onto the other row: focus lands there, the select seam's
+        # guard refuses the settle select, nothing is said.
         await pilot.press("shift+tab")
         for _ in range(6):
             await pilot.pause()
         assert len(toasts) == 2, toasts
+        assert screen.focused is rows[0], screen.focused
         _reader_holds_the_dirty_analysis(screen, area)
 
         back = await _wait_for_selector(screen, pilot, "#library-media-back")
@@ -285,20 +289,33 @@ async def test_a_refusal_switches_to_the_tab_holding_the_draft(monkeypatch):
 
 
 async def test_escape_cancels_an_armed_delete_before_the_dirty_veto(monkeypatch):
-    """M-5: Escape over an armed "Move to trash" confirm, with a dirty
-    analysis beneath it, cancels the confirm (its own one step back) rather
-    than answering with the unsaved copy; the form and its text stay."""
+    """M-5 / R2-5: an armed "Move to trash" confirm over a form that then
+    becomes dirty -- the chip reads ``esc cancel`` (what the key does), Escape
+    cancels the confirm with no toast and the text stays; and once the form
+    is dirty, Move to trash itself (the button) refuses with the one toast
+    rather than arming a confirm (which a dirty metadata form would not
+    even render)."""
     host, app, _service = _host()
     toasts = _record_toasts(monkeypatch, app)
     async with host.run_test(size=SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        area = await _dirty_analysis(screen, pilot)
+        await _open_row_1(screen, pilot)
+        area = await _open_analysis_form(screen, pilot)
+        # Arm the confirm while the form is still clean ...
         screen.query_one("#library-media-reader-more", Button).press()
         delete = await _wait_for_selector(screen, pilot, "#library-media-delete")
         delete.press()
         await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
         assert screen._media_state.confirming_delete is True
+        # ... then make it dirty under the armed confirm.
+        await pilot.click("#library-media-analysis-edit-text")
+        await _type(pilot, "Key points")
+        await _wait_for_text(screen, pilot, "Key points")
+        assert screen._library_media_editor_dirty() == "analysis"
+        assert ("esc", "cancel") in screen._footer_shortcut_registration[1], (
+            screen._footer_shortcut_registration
+        )
         screen.set_focus(None)
 
         await pilot.press("escape")
@@ -310,6 +327,18 @@ async def test_escape_cancels_an_armed_delete_before_the_dirty_veto(monkeypatch)
         )
         for _ in range(4):
             await pilot.pause()
-
         assert toasts == [], toasts
+        _reader_holds_the_dirty_analysis(screen)
+
+        # R2-5: Move to trash on a dirty form is refused, not armed.
+        if not screen.query("#library-media-delete"):
+            screen.query_one("#library-media-reader-more", Button).press()
+        delete = await _wait_for_selector(screen, pilot, "#library-media-delete")
+        delete.press()
+        await _wait_for_condition(pilot, lambda: bool(toasts), message="no refusal")
+        for _ in range(4):
+            await pilot.pause()
+        assert toasts == [LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY], toasts
+        assert screen._media_state.confirming_delete is False
+        assert not screen.query("#library-media-delete-confirm")
         _reader_holds_the_dirty_analysis(screen)

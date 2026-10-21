@@ -10959,15 +10959,11 @@ class LibraryScreen(BaseAppScreen):
         ):
             media_id = str(getattr(focused, "media_id", "") or "")
             title = str(getattr(focused, "_library_media_title", "") or media_id)
-            if (
-                media_id
-                and media_id != self._media_state.selected_media_id
-                # TASK-34000.22: a focus move onto another row (a click's
-                # queued bubble, Tab) never selects past an authoring form
-                # holding unsaved text -- the Reader keeps the form; the
-                # press and the arrow keys have already said why.
-                and not self._library_media_editor_dirty()
-            ):
+            # TASK-34000.22 fix round 2 (R2-2): a focus move onto another
+            # row (a click's queued bubble, Tab) under a dirty authoring
+            # form is refused by the select seam's own guard -- the one
+            # guard every route shares -- not by a clause here.
+            if media_id and media_id != self._media_state.selected_media_id:
                 self._select_library_media_reader_row(media_id, title, immediate=False)
         if self.is_mounted:
             stage = self._library_notes_focus_stage(focused)
@@ -23016,6 +23012,11 @@ class LibraryScreen(BaseAppScreen):
             # The same ONE writer as those two (TASK-22210's coalesced,
             # deduplicated progress write) -- no new data work in this seam.
             self._capture_library_media_loaded_progress()
+            if media_form_dirty:
+                # Fix round 2 (R2-4): the form must be ON SCREEN -- a
+                # Trash round trip leaves the view at "list", and below 64
+                # columns the list then fills the stage over the form.
+                self._reveal_library_media_dirty_form()
         else:
             self._media_state.view = "list"
             self._media_state.detail = None
@@ -33232,6 +33233,11 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
                 or self._media_state.view != "list"
                 or not getattr(self, "is_current", False)
+                # TASK-34000.22 fix round 2 (R2-1): an ambient resume never
+                # opens over an authoring form holding unsaved text (the
+                # opener would refuse anyway; this keeps the ambient path
+                # quiet, as the storage warning's severity rule wants).
+                or self._library_media_editor_dirty()
             ):
                 return
             # task-31234 (supersedes task-28245's once-per-set gate, user
@@ -33366,6 +33372,11 @@ class LibraryScreen(BaseAppScreen):
             or self._media_state.confirming_delete
             or self._media_state.editing_analysis
         ):
+            # TASK-34000.22 fix round 2 (R2-5): the key cancels an armed
+            # delete confirm FIRST (``action_library_media_viewer_back``),
+            # so over one the chip says that, dirty form or not.
+            if self._media_state.confirming_delete:
+                return "cancel"
             # TASK-34000.22: while an authoring form holds unsaved text the
             # key refuses (``action_library_media_viewer_back``), so the
             # chip names the blocker in the Prompts editor's own words
@@ -33446,6 +33457,9 @@ class LibraryScreen(BaseAppScreen):
 
     def _notify_media_editor_dirty_veto(self) -> None:
         return self._media_controller._notify_media_editor_dirty_veto()
+
+    def _reveal_library_media_dirty_form(self) -> None:
+        return self._media_controller._reveal_library_media_dirty_form()
 
     def _library_media_row_walk_leaves_dirty_form(self, key: str) -> bool:
         """Whether an Up/Down press from the focused media row would select
@@ -33645,6 +33659,12 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the viewer's "Delete" action.
         """
         event.stop()
+        # TASK-34000.22 fix round 2 (R2-5): a destructive action on the item
+        # being edited -- refused out loud while a form holds unsaved text
+        # (a confirm armed over a dirty metadata form never even renders).
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self._media_state.confirming_delete = True
         self._media_state.delete_receipt_ids = ()
         self._sync_library_media_viewer_or_recompose()
@@ -34638,6 +34658,10 @@ class LibraryScreen(BaseAppScreen):
         Mirrors ``handle_library_media_delete`` -- arming only; the actual
         trash write still needs the confirm affordance.
         """
+        # TASK-34000.22 fix round 2 (R2-5): same refusal as the button.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self._media_state.confirming_delete = True
         self._media_state.delete_receipt_ids = ()
         self._sync_library_media_viewer_or_recompose()
@@ -36143,6 +36167,12 @@ class LibraryScreen(BaseAppScreen):
             note_flush = await self._flush_library_note_save()
             if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
                 return None
+            # TASK-34000.22 fix round 2 (R2-1): this door begins the
+            # selection itself and clears both forms below, so it carries
+            # the same refusal as ``_open_library_media_viewer``.
+            if self._library_media_editor_dirty():
+                self._notify_media_editor_dirty_veto()
+                return None
             if not entry_is_current():
                 return LibraryEntryReconcileResult.SUPERSEDED
             if not entry_origin:
@@ -36954,6 +36984,13 @@ class LibraryScreen(BaseAppScreen):
         ``open_chat_with_handoff`` now reports (fix round 1, M-1), so the
         receipt never claims "staged" for a refused stage.
         """
+        # TASK-34000.22 fix round 2 (R2-3): refused BEFORE any link or
+        # stage -- the navigation veto alone came after the membership row
+        # and the "staged in Console" receipt had been written, and the
+        # stale hand-off then applied on the next Console visit.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_media_handoff_payload()
         notify = getattr(self.app_instance, "notify", None)

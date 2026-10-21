@@ -854,17 +854,22 @@ advertise a key that does nothing. No step lands in a text box.
 Edit metadata form holds text that differs from what is saved, Escape keeps
 the form and says so ("Unsaved analysis — Save or Discard changes first." /
 "Unsaved media details — Save or Discard changes first."), and the footer
-reads `esc save or discard first` instead of `esc close`. The form's Cancel
-reads **Discard changes** and is the only way to drop the text; Save is the
-other way out. Switching Reader tabs keeps what you typed, and "‹ Back",
-another Items row (clicked, or reached with Up/Down), a rail row, Export…,
-a review set, the nav bar and Ctrl+Q all refuse the same way until you save
-or discard — and a refusal brings the tab holding the form back on screen.
-The Items filter still filters the list, but it never moves the Reader off
-the form: the item you are editing stays, even when the filter hides its
-row or matches nothing, and Clear brings the list back around it. An
-untouched form still closes on one Escape or Cancel, and Escape over an
-armed "Move to trash" confirm cancels the confirm first.
+reads `esc save or discard first` instead of `esc close`. Save keeps the
+text; the form's Cancel reads **Discard changes** and is the one way to drop
+it while keeping the item (Ctrl+Q's "Discard and quit" and deleting the item
+drop it too, each after its own question). Switching Reader tabs keeps what
+you typed, and "‹ Back", another Items row (clicked, or reached with
+Up/Down), a rail row, Export…, a review set, Use in Console, Move to trash
+and the nav bar all refuse the same way until you save or discard; Ctrl+Q
+asks before it quits. Every refusal brings the form back on screen, on its
+own tab, with Save and Discard changes. The Items filter still filters the
+list, but it never moves the Reader off the form: the item you are editing
+stays, even when the filter hides its row or matches nothing, and Clear
+brings the list back around it. An untouched form still closes on one
+Escape or Cancel, and over an armed "Move to trash" confirm the chip reads
+`esc cancel` and Escape cancels the confirm first.
+
+
 Stepping out of the Reader moves focus, not the document: in the three-pane
 layout (verified at 235x52) the Items pane is already showing the list, so
 the item keeps painting beside it and `]`/`[` keep working from the row.

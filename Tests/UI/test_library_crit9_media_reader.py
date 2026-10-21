@@ -184,10 +184,17 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
     assert LibraryScreen._library_media_escape_label(more_fake) == "close"
     assert "`esc close`" in guide
 
-    for sub_state in ("editing", "confirming_delete", "editing_analysis"):
+    for sub_state in ("editing", "editing_analysis"):
         sub_fake, _calls, _shell, _find = _escape_fake(region="reader")
         setattr(sub_fake._media_state, sub_state, True)
         assert LibraryScreen._library_media_escape_label(sub_fake) == "close", sub_state
+    # TASK-34000.22 fix round 2 (R2-5): an armed delete confirm is the one
+    # sub-state with its own word -- Escape cancels the confirm FIRST, before
+    # the dirty-form veto, so the chip says "cancel" and the guide quotes it.
+    confirm_fake, _calls, _shell, _find = _escape_fake(region="reader")
+    confirm_fake._media_state.confirming_delete = True
+    assert LibraryScreen._library_media_escape_label(confirm_fake) == "cancel"
+    assert "`esc cancel`" in guide
 
     # The contradicting claims are gone.
     assert "Escape never leaves the Reader at all" not in guide

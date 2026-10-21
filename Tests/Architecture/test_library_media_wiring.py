@@ -333,6 +333,7 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_library_media_reader_target_id",
     "_library_media_editor_dirty",
     "_notify_media_editor_dirty_veto",
+    "_reveal_library_media_dirty_form",
     "_library_media_request_matches_current_authority",
     "_library_media_semantic_row_is_current",
     "_library_media_successful_focus_is_allowed",
@@ -693,9 +694,11 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # ``handle_library_media_analysis_text_changed``), the one dirty
     # predicate every exit reads (``_library_media_editor_dirty``) and its
     # veto toast (``_notify_media_editor_dirty_veto``), each with a one-line
-    # screen delegator.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 146, (
-        f"expected 146 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # screen delegator. Fix round 2 (2026-10-21): 146 -> 147,
+    # ``_reveal_library_media_dirty_form`` (the refusal's and the Media
+    # press's "put the form on screen": viewer view + the form's tab).
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 147, (
+        f"expected 147 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"

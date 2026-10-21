@@ -2206,10 +2206,20 @@ class LibraryMediaController:
         identity = self._library_media_reader_identity(media_id)
         if identity is None:
             return
-        self._capture_library_media_loaded_progress()
-        self._library_media_progress_restored_id = None
         canonical_id, backing_id = identity
         current = self._library_media_reader_session
+        # TASK-34000.22 fix round 2 (R2-2): the ONE guard, ahead of the
+        # preamble -- while an authoring form holds unsaved text the
+        # Reader's item is PINNED (I-2): no route (a user gesture, which
+        # says why at its own seam, or an automatic one: a focus move's
+        # settle select, a typed filter's select-first, a restored
+        # selection, a review-set walk) moves it off the form, and a refused
+        # move must not capture progress, re-arm the scroll restore or stop
+        # the settle timer either. Silent here; the gestures toast.
+        if canonical_id != current.selected_id and self._library_media_editor_dirty():
+            return
+        self._capture_library_media_loaded_progress()
+        self._library_media_progress_restored_id = None
         if (
             not immediate
             and current.selected_id == canonical_id
@@ -2220,14 +2230,6 @@ class LibraryMediaController:
             self._library_media_selection_timer.stop()
             self._library_media_selection_timer = None
         if canonical_id != current.selected_id:
-            # TASK-34000.22 fix round 1 (I-2): the central guard. While an
-            # authoring form holds unsaved text the Reader's item is PINNED:
-            # no route -- a user gesture (those say why before they get
-            # here) or an automatic one (a typed filter's select-first, a
-            # restored selection, a review-set walk) -- moves it off the
-            # form. Silent here; the gestures toast at their own seams.
-            if self._library_media_editor_dirty():
-                return
             # TASK-34000.24: the "Use in Console" link receipt is per item --
             # opening another item drops it (the conversation reader's
             # per-load rule); a reload of the SAME item (retry, re-entry
@@ -3126,6 +3128,14 @@ class LibraryMediaController:
                 row-press behavior for a row missing its ``media_id``).
         """
         media_id = str(media_id or "")
+        # TASK-34000.22 fix round 2 (R2-1): every opener of the Reader
+        # respects a dirty authoring form at ONE guard each -- this one
+        # covers the row press, the browse summary's "Open in viewer", the
+        # review-set entry points and the auto-resume. Opening resets both
+        # forms below, so it refuses out loud instead.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         self._library_media_viewer_return = None
@@ -3356,21 +3366,38 @@ class LibraryMediaController:
                 severity="warning",
                 markup=False,
             )
-        # Fix round 1 (M-4): the refusal shows the form it is about. The
-        # two forms live on different Reader tabs (metadata on Info, the
-        # analysis on Analysis) and both survive a tab switch, so a refusal
-        # for the one NOT on screen switches the Reader to its tab -- the
-        # user then sees the text, Save and Discard changes, never a toast
-        # about a form they cannot find.
+        # Fix round 1 (M-4): the refusal shows the form it is about.
+        self._reveal_library_media_dirty_form()
+
+    def _reveal_library_media_dirty_form(self) -> None:
+        """Put the dirty authoring form, with its Save and Discard, on screen.
+
+        TASK-34000.22 fix rounds 1 and 2 (M-4, R2-4). The two forms live on
+        different Reader tabs (metadata on Info, the analysis on Analysis)
+        and both survive a tab switch, so a refusal for the one NOT on
+        screen switches the Reader to its tab. And the Reader must be the
+        view: a Trash round trip leaves ``view == "list"`` with the form
+        still mounted, and below 64 columns the list then fills the stage
+        over it -- so a refusal, and the Media rail press that returns to
+        the draft, restore the viewer (reclaiming its width exactly as a
+        row select does). No-op while no form is dirty.
+        """
+        form = self._library_media_editor_dirty()
+        if not form:
+            return
+        changed = False
+        if self._library_media_view != "viewer":
+            self._library_media_view = "viewer"
+            self._restore_library_media_reader_width_on_open()
+            changed = True
         target_mode = "info" if form == "edit" else "analysis"
-        if (
-            self._library_media_view == "viewer"
-            and self._library_media_reader_session.mode != target_mode
-        ):
+        if self._library_media_reader_session.mode != target_mode:
             self._library_media_reader_session = set_mode(
                 self._library_media_reader_session,
                 target_mode,  # type: ignore[arg-type]
             )
+            changed = True
+        if changed:
             self._sync_library_media_viewer_or_recompose()
 
     def _record_library_media_editor_draft(self, write: Callable[[], None]) -> None:
