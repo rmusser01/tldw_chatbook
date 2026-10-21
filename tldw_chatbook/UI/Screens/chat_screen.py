@@ -26,7 +26,6 @@ from tldw_chatbook.Utils.input_validation import escape_markup
 # backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
 # widening the escape would make that leak worse rather than fix it.
 from rich.markup import escape as _escape_for_markup_off_sink  # TASK-32802.4
-from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult, ScreenStackError
 from textual.binding import Binding
@@ -8643,8 +8642,7 @@ class ChatScreen(BaseAppScreen):
             cancel_all_visible,
         ) = payload
         try:
-            # TASK-33620.15.7: a payload change rarely changes every line, and
-            # an unchanged one must not request a whole-screen layout.
+            # TASK-33620.15.7: an unchanged line must not request a layout.
             status = self.query_one("#console-agent-section-status", Static)
             if status.content != status_line:
                 status.update(status_line)
@@ -11272,53 +11270,16 @@ class ChatScreen(BaseAppScreen):
         try:
             if not is_current():
                 return
-            if self._character_avatar_spec_is_blank(
-                spec
-            ) and left_rail.character_avatar_is_blank():
-                # TASK-33620.15.7: with no character every expression change
-                # of a run re-mounted the same hidden blank -- a whole-screen
-                # layout for a widget that paints nothing.
-                replaced = True
-            else:
-                left_rail.invalidate_character_avatar_geometry()
-                fitted_box = left_rail.character_avatar_box
-                replaced = await left_rail.replace_character_avatar_widget(
-                    lambda: self._build_character_avatar_widget(spec, box=fitted_box),
-                    is_current=is_current,
-                )
+            left_rail.invalidate_character_avatar_geometry()
+            fitted_box = left_rail.character_avatar_box
+            replaced = await left_rail.replace_character_avatar_widget(
+                lambda: self._build_character_avatar_widget(spec, box=fitted_box),
+                is_current=is_current,
+                keep_blank=ConsoleLeftRail.character_avatar_spec_is_blank(spec),
+            )
             if not replaced or not is_current():
                 return
-            try:
-                name_widget = self.query_one("#console-character-name", Static)
-                if not is_current():
-                    return
-                name_text = Text(
-                    sanitize_character_display_label(
-                        name,
-                        max_characters=180,
-                    )
-                    or "No character in this chat"
-                )
-                current_name = name_widget.content
-                if not (isinstance(current_name, Text) and current_name == name_text):
-                    name_widget.update(name_text)
-            except QueryError:
-                pass
-            try:
-                reaction_widget = self.query_one(
-                    "#console-character-reaction-state", Static
-                )
-                if not is_current():
-                    return
-                reaction_text = (
-                    f"Reaction: {manual_label} (manual)"
-                    if manual_label
-                    else "Reaction: Automatic"
-                )
-                if reaction_widget.content != reaction_text:
-                    reaction_widget.update(reaction_text)
-            except QueryError:
-                pass
+            left_rail.sync_character_caption(name, manual_label)
             self._request_console_context_allocation_reconcile()
         except Exception:
             # Must never raise: called from `_refresh_active_character_avatar_
@@ -11382,25 +11343,6 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             return 0
 
-    @staticmethod
-    def _character_avatar_spec_is_blank(spec: dict | None) -> bool:
-        """Whether ``spec`` builds the hidden blank: no character, no image.
-
-        Args:
-            spec: The cached avatar spec, or None.
-
-        Returns:
-            True when `_build_character_avatar_widget` mounts the zero-size,
-            display-none ``#console-character-avatar-empty`` Static.
-        """
-        if spec and spec.get("character_id") is not None:
-            return False
-        return not spec or (
-            spec.get("pil") is None
-            and spec.get("pixels") is None
-            and not spec.get("animation_bytes")
-        )
-
     def _build_character_avatar_widget(
         self,
         spec: dict | None,
@@ -11459,7 +11401,7 @@ class ChatScreen(BaseAppScreen):
             and spec.get("pixels") is None
             and not spec.get("animation_bytes")
         ):
-            if self._character_avatar_spec_is_blank(spec):
+            if ConsoleLeftRail.character_avatar_spec_is_blank(spec):
                 # TASK-23194: with no character set, `#console-character-name`
                 # below already renders "No character in this chat". This
                 # placeholder used to render the SAME sentence, so the rail
@@ -17373,9 +17315,7 @@ class ChatScreen(BaseAppScreen):
         mode_copy = self._console_mode_summary(control_state)
         if run_status := self._native_run_status_copy():
             mode_copy = f"{mode_copy} | Run: {run_status}"
-        # TASK-33620.15.7: a hidden, zero-height compat static, re-synced on
-        # every 0.2 s run tick -- its copy never moves another widget, so it
-        # must not request a whole-screen layout, changed or not.
+        # TASK-33620.15.7: hidden and zero-height, so it never needs layout.
         if mode_bar.content != mode_copy:
             mode_bar.update(mode_copy, layout=False)
         # TASK-2154.18 (FB-08): the mode bar itself is a hidden compat

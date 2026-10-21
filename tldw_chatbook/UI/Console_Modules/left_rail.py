@@ -47,6 +47,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 from rich.cells import cell_len
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -72,6 +73,7 @@ from ...Chat.console_settings_defaults import (
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...UI.Navigation.surface_swap_guard import finish_removal
+from ...UI.character_display_text import sanitize_character_display_label
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,
@@ -271,6 +273,12 @@ class _ContextBoundedSection(ConsoleBoundedSection):
             return
         if self.desired_content_lines != previous_demand:
             self._allocation_owner.request_allocation_reconcile()
+
+
+def _reaction_caption(manual_label: str | None) -> str:
+    """The Character section's Reaction line for ``manual_label``."""
+
+    return "Reaction: " + (f"{manual_label} (manual)" if manual_label else "Automatic")
 
 
 class ConsoleLeftRail(Vertical):
@@ -1765,18 +1773,57 @@ class ConsoleLeftRail(Vertical):
             return None
         return prerendered
 
-    def character_avatar_is_blank(self) -> bool:
-        """Whether the avatar holder shows only the hidden no-character blank.
+    def sync_character_caption(
+        self, name: str | None, manual_label: str | None
+    ) -> None:
+        """Repaint the avatar caption and Reaction line after an avatar paint.
+
+        Every expression change of a run repaints both; unchanged copy must
+        not request a whole-screen layout (TASK-33620.15.7).
+
+        Args:
+            name: The character's display name, or None with no character.
+            manual_label: The manual reaction's label, or None when automatic.
+        """
+
+        name_copy = Text(
+            sanitize_character_display_label(name, max_characters=180)
+            or "No character in this chat"
+        )
+        for selector, copy in (
+            ("#console-character-name", name_copy),
+            ("#console-character-reaction-state", _reaction_caption(manual_label)),
+        ):
+            try:
+                widget = self.query_one(selector, Static)
+            except QueryError:
+                continue
+            if widget.content != copy:
+                widget.update(copy)
+
+    @staticmethod
+    def character_avatar_spec_is_blank(spec: dict | None) -> bool:
+        """Whether ``spec`` builds the hidden blank: no character, no image.
+
+        Args:
+            spec: The cached avatar spec, or None.
 
         Returns:
-            True when the holder's one child is the empty, display-none
-            ``#console-character-avatar-empty`` Static that a spec with no
-            character and no image builds.
+            True when the screen's avatar builder mounts the zero-size,
+            display-none ``#console-character-avatar-empty`` Static.
         """
-        try:
-            holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
-        except (NoMatches, QueryError):
+        if spec and spec.get("character_id") is not None:
             return False
+        return not spec or (
+            spec.get("pil") is None
+            and spec.get("pixels") is None
+            and not spec.get("animation_bytes")
+        )
+
+    @staticmethod
+    def _avatar_holder_shows_blank(holder: Widget) -> bool:
+        """Whether ``holder``'s one child is the hidden no-character blank."""
+
         children = list(holder.children)
         if len(children) != 1:
             return False
@@ -1794,8 +1841,24 @@ class ConsoleLeftRail(Vertical):
         widget_builder: Callable[[], Widget],
         *,
         is_current: Callable[[], bool],
+        keep_blank: bool = False,
     ) -> bool:
-        """Serialize one freshness-fenced replacement of the avatar child."""
+        """Serialize one freshness-fenced replacement of the avatar child.
+
+        Args:
+            widget_builder: Builds the new avatar child.
+            is_current: Whether this replacement is still the latest one.
+            keep_blank: The new child would be the hidden no-character blank
+                (``character_avatar_spec_is_blank``). With that blank already
+                mounted, keep it: with no character, every expression change
+                of a run re-mounted it, a whole-screen layout for a widget
+                that paints nothing (TASK-33620.15.7). Decided under the lock,
+                so an in-flight replacement that removes the blank first is
+                seen, and the blank is mounted again.
+
+        Returns:
+            True when the holder shows this replacement's child.
+        """
 
         async with self._character_avatar_mount_lock:
             if not is_current() or not self.is_mounted:
@@ -1804,6 +1867,8 @@ class ConsoleLeftRail(Vertical):
                 holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
             except (NoMatches, QueryError):
                 return False
+            if keep_blank and self._avatar_holder_shows_blank(holder):
+                return True
             # TASK-34982: the poll's sync reaches this in its timer's task.
             await finish_removal(holder.remove_children())
             if not is_current() or not holder.is_mounted:
@@ -2464,11 +2529,7 @@ class ConsoleLeftRail(Vertical):
                 markup=False,
             )
             reaction_state = Static(
-                (
-                    f"Reaction: {self._manual_reaction_label} (manual)"
-                    if self._manual_reaction_label
-                    else "Reaction: Automatic"
-                ),
+                _reaction_caption(self._manual_reaction_label),
                 id="console-character-reaction-state",
                 markup=False,
             )

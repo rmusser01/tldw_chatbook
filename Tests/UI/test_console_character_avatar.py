@@ -2740,3 +2740,82 @@ async def test_character_portrait_grows_and_shrinks_with_terminal(
     assert sizes[1].height > sizes[0].height
     assert sizes[1].width > sizes[0].width
     assert sizes[2] == sizes[0]
+
+
+# -- TASK-33620.15.7: the hidden no-character avatar blank -----------------
+
+
+async def _paint_avatar(screen, spec: dict | None = None) -> None:
+    await screen._render_character_avatar_into_section(
+        spec=spec, name=None, manual_label=None, is_current=lambda: True
+    )
+
+
+def _avatar_children(screen) -> list:
+    return list(screen.query_one("#console-character-avatar").children)
+
+
+def _is_blank(widget) -> bool:
+    return (
+        isinstance(widget, Static)
+        and widget.id == "console-character-avatar-empty"
+        and not widget.display
+        and str(widget.content) == ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_blank_avatar_repaint_keeps_the_mounted_blank(
+    console_screen_with_db, monkeypatch
+) -> None:
+    """With no character, an expression change re-mounted the same blank."""
+
+    from Tests.UI.test_console_run_tick_layout_requests import _LayoutRequests
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    requests = _LayoutRequests(monkeypatch)
+    _app, screen, _db = console_screen_with_db
+    await _paint_avatar(screen)
+    (blank,) = _avatar_children(screen)
+    assert _is_blank(blank)
+    with requests.counting() as calls:
+        await _paint_avatar(screen)
+    assert _avatar_children(screen) == [blank]
+    rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    assert [w for w in calls if w is rail or rail in w.ancestors] == []
+    # Positive control: a character without an image is a visible placeholder
+    # that replaces the blank, and the blank comes back after it.
+    await _paint_avatar(screen, {"character_id": 7})
+    (placeholder,) = _avatar_children(screen)
+    assert not _is_blank(placeholder)
+    await _paint_avatar(screen)
+    (again,) = _avatar_children(screen)
+    assert _is_blank(again) and again is not blank
+
+
+@pytest.mark.asyncio
+async def test_blank_avatar_decision_waits_for_an_in_flight_replacement(
+    console_screen_with_db,
+) -> None:
+    """The keep-the-blank check runs under the mount lock.
+
+    A replacement already holding the lock removes the blank and is then
+    superseded. A blank paint that checked outside the lock saw the blank
+    still attached and kept it, so the holder was left with no child at all.
+    """
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    _app, screen, _db = console_screen_with_db
+    await _paint_avatar(screen)
+    assert _is_blank(_avatar_children(screen)[0])
+    rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    holder = screen.query_one("#console-character-avatar")
+    async with rail._character_avatar_mount_lock:
+        paint = asyncio.create_task(_paint_avatar(screen))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        await holder.remove_children()
+    await asyncio.wait_for(paint, timeout=5)
+    children = _avatar_children(screen)
+    assert len(children) == 1 and _is_blank(children[0]), children
