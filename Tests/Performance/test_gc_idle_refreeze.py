@@ -274,7 +274,9 @@ def test_a_refreeze_freezes_nothing_while_another_collection_runs() -> None:
         frozen = gc.get_freeze_count()
         outcome = during_another_collection(lambda: refreezer.maintain("run_settled"))
         assert outcome == ["busy"], outcome
-        assert gc.get_freeze_count() == frozen, "a skipped collection was followed by a freeze"
+        assert gc.get_freeze_count() == frozen, (
+            "a skipped collection was followed by a freeze"
+        )
         gc.collect()
         assert garbage() is None
     finally:
@@ -304,7 +306,9 @@ def test_a_compaction_another_collection_blocks_refreezes_and_stays_owed() -> No
             lambda: refreezer.maintain("conversation_painted")
         )
         assert outcome == ["busy"], outcome
-        assert gc.get_freeze_count() >= frozen, "the blocked compaction left the heap unfrozen"
+        assert gc.get_freeze_count() >= frozen, (
+            "the blocked compaction left the heap unfrozen"
+        )
         assert garbage() is not None
         assert refreezer.compaction_due(), "a blocked compaction was booked as done"
 
