@@ -19,6 +19,7 @@ import weakref
 from collections.abc import Callable
 
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -27,7 +28,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Utils import ui_responsiveness
+from tldw_chatbook.Utils import text_selection_crash_guard, ui_responsiveness
 from tldw_chatbook.Utils.text_selection_crash_guard import TextualAppGuards
 from tldw_chatbook.Utils.ui_responsiveness import (
     COMPACTION_GROWTH_RATIO,
@@ -905,3 +906,39 @@ async def test_the_app_guards_stamp_user_input_for_the_quiet_check(
         owner.fire_last()
     assert ops.calls == []
     assert owner.timers[-1][0] == pytest.approx(1.5)
+
+
+@pytest.mark.parametrize("stamp_on_post", [True, False], ids=["tap", "control"])
+async def test_input_posted_but_not_yet_dispatched_holds_off_a_maintenance(
+    monkeypatch: pytest.MonkeyPatch, stamp_on_post: bool
+) -> None:
+    """A key already posted to the app counts as input before the app handles it.
+
+    TASK-33620.15.10: the driver posts a key to the app's queue, and the app
+    handles it later; a refreezer timer firing in between must see it. The
+    key is posted here without yielding to the loop, so it is still queued
+    when the timer fires. Negative control: with the stamp only at dispatch
+    (the posting hook removed), the same timer starts a maintenance.
+
+    Args:
+        monkeypatch: Installs a refreezer with a fake clock as the process's.
+        stamp_on_post: Whether the app stamps input when it is posted.
+    """
+    clock, ops, owner = Clock(), Ops(), Owner()
+    refreezer = make(clock, ops, quiet_seconds=2.0)
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    if not stamp_on_post:
+        monkeypatch.delattr(text_selection_crash_guard.UserInputTap, "post_message")
+    app = TranscriptApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        refreezer.request("run_settled", owner, owner_busy)
+        clock.now += 10.0
+        assert app.post_message(events.Key("a", "a"))
+        owner.fire_last()  # before the loop has handled the key
+        if stamp_on_post:
+            assert ops.calls == []
+            assert owner.timers[-1][0] == pytest.approx(2.0)
+        else:
+            assert ops.calls == ["refreeze:run_settled"]
+        await pilot.pause()

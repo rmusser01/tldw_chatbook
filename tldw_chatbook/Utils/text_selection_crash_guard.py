@@ -64,6 +64,7 @@ from typing import Any, Callable, Optional
 
 from loguru import logger
 from textual import events
+from textual.message import Message
 
 from tldw_chatbook.Utils.ui_responsiveness import note_user_input
 
@@ -220,9 +221,16 @@ class UserInputTap:
     """App mixin: stamp each user input for the idle heap re-freeze (TASK-33620.15.3).
 
     The re-freeze (ADR-198 amendment) must never land while the user types.
-    ``App.on_event`` sees every input event before it is forwarded, so one
-    timestamp here covers every screen and modal.
+    Every input event reaches the app twice: when the driver posts it to the
+    app's queue, and when ``App.on_event`` dispatches it to a screen or
+    modal. Both stamp. A refreezer timer can fire between the two, while the
+    key waits in the queue, so dispatch alone would miss it (TASK-33620.15.10).
     """
+
+    def post_message(self, message: Message) -> bool:
+        if isinstance(message, _USER_INPUT):
+            note_user_input()
+        return super().post_message(message)  # type: ignore[misc]
 
     async def on_event(self, event: events.Event) -> None:
         if isinstance(event, _USER_INPUT):
