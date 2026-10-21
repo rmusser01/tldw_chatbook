@@ -749,5 +749,10 @@
     "passed": 26,
     "failed": 0,
     "seconds": 1.93
+  },
+  "review_round_2": {
+    "head": "194b5224403344beed1a5241a21d7b1b07bccf40",
+    "result": "Both Minor findings resolved; no actionable residual finding; source-ready for hosted qualification. Task Done/merge-ready not yet qualified.",
+    "controller_dispositions": "Retain three hosted attempts/new-log comparison as mandatory closure gates; retain historical partial timing limitation. Earlier product/broad-suite/native-security coverage unchanged; controller will inspect live PR feedback."
   }
 }
