@@ -11,6 +11,7 @@ Implementation plans, in delivery order:
 3. [Optional semantic indexing](../plans/2026-10-20-workspace-project-semantic-index.md)
 
 Reference: [Codex CLI source inspection](2026-10-20-codex-cli-project-context-reference.md).
+Review: [Three-agent pre-implementation review and corrections](../qa/2026-10-20-workspace-project-context/plan-review.md).
 
 ## Intent and agreed requirements
 
@@ -36,8 +37,9 @@ create Library documents. `Tools/workspace_file_roots.py::workspace_context_note
 already describes admitted folders using the aliases accepted by the offered
 `fs_*`, Git, and Virtual CLI tools. It does not establish a strategy for answering
 project questions. `Chat/console_agent_bridge.py::build_console_first_request_plan`
-constructs the note after the final tool allow-list, which is the correct seam
-for truthful capability guidance.
+currently constructs the note after plugin filtering but before automatic-goal
+narrowing. Render it after all narrowing so guidance reflects the actual final
+request's tools.
 
 The two file-tool families use different arguments and roots. For a workspace
 folder, the diagnostic call is `fs_list` with
@@ -127,9 +129,14 @@ The Console wording explicitly permits workspace-tool evidence to supplement
 or supersede irrelevant Library excerpts for the user's project question.
 The citation status describes the Library references: an uncited Library bundle
 does not invalidate an answer supported by workspace files. Existing validation
-of actual `[S#]` markers, source receipts, and citation repair remains intact.
-The implementation must qualify initial sends, retry, and handoff consumers;
-automatic and explicitly staged evidence have different preparation paths.
+of actual `[S#]` markers and source receipts remains intact. Canonical Console
+capture marks Library labels as optional in its runtime repair contract; no
+labels alone must not trigger a repair request that invents attribution. Actual
+unknown/malformed labels still require correction. Generic local capture keeps
+its mandatory-marker default, and dedicated Library answers remain strict.
+Preserve exact captured source text and object identity. The implementation must
+qualify initial sends, retry, and actual handoff staging through canonical capture;
+the handoff model's unused formatting helper is not an integration test.
 
 ## Optional index ownership and storage
 
@@ -152,6 +159,11 @@ Its durable state contains:
   hints, chunk/line mappings, source text, and keyword FTS rows.
 - Generation identity, compatibility fingerprints, coverage counters, and
   pending cleanup state.
+
+The existing Workspace registry also gains a durable per-binding authority
+revision/tombstone in its canonical schema. App-local invalidation counters do
+not serialize other processes. The cache owns a durable active-job claim/fencing
+token and a manifest revision advanced with each published membership change.
 
 Keys include the local data authority, workspace and binding IDs, locator/root
 identity, index epoch, and extractor/chunker version. Semantic generations also
@@ -189,6 +201,11 @@ file text will leave the device. A cloud embedding destination requires its own
 indexing consent; Library Allowed or a chat-model choice is not that consent.
 Changing that destination pauses semantic work pending a new choice. No project
 analysis or chat-generation calls run during indexing.
+Project-local model loading is explicitly offline-only on ordinary and restored
+profiles; a missing complete snapshot requires setup and cannot cause a download.
+Embedding adapter/factory logs and errors use credential-free destination labels.
+Semantic adapter outcomes distinguish successful zero hits from provider/backend
+failure so keyword fallback and status remain truthful.
 
 Expose one optional read-only `fs_search_index` spec through the existing
 `LocalToolProvider` and registry. It accepts `root_alias`, query, and a bounded
@@ -232,6 +249,10 @@ applies backpressure. No `list(rglob(...))`, recursive Python call stack, comple
 in-memory manifest, per-file UI row, or unbounded producer queue is permitted.
 Checkpoints occur after committed pages. Restart can re-enumerate the interrupted
 directory idempotently; an iterator offset is not durable proof of coverage.
+Each bounded directory/read unit receives a freshly checked authority revision
+and exclusions from the parent before admission. Root identity remains pinned;
+the job must not retain stale initial exclusions. Reads already admitted before
+narrowing may finish, but cannot bypass later publication/disclosure checks.
 
 Use pages of at most 256 discovered entries, at most two concurrent file reads,
 and at most 4 MiB of extracted text queued for the writer. A file is eligible
@@ -282,18 +303,32 @@ publishes its ready pointer after validation; queries may retain the previous
 compatible semantic generation during rebuilding, with live candidate validation.
 Failed, cancelled, or configuration-incompatible semantic generations are never
 queried. Embedding-profile changes retain keyword availability.
+Semantic source pages and final publication compare one captured keyword manifest
+revision; intervening keyword changes cannot publish a mixed Ready generation.
+Use bounded keyset pages rather than a long-lived SQLite read transaction across
+model/network work.
 
 Removal, retargeting, root-identity replacement, Disable, Clear index, or data
-authority changes revoke eligibility before cleanup. Every writer publication
-checks the captured epoch and current authority, so an old worker cannot publish
-after revocation. Each committed batch also rechecks binding exclusions; additions
-take effect before the next publish or query, and removals admit work only in a
-fresh indexing operation. Unknown current authority refuses delivery.
+authority changes revoke eligibility before cleanup. A short scoped fence in
+the existing registry database serializes its authority revision with index
+publication/disclosure admission across processes. Lock order is registry then
+project store; hold no such fence during scanning, provider work, worker joins
+or cleanup. Each bounded publication compares current authority/exclusions,
+captured epoch and durable active-job ownership inside that fence. App-local
+callbacks alone cannot establish this guarantee. Additions take effect before
+the next read-unit/publish/query admission, and removals widen only a fresh
+indexing operation. Unknown current authority refuses delivery. Disclosure
+admitted before revocation follows the existing already-disclosed-output rule;
+an in-flight result with no final admission yet must still pass the current fence.
 
 Queries apply authority and exclusion filters before ranking and top-k, then
 validate the selected live candidates again. The current run's narrower admitted
 roots and exclusions always win over cached index readiness. An index is not an
 alternate route around a blocked file read or a missing binding.
+Carry that run's frozen/accumulated exclusion floor and admitted executor into
+both keyword and semantic candidate selection. Semantic generations that cannot
+apply the exact current floor before top-k are unavailable for that call, with
+keyword fallback; an unbounded authorized-path list is not a bounded filter.
 
 Detachment and disabling stop pending work and make cached content immediately
 unqueryable. Physical cleanup is asynchronous and retryable; failures cannot
@@ -313,6 +348,9 @@ control selects included subfolders and text file types before a large build.
 Those processing inclusions cannot override binding exclusions or sensitive paths.
 Changing them advances the processing revision. Narrowing removes affected
 candidates immediately; widening requires a new Refresh before adding coverage.
+Every action compares its expected scope before effects in the service, including
+Enable from Off; job actions also compare expected job state/revision. Fencing
+only the returned UI callback cannot prevent an old Enable from undoing Clear.
 
 The Console file inspector presents compact, read-only index status with a
 management action that opens the binding's Settings section. It keeps Library
@@ -373,7 +411,8 @@ The guidance-only delivery implements this design without its own new boundary.
    truthful behavior through native and fenced tool protocols.
 4. Console answers can use verified file evidence alongside Library sources
    without inventing Library labels. Dedicated Library answer grounding and
-   actual marker validation retain their existing strict behavior.
+    actual marker validation retain their existing strict behavior. Canonical
+    Console capture does not force missing-marker repair on a file-only answer.
 5. Keyword indexing and search work with embeddings dependencies absent and no
    network traffic. Semantic enablement identifies its destination; destination
    changes pause processing until explicitly accepted.
@@ -393,10 +432,15 @@ The guidance-only delivery implements this design without its own new boundary.
    frontier entries nor duplicates file/chunk rows.
 9. A delayed build/query race with exclusion addition, detach, retarget, Clear,
    root replacement, or data-authority switch cannot deliver revoked names or
-   content or republish an old generation. Cleanup failure remains unqueryable.
+    content or republish an old generation. Exercise another process mutating
+    authority after the builder's last read, old-run exclusion floors after a
+    removal/refresh, and delayed Enable/Clear in both orderings. Cleanup failure
+    remains unqueryable.
 10. Stale/deleted-file candidates never disclose cached old text. Failed or
     partial scans do not delete unvisited rows. Semantic rebuild failure retains
     only a compatible prior generation and independently available keyword search.
+    Concurrent keyword changes cannot publish mixed semantic membership, and a
+    backend error is distinguishable from a successful query with zero hits.
 11. Storage admission, maintenance, restart, backup/restore, and actual worker
     retirement are exercised with real isolated SQLite owners. No project-cache
     payload enters Library media, global Library search, content sync, or export.

@@ -36,6 +36,9 @@ Console grounding permits both Library references and workspace evidence with
 distinct provenance. Dedicated Library answer generation retains its supplied-
 evidence-only contract. An irrelevant Library bundle does not establish that
 workspace files are unavailable.
+Canonical Console citation repair accepts a mixed answer without Library labels;
+their absence must not manufacture attribution. Actual unknown/malformed labels
+remain invalid, while generic local capture retains mandatory-marker defaults.
 
 No Library policy migration or automatic toggle occurs. Saved Never/Automatic,
 Blocked/Allowed, manually staged sources, and scope intersection retain ADR-079
@@ -48,6 +51,9 @@ project-index service and separately versioned SQLite store own its manifest,
 FTS, jobs/checkpoints, generations, and cleanup. Files remain authoritative;
 cached text and vectors are derived. Root identity, locator fingerprint, local
 data authority, binding identity, configuration, and index epoch scope readiness.
+The existing registry owns a durable monotonic authority revision/tombstone;
+the cache owns a durable active-job claim and transactional manifest revision.
+App-local mutation notifications are not a cross-process authority witness.
 Enablement authorizes application indexing reads only within the live binding
 and selected processing scope; it does not authorize assistant tool calls.
 
@@ -61,6 +67,8 @@ Keyword FTS works without optional embedding dependencies. Semantic indexing is
 a further opt-in using existing embedding/chunking/vector primitives with a
 separate project namespace and lifecycle. Cloud embedding disclosure requires
 index-specific destination consent; Library permission does not provide it.
+Project-local model loading is offline-only, including ordinary profiles, and
+adapter/factory reporting does not disclose credential-bearing endpoints.
 
 ### Discovery does not widen file authority
 
@@ -74,6 +82,9 @@ read, removed binding, or incompatible root cannot be bypassed through the cache
 The binding's effective `fs_read` permission is a narrowing floor for excerpt
 delivery: Blocked refuses and Ask requires review even when index search is
 otherwise Allowed.
+Carry the requesting run's frozen/accumulated exclusion floor into keyword and
+semantic selection; a live registry read alone cannot restore access removed for
+that run. If exact bounded semantic filtering is unavailable, use keyword search.
 
 Indexed text never becomes automatic project instructions. Search has the same
 binding-root instruction scope as existing grep; exact follow-up file reads use
@@ -87,9 +98,14 @@ a whole-tree list. A fixed-purpose contained scanner process lives for one job;
 it reuses root-pinning/process-containment primitives and does not change the
 one-shot agent file-worker protocol. The parent service owns transactional
 publication and rechecks authority and epoch before each committed batch.
+Fresh authority is admitted per bounded directory/read unit, not frozen for the
+whole worker lifetime. A short registry-then-cache serialization fence covers
+publication/disclosure admission against concurrent registry mutation, including
+other processes; never hold it across worker/network work or cleanup.
 
 Keyword entries are eligible only after their manifest/text/FTS batch commits.
-Semantic generations publish through an atomic compatible ready pointer. Partial
+Semantic generations read bounded pages of one checked keyword manifest revision
+and publish through an atomic compatible ready pointer. Partial
 coverage, skipped processing-policy files, budget exhaustion, and interrupted
 jobs are reported truthfully. Refresh and restart Resume are explicit in the
 first release; no watcher dependency or scan-on-every-send is introduced.
@@ -99,6 +115,8 @@ revoke query/publication eligibility before retryable physical cleanup. New
 exclusions narrow access immediately at the next query/publication boundary.
 An old job cannot resurrect cleared or revoked data. Detachment cannot retract
 tool output already disclosed into a conversation or provider request.
+Management actions compare expected scope/job state before effects, so a delayed
+Enable cannot undo Clear and an old Clear cannot remove a later generation.
 
 The first release indexes local UTF-8 project text. Remote/SSH indexing and
 binary/media extraction require separate designs. Settings owns management;
