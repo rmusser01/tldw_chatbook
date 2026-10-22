@@ -1294,6 +1294,22 @@ before opening a PR that adds CSS, and attribute any growth to the segment that 
 the failure message names segments and sources precisely so that attribution is not
 guesswork.
 
+## `DEFAULT_CSS` -> `BUNDLED_CSS` moves bytes onto the boot parse, and the boot budget can refuse it (TASK-35649, 2026-10-22)
+
+The allowlist ratchet (`test_class_level_css_stays_within_the_allowlist`) prescribes one
+fix: rename `DEFAULT_CSS` to `BUNDLED_CSS` and rebuild. That trades one live stylesheet
+source per class for bytes in `widget_defaults_{self,scoped}.tcss`, and those sheets are
+parsed before first paint. Six small declarations (padding, `height: auto`, two modals)
+took `MAX_BOOT_PARSED_CSS_BYTES` from 2,363 B of headroom to a 94 B breach. The
+per-segment diff charged 2,457 B to them: each lifted class pays a
+`/* ===== WIDGET: X (path) ===== */` banner in every stream it lands in, about 75 B, and
+the class body's indentation and blank lines are copied verbatim. Rewriting the two
+modals' blocks as one-line rules recovered 267 B, which left 173 B, with byte-identical
+screenshots. **What to do:** run `Tests/Performance/test_boot_css_byte_budget.py` with
+the allowlist test whenever you convert a declaration. If the budget is tight, write the
+moved block compactly before reaching for an allowlist entry. A rarely opened modal's
+rules are the legitimate allowlist case (ADR-097's "defer the cost").
+
 ## A UI-thread owner method must never take the owner's stop lock (TASK-31826)
 
 `MeetingSessionOwner._stop_lock` is held across `session.stop()`, which blocks on

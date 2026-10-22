@@ -997,3 +997,7 @@ Tests/UI/test_settings_configuration_hub.py::test_settings_keyless_provider_save
 # 3.5), so dev reached 2,004 lines in features/_library_panels.tcss unseen.
 # Static (reads css/ only), about 4-6 s with its private-profile child.
 Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+# TASK-35649: no lane ran the class-level DEFAULT_CSS allowlist ratchet
+# (TASK-21115), so six unlisted declarations accreted on dev unseen. Static
+# (an AST walk of the package), about 5-10 s with its private-profile child.
+Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist

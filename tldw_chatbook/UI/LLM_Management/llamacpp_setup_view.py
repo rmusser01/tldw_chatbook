@@ -70,7 +70,7 @@ _STATUS = {
 class LlamaCppSetupView(Vertical):
     """Session-local launch draft with device-local tuning profiles."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LlamaCppSetupView { height: auto; }
     LlamaCppSetupView Horizontal { height: auto; }
     LlamaCppSetupView .llamacpp-status { height: auto; }

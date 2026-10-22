@@ -490,7 +490,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR lane while dev's Library panels sheet sat at 2,004 active lines. A
 # static node (about 4-6 s with its private-profile child), appended at the
 # tail so no existing entry changes shard.
-MINIMUM_FILES = 615
+# TASK-35649 raised it by 1, to 616: the class-level DEFAULT_CSS allowlist
+# ratchet, which ran in no PR lane while six unlisted declarations accreted.
+# A static node (an AST walk, about 5-10 s with its private-profile child),
+# appended at the tail after TASK-35648's.
+MINIMUM_FILES = 616
 
 
 def read_census(path: Path) -> list[str]:

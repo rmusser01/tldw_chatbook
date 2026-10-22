@@ -740,51 +740,18 @@ class FileNotesHistoryDialog(
     BINDINGS = [("escape", "request_safe_cancel", "Close")]
     SAFE_MODAL_CONTENT = "#file-notes-history-dialog"
 
-    DEFAULT_CSS = """
-    FileNotesHistoryDialog {
-        align: center middle;
-    }
-
+    BUNDLED_CSS = """
+    FileNotesHistoryDialog { align: center middle; }
     #file-notes-history-dialog {
-        width: 90;
-        max-width: 95%;
-        height: auto;
-        max-height: 85%;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
+        width: 90; max-width: 95%; height: auto; max-height: 85%;
+        border: round $primary; background: $surface; padding: 1 2;
     }
-
-    #file-notes-history-title {
-        height: 1;
-        text-style: bold;
-    }
-
-    #file-notes-history-list {
-        height: auto;
-        max-height: 10;
-        min-height: 1;
-        margin-top: 1;
-    }
-
-    #file-notes-history-destination-label {
-        height: 1;
-        margin-top: 1;
-    }
-
-    #file-notes-history-destination {
-        height: 1;
-    }
-
-    #file-notes-history-actions {
-        height: 1;
-        margin-top: 1;
-    }
-
-    #file-notes-history-status {
-        height: 1;
-        margin-top: 1;
-    }
+    #file-notes-history-title { height: 1; text-style: bold; }
+    #file-notes-history-list { height: auto; max-height: 10; min-height: 1; margin-top: 1; }
+    #file-notes-history-destination-label { height: 1; margin-top: 1; }
+    #file-notes-history-destination { height: 1; }
+    #file-notes-history-actions { height: 1; margin-top: 1; }
+    #file-notes-history-status { height: 1; margin-top: 1; }
     """
 
     def __init__(

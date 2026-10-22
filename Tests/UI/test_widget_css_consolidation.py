@@ -1187,8 +1187,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
         ("UI/Study_Window.py", "StructuredLearningWidget", "DEFAULT_CSS"),
         ("UI/Study_Window.py", "StudyGuideWidget", "DEFAULT_CSS"),
         ("UI/Study_Window.py", "StudyWindow", "DEFAULT_CSS"),
-        ("UI/Tools_Settings_Window.py", "ConfirmDisableDialog", "DEFAULT_CSS"),
-        ("UI/Tools_Settings_Window.py", "ToolsSettingsWindow", "DEFAULT_CSS"),
         ("UI/Voice_Cloning_Window.py", "VoiceCloningWindow", "DEFAULT_CSS"),
         ("UI/Wizards/BaseWizard.py", "WizardContainer", "DEFAULT_CSS"),
         ("UI/Wizards/BaseWizard.py", "WizardProgress", "DEFAULT_CSS"),
@@ -1375,7 +1373,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
             "DEFAULT_CSS",
         ),
         ("Widgets/Media/media_search_panel.py", "MediaSearchPanel", "DEFAULT_CSS"),
-        ("Widgets/Media/media_viewer_panel.py", "DeleteConfirmDialog", "DEFAULT_CSS"),
         ("Widgets/Media/media_viewer_panel.py", "MediaViewerPanel", "DEFAULT_CSS"),
         ("Widgets/model_search_picker.py", "ModelSearchPicker", "DEFAULT_CSS"),
         (
