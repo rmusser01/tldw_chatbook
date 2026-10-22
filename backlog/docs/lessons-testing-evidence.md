@@ -90,6 +90,18 @@ disabling poll arming still failed the original assertion with
 `reconciled=True`. This barrier does not witness retirement of later queued
 refreshes; that remains the separate lesson below.
 
+**TASK-35833 follow-up, 2026-10-22.** Reconcile-ended is not effect-landed
+on a cached Console. The headless-delivery test reopens the same ChatScreen,
+so its reconcile skips the view start, and the poll is armed through the
+wake hook's `screen.call_later`. An instrumented run showed the timer still
+unset at the line that sets `_console_attach_reconciled = True` in 5 of 5
+runs, and the test's flag wait could check inside that gap. If a test asserts
+what an attach arms, wait for `_console_attach_reconciled and not
+_console_attach_reconcile_running`, then for one round trip through the
+screen's queue: `Tests/UI/pump_probe.py::pump_runs(screen)` posts a
+`call_later` and waits for it with a bound. (This task was also filed from
+runs that predated TASK-35710's fix, the TASK-35443 trap below.)
+
 ## A held lock shows one waiting read per run; a recording lock shows them all (TASK-35645, 2026-10-20)
 
 **Incident.** The response-rules phase test holds config's rebuild lock and prints where the UI loop blocked. Three times (TASK-35444, its round 2, and a local 1-in-13 failure) the stack named one read, the fix moved it, and the next run blocked at another. A real hold can only show the first wait: the loop stops there. One scratch run instead patched the two lock accessors with a proxy that recorded every blocking acquire from the main thread, refused non-blocking probes as if held, and forced the warm-cache checks to miss. Over a full UI sync it listed 2 sites (14 waits), and 0 after the fix. A third site turned up later: the attach reconcile's screen resume, which runs once, before that window opened. Calling seven refresh entry points inside the window listed it (35 waits at 5 sites on dev).

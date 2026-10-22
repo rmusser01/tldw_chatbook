@@ -41,6 +41,7 @@ from Tests.UI.app_factory import (
     persist_seeded_config,
 )
 from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.pump_probe import pump_runs
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -2496,15 +2497,33 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
             await _wait_for_selector(screen, pilot, "#console-native-composer")
             # TASK-35710: the composer mounts before a deferred full sync
             # finishes. A message-pump pause is not attachment completion.
+            # TASK-35833: wait for the reconcile to END, then for one screen
+            # message. The cached Console's reconcile skips the view start
+            # and arms the poll through the wake hook's `call_later`, so the
+            # timer is still unset when `_console_attach_reconciled` flips.
+            def reconcile_ended():
+                return (
+                    screen._console_attach_reconciled
+                    and not screen._console_attach_reconcile_running
+                )
+
             for _ in range(50):
-                if screen._console_attach_reconciled:
+                if reconcile_ended():
                     break
                 await pilot.pause(0.1)
-            assert app.screen is screen and screen._console_attach_reconciled, (
-                "Console attachment did not complete before the poll check: "
+            assert app.screen is screen and reconcile_ended(), (
+                "Console attach reconcile never ended before the poll check "
+                "(_console_attach_reconciled and not "
+                "_console_attach_reconcile_running): "
+                f"reconciled={screen._console_attach_reconciled}, "
+                f"running={screen._console_attach_reconcile_running}, "
                 f"sync_complete={screen._console_attach_sync_complete}, "
                 f"view_started={screen._console_attach_view_started}, "
                 f"retry_exhausted={screen._console_attach_reconcile_retry_exhausted}"
+            )
+            assert await pump_runs(screen, 5.0), (
+                "the Console never ran a callback posted after its attach "
+                "reconcile ended, so a deferred poll arm could not have run"
             )
 
         chat = ChatScreen(app)
