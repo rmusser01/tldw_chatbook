@@ -600,63 +600,23 @@ class DatasetRenameRow(NotifyMixin, Vertical):
         self.post_message(DatasetRenamed(self._dataset_id))
 
 
-class SnippetEditor(NotifyMixin, Vertical):
-    """Detail-pane content for a selected dataset: a read-only snippet
-    table (character count, whitespace flag, exact-duplicate flag) and an
-    import control (``#evals-import-snippets``)."""
+class _SnippetResults(Vertical):
+    """Read-only import results; recomposition never replaces the name editor."""
 
-    def __init__(
-        self, view_model: EvalsViewModel, dataset_id: str, **kwargs: Any
-    ) -> None:
+    def __init__(self, snippets: list[dict[str, Any]], **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._view_model = view_model
-        self._dataset_id = dataset_id
-        #: The in-flight import read worker, or None. Exposed so tests can
-        #: await the thread half instead of guessing at `pilot.pause()` counts.
-        self._import_worker: Any = None
+        self._snippets = snippets
+
+    def update_snippets(self, snippets: list[dict[str, Any]]) -> None:
+        """Refresh only the summary, table and warnings after an import."""
+        self._snippets = snippets
+        self.refresh(recompose=True)
 
     def compose(self) -> ComposeResult:
-        db = self._view_model.db
-        if db is None:
-            yield Static(
-                "The evaluation service is unavailable.",
-                id="evals-snippet-editor-unavailable",
-            )
-            return
-        dataset = self._view_model.dataset_by_id(self._dataset_id)
-        if dataset is None:
-            # Re-checked here (not only by evals_screen.py's own guard)
-            # against the same deleted-between-selection-and-compose race
-            # bench_editor.py's widgets guard against.
-            yield Static(
-                "This dataset's data could not be read.",
-                id="evals-snippet-editor-error",
-            )
-            return
-
-        snippets = dataset_snippets(dataset)
+        snippets = self._snippets
         groups = {snippet.get("group") for snippet in snippets if snippet.get("group")}
         snippet_word = "snippet" if len(snippets) == 1 else "snippets"
         group_word = "group" if len(groups) == 1 else "groups"
-
-        # markup=False: the dataset name is user-authored free text -- a
-        # bare `[/]` would raise `MarkupError` the instant this Static
-        # lays out (task-1482 Task 1; mirrors bench_editor.py's identical
-        # fix for `config.name`).
-        yield Static(
-            str(dataset.get("name") or "Untitled dataset"),
-            id="evals-detail-dataset-name",
-            classes="evals-pane-heading",
-            markup=False,
-        )
-        # task-1484: the rename affordance sits directly under the name it
-        # renames -- see DatasetRenameRow's own docstring.
-        yield DatasetRenameRow(
-            self._view_model,
-            self._dataset_id,
-            str(dataset.get("name") or "Untitled dataset"),
-            id="evals-dataset-rename-row",
-        )
         yield Static(
             f"inline · {len(snippets)} {snippet_word} · {len(groups)} {group_word}",
             id="evals-snippet-editor-summary",
@@ -685,8 +645,6 @@ class SnippetEditor(NotifyMixin, Vertical):
                 f"{total_warnings} {warning_word}" if total_warnings else "No warnings",
                 id="evals-snippet-warnings-summary",
             )
-
-        yield Button("Import…", id="evals-import-snippets")
 
     @staticmethod
     def _compose_row(
@@ -727,6 +685,63 @@ class SnippetEditor(NotifyMixin, Vertical):
                 classes="evals-snippet-meta",
                 markup=False,
             )
+
+
+class SnippetEditor(NotifyMixin, Vertical):
+    """Detail-pane content for a selected dataset: a read-only snippet
+    table (character count, whitespace flag, exact-duplicate flag) and an
+    import control (``#evals-import-snippets``)."""
+
+    def __init__(
+        self, view_model: EvalsViewModel, dataset_id: str, **kwargs: Any
+    ) -> None:
+        super().__init__(**kwargs)
+        self._view_model = view_model
+        self._dataset_id = dataset_id
+        #: The in-flight import read worker, or None. Exposed so tests can
+        #: await the thread half instead of guessing at `pilot.pause()` counts.
+        self._import_worker: Any = None
+
+    def compose(self) -> ComposeResult:
+        db = self._view_model.db
+        if db is None:
+            yield Static(
+                "The evaluation service is unavailable.",
+                id="evals-snippet-editor-unavailable",
+            )
+            return
+        dataset = self._view_model.dataset_by_id(self._dataset_id)
+        if dataset is None:
+            # Re-checked here (not only by evals_screen.py's own guard)
+            # against the same deleted-between-selection-and-compose race
+            # bench_editor.py's widgets guard against.
+            yield Static(
+                "This dataset's data could not be read.",
+                id="evals-snippet-editor-error",
+            )
+            return
+
+        # markup=False: the dataset name is user-authored free text -- a
+        # bare `[/]` would raise `MarkupError` the instant this Static
+        # lays out (task-1482 Task 1; mirrors bench_editor.py's identical
+        # fix for `config.name`).
+        yield Static(
+            str(dataset.get("name") or "Untitled dataset"),
+            id="evals-detail-dataset-name",
+            classes="evals-pane-heading",
+            markup=False,
+        )
+        # task-1484: the rename affordance sits directly under the name it
+        # renames -- see DatasetRenameRow's own docstring.
+        yield DatasetRenameRow(
+            self._view_model,
+            self._dataset_id,
+            str(dataset.get("name") or "Untitled dataset"),
+            id="evals-dataset-rename-row",
+        )
+        yield _SnippetResults(dataset_snippets(dataset), id="evals-snippet-results")
+
+        yield Button("Import…", id="evals-import-snippets")
 
     @on(Button.Pressed, "#evals-import-snippets")
     def _on_import_pressed(self, event: Button.Pressed) -> None:
@@ -837,7 +852,7 @@ class SnippetEditor(NotifyMixin, Vertical):
             self._notify("The evaluation service is unavailable.", severity="error")
             return
         try:
-            import_snippets_into_dataset(db, self._dataset_id, new_snippets)
+            snippets = import_snippets_into_dataset(db, self._dataset_id, new_snippets)
         except ValueError as exc:
             self._notify(str(exc), severity="error")
             return
@@ -851,7 +866,10 @@ class SnippetEditor(NotifyMixin, Vertical):
         message = f"Imported {len(new_snippets)} snippet(s)"
         message += self._skipped_suffix(skipped_count)
         self._notify(message, severity="information")
-        self.refresh(recompose=True)
+        # Keep the live name Input (including its focus, caret and selection).
+        self.query_one("#evals-snippet-results", _SnippetResults).update_snippets(
+            snippets
+        )
 
     @staticmethod
     def _skipped_suffix(skipped_count: int) -> str:

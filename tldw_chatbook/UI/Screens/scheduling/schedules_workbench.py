@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -545,6 +545,7 @@ class SchedulesWorkbench(BaseAppScreen):
         #: (Qodo finding 7) -- see `_edit_definition_field`.
         self._definition_edit_locks: dict[str, asyncio.Lock] = {}
         self._marked_ids: set[str] = set()
+        self._reminder_bulk_pending = False
         #: The current hidden-panes notice from on_resize; combined with
         #: the marks/glyph legend in _update_pane_notice (task-23107).
         self._resize_notice = ""
@@ -5061,6 +5062,8 @@ class SchedulesWorkbench(BaseAppScreen):
         (`ResultsHostScreen`) owns its own `d`, and a screen underneath
         never receives the key anyway.
         """
+        if self._refuse_if_reminder_bulk_pending():
+            return
         if self._marked_ids:
             marked = self._marked_reminder_tasks()
             if not marked:
@@ -5112,7 +5115,7 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def _on_bulk_delete_confirmed(self, confirmed, marked: list[ReminderTask]) -> None:
         """Delete all marked tasks after the confirmation dialog."""
-        if not confirmed:
+        if not confirmed or self._refuse_if_reminder_bulk_pending():
             return
         service = self._service()
         if service is None:
@@ -5122,9 +5125,11 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
+        targets = tuple((task.id, task.owner_id) for task in marked)
+
         async def _bulk_delete() -> None:
             errors = 0
-            for task in marked:
+            for task_id, owner_id in targets:
                 try:
                     # A False return is a refusal, not a crash (e.g. the
                     # transfer read-only guard, final review I7) -- count
@@ -5132,27 +5137,23 @@ class SchedulesWorkbench(BaseAppScreen):
                     # facade declined. `owner_id` is the ROW's own (final
                     # review F4), same as the single-row delete.
                     if not await service.delete_reminder(
-                        task.id, owner_id=task.owner_id
+                        task_id, owner_id=owner_id
                     ):
                         errors += 1
                 except Exception:  # noqa: BLE001
-                    logger.exception("Failed to delete reminder {}", task.id)
+                    logger.exception("Failed to delete reminder {}", task_id)
                     errors += 1
-            count = len(marked) - errors
+            count = len(targets) - errors
             self.app_instance.notify(
                 f"Deleted {count} marked task{'s' if count != 1 else ''}"
                 + (f" ({errors} failed)" if errors else "")
                 + ".",
                 severity="information" if not errors else "warning",
             )
-            self._marked_ids.clear()
+            self._marked_ids.difference_update(task_id for task_id, _ in targets)
             self._request_tasks_refresh(refresh_definitions=False)
 
-        self.run_worker(
-            _bulk_delete,
-            exclusive=True,
-            group="schedules-bulk-delete",
-        )  # type: ignore[arg-type]
+        self._run_reminder_bulk(_bulk_delete, group="schedules-bulk-delete")
 
     def _selected_task(self) -> ReminderTask | None:
         """Return the reminder under the queue cursor, if any.
@@ -5240,6 +5241,8 @@ class SchedulesWorkbench(BaseAppScreen):
         silently ignored by the bulk actions or, worse, let them fall
         through to an unmarked row.
         """
+        if self._refuse_if_reminder_bulk_pending():
+            return
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
@@ -5261,9 +5264,45 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def action_clear_marks(self) -> None:
         """Clear all bulk marks (escape key)."""
+        if self._refuse_if_reminder_bulk_pending():
+            return
         if self._marked_ids:
             self._marked_ids.clear()
             self._render_table()
+
+    def _refuse_if_reminder_bulk_pending(self) -> bool:
+        """Keep admitted reminder mutations and their marks owned until settlement."""
+        if not self._reminder_bulk_pending:
+            return False
+        self.app_instance.notify(
+            "Reminder tasks are busy — wait for the current bulk action to finish.",
+            severity="warning",
+        )
+        return True
+
+    def _run_reminder_bulk(
+        self, mutation: Callable[[], Awaitable[None]], *, group: str
+    ) -> None:
+        """Admit synchronously and release even if worker submission fails."""
+        if self._refuse_if_reminder_bulk_pending():
+            return
+        self._reminder_bulk_pending = True
+
+        async def _do() -> None:
+            try:
+                await mutation()
+            finally:
+                self._reminder_bulk_pending = False
+
+        try:
+            self.run_worker(_do, group=group)
+        except Exception:  # noqa: BLE001
+            self._reminder_bulk_pending = False
+            logger.exception("Could not start reminder bulk action {}", group)
+            self.app_instance.notify(
+                "Could not start the reminder bulk action; marks kept for retry.",
+                severity="error",
+            )
 
     def _marked_reminder_tasks(self) -> list[ReminderTask]:
         """Marked tasks that support bulk operations."""
@@ -5279,6 +5318,8 @@ class SchedulesWorkbench(BaseAppScreen):
         While ANY mark exists, space never falls through to the
         highlighted, unmarked row (task-23107 review F1).
         """
+        if self._refuse_if_reminder_bulk_pending():
+            return
         if self._marked_ids:
             marked = self._marked_reminder_tasks()
             if not marked:
@@ -5322,9 +5363,11 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
+        targets = tuple((task.id, task.owner_id, not task.enabled) for task in marked)
+
         async def _bulk_toggle() -> None:
             errors = 0
-            for task in marked:
+            for task_id, owner_id, enabled in targets:
                 try:
                     # A None return is a refusal, not a crash -- same
                     # reasoning as the bulk delete above. `owner_id` is
@@ -5332,31 +5375,27 @@ class SchedulesWorkbench(BaseAppScreen):
                     # single-row toggle.
                     if (
                         await service.update_reminder(
-                            task.id,
-                            {"enabled": not task.enabled},
-                            owner_id=task.owner_id,
+                            task_id,
+                            {"enabled": enabled},
+                            owner_id=owner_id,
                         )
                         is None
                     ):
                         errors += 1
                 except Exception:  # noqa: BLE001
-                    logger.exception("Failed to toggle reminder {}", task.id)
+                    logger.exception("Failed to toggle reminder {}", task_id)
                     errors += 1
-            count = len(marked) - errors
+            count = len(targets) - errors
             self.app_instance.notify(
                 f"Toggled {count} marked task{'s' if count != 1 else ''}"
                 + (f" ({errors} failed)" if errors else "")
                 + ".",
                 severity="information" if not errors else "warning",
             )
-            self._marked_ids.clear()
+            self._marked_ids.difference_update(task_id for task_id, _, _ in targets)
             self._request_tasks_refresh(refresh_definitions=False)
 
-        self.run_worker(
-            _bulk_toggle,
-            exclusive=True,
-            group="schedules-bulk-toggle",
-        )  # type: ignore[arg-type]
+        self._run_reminder_bulk(_bulk_toggle, group="schedules-bulk-toggle")
 
     async def action_sync_now(self) -> None:
         """Sync schedule state now."""

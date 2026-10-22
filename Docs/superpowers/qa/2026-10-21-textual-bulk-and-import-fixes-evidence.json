@@ -1,0 +1,1374 @@
+{
+  "base_dev": "85d140df8777df7eaeb5d0c6d326051cbe965351",
+  "product_commits": [
+    "867494bc97ff9ebf890784426f5303fec1f9ba30",
+    "6e01bf68de58ee42db2f9ab4aac68a4935e9963c"
+  ],
+  "environment": {
+    "python": "3.12.10",
+    "textual": "8.2.8",
+    "platform": "native Windows"
+  },
+  "canonical_lf_utf8_source_sha256": {
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": "e6f87f0d9b67567746b3ef67f99d3bea11e5cebe59fe56992bb542178eeb0ea6",
+    "tldw_chatbook/UI/Evals/snippet_editor.py": "67f8f5a50d3ae38cbbbc33672eaa4df04ecff410ee4169c32cbb9767e35b7da5",
+    "Tests/UI/test_schedules_bulk_admission.py": "60c2a5093da57405270db771d952d9a54e922c465acf12e1c8316c80f8077efa",
+    "Tests/UI/test_evals_snippet_import_drafts.py": "9316f53fab92bb9f89343b5f89ae7d642524ccd3d271f10bdc26c7fe7c7c2c6e",
+    "scripts/ui_pr_gate_census.txt": "452f742b482b36354856facd26eec1be1a6a3143b81b2926fff9cfcd116546b3",
+    "scripts/check_ui_pr_gate_census.py": "d8a136f99cf53db8627a98b6f5cb52e7731269e8304fbb6fc307ceb8c09b4d76",
+    "Docs/security/production-diagnostic-inventory.json": "c4782e6266061d0a9b54bce20782e7a7e76d40e6c72a438a9e3da18b08ae9eb6"
+  },
+  "task36036_focused": {
+    "initial_focused": [
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-toggle]",
+        "seconds": 27.621,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[delete-delete]",
+        "seconds": 30.206,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-delete]",
+        "seconds": 28.295,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[delete-toggle]",
+        "seconds": 28.655,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_mark_and_clear_gestures",
+        "seconds": 28.091,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_admission_freezes_ids_owners_and_desired_toggle_values",
+        "seconds": 25.368,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_submission_failure_releases_admission_for_retry[toggle]",
+        "seconds": 20.05,
+        "outcome": "failed"
+      },
+      {
+        "name": "test_submission_failure_releases_admission_for_retry[delete]",
+        "seconds": 20.562,
+        "outcome": "failed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[local-toggle]",
+        "seconds": 23.403,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[local-delete]",
+        "seconds": 23.388,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]",
+        "seconds": 37.479,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[server:1-delete]",
+        "seconds": 27.955,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_mixed_success_refusal_and_failure_reports_actual_count[toggle]",
+        "seconds": 27.957,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_mixed_success_refusal_and_failure_reports_actual_count[delete]",
+        "seconds": 28.063,
+        "outcome": "passed"
+      }
+    ],
+    "notification_drain_retry": [
+      {
+        "name": "test_submission_failure_releases_admission_for_retry[toggle]",
+        "seconds": 38.917,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_submission_failure_releases_admission_for_retry[delete]",
+        "seconds": 26.429,
+        "outcome": "passed"
+      }
+    ],
+    "latest_distinct_focused_nodes": [
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-toggle]",
+        "seconds": 27.621,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[delete-delete]",
+        "seconds": 30.206,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-delete]",
+        "seconds": 28.295,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[delete-toggle]",
+        "seconds": 28.655,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_pending_batch_refuses_mark_and_clear_gestures",
+        "seconds": 28.091,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_admission_freezes_ids_owners_and_desired_toggle_values",
+        "seconds": 25.368,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_submission_failure_releases_admission_for_retry[toggle]",
+        "seconds": 38.917,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_submission_failure_releases_admission_for_retry[delete]",
+        "seconds": 26.429,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[local-toggle]",
+        "seconds": 23.403,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[local-delete]",
+        "seconds": 23.388,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]",
+        "seconds": 37.479,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_ordinary_batch_completes_and_clears_its_marks[server:1-delete]",
+        "seconds": 27.955,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_mixed_success_refusal_and_failure_reports_actual_count[toggle]",
+        "seconds": 27.957,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_mixed_success_refusal_and_failure_reports_actual_count[delete]",
+        "seconds": 28.063,
+        "outcome": "passed"
+      }
+    ],
+    "existing_affected": [
+      {
+        "name": "test_marking_rows_shows_count_and_keys",
+        "seconds": 3.064,
+        "outcome": "error"
+      },
+      {
+        "name": "test_clearing_marks_clears_the_legend",
+        "seconds": 0.12,
+        "outcome": "error"
+      },
+      {
+        "name": "test_bulk_delete_never_falls_through_to_the_highlighted_row",
+        "seconds": 0.145,
+        "outcome": "error"
+      },
+      {
+        "name": "test_bulk_toggle_never_falls_through_to_the_highlighted_row",
+        "seconds": 0.134,
+        "outcome": "error"
+      },
+      {
+        "name": "test_stale_marks_are_pruned_on_reload",
+        "seconds": 0.211,
+        "outcome": "error"
+      },
+      {
+        "name": "test_p_key_toggles_a_reminder_enabled_state",
+        "seconds": 0.209,
+        "outcome": "error"
+      },
+      {
+        "name": "test_p_key_on_a_locked_reminder_refuses_honestly",
+        "seconds": 0.134,
+        "outcome": "error"
+      },
+      {
+        "name": "test_key_bound_edit_refuses_on_a_transferring_row",
+        "seconds": 0.138,
+        "outcome": "error"
+      },
+      {
+        "name": "test_update_reminder_for_server_row_records_mutation_when_offline",
+        "seconds": 4.293,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_delete_reminder_for_server_row_records_tombstone_when_offline",
+        "seconds": 3.651,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_update_reminder_refused_while_transferring",
+        "seconds": 1.994,
+        "outcome": "passed"
+      },
+      {
+        "name": "test_delete_reminder_refused_while_transferring",
+        "seconds": 2.353,
+        "outcome": "passed"
+      }
+    ]
+  },
+  "receipts": [
+    {
+      "path": "task-1/green.xml",
+      "sha256": "14b4cc78f1de13b73357e2f92a027ac35403c5310a07a5f540c78c13d69279d5",
+      "summary": {
+        "tests": "14",
+        "failures": "2",
+        "errors": "0",
+        "skipped": "0",
+        "time": "379.042"
+      },
+      "cases": [
+        {
+          "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-toggle]",
+          "seconds": 27.621,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[delete-delete]",
+          "seconds": 30.206,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-delete]",
+          "seconds": 28.295,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pending_batch_refuses_same_and_cross_verb_overlap[delete-toggle]",
+          "seconds": 28.655,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pending_batch_refuses_mark_and_clear_gestures",
+          "seconds": 28.091,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_admission_freezes_ids_owners_and_desired_toggle_values",
+          "seconds": 25.368,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_submission_failure_releases_admission_for_retry[toggle]",
+          "seconds": 20.05,
+          "outcome": "failure",
+          "failure_excerpt": [
+            "--- child failure: assert False",
+            "raise RuntimeError(\"test: worker submission refused\")"
+          ]
+        },
+        {
+          "name": "test_submission_failure_releases_admission_for_retry[delete]",
+          "seconds": 20.562,
+          "outcome": "failure",
+          "failure_excerpt": [
+            "--- child failure: assert False",
+            "raise RuntimeError(\"test: worker submission refused\")"
+          ]
+        },
+        {
+          "name": "test_ordinary_batch_completes_and_clears_its_marks[local-toggle]",
+          "seconds": 23.403,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ordinary_batch_completes_and_clears_its_marks[local-delete]",
+          "seconds": 23.388,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]",
+          "seconds": 37.479,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ordinary_batch_completes_and_clears_its_marks[server:1-delete]",
+          "seconds": 27.955,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_mixed_success_refusal_and_failure_reports_actual_count[toggle]",
+          "seconds": 27.957,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_mixed_success_refusal_and_failure_reports_actual_count[delete]",
+          "seconds": 28.063,
+          "outcome": "passed"
+        }
+      ]
+    },
+    {
+      "path": "task-1/green-submission.xml",
+      "sha256": "198fe9c541cf9690f023869d71a57c5f352ada8dc2c349cc7c662a7c1dc39712",
+      "summary": {
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "67.156"
+      },
+      "cases": [
+        {
+          "name": "test_submission_failure_releases_admission_for_retry[toggle]",
+          "seconds": 38.917,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_submission_failure_releases_admission_for_retry[delete]",
+          "seconds": 26.429,
+          "outcome": "passed"
+        }
+      ]
+    },
+    {
+      "path": "task-1/affected.xml",
+      "sha256": "5d72a28d06fec27a00dd4d5d50854494fc9e40332f05870fd8333938e260e847",
+      "summary": {
+        "tests": "12",
+        "failures": "0",
+        "errors": "8",
+        "skipped": "0",
+        "time": "22.650"
+      },
+      "cases": [
+        {
+          "name": "test_marking_rows_shows_count_and_keys",
+          "seconds": 3.064,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_clearing_marks_clears_the_legend",
+          "seconds": 0.12,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_bulk_delete_never_falls_through_to_the_highlighted_row",
+          "seconds": 0.145,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_bulk_toggle_never_falls_through_to_the_highlighted_row",
+          "seconds": 0.134,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_stale_marks_are_pruned_on_reload",
+          "seconds": 0.211,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_p_key_toggles_a_reminder_enabled_state",
+          "seconds": 0.209,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_p_key_on_a_locked_reminder_refuses_honestly",
+          "seconds": 0.134,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_key_bound_edit_refuses_on_a_transferring_row",
+          "seconds": 0.138,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_update_reminder_for_server_row_records_mutation_when_offline",
+          "seconds": 4.293,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_delete_reminder_for_server_row_records_tombstone_when_offline",
+          "seconds": 3.651,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_update_reminder_refused_while_transferring",
+          "seconds": 1.994,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_delete_reminder_refused_while_transferring",
+          "seconds": 2.353,
+          "outcome": "passed"
+        }
+      ]
+    },
+    {
+      "path": "task-2/red.xml",
+      "sha256": "baab2881751a3e3cb7cf72f847562935d9e304ec85ba5807b0d661d822fbdd74",
+      "summary": {
+        "tests": "3",
+        "failures": "3",
+        "errors": "0",
+        "skipped": "0",
+        "time": "93.540"
+      },
+      "cases": [
+        {
+          "name": "test_import_preserves_live_name_edit[txt-whitespace]",
+          "seconds": 30.423,
+          "outcome": "failure",
+          "failure_excerpt": [
+            "--- child failure: AssertionError: assert 'Stored name' == '   '",
+            "assert stored[\"name\"] == \"Stored name\""
+          ]
+        },
+        {
+          "name": "test_import_preserves_live_name_edit[csv-markup]",
+          "seconds": 33.812,
+          "outcome": "failure",
+          "failure_excerpt": [
+            "--- child failure: AssertionError: assert 'Stored name' == '  [/][name]  '",
+            "assert stored[\"name\"] == \"Stored name\""
+          ]
+        },
+        {
+          "name": "test_import_preserves_live_name_edit[json-collision]",
+          "seconds": 23.334,
+          "outcome": "failure",
+          "failure_excerpt": [
+            "--- child failure: AssertionError: assert 'Stored name' == ' taken '",
+            "assert stored[\"name\"] == \"Stored name\""
+          ]
+        }
+      ]
+    },
+    {
+      "path": "task-2/green.xml",
+      "sha256": "6a75e97b49b6d0355fb9870f69c913f237ace03141b90cf1bcb630599aee7106",
+      "summary": {
+        "tests": "6",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0",
+        "time": "100.727"
+      },
+      "cases": [
+        {
+          "name": "test_import_preserves_live_name_edit[txt-whitespace]",
+          "seconds": 12.614,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_import_preserves_live_name_edit[csv-markup]",
+          "seconds": 13.882,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_import_preserves_live_name_edit[json-collision]",
+          "seconds": 12.776,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_cancelled_and_failed_imports_keep_name_edit",
+          "seconds": 16.706,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_import_then_explicit_rename_validates_and_updates_catalog",
+          "seconds": 20.113,
+          "outcome": "failure",
+          "failure_excerpt": [
+            "--- child failure: AssertionError: assert 'warning' == 'error'",
+            "assert editor.query_one(\"#evals-snippet-empty\")"
+          ]
+        },
+        {
+          "name": "test_ordinary_import_keeps_name_and_table_scroll_owner",
+          "seconds": 22.388,
+          "outcome": "passed"
+        }
+      ]
+    },
+    {
+      "path": "task-2/final.xml",
+      "sha256": "34fe333912e2e6fadcc54b0d379a777980f893d97cfb9a4e26d6f73c761978ae",
+      "summary": {
+        "tests": "6",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "108.714"
+      },
+      "cases": [
+        {
+          "name": "test_import_preserves_live_name_edit[txt-whitespace]",
+          "seconds": 25.197,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_import_preserves_live_name_edit[csv-markup]",
+          "seconds": 15.539,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_import_preserves_live_name_edit[json-collision]",
+          "seconds": 12.922,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_cancelled_and_failed_imports_keep_name_edit",
+          "seconds": 17.834,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_import_then_explicit_rename_validates_and_updates_catalog",
+          "seconds": 18.203,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ordinary_import_keeps_name_and_table_scroll_owner",
+          "seconds": 15.876,
+          "outcome": "passed"
+        }
+      ]
+    },
+    {
+      "path": "task-2/control.xml",
+      "sha256": "1d5a5bbe8da70aee6d9add207eafa04bf3d33e07b001a8e95d7895a9dbe2ebf2",
+      "summary": {
+        "tests": "6",
+        "failures": "0",
+        "errors": "6",
+        "skipped": "0",
+        "time": "11.847"
+      },
+      "cases": [
+        {
+          "name": "test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinned",
+          "seconds": 4.092,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_empty_dataset_shows_empty_state_and_import_control",
+          "seconds": 0.174,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_missing_dataset_still_shows_the_not_found_message",
+          "seconds": 0.205,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_snippet_editor_heading_renders_a_markup_hazard_dataset_name_literally",
+          "seconds": 0.154,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_json_import_of_the_same_export_twice_does_not_crash",
+          "seconds": 0.266,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        },
+        {
+          "name": "test_import_snippets_into_dataset_dedups_colliding_ids",
+          "seconds": 0.323,
+          "outcome": "error",
+          "failure_excerpt": [
+            "failed on setup with \"tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\""
+          ]
+        }
+      ]
+    },
+    {
+      "path": "task-2/governance.xml",
+      "sha256": "0d45a1dc461c7f5b08474d538f980ebb54ca01187cac6f4a5355b42d42b082e1",
+      "summary": {
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "108.263"
+      },
+      "cases": [
+        {
+          "name": "test_all_referenced_ds_tokens_are_defined",
+          "seconds": 11.766,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_python_style_ratchet",
+          "seconds": 95.266,
+          "outcome": "passed"
+        }
+      ]
+    },
+    {
+      "path": "controller-ci/results.xml",
+      "sha256": "c3eea9a7cb4ad205dd383aa862cf440ea0d1654c37823f922b7fcb2e8196b813",
+      "summary": {
+        "tests": "121",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "62.615"
+      },
+      "cases": [
+        {
+          "name": "test_a_valid_census_passes",
+          "seconds": 1.664,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_comments_and_blank_lines_are_not_counted_as_entries",
+          "seconds": 0.028,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_duplicate_entry_is_rejected",
+          "seconds": 0.031,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_path_outside_tests_ui_is_rejected",
+          "seconds": 0.027,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_censused_file_that_no_longer_exists_is_rejected",
+          "seconds": 0.035,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_shrunk_census_is_rejected",
+          "seconds": 0.039,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_missing_census_file_is_rejected",
+          "seconds": 0.015,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_the_committed_census_is_currently_valid",
+          "seconds": 8.722,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_node_id_entries_for_defined_tests_pass",
+          "seconds": 0.051,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_node_id_naming_a_renamed_test_is_rejected",
+          "seconds": 0.029,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_node_id_naming_a_method_on_the_wrong_class_is_rejected",
+          "seconds": 0.028,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_node_id_in_a_missing_file_is_rejected",
+          "seconds": 0.045,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_node_id_beside_its_whole_file_is_rejected",
+          "seconds": 0.035,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_an_entry_with_whitespace_is_rejected",
+          "seconds": 0.036,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_stacked[escape-enter]]",
+          "seconds": 0.028,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_stacked[not-now-send-button]]",
+          "seconds": 0.015,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_scalars[1]]",
+          "seconds": 0.016,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_scalars[True]]",
+          "seconds": 0.017,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_scalars[None]]",
+          "seconds": 0.019,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_scalars[2.5]]",
+          "seconds": 0.019,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_tuple_values[enter-size0]]",
+          "seconds": 0.025,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_named_ids[wide]]",
+          "seconds": 0.022,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_dict_keys[image-only]]",
+          "seconds": 0.019,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_param_ids[one]]",
+          "seconds": 0.018,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_param_ids[2]]",
+          "seconds": 0.139,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_callable_ids]",
+          "seconds": 0.012,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_resolvable_parametrize_ids_pass[test_computed]",
+          "seconds": 0.013,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_unresolvable_or_renamed_parametrize_ids_are_refused[test_stacked[enter-escape]-no parametrize id]",
+          "seconds": 0.019,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_unresolvable_or_renamed_parametrize_ids_are_refused[test_named_ids[narrow-ish]-no parametrize id]",
+          "seconds": 0.019,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_unresolvable_or_renamed_parametrize_ids_are_refused[test_dict_keys[system-prompt-renamed]-no parametrize id]",
+          "seconds": 0.018,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_unresolvable_or_renamed_parametrize_ids_are_refused[test_callable_ids[80x24]-cannot be resolved statically]",
+          "seconds": 0.015,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_unresolvable_or_renamed_parametrize_ids_are_refused[test_computed[save-markdown]-cannot be resolved statically]",
+          "seconds": 0.01,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_unresolvable_or_renamed_parametrize_ids_are_refused[test_missing[x]-does not define]",
+          "seconds": 0.01,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_renamed_parametrize_id_fails_the_census",
+          "seconds": 0.025,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_disjoint_pytest_targets_have_no_overlap",
+          "seconds": 0.008,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_overlapping_pytest_targets_are_named[targets0]",
+          "seconds": 0.008,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_overlapping_pytest_targets_are_named[targets1]",
+          "seconds": 0.008,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_overlapping_pytest_targets_are_named[targets2]",
+          "seconds": 0.007,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_overlapping_pytest_targets_are_named[targets3]",
+          "seconds": 0.007,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_overlapping_pytest_targets_are_named[targets4]",
+          "seconds": 0.008,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_precedence[p]]",
+          "seconds": 0.017,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_precedence[L2]]",
+          "seconds": 0.011,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_bytes[ab]]",
+          "seconds": 0.012,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_bytes[\\\\xc3\\\\xa9]]",
+          "seconds": 0.011,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_bytes[a\\\\nb]]",
+          "seconds": 0.01,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_complex[1j]]",
+          "seconds": 0.01,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_complex[(2+3j)]]",
+          "seconds": 0.01,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_unicode_values[\\\\xe9]]",
+          "seconds": 0.011,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_unicode_values[tab\\\\there]]",
+          "seconds": 0.013,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_unicode_list_ids[\\\\xfc]]",
+          "seconds": 0.098,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_unicode_list_ids[plain]]",
+          "seconds": 0.011,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_unicode_param_id[\\\\xf1]]",
+          "seconds": 0.013,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_duplicates[a0]]",
+          "seconds": 0.015,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_duplicates[a1]]",
+          "seconds": 0.014,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_duplicates[x1_0]]",
+          "seconds": 0.019,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_match_what_pytest_generates[test_duplicates[x1_1]]",
+          "seconds": 0.018,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_pytest_never_generates_are_refused[test_precedence[L1]-no parametrize id]",
+          "seconds": 0.022,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_pytest_never_generates_are_refused[test_complex[c0]-no parametrize id]",
+          "seconds": 0.021,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_pytest_never_generates_are_refused[test_unicode_values[\\xe9]-no parametrize id]",
+          "seconds": 0.015,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_pytest_never_generates_are_refused[test_duplicates[a]-no parametrize id]",
+          "seconds": 0.011,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_pytest_never_generates_are_refused[test_uses_param_fixture[vanilla-1]-parametrized fixture]",
+          "seconds": 0.014,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ids_pytest_never_generates_are_refused[test_uses_param_fixture[1]-parametrized fixture]",
+          "seconds": 0.014,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_target_inside_another_listed_target_is_named[targets0]",
+          "seconds": 0.009,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_target_inside_another_listed_target_is_named[targets1]",
+          "seconds": 0.01,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_target_inside_another_listed_target_is_named[targets2]",
+          "seconds": 0.009,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_prefix_without_a_node_boundary_is_not_an_overlap",
+          "seconds": 0.011,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_dead_defines_test_is_gone",
+          "seconds": 0.015,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_split_model_defaults_keeps_every_test_function_gated_once",
+          "seconds": 0.132,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[.github/workflows/derived-artifacts.yml-TASK-35834 runs (\\\\w+) shards-shards]",
+          "seconds": 0.111,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[scripts/ui_pr_gate_census.txt-round-robin over (\\\\w+) shards-shards]",
+          "seconds": 0.086,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[scripts/ui_pr_gate_census.txt-TASK-35834 runs (\\\\w+):-shards]",
+          "seconds": 0.09,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[scripts/check_ui_pr_gate_census.py-TASK-35834: lane now runs (\\\\w+)\\\\.-shards]",
+          "seconds": 0.08,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[scripts/ui_lane_shard_replay.py---shards (\\\\d+) run1 run2-shards]",
+          "seconds": 0.088,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[scripts/ui_lane_shard_replay.py---shards (\\\\d+) --tail-shards]",
+          "seconds": 0.064,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md-TASK-35834: (\\\\w+) UI\\\\s+shards-shards]",
+          "seconds": 0.15,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md-current total is (\\\\w+) concurrent test runners per PR-runners]",
+          "seconds": 0.067,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md-TASK-34353; (\\\\w+) since\\\\s+TASK-35834-shards]",
+          "seconds": 0.059,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md-now runs (\\\\w+) test runners at once-runners]",
+          "seconds": 0.079,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_a_stated_shard_count_is_the_matrix_size[backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md-(\\\\w+) with perf-guard-runners+perf]",
+          "seconds": 0.092,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_workflow_has_one_fast_prerequisite_and_one_required_aggregator",
+          "seconds": 0.065,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_required_aggregator_fails_when_either_lane_fails",
+          "seconds": 0.076,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards",
+          "seconds": 0.087,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[1]",
+          "seconds": 0.231,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[2]",
+          "seconds": 0.407,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[3]",
+          "seconds": 0.496,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[4]",
+          "seconds": 0.97,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[5]",
+          "seconds": 1.304,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[6]",
+          "seconds": 1.532,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[7]",
+          "seconds": 2.045,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[8]",
+          "seconds": 2.153,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[9]",
+          "seconds": 2.626,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[10]",
+          "seconds": 2.3,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[11]",
+          "seconds": 2.922,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[12]",
+          "seconds": 3.265,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shards_cover_the_census_once_each_in_census_order[13]",
+          "seconds": 3.032,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_shard_refuses_an_index_outside_the_split",
+          "seconds": 0.013,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_ui_gate_census_is_non_empty_and_every_entry_exists",
+          "seconds": 0.063,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_triggers_are_not_path_filtered",
+          "seconds": 0.087,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_every_checker_runs",
+          "seconds": 0.081,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_local_preflight_runs_the_same_checker_inventory_in_order",
+          "seconds": 0.251,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_checker_steps_survive_an_earlier_failure",
+          "seconds": 0.072,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_job_installs_nothing",
+          "seconds": 0.095,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_derived_artifact_checkers_use_mermaid_builder_python_pin",
+          "seconds": 0.077,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_required_check_name_is_stable",
+          "seconds": 0.083,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_dispatch_inputs_name_the_pr_or_the_run_to_wait_for",
+          "seconds": 0.085,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_queue_tick_runs_after_ci_and_is_never_required",
+          "seconds": 0.187,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_branch_dispatch_without_pr_runs_the_gate",
+          "seconds": 0.09,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_every_pr_lane_pytest_step_has_disjoint_targets",
+          "seconds": 0.618,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_every_node_id_target_in_a_pr_lane_step_resolves",
+          "seconds": 14.41,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr_step_contract_rejects_location_and_target_drift[wrong-job]",
+          "seconds": 0.1,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr_step_contract_rejects_location_and_target_drift[moved-back]",
+          "seconds": 0.083,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr_step_contract_rejects_location_and_target_drift[missing]",
+          "seconds": 0.076,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr_step_contract_rejects_location_and_target_drift[duplicate]",
+          "seconds": 0.067,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr_step_contract_rejects_location_and_target_drift[order]",
+          "seconds": 0.069,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr_step_contract_rejects_location_and_target_drift[overlap]",
+          "seconds": 0.085,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr_step_contract_rejects_location_and_target_drift[unresolved]",
+          "seconds": 8.2,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr3023_critical_targets_run_in_required_admission_step",
+          "seconds": 0.343,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr3023_membership_rejects_actual_workflow_drift[missing]",
+          "seconds": 0.086,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr3023_membership_rejects_actual_workflow_drift[wrong-step]",
+          "seconds": 0.101,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr3023_membership_rejects_actual_workflow_drift[duplicate]",
+          "seconds": 0.086,
+          "outcome": "passed"
+        },
+        {
+          "name": "test_pr3023_membership_rejects_actual_workflow_drift[order]",
+          "seconds": 0.074,
+          "outcome": "passed"
+        }
+      ]
+    }
+  ],
+  "controller": {
+    "worker_contract": {
+      "result": "PASS",
+      "new_sync_targets": 0,
+      "new_post_await_lookups": 0,
+      "new_nonworker_waits": 0
+    },
+    "markup_interpolation": {
+      "result": "PASS",
+      "pinned": 541
+    },
+    "census": {
+      "old": 430,
+      "new": 434,
+      "prefix_identical": true,
+      "new_entries": [
+        {
+          "entry": "Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_same_and_cross_verb_overlap[toggle-toggle]",
+          "index": 430,
+          "shard_label": 2
+        },
+        {
+          "entry": "Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_same_and_cross_verb_overlap[delete-delete]",
+          "index": 431,
+          "shard_label": 3
+        },
+        {
+          "entry": "Tests/UI/test_evals_snippet_import_drafts.py::test_import_preserves_live_name_edit",
+          "index": 432,
+          "shard_label": 4
+        },
+        {
+          "entry": "Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_mark_and_clear_gestures",
+          "index": 433,
+          "shard_label": 5
+        }
+      ]
+    }
+  },
+  "reviews": {
+    "task36036": "spec compliant; quality Approved; no Critical/Important",
+    "task36037": "spec Approved; quality Approved; no Critical/Important"
+  },
+  "limits": [
+    "14 existing UI controls stopped before their bodies in raw_source_selection_changed fixture admission; not counted as passing",
+    "No full suite, external HTTP/server atomicity or physical cancellation claim",
+    "No production native terminal or OS file-picker journey",
+    "Inherited pytest-asyncio/Pydantic warnings and existing Schedules/checker full-file formatter debt retained"
+  ],
+  "ci_followup": {
+    "initial_head": "66bc8d6bf235d83d29d78ac8f01532beb7cc5895",
+    "run": 39660610647,
+    "console_flake": {
+      "documented_owner": "TASK-35645; TASK-34789 mapped-learning side thread",
+      "affected_files_unchanged_against_current_dev": true,
+      "exact_native_parameter": "passed in44.85s",
+      "UI_shard7_rerun": "success",
+      "not_claimed_fixed": true
+    },
+    "diagnostic_inventory": {
+      "only_changed_owner": "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
+      "calls": [
+        32,
+        33
+      ],
+      "digest": [
+        "db4904d58b553c5b3111",
+        "b1e6c5cad5edc5c931f6"
+      ],
+      "task494_total": [
+        7716,
+        7717
+      ],
+      "sinks_unchanged": true,
+      "reviewed_arguments": [
+        "task.id becomes captured task_id in the two existing errors",
+        "new submission failure uses fixed schedules-bulk-toggle/delete group"
+      ],
+      "verification": {
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "seconds": 118.99,
+        "receipt_sha256": "2153de2343cf883d1f43cdaeee94b5a896c2c7cf52c9831ac0c4c58287eca290"
+      }
+    },
+    "application_test_census_workflow_sources_unchanged": true
+  }
+}
