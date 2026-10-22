@@ -26,7 +26,7 @@ import uuid
 import zipfile
 from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Dict, List, Mapping, Optional, Tuple
+from typing import Any, BinaryIO, Callable, Dict, List, Mapping, Optional, Tuple
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
@@ -1757,6 +1757,34 @@ class ChatbookImporter:
                                 msg,
                                 stage=True,
                             )
+                        # TASK-34000.19: the conversation JSON's ``keywords``
+                        # is the record; the manifest item's ``tags`` is the
+                        # fallback. Linked after the commit above, so a
+                        # refused keyword can never roll the conversation back.
+                        conversation_keywords = conv_data.get("keywords")
+                        if (
+                            not isinstance(conversation_keywords, list)
+                            or not conversation_keywords
+                        ):
+                            conv_item = next(
+                                (
+                                    item
+                                    for item in manifest.content_items
+                                    if item.id == conv_id
+                                    and item.type == ContentType.CONVERSATION
+                                ),
+                                None,
+                            )
+                            conversation_keywords = (
+                                list(conv_item.tags or []) if conv_item else []
+                            )
+                        self._restore_chachanotes_keywords(
+                            db,
+                            db.link_conversation_to_keyword,
+                            str(new_conv_id),
+                            conversation_keywords,
+                            content_type=ContentType.CONVERSATION,
+                        )
                         status.record_success(ContentType.CONVERSATION)
                         logger.debug(
                             f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}"
@@ -2662,16 +2690,22 @@ class ChatbookImporter:
                     content = f.read()
 
                 # Extract frontmatter if present
+                frontmatter_tags: list[str] = []
                 if content.startswith("---"):
                     parts = content.split("---", 2)
                     if len(parts) >= 3:
                         # Parse frontmatter
-                        parts[1].strip()
+                        frontmatter_tags = self._frontmatter_tags(parts[1])
                         note_content = parts[2].strip()
                     else:
                         note_content = content
                 else:
                     note_content = content
+                # TASK-34000.19: the manifest item's ``tags`` is the record
+                # (ADR-057's canonical membership); the frontmatter ``tags:``
+                # line is the fallback for a hand-edited bundle whose
+                # manifest gives none.
+                note_keywords = list(note_item.tags or []) or frontmatter_tags
 
                 # Check for existing note with same title
                 note_title = note_item.title
@@ -2695,11 +2729,19 @@ class ChatbookImporter:
                     elif resolution == ConflictResolution.RENAME:
                         note_title = self._generate_unique_note_title(note_title, db)
 
-                # Create note
-                # Note: keywords/tags are not stored in the notes table
+                # Create note. Keywords are not a notes-table column: they
+                # are re-linked through the ordinary note keyword write path
+                # once the row exists (TASK-34000.19).
                 new_note_id = db.add_note(title=note_title, content=note_content)
 
                 if new_note_id:
+                    self._restore_chachanotes_keywords(
+                        db,
+                        db.link_note_to_keyword,
+                        str(new_note_id),
+                        note_keywords,
+                        content_type=ContentType.NOTE,
+                    )
                     status.record_success(ContentType.NOTE)
                     logger.debug(f"Imported note: {note_title}")
                 else:
@@ -2712,6 +2754,107 @@ class ChatbookImporter:
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_notes: Error importing note {}",
                     note_id,
+                )
+
+    @staticmethod
+    def _frontmatter_tags(frontmatter: str) -> list[str]:
+        """Return the comma-separated ``tags:`` line of a note's frontmatter.
+
+        The creator writes ``tags: a, b`` only when the note has keywords;
+        a bundle without the line yields ``[]``.
+        """
+        for line in frontmatter.splitlines():
+            if line.startswith("tags:"):
+                return [
+                    tag.strip()
+                    for tag in line[len("tags:") :].split(",")
+                    if tag.strip()
+                ]
+        return []
+
+    @staticmethod
+    def _ensure_chachanotes_keyword(db: CharactersRAGDB, text: str) -> Optional[int]:
+        """Return the id of the active keyword ``text``, creating it if needed.
+
+        Get-or-create against the ChaChaNotes ``keywords`` table, which has no
+        such method of its own. ``get_keyword_by_text`` is case-insensitive
+        and active-only (the table's ``COLLATE NOCASE`` uniqueness rule), so a
+        destination that already holds ``meeting`` is linked, never
+        duplicated as ``Meeting``. ``add_keyword`` undeletes a soft-deleted
+        row (its documented behaviour) but raises ``ConflictError`` for an
+        active one -- the shape of two importers racing -- so a conflict is
+        answered with one more lookup.
+
+        Args:
+            db: The destination ChaChaNotes database.
+            text: The keyword as the bundle carries it.
+
+        Returns:
+            The keyword's integer id, or ``None`` for a blank (nothing to
+            link).
+        """
+        cleaned = text.strip() if isinstance(text, str) else ""
+        if not cleaned:
+            return None
+        row = db.get_keyword_by_text(cleaned)
+        if row:
+            return int(row["id"])
+        try:
+            keyword_id = db.add_keyword(cleaned)
+        except ConflictError:
+            row = db.get_keyword_by_text(cleaned)
+            return int(row["id"]) if row else None
+        return int(keyword_id) if keyword_id is not None else None
+
+    @staticmethod
+    def _restore_chachanotes_keywords(
+        db: CharactersRAGDB,
+        link: Callable[[str, int], bool],
+        item_id: str,
+        keywords: Any,
+        *,
+        content_type: ContentType,
+    ) -> None:
+        """Re-link an imported note's or conversation's keyword membership.
+
+        ADR-057's rule, applied to notes and conversations (TASK-34000.19):
+        membership comes back through the ordinary keyword write path
+        (``link_note_to_keyword`` / ``link_conversation_to_keyword``, both
+        ``INSERT OR IGNORE``). Blanks are skipped and casefold duplicates
+        linked once. The item's content is the thing being restored, so a
+        keyword that cannot be created or linked is logged with the item id
+        and skipped; it never fails the item. The log names the exception
+        class only -- never the keyword (ADR-057's diagnostics boundary).
+
+        Args:
+            db: The destination ChaChaNotes database.
+            link: The DB's own linker for this content type.
+            item_id: The NEW local id the destination assigned.
+            keywords: The bundle's list of keyword strings; anything that is
+                not a list is treated as no keywords.
+            content_type: Named in the diagnostic.
+        """
+        if not isinstance(keywords, (list, tuple)):
+            return
+        seen: set[str] = set()
+        for raw in keywords:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            cleaned = raw.strip()
+            if cleaned.casefold() in seen:
+                continue
+            seen.add(cleaned.casefold())
+            try:
+                keyword_id = ChatbookImporter._ensure_chachanotes_keyword(db, cleaned)
+                if keyword_id is not None:
+                    link(item_id, keyword_id)
+            except Exception as exc:
+                logger.warning(
+                    "ChatbookImporter: could not restore a keyword on imported "
+                    "{} {} ({})",
+                    content_type.value,
+                    item_id,
+                    type(exc).__name__,
                 )
 
     @content_call(_content_sources)

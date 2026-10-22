@@ -45,7 +45,7 @@ from ..Chat.thinking_blocks import (
 )
 from ..config import load_console_library_migration_seed
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..DB.Client_Media_DB_v2 import MediaDatabase, fetch_keywords_for_media_batch
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_record
 from ..STT.persistence import load_transcription_provenance_document
@@ -705,6 +705,15 @@ class ChatbookCreator:
         logger.info(
             f"ChatbookCreator._collect_conversations: Created conversations directory at {conv_dir}"
         )
+        # TASK-34000.19 (L-04): one batch read of the active keyword
+        # membership for the whole selection -- ADR-057's shape for Prompts.
+        # It rides in the conversation's own JSON (``keywords``) and in the
+        # manifest item's ``tags``; a conversation with none carries ``[]``
+        # in both. The reader pre-seeds every requested id with ``[]`` and
+        # returns keyword ROW dicts, so the text is ``row["keyword"]``.
+        keywords_by_conversation = db.get_keywords_for_conversations(
+            [str(conv_id) for conv_id in conversation_ids]
+        )
 
         total = len(conversation_ids)
         for idx, conv_id in enumerate(conversation_ids):
@@ -802,6 +811,10 @@ class ChatbookCreator:
                     if active_leaf is not None
                     else None,
                     "messages": exported_messages,
+                    "keywords": [
+                        row["keyword"]
+                        for row in keywords_by_conversation.get(str(conv_id), [])
+                    ],
                 }
                 conv_data["selected_path_message_ids"] = self._selected_path_ids(
                     exported_messages,
@@ -845,6 +858,7 @@ class ChatbookCreator:
                         title=title,
                         created_at=datetime.fromisoformat(conv_data["created_at"]),
                         updated_at=datetime.fromisoformat(conv_data["updated_at"]),
+                        tags=list(conv_data["keywords"]),
                         metadata=citation_metadata,
                         file_path=f"content/conversations/{conv_file.name}",
                     )
@@ -1423,6 +1437,15 @@ class ChatbookCreator:
         )
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
+        # TASK-34000.19 (L-04): the notes table has no keyword column, so the
+        # old ``note.get("keywords")`` was always empty and every note shipped
+        # ``"tags": []``. One batch read of the active membership instead
+        # (ADR-057's shape for Prompts); the frontmatter ``tags:`` line and
+        # the manifest item's ``tags`` both carry it. Ids with no keywords are
+        # absent from the result, so a note with none carries ``[]``.
+        keywords_by_note = db.get_keywords_for_notes_batch(
+            [str(note_id) for note_id in note_ids]
+        )
 
         total = len(note_ids)
         for idx, note_id in enumerate(note_ids):
@@ -1450,9 +1473,7 @@ class ChatbookCreator:
                     "content": note["content"],
                     "created_at": created_at,
                     "updated_at": last_modified,
-                    "tags": note.get("keywords", "").split(",")
-                    if note.get("keywords")
-                    else [],
+                    "tags": list(keywords_by_note.get(str(note["id"]), [])),
                 }
 
                 # Write markdown file
@@ -1583,6 +1604,21 @@ class ChatbookCreator:
         metadata_dir = media_dir / "metadata"
         metadata_dir.mkdir(exist_ok=True)
 
+        # TASK-34000.19 (L-04): the Media row has no ``media_keywords`` column
+        # (keywords live in Keywords/MediaKeywords), so reading that key off
+        # the row wrote ``null`` into every metadata JSON. One batch read of
+        # the active membership (the MODULE function: ordered, and it filters
+        # deleted media as well as deleted keywords); the importer already
+        # accepts a list here. An id that is not an integer is left to the
+        # per-item loop below, which reports it as not found.
+        requested_media_ids: list[int] = []
+        for media_id in media_ids:
+            try:
+                requested_media_ids.append(int(media_id))
+            except (TypeError, ValueError):
+                continue
+        keywords_by_media = fetch_keywords_for_media_batch(db, requested_media_ids)
+
         total = len(media_ids)
         for idx, media_id in enumerate(media_ids):
             self._check_cancel()
@@ -1618,7 +1654,9 @@ class ChatbookCreator:
                     "updated_at": media_item.get("last_modified"),
                     "metadata": {
                         "ingestion_date": media_item.get("ingestion_date"),
-                        "media_keywords": media_item.get("media_keywords"),
+                        "media_keywords": list(
+                            keywords_by_media.get(int(media_item["id"]), [])
+                        ),
                         "prompt": media_item.get("prompt"),
                         "summary": media_item.get("summary"),
                         "transcription_model": media_item.get("transcription_model"),
@@ -1669,6 +1707,7 @@ class ChatbookCreator:
                             media_item.get("last_modified")
                         )
                         or datetime.now(),
+                        tags=list(media_data["metadata"]["media_keywords"]),
                         metadata={
                             "media_type": media_item.get("type"),
                             "quality": quality,

@@ -516,7 +516,10 @@ class ContentItem:
             updated_at=datetime.fromisoformat(data["updated_at"])
             if data.get("updated_at")
             else None,
-            tags=data.get("tags", []),
+            # TASK-34000.19: an explicit ``"tags": null`` (a hand-edited or
+            # foreign-writer bundle) reads as no tags, never ``None`` -- the
+            # importer iterates this field to restore keyword membership.
+            tags=list(data.get("tags") or []),
             metadata=data.get("metadata", {}),
             file_path=data.get("file_path"),
         )

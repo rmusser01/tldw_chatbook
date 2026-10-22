@@ -164,13 +164,16 @@ only loses content when you ask it to (task-32353).
 
 Directly above the submit button, two quiet lines say what pressing it
 will write, before you press it (task-32353): a **bundle line** —
-"Bundle: 2 media items · text only · about 4 KB before compression" —
+"Bundle: 2 media items · text + keywords only · about 4 KB before compression" —
 naming how many items are going in, what the archive holds for each of
 them, and how much content that is (the written `.zip` is smaller; the
-receipt after the run reports that file's own size). "text only" is not a
-summary of the quality chooser: whatever that control is set to, a bundle
-holds each item's stored text plus its details, never the original media
-file — the Library does not keep a path to one. The line is absent when
+receipt after the run reports that file's own size). "text + keywords only"
+is not a summary of the quality chooser: whatever that control is set to, a
+bundle holds each item's stored text, its details and its keywords, never
+the original media file — the Library does not keep a path to one. Keywords
+on media, notes and conversations travel in the bundle and come back on
+import (the line reads "text + keywords" for scopes without media). The
+line is absent when
 the scope is empty, where "Nothing to export in this scope." is the only
 thing worth saying. And a
 **contents list** naming the items themselves, up to 20 of them, then
@@ -344,7 +347,7 @@ destination, or leaving the Import canvas cancels pending consent.
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
 | "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
-| "Bundle: N media items · text only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text and details — never the original media file, whatever the quality chooser says), and how much content that is. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
+| "Bundle: N media items · text + keywords only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text, details and keywords — never the original media file, whatever the quality chooser says; "text + keywords" for scopes without media), and how much content that is. Keywords on media, notes and conversations travel in the bundle and come back on import. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
 | The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). A destination that cannot be written is refused right there, with the reason on the line under the button and nothing accepted — "Can't save there: The folder \<path\> does not exist.", "… \<name\> is a file, not a folder.", "… That name is a folder." |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |

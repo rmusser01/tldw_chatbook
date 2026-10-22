@@ -190,6 +190,47 @@ def test_non_media_scopes_hide_media_fields(kind):
     assert state.show_media_fields is False
 
 
+# --- Bundle payload phrase (TASK-34000.19 AC#3) ------------------------------
+
+
+def test_a_media_scope_bundle_line_says_the_text_and_keywords_travel():
+    """Media-bearing scopes keep the "only" (never the original media file,
+    whatever the quality chooser says) and now name the keywords, which
+    the bundle carries since TASK-34000.19 (it used to say "text only")."""
+    state = build_library_export_form_state(
+        scope=ExportScope(kind="media"),
+        counts={"media": 2},
+        name="x",
+        description="",
+        media_quality=DEFAULT_MEDIA_QUALITY,
+        destination="",
+        approx_bytes=4096,
+        item_count=2,
+    )
+    assert state.consequence_line == (
+        "Bundle: 2 media items · text + keywords only · about 4 KB before compression"
+    )
+
+
+@pytest.mark.parametrize("kind", ["notes", "conversations", "everything"])
+def test_every_other_scope_bundle_line_names_the_keywords_too(kind):
+    """Notes and conversations carry their keywords as well, so the payload
+    phrase appears for every scope kind -- it used to be media-only."""
+    state = build_library_export_form_state(
+        scope=ExportScope(kind=kind),
+        counts={"media": 1, "conversations": 1, "notes": 1, "prompts": 0},
+        name="x",
+        description="",
+        media_quality=DEFAULT_MEDIA_QUALITY,
+        destination="",
+        approx_bytes=None,
+        item_count=3,
+    )
+    assert state.consequence_line == (
+        "Bundle: 3 items · text + keywords · size known once it runs"
+    )
+
+
 # --- Overwrite confirm line ---------------------------------------------------
 
 
