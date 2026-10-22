@@ -771,27 +771,47 @@ class PersonasCharacterEditorWidget(Container):
             self._sync_actor_pack_mode()
 
     def mark_saved(
-        self, record: Dict[str, Any], *, submitted_snapshot: tuple | None = None
+        self,
+        record: Dict[str, Any],
+        *,
+        submitted_snapshot: tuple | None = None,
+        submitted_attachment_snapshot: tuple | None = None,
     ) -> bool:
-        """Adopt the saved record and acknowledge only the submitted raw form.
+        """Adopt the saved record and acknowledge only the submitted drafts.
 
         Args:
             record: Persisted character, including its actual id and version.
             submitted_snapshot: Raw form at submission. Omit for synchronous
                 callers acknowledging the current form.
+            submitted_attachment_snapshot: Avatar values captured for this Save.
+                Omit for synchronous callers acknowledging the current attachment.
 
         Returns:
-            Whether newer form edits remain unsaved.
+            Whether newer form edits or attachments remain unsaved.
         """
+        live_attachment = self._attachment_snapshot()
         self._character_data = dict(record or {})
+        self._loaded_attachment_snapshot = self._attachment_snapshot()
+        if (
+            submitted_attachment_snapshot is not None
+            and live_attachment != submitted_attachment_snapshot
+        ):
+            # Adopt persisted identity/version without replacing a later upload.
+            for key, value in zip(("image", "avatar"), live_attachment, strict=True):
+                if value is None:
+                    self._character_data.pop(key, None)
+                else:
+                    self._character_data[key] = value
         if submitted_snapshot is None:
             self._greetings = [
                 str(g) for g in (self._character_data.get("alternate_greetings") or [])
             ]
             submitted_snapshot = self._form_snapshot()
         self._loaded_snapshot = submitted_snapshot
-        self._loaded_attachment_snapshot = self._attachment_snapshot()
-        self._dirty_posted = self._form_snapshot() != self._loaded_snapshot
+        self._dirty_posted = (
+            self._form_snapshot() != self._loaded_snapshot
+            or self.has_unsaved_attachment()
+        )
         self.query_one("#personas-char-editor-validation", Static).update("")
         # A create-session's first Save assigns the brand-new character its
         # id here - the expression slots must flip from disabled to enabled
