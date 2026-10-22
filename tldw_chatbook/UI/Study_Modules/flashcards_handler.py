@@ -762,7 +762,8 @@ class StudyFlashcardsController:
             return
 
         name_input = self.window.query_one("#new-deck-name-input", Input)
-        name = str(name_input.value or "").strip()
+        submitted_name = name_input.value
+        name = str(submitted_name or "").strip()
         if not name:
             self._notify("Deck name is required.")
             return
@@ -782,7 +783,8 @@ class StudyFlashcardsController:
             self._notify("Failed to create deck.", severity="error")
             return
 
-        name_input.value = ""
+        if name_input.value == submitted_name:
+            name_input.value = ""
         created_deck_id = str(
             created.get("backing_id") or created.get("record_id") or Select.BLANK
         )
@@ -811,8 +813,11 @@ class StudyFlashcardsController:
         front_widget = self.window.query_one("#card-front", TextArea)
         back_widget = self.window.query_one("#card-back", TextArea)
         tags_widget = self.window.query_one("#card-tags", Input)
-        front = str(front_widget.text or "").strip()
-        back = str(back_widget.text or "").strip()
+        submitted_front = front_widget.text
+        submitted_back = back_widget.text
+        submitted_tags = tags_widget.value
+        front = str(submitted_front or "").strip()
+        back = str(submitted_back or "").strip()
         if not front:
             self._notify("Card front is required.")
             return
@@ -820,7 +825,7 @@ class StudyFlashcardsController:
             self._notify("Card back is required.")
             return
 
-        tags = self._parse_tags(tags_widget.value)
+        tags = self._parse_tags(submitted_tags)
         try:
             # TASK-34000.6: same contract as `refresh_cards` -- the card is
             # scoped by its deck; `StudyScopeService.create_flashcard` accepts
@@ -839,9 +844,12 @@ class StudyFlashcardsController:
             self._notify("Failed to create flashcard.", severity="error")
             return
 
-        front_widget.text = ""
-        back_widget.text = ""
-        tags_widget.value = ""
+        if front_widget.text == submitted_front:
+            front_widget.text = ""
+        if back_widget.text == submitted_back:
+            back_widget.text = ""
+        if tags_widget.value == submitted_tags:
+            tags_widget.value = ""
         await self.refresh_cards()
         self._set_review_status("Flashcard created.")
 
