@@ -149,8 +149,9 @@ async def test_preparing_authored_input_returns_to_natural_full(
         assert case.probe.live_at_entry and not case.probe.release_timed_out
 
 
+@pytest.mark.parametrize("queued_full", [False, True], ids=["natural", "queued-full"])
 async def test_preparing_changed_source_after_original_tab_await_replays_full(
-    monkeypatch, record_property
+    monkeypatch, record_property, queued_full
 ):
     """A source change while the real surface lock is held cannot publish success."""
     import asyncio
@@ -166,24 +167,25 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
     )
 
     async with _received_console_case(
-        monkeypatch, "preparing-held-source", durable=True
+        monkeypatch, f"preparing-held-source-{queued_full}", durable=True
     ) as case:
         await _qualify_warm_capture_sources(case)
         _send(case, "enter")
         record = await _held_received_record(case)
         console = case.console
+        setup_deadline = asyncio.get_running_loop().time() + 5
         assert await _until(
             lambda: (
                 controls.preparing_poll_record(console) is record
                 and not console._console_sync_in_progress
                 and console._console_session_tabs_sync_calls == 0
             ),
-            5,
+            max(0, setup_deadline - asyncio.get_running_loop().time()),
         )
         surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
         lock = surface._session_sync_lock
-        assert type(lock) is asyncio.Lock and not lock.locked()
         timer = console._console_transcript_sync_timer
+        assert timer is not None
         full_code = ChatScreen._sync_native_console_chat_ui.__code__
         held, results, calls = {}, [], []
         active_full = {}
@@ -225,6 +227,45 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
                             )
                         )
 
+        completed_display = []
+
+        def completed_original_display(kind, label, frame, value):
+            if (
+                kind == sys.monitoring.events.PY_RETURN
+                and frame.f_locals.get("self") is console
+                and frame.f_locals.get("poll_record") is record
+                and value is True
+                and asyncio.current_task() is timer._task
+            ):
+                completed_display.append(True)
+
+        with _original_transition_events(
+            [("completed_display", ChatScreen, "_sync_native_console_chat_ui")],
+            completed_original_display,
+        ):
+            if queued_full:
+                # Sampled idle fields do not retire an already queued FULL.
+                # Keep its original worker and publication path intact.
+                asyncio.get_running_loop().call_soon(
+                    lambda: console.run_worker(
+                        console._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+                )
+            assert await _until(
+                lambda: (
+                    bool(completed_display)
+                    and controls.preparing_poll_record(console) is record
+                    and not console._console_sync_in_progress
+                    and console._console_session_tabs_sync_calls == 0
+                    and not getattr(
+                        console, "_console_control_bar_replay_whole_sync", False
+                    )
+                ),
+                max(0, setup_deadline - asyncio.get_running_loop().time()),
+            ), "No original natural Preparing display completed before the tab hold"
+        assert type(lock) is asyncio.Lock and not lock.locked()
         await lock.acquire()
         owned_lock = True
         try:

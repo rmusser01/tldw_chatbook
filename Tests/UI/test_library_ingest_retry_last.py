@@ -67,6 +67,9 @@ def _job(**overrides) -> LibraryIngestJob:
     return LibraryIngestJob(**defaults)
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
 # --- state builder: visibility matrix ----------------------------------------
 
 
@@ -156,7 +159,7 @@ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
     # `save_settings_to_cli_config` it wraps) keeps this test's own
     # subject -- the pre-clear submission snapshot -- intact.
     screen._save_library_ingest_options = lambda *_a, **_k: True
-    screen._do_submit_ingest("/tmp/talk.mp3")
+    screen._do_submit_ingest("/tmp/talk.mp3", _readiness_checked=True)
 
     snapshot = screen._ingest_state.last_submission
     assert snapshot is not None
@@ -306,6 +309,16 @@ async def _ingest_screen(host, pilot):
 
 async def _submit_batch(screen, pilot, monkeypatch, tmp_path, submitted):
     """Stage a source with metadata + options and submit it (no warnings)."""
+    # Readiness itself is covered separately; retain its real worker and
+    # publication path while making these restaging fixtures model-independent.
+    from tldw_chatbook.Library import transcription_readiness
+
+    monkeypatch.setattr(
+        transcription_readiness, "check_transcription_readiness", lambda *a, **k: None
+    )
+    # Persistence has separate round-trip tests; keep config reloads from
+    # racing these keyboard/restaging journeys after successful publication.
+    monkeypatch.setattr(screen, "_save_library_ingest_options", lambda *_a, **_k: None)
     source = tmp_path / "talk.mp3"
     source.write_bytes(b"RIFFxxxx")
     clean = _preflight(type_groups={"audio_video": [str(source)]}, total_files=1)
@@ -344,7 +357,18 @@ async def _submit_batch(screen, pilot, monkeypatch, tmp_path, submitted):
         screen._ingest_state.path_debounce_timer = None
 
     screen._submit_library_ingest_form()
-    await pilot.pause()
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            bool(submitted)
+            and screen.query_one("#library-ingest-path", Input) is not path_input
+            and screen.query_one("#library-ingest-path", Input).is_mounted
+            and screen.query_one("#library-ingest-path", Input).value == ""
+            and not screen.query_one("#library-ingest-path", Input).disabled
+            and bool(screen.query("#library-ingest-browse"))
+        ),
+        message="ready submission never mounted its cleared form",
+    )
     assert [k.get("source_path") for k in submitted] == [str(source)]
     assert screen._ingest_state.form.path == ""
     assert screen._ingest_state.form.title == ""
@@ -416,9 +440,9 @@ async def test_retry_last_restores_the_form_and_runs_a_fresh_preflight(
         screen.query_one("#library-ingest-retry-last", Button).press()
         await pilot.pause()
         assert screen._ingest_state.retry_confirm_armed is True
-        assert screen._ingest_state.form.author == "Somebody Else", (
-            "the arming press must change nothing"
-        )
+        assert (
+            screen._ingest_state.form.author == "Somebody Else"
+        ), "the arming press must change nothing"
         screen._ingest_state.retry_confirm_armed_at -= 1.0
         screen.query_one("#library-ingest-retry-last", Button).press()
         await pilot.pause()
@@ -478,9 +502,9 @@ async def test_retry_last_survives_queue_ticks_with_object_identity(
         screen = await _ingest_screen(host, pilot)
 
         retry_before = screen.query_one("#library-ingest-retry-last", Button)
-        assert retry_before.display is False, (
-            "affordance visible without a last submission (AC#4)"
-        )
+        assert (
+            retry_before.display is False
+        ), "affordance visible without a last submission (AC#4)"
 
         await _submit_batch(screen, pilot, monkeypatch, tmp_path, submitted)
 
@@ -524,6 +548,7 @@ async def test_r_key_re_stages_when_focus_is_not_in_a_text_field(monkeypatch, tm
         )
 
         # Focus a non-text widget (the Browse button) and press `r`.
+        prior_path_input = screen.query_one("#library-ingest-path", Input)
         screen.set_focus(screen.query_one("#library-ingest-browse", Button))
         await pilot.pause()
         await pilot.press("r")
@@ -531,16 +556,21 @@ async def test_r_key_re_stages_when_focus_is_not_in_a_text_field(monkeypatch, tm
 
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-ingest-path", Input).value == source,
-            message="`r` never re-staged the last submission",
+            lambda: (
+                screen.query_one("#library-ingest-path", Input).value == source
+                and screen.query_one("#library-ingest-path", Input)
+                is not prior_path_input
+                and not screen._ingest_state.form.preflight_checking
+                and not screen._recompose_required
+            ),
+            message="`r` never completed mounting the restored form",
         )
 
-        # Guard: inside the path field, `r` types.
-        path_input = screen.query_one("#library-ingest-path", Input)
-        path_input.value = ""
-        screen.set_focus(path_input)
-        await pilot.pause()
-        await pilot.press("r")
+        # Guard: inside the path field, `r` replaces the selected text.
+        # Use the real editing gesture; assigning an empty value first can
+        # trigger a separate clear-form recompose before the keystroke.
+        await pilot.click("#library-ingest-path")
+        await pilot.press("home", "shift+end", "r")
         await pilot.pause()
         assert screen.query_one("#library-ingest-path", Input).value == "r"
 
@@ -629,14 +659,14 @@ async def test_retry_over_an_edited_form_takes_two_presses(monkeypatch, tmp_path
         await pilot.press("r")
         await pilot.pause()
 
-        assert screen._ingest_state.form.path == "/tmp/half-typed-other", (
-            "the first `r` destroyed in-progress form content with no confirmation"
-        )
+        assert (
+            screen._ingest_state.form.path == "/tmp/half-typed-other"
+        ), "the first `r` destroyed in-progress form content with no confirmation"
         assert screen._ingest_state.form.title == "Half-typed title"
         retry = screen.query_one("#library-ingest-retry-last", Button)
-        assert "again" in str(retry.label).casefold(), (
-            f"the pending consent is not visible on the affordance ({retry.label!r})"
-        )
+        assert (
+            "again" in str(retry.label).casefold()
+        ), f"the pending consent is not visible on the affordance ({retry.label!r})"
 
         # Second press (past the repeat-gesture dead zone) replaces it.
         screen._ingest_state.retry_confirm_armed_at -= 1.0

@@ -2029,7 +2029,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             external_status.display = bool(self.external_status)
             yield external_status
             external_cancel = Button(
-                "Cancel external preparation",
+                "Cancel import preparation",
                 id="library-external-prepare-cancel",
                 classes="library-canvas-action",
                 compact=True,

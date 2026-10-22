@@ -442,6 +442,12 @@ ADMISSION_2_TARGETS = (
     # until the provider worker, and the bridge worker, exit (bootstrap_profile).
     "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits",
     "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits",
+    # TASK-32755.3: selected STT readiness and its publication/cancellation pins.
+    "Tests/Library/test_transcription_readiness.py",
+    "Tests/Library/test_ingest_stt_warnings.py",
+    "Tests/UI/test_library_ingest_readiness.py",
+    "Tests/UI/test_library_ingest_canvas.py::test_external_preparation_status_and_cancel_are_stable_and_path_free",
+    "Tests/UI/test_library_ingest_canvas.py::test_physical_external_cancel_releases_scope_and_preserves_form",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

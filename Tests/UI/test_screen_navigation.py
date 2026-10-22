@@ -4769,8 +4769,21 @@ async def test_boot_with_mcp_default_tab_lands_on_settings_tools_hub(request):
         deadline = time.monotonic() + 20.0
         while time.monotonic() < deadline:
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "SettingsScreen" and app.screen.query(
-                "#settings-tools-hub"
+            if type(app.screen).__name__ != "SettingsScreen":
+                continue
+            panes = list(app.screen.query(ToolsHubPanel))
+            workbench = panes[0].workbench if panes else None
+            if workbench is None or workbench.is_loading or workbench._reloading:
+                continue
+            # Pane registration precedes its deferred Tools/Permissions/Audit
+            # mounts. Ending run_test here used to prune their Select children
+            # during Compose, then Textual's Mount queried the removed overlay.
+            canvases = workbench.query(
+                "#mcp-mode-canvas-tools, #mcp-mode-canvas-permissions, "
+                "#mcp-mode-canvas-audit"
+            )
+            if len(canvases) == 3 and all(
+                node.is_mounted for node in workbench.walk_children()
             ):
                 break
 
@@ -4779,6 +4792,12 @@ async def test_boot_with_mcp_default_tab_lands_on_settings_tools_hub(request):
         assert settings.active_category == SettingsCategoryId.TOOLS.value
         pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
         assert pane.workbench is not None
+        workbench = pane.workbench
+        assert not workbench.is_loading
+        assert not workbench._reloading
+        for mode in ("tools", "permissions", "audit"):
+            assert workbench.query_one(f"#mcp-mode-canvas-{mode}").is_mounted
+        assert all(node.is_mounted for node in workbench.walk_children())
 
 
 @pytest.mark.asyncio

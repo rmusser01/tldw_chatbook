@@ -205,7 +205,7 @@ def test_do_submit_ingest_persists_options(monkeypatch) -> None:
         batches.append({s: dict(v) for s, v in section_values.items()}) or True
     )
 
-    screen._do_submit_ingest("/tmp/test.pdf")
+    screen._do_submit_ingest("/tmp/test.pdf", _readiness_checked=True)
 
     # One batched write, not one full config read/parse/reload per option key.
     assert len(batches) == 1, f"expected a single batched save, got {len(batches)}"
@@ -301,7 +301,7 @@ def test_task_3303_options_round_trip_persisted_config(monkeypatch) -> None:
         saved_sections.update({s: dict(v) for s, v in section_values.items()}) or True
     )
 
-    screen._do_submit_ingest("/tmp/report.docx")
+    screen._do_submit_ingest("/tmp/report.docx", _readiness_checked=True)
 
     for group, values in submitted_options.items():
         section = f"library.ingest_options.{group}"
@@ -361,7 +361,7 @@ def test_task_3306_av_options_round_trip_persisted_config(monkeypatch) -> None:
         saved_sections.update({s: dict(v) for s, v in section_values.items()}) or True
     )
 
-    screen._do_submit_ingest("/tmp/talk.mp3")
+    screen._do_submit_ingest("/tmp/talk.mp3", _readiness_checked=True)
 
     section = saved_sections.get("library.ingest_options.audio_video", {})
     for name, value in submitted["audio_video"].items():
@@ -838,7 +838,7 @@ def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> Non
         saved_sections.update({s: dict(v) for s, v in section_values.items()}) or True
     )
 
-    screen._do_submit_ingest("/tmp/scan.png")
+    screen._do_submit_ingest("/tmp/scan.png", _readiness_checked=True)
 
     section = saved_sections.get("library.ingest_options.image", {})
     for name, value in submitted["image"].items():

@@ -530,7 +530,7 @@ async def test_submit_brings_the_queue_heading_into_view(request, monkeypatch):
             >= canvas.scroll_offset.y + canvas.container_size.height
         ), "precondition: at this height the queue heading starts below the fold"
 
-        screen._do_submit_ingest("/tmp/anything.txt")
+        screen._do_submit_ingest("/tmp/anything.txt", _readiness_checked=True)
         await pilot.pause()
         await pilot.pause()
 

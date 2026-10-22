@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## New regression files need an explicit PR lane (TASK-32755.3, PR #3202)
+
+**Incident.** The full review of transcription readiness found that its new
+Library and UI regression files were absent from every required PR invocation;
+the earlier green CI run therefore did not execute them. Existing snapshot and
+restaging tests outside those lanes also still assumed synchronous submission.
+The direct fixtures reproduced NoActiveAppError, and the mounted audio fixture
+queued nothing with no installed runtime/model.
+
+**What to do.** Check the actual workflow targets when adding regression files.
+Readiness and publication pins now run in the admission-sensitive lane with its
+matching target contract. Keep unmounted persistence tests at the post-readiness
+boundary; mounted journey fixtures retain the real worker/publication and await
+completion while stubbing only the separately tested package/model check.
+
+
+
 
 ## Repeated pytest file names need occurrence timestamps (TASK-35834, 2026-10-20)
 
@@ -119,6 +136,25 @@ critical held-lock action, watchdog and timing assertions. This settles setup; i
 does not establish that ordinary FULL reconciliation is nonblocking or prove an
 intermittent hosted failure was reproduced locally. The focused 15-case UI file
 passed with this barrier; hosted qualification remains separate.
+
+**Follow-up (PR #3202, 2026-10-22 UTC).** The Preparing source-change test
+sampled idle counters, then held the session surface lock. A deterministic
+control queued the unchanged original FULL immediately after that sample:
+it reached the lock first, and the timer's narrowed refresh repeatedly
+declined under the existing active-sync guard. The held-wait assertion then
+failed with the hosted signature. Observe a successful original narrowed
+timer completion before taking the lock, within the same setup budget;
+retain the queued-FULL control and the later replay/custody assertions.
+The old hosted log did not identify which callback won that run.
+
+The same PR's MCP alias-boot test could finish when its Settings pane existed
+but the workbench was still loading hidden canvases. An explicit completed-
+loading assertion failed at that old boundary; teardown could prune Select
+children while their Mount handlers still needed their overlays. Waiting
+for completed loading and mounted descendants preserves the original
+twenty-second deadline. This is startup-test qualification, not evidence of
+rapid-navigation safety. Separate native-worker cleanup failures on Windows
+remain separate from the mounting assertions.
 
 ## A local red is only evidence after a same-tree baseline (TASK-35080/35081, 2026-10-15)
 
