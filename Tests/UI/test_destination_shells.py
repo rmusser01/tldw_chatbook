@@ -3509,8 +3509,10 @@ async def test_settings_destination_uses_three_column_workbench_contract():
             "unless you run Manual sync yourself." in text
         )
         assert "Mutation replay: disabled" not in text
+        # TASK-35647 review, rewritten on purpose: MCP is a Settings category now.
         assert (
-            "runtime MCP, ACP, and tool control stay in their own destinations" in text
+            "MCP and tools are in Settings ▸ Tools & MCP; ACP is on the ACP screen"
+            in text
         )
         assert "Column 1:" not in text
         assert "Column 2:" not in text

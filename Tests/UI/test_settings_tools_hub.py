@@ -54,13 +54,17 @@ def test_tools_category_id_exists_and_mcp_defaults_retired():
 
 
 _SETTINGS_PLACE = re.compile(r"Settings [▸>] ")
+#: A title ends the text or meets punctuation: "Tools & MCP Servers" is not
+#: the category "Tools & MCP".
+_TITLE_END = r"(?=$|[.,;:)!?])"
 _NAMED_SCREEN = re.compile(r"\bthe ([A-Z][\w&]*(?: [A-Z][\w&]*)*) screen\b")
 
 
 def _unregistered_destinations(text: str, category_titles: list[str]) -> list[str]:
     """The places ``text`` sends a user that the app cannot open.
 
-    "Settings ▸ <X>" needs a Settings category titled X. "the <X> screen"
+    "Settings ▸ <X>" (or "Settings > <X>") needs a Settings category whose
+    whole title is X. "the <X> screen"
     needs a route ``resolve_screen_route`` finds, reached other than through
     ``_SCREEN_ALIASES``: an alias is a retired screen's redirect ("mcp"
     has been one since ADR-240), so a name only an alias resolves names a
@@ -69,7 +73,9 @@ def _unregistered_destinations(text: str, category_titles: list[str]) -> list[st
     missing = []
     for match in _SETTINGS_PLACE.finditer(text):
         rest = text[match.end() :]
-        if not any(rest.startswith(title) for title in category_titles):
+        if not any(
+            re.match(re.escape(title) + _TITLE_END, rest) for title in category_titles
+        ):
             missing.append(match.group(0) + rest)
     aliases = registered_screen_aliases()
     for name in _NAMED_SCREEN.findall(text):
@@ -91,23 +97,39 @@ def test_overview_rows_and_tools_badge_name_only_registered_destinations():
     assert _unregistered_destinations(
         "MCP: tool servers are managed on the MCP screen", titles
     ) == ["the MCP screen"]
-    assert _unregistered_destinations("open Settings ▸ MCP Servers", titles) == [
-        "Settings ▸ MCP Servers"
+    for made_up in ("open Settings ▸ MCP Servers", "Settings ▸ Tools & MCP Servers"):
+        assert _unregistered_destinations(made_up, titles) == [
+            made_up.removeprefix("open ")
+        ]
+    assert _unregistered_destinations("in Settings > Workspace; then", titles) == [
+        "Settings > Workspace; then"
     ]
 
     badge = screen._persistence_badge(SettingsCategoryId.TOOLS)
-    for label, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS:
+    # Every row the Overview renders: the boundary rows with the Recovery row
+    # (its card and help), and the Scope Inspector's rows (review of #35647).
+    rows = [
+        *screen._overview_ownership_rows(),
+        *screen._inspector_guidance(SettingsCategoryId.OVERVIEW),
+    ]
+    assert {label for label, _value in rows} >= {"Recovery", "Boundary"}
+    for label, value in rows:
         row = f"{label}: {value}"
         assert _unregistered_destinations(row, titles) == [], row
     assert _unregistered_destinations(badge, titles) == [], badge
     assert "Settings ▸ Tools & MCP" in dict(SETTINGS_OVERVIEW_BOUNDARY_ROWS)["MCP"]
+    boundary = dict(screen._inspector_guidance(SettingsCategoryId.OVERVIEW))["Boundary"]
+    assert "Settings ▸ Tools & MCP" in boundary, boundary
 
     # One definition: the category list's summary IS the shared record, and
     # the banner's badge reads its save model from it.
     assert TOOLS_HUB_CATEGORY_SUMMARY in screen._category_summaries()
     assert badge == TOOLS_HUB_CATEGORY_SUMMARY.status
-    banner = screen._category_state_banner_text(SettingsCategoryId.TOOLS)
-    assert banner.startswith(f"State: {TOOLS_HUB_CATEGORY_SUMMARY.status} | ")
+    # The banner's scope half is Tools & MCP's own, not Overview's line.
+    assert screen._category_state_banner_text(SettingsCategoryId.TOOLS) == (
+        "State: Immediate actions | Server, permission and tool-gate changes "
+        "save as you make them."
+    )
 
 
 # task-35597: every test that mounts a harness app or a _build_test_app

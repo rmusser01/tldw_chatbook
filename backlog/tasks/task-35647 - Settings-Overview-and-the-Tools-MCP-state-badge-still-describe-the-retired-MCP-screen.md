@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-20 03:07
-updated_date: 2026-10-22 20:24
+updated_date: 2026-10-22 23:30
 dependencies: []
 labels:
 - follow-up
@@ -65,3 +65,20 @@ Settings copy now names Settings ▸ Tools & MCP where it used to name the retir
   - `test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract`. This test is plain, not private-profile. Locally it fails at dev 28beeb9ed5 with `RecoveryRequired: raw_source_selection_changed` (the known local signature). The new pin passed once under a temporary `@private_profile_test`, which was reverted.
 - **Docs**: Docs/User_Guide/settings.md has the new mode-strip copy, and its badge table has an "Immediate actions" row for Tools & MCP.
 - **Files**: tldw_chatbook/UI/Screens/settings_screen.py, Tests/UI/test_settings_tools_hub.py, Tests/UI/test_settings_configuration_hub.py, Tests/UI/test_destination_shells.py, Docs/User_Guide/settings.md.
+
+**Review round 1 (verdict "With fixes")**
+
+- **C1 (AC#1 was not met).** The Overview's Scope Inspector `Boundary` row still said "runtime MCP, ACP, and tool control stay in their own destinations". It now reads "MCP and tools are in Settings ▸ Tools & MCP; ACP is on the ACP screen". ACP is a real route (`"acp"`, `ACPScreen`) and a shell destination. The pin in `test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract` was rewritten on purpose. That test is plain (no private profile), so locally it was verified under a temporary `@private_profile_test`, then reverted.
+- **I1.** `_category_state_scope_text` gains a Tools & MCP branch, so the banner now reads "State: Immediate actions | Server, permission and tool-gate changes save as you make them." (Gates save immediately per Docs/User_Guide/mcp.md; permission toggles stay undrafted.)
+  - Folding Guardian into the `(SCHEDULES, DREAMS)` tuple would need a wrapped three-name tuple (+2 lines). Guardian's badge ("Applies immediately") is paired with Agents instead, which fits one line. settings_screen.py stays at 35,663.
+  - The test asserts the whole banner. It was red first: `'State: Immediate actions | Review readiness across Settings categories.'`.
+- **I2 (rendered rows).** The test now scans `_overview_ownership_rows()` (boundary rows plus Recovery) and the Overview's `_inspector_guidance` rows. It asserts that the Recovery and Boundary labels are among them.
+  - The scanner accepts "Settings > X" as well as "Settings ▸ X".
+  - A title must now match whole, ending the text or at punctuation; "Settings ▸ Tools & MCP Servers" is refused.
+  - Red first on the old Boundary row (`assert 'Settings ▸ Tools & MCP' in 'runtime MCP, ACP, …'`).
+  - Negative controls (each made temporarily, then reverted): Recovery's "Settings > Workspaces;" changed to "Settings > Workspace", and the Boundary's title changed to "Tools & MCP Servers". Each failed the scan.
+- **Runs:**
+  - tools_hub, footer_hints and state_line_unsaved_count: 42 passed.
+  - The shells Overview pin plus `test_state_banner_leads_with_persistence_badge` and `test_state_banner_text_has_exactly_one_state_segment`, under a temporary private-profile marker: 3 passed.
+  - settings_screen.py module ratchet: passed.
+  - preflight: passed.

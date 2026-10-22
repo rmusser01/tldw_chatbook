@@ -2422,7 +2422,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ("Recovery", "open the specific category before changing values"),
         (
             "Boundary",
-            "runtime MCP, ACP, and tool control stay in their own destinations",
+            "MCP and tools are in Settings ▸ Tools & MCP; ACP is on the ACP screen",
         ),
     ),
     SettingsCategoryId.PROVIDERS_MODELS: (
@@ -10780,7 +10780,7 @@ class SettingsScreen(BaseAppScreen):
             return "Reviewed actions"
         if category is SettingsCategoryId.TOOLS:  # the category list's own words
             return TOOLS_HUB_CATEGORY_SUMMARY.status
-        if category is SettingsCategoryId.AGENTS:
+        if category in (SettingsCategoryId.AGENTS, SettingsCategoryId.GUARDIAN):
             return "Applies immediately"
         if category is SettingsCategoryId.THEME:
             # Use/Try/Revert act at once; the banner stays hidden for Theme,
@@ -10793,8 +10793,6 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
         if category in (SettingsCategoryId.SCHEDULES, SettingsCategoryId.DREAMS):
-            return "Applies immediately"
-        if category is SettingsCategoryId.GUARDIAN:
             return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
@@ -10842,6 +10840,8 @@ class SettingsScreen(BaseAppScreen):
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
             return "Each action reversible: unarchive, rename again, or set active."
+        if category is SettingsCategoryId.TOOLS:
+            return "Server, permission and tool-gate changes save as you make them."
         if category is SettingsCategoryId.TOOL_PROFILES:
             return (
                 "Imports stay unbound; MCP owns policy editing; removal permanently "
