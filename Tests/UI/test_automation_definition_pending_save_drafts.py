@@ -362,6 +362,10 @@ async def test_saved_identity_survives_metadata_read_and_later_keyboard_input(
             await pilot.click("#automation-save")
             await _until(entered.is_set)
             await _keyboard(pilot, screen, "#automation-name", "end", "X")
+            # Partial teardown may remove presentation chrome while the raw
+            # editor remains attached and the admitted write still commits.
+            chrome = "#automation-owner-help" if read_failure else ".form-title"
+            await screen.query_one(chrome).remove()
             monkeypatch.setattr(db, "get_automation_definition", read_saved)
             release.set()
             await _until(lambda: len(settled) == len(calls))

@@ -35,6 +35,7 @@ from loguru import logger
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
@@ -1022,10 +1023,18 @@ class AutomationDefinitionForm(ModalScreen):
                 return
             self._dirty = True
             self._definition_row = self._definition_row or {}
-            self.query_one(".form-title", Label).update("Edit Recurring Question")
-            self.query_one("#automation-owner-help", Static).update(
-                "Existing automations keep the owner they were created with."
-            )
+            # Chrome can disappear during the save await while the draft
+            # remains attached. Missing presentation must not undo its result.
+            try:
+                self.query_one(".form-title", Label).update("Edit Recurring Question")
+            except QueryError:
+                pass
+            try:
+                self.query_one("#automation-owner-help", Static).update(
+                    "Existing automations keep the owner they were created with."
+                )
+            except QueryError:
+                pass
             try:
                 row = await asyncio.to_thread(
                     self._service.db.get_automation_definition, self._definition_id
