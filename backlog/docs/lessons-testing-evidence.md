@@ -21150,3 +21150,10 @@ During optional keyword scanner qualification (TASK-36003, 2026-10-21), retainin
 **Incident (TASK-36005, 2026-10-21).** A real20,000-file project-index benchmark reached its test-only600s observer deadline at19,400files, then explicitly resumed and completed in the same generated cache. When the resume probe exited, pytest numbered-temp retention removed the older corpus/cache before the planned idle lookup rerun. The concurrent-load timing remained valid, but an idle comparison required a separately disclosed derived-cache reconstruction.
 
 **What to do.** Put multi-phase benchmark corpora and caches in an explicitly owned private artifact location outside pytest numbered-temp retention. Verify their native owners have retired before reuse or cleanup. Retain setup, timeout/resume, load, source and reconstruction differences; do not replace the original measurement or call a cache-only reconstruction another end-to-end scan.
+
+
+## Adding real admission work changes a performance budget's boundary
+
+**Incident (TASK-36006, 2026-10-22).** Keyword qualification initially compared a canonical lexical method plus an in-memory test fence with a later real registry fence, sensitive-path acquisition and management-status read. The broader final clock failed all six500ms p95 cells; source audit confirmed the extra work was production work, not fixture overhead. The nested/common canonical component also failed577.305ms, so changing the reporting boundary alone could not satisfy the original target.
+
+**What to do.** Name and retain canonical lookup, admitted candidates, live validation and whole invocation separately, including their exact guards/owners and setup exclusions. A stronger admitted budget is a new requirement; accepting its miss requires an explicit recorded deviation, not relabeling the failure as invalid measurement. Profile the failing component before a local remedy, and retain adverse/source/load receipts. Never subtract independently computed percentile values or sum overlapping cumulative profiles to claim an exclusive phase cost.
