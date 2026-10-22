@@ -375,8 +375,9 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     ``_sync_console_rail_and_controls`` is unchanged: same locks, refusal and
     deferral. A deferred or failed projection records nothing, so the next
     tick tries again. What changes on its own during a run (the Agent rail,
-    the cost chip, readiness evidence, tool counts, pending rounds) is an
-    input, so it renders on the next tick as before. What can reach the
+    the cost chip, readiness evidence, tool counts, pending rounds and a
+    legacy unscoped approval) is an input, so it renders on the next tick
+    as before. What can reach the
     screen up to a second later is whatever else the projections read that
     no input sees change: a config value read fresh inside them, the
     context estimate (itself refreshed once a second while streaming), and
