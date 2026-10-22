@@ -50,3 +50,16 @@ file failed earlier at the preparation reader-entry wait (246.53s total),
 and the untouched replay source failed the same earlier wait (57.40s).
 The separately filed original line-231 mode is not fixed or claimed here;
 25 consecutive complete single-node dev runs have not been established.
+
+Follow-up in PR #3202 / TASK-32755.2 (2026-10-22 UTC): queuing an unchanged
+original FULL immediately after the sampled idle predicate reproduced the
+first held-wait signature. That FULL acquired the real surface lock with no
+Preparing record; the natural timer then declined under the existing
+sync-in-progress guard. Setup now witnesses a successful original narrowed
+timer completion before taking the lock. It shares the original five-second
+setup budget and retains the source-change, replay and physical-custody
+assertions. A retained queued-FULL variant and the natural variant passed
+together (70.75s). The older hosted logs did not retain those scheduling
+rows, so this establishes the setup hazard rather than every historical
+first-wait cause. The 25-run qualification remains outstanding; the task's
+acceptance checklist is unchanged.
