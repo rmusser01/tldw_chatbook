@@ -1,7 +1,7 @@
 ---
 id: TASK-36360
 title: Keep quiz final-answer retry from duplicating answers and inflating scores
-status: To Do
+status: In Progress
 created_date: 2026-10-22 20:42
 labels:
 - study
@@ -13,6 +13,9 @@ references:
 - backlog/decisions/011-chatbook-workbench-ui-system.md
 documentation:
 - Docs/superpowers/qa/2026-10-22-textual-book-after-pr3207.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 21:52
 ---
 
 ## Description
@@ -48,6 +51,19 @@ Reason: No new ADR is expected for a controller-local pending-answer correction.
 - [ ] #3 Ordinary successful multi-question attempts preserve grading/history behavior, and definite failure leaves the current question, answer and retry usable.
 - [ ] #4 Bounded mounted regressions exercise actual Start/Submit dispatch and independently verify service payload, real SQLite answers/score and visible result, retaining the ordinary passing control; uncertain-commit or server-wide idempotency is not introduced.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR. ADR path: existing ADR paths in this task. Reason: bounded correction within the current owner; no new storage, provider or application boundary.
+
+1. Read the linked task, ADRs, current owner tests and retained audit evidence.
+2. Add and run mounted behavior regressions RED, then implement the smallest owner-local correction: Build each final submission from prior completed answers plus the current answer without appending it to persistent pending state before the awaited submission succeeds. Preserve existing question progression and grading.
+3. Verify targeted new/adjacent tests and static checks; obtain independent Superpowers task review.
+4. Record evidence, update notes/ACs and relevant documentation, then mark Done via CLI.
+
+Implementation plan: Docs/superpowers/plans/2026-10-22-textual-retry-and-pending-drafts.md
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
