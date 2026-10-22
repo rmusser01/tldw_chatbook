@@ -1,7 +1,7 @@
 ---
 id: TASK-36131
 title: Preserve avatars uploaded while an earlier Character Save is pending
-status: To Do
+status: In Progress
 created_date: 2026-10-22 15:29
 labels:
 - personas
@@ -11,6 +11,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-22-textual-book-after-pr3205.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 17:29
 ---
 
 ## Description
@@ -46,3 +49,14 @@ Reason: No new ADR is required for a bounded correction within the existing Char
 - [ ] #3 A subsequent explicit Save persists the retained avatar to the same Character with the correct version and then becomes clean; uploads made before Save persist normally and failed saves retain staged bytes.
 - [ ] #4 Mounted real-picker-result and real-store regressions distinguish upload-before-Save, upload-during-pending-Save and same-record retry/failure outcomes while preserving path validation, storage admission, stale-editor fences and existing raw-text/greetings coverage.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md; backlog/decisions/033-application-session-state-ownership.md
+Reason: Acknowledge the submitted attachment baseline while retaining later avatar bytes as an unsaved attachment and adopting the actual persisted identity/version. Preserve existing text/greetings acknowledgement and aggregate guards.
+1. Read the task and trace avatar staging, Save capture, persistence, mark_saved and all acknowledgement callers. Extend the retained mounted real-picker/real-SQLite race into maintained regressions for pending update/create as applicable, ordinary upload-before-Save, preview/readout and New/leave Stay, next same-record Save and definite failure/retry. Establish intended RED before the minimal attachment-domain fix; preserve path/admission and editor identity fences.
+2. Verify the new/adjacent mounted tests, scoped static checks and existing size ceilings; retain exact receipts and source hashes.
+3. Independently review against all four acceptance criteria, update architecture/QA notes, then root integrates census/pins and completes task metadata.
+<!-- SECTION:PLAN:END -->

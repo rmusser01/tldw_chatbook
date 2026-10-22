@@ -1,7 +1,7 @@
 ---
 id: TASK-36130
 title: Keep full audiobook imports authoritative over shortened previews
-status: To Do
+status: In Progress
 created_date: 2026-10-22 15:29
 labels:
 - speech
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-22-textual-book-after-pr3205.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 17:29
 ---
 
 ## Description
@@ -45,3 +48,14 @@ Reason: Repair content ownership within the existing audiobook widget. No new st
 - [ ] #3 Equivalent Notes and Conversation import previews preserve the same full-source guarantee. Intentional source editing has a consistent, explicit relationship to the text submitted by Generate, without silently discarding unseen imported content.
 - [ ] #4 Bounded mounted regressions drive real import/change/Generate events for long, exactly-1000 and short sources, demonstrate the defect before the fix and preserve ordinary imports and deliberate edits without provider or synthesis effects.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/011-chatbook-workbench-ui-system.md
+Reason: Keep full imported content in the existing editable TextArea for file, Notes and Conversation imports. Preserve source freshness and existing import/service paths; do not let a shortened programmatic display replace source.
+1. Read the task, shared source-change handler and all three import callbacks. Extend the retained real import/Generate witness into bounded maintained regressions: long file, exactly 1000 and short control; real Notes/Conversation service routes; deliberate edit/clear before detection completes. Record meaningful RED assertions, then keep the complete source in the existing editor. Verify editor/model, chapter tail and emitted Generate content separately. No synthesis or external provider calls.
+2. Verify the new/adjacent mounted tests, scoped static checks and existing size ceilings; retain exact receipts and source hashes.
+3. Independently review against all four acceptance criteria, update architecture/QA notes, then root integrates census/pins and completes task metadata.
+<!-- SECTION:PLAN:END -->

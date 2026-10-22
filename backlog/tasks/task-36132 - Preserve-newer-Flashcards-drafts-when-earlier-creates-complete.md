@@ -1,7 +1,7 @@
 ---
 id: TASK-36132
 title: Preserve newer Flashcards drafts when earlier creates complete
-status: To Do
+status: In Progress
 created_date: 2026-10-22 15:30
 labels:
 - study
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-22-textual-book-after-pr3205.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 17:29
 ---
 
 ## Description
@@ -45,3 +48,14 @@ Reason: ADR required: no new ADR. This bounded repair retains screen-local autho
 - [ ] #3 Unchanged fields clear after one successful creation; a definite failed create preserves current drafts and remains retryable under the existing service contract. Uncertain-write retry/idempotency policy is outside this task.
 - [ ] #4 Bounded mounted regressions use the existing create events/workers, controlled service awaits and real StudyScopeService/LocalStudyService with SQLite; live drafts are asserted separately from stored records and unchanged-success/failure-retry controls pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/011-chatbook-workbench-ui-system.md
+Reason: Capture raw deck/card authoring fields before normalization; clear each field after success only when its current value still equals that raw submission. Retain current editing context and the unchanged service, list/status and view-swap contracts.
+1. Read the task, deck/card create callers and quiz acknowledgement precedent. Add bounded mounted real StudyScopeService/LocalStudyService/SQLite regressions with controlled service awaits: deck name, each card field independently and combined, raw whitespace, focus moved elsewhere, unchanged success and definite failure/retry. Record intended RED; make submitted-only clearing local to existing handlers. Do not introduce an uncertain-write exactly-once promise or repair separate list/status tasks.
+2. Verify the new/adjacent mounted tests, scoped static checks and existing size ceilings; retain exact receipts and source hashes.
+3. Independently review against all four acceptance criteria, update architecture/QA notes, then root integrates census/pins and completes task metadata.
+<!-- SECTION:PLAN:END -->
