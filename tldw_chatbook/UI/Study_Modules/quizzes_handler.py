@@ -798,14 +798,13 @@ class StudyQuizzesController:
         question_id = str(
             current_question.get("backing_id") or current_question.get("id") or ""
         )
-        self.current_attempt_answers.append(
-            {
-                "question_id": question_id,
-                "user_answer": user_answer,
-            }
-        )
+        current_answer = {
+            "question_id": question_id,
+            "user_answer": user_answer,
+        }
 
         if self.current_question_index + 1 < len(self.current_attempt_questions):
+            self.current_attempt_answers.append(current_answer)
             self.current_question_index += 1
             answer_widget.value = ""
             self._show_current_question()
@@ -818,7 +817,7 @@ class StudyQuizzesController:
                 mode=self._current_mode(),
                 **self._scope_arguments(),
                 attempt_id=self.current_attempt_id,
-                answers=list(self.current_attempt_answers),
+                answers=[*self.current_attempt_answers, current_answer],
             )
         except Exception:
             logger.opt(exception=True).error("Failed to submit quiz attempt")
