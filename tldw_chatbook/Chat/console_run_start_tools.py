@@ -33,6 +33,7 @@ a subclass (a plugin provider) composes from more than the key covers.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 import sys
@@ -322,6 +323,11 @@ async def compose_run_mcp_provider(
                 )
                 return None
 
+    if prepared is None:
+        # TASK-33620.15.5: the kill switch below is a store read on the loop,
+        # like the fingerprint's two; give the UI loop a turn between them.
+        await asyncio.sleep(0)
+        _require_current(local_read)
     error = None
     try:
         engaged = prepared.kill_switch if prepared is not None else bool(service.get_kill_switch())
@@ -332,6 +338,8 @@ async def compose_run_mcp_provider(
         engaged, error = True, caught
     _fill(local_read, engaged, error)
     if not engaged and prepared is None:
+        await asyncio.sleep(0)  # and between it and the composition's reads
+        _require_current(local_read)
         try:
             compose = provider.compose_catalog
             await (compose(kill_switch_engaged=False) if plain else compose())

@@ -73,7 +73,12 @@ _BUDGETS: dict[str, int] = {
     # app_navigation.py: 8,524 -> 7,467; command-palette providers ->
     # app_command_providers.py: 7,467 -> 6,403; per-feature glue ->
     # app_feature_glue.py: 6,403 -> 5,712).
-    "tldw_chatbook/app.py": 5710,
+    # 2026-10-19 (TASK-33620.15.5, owner decision: raise the row rather than
+    # contort code): +4 lines for the idle pre-import of the Console's
+    # first-send modules, which must run in the post-UI-ready pass itself.
+    # Re-measured 2026-10-20 on origin/dev 0fef489ece (app.py 5,707 there):
+    # 5,710 -> 5,711.
+    "tldw_chatbook/app.py": 5711,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.

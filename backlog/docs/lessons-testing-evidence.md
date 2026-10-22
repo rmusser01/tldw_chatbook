@@ -42,6 +42,23 @@ lifetime behavior. The repaired observer distinguished all 26 completions.
 This proves the witness repair; it does not establish the separately filed
 first-wait mode or 25 complete dev-run qualification in TASK-35713.
 
+## Work added to the front of a shared idle pass lands on whatever was queued behind it (TASK-33620.15.14, 2026-10-20)
+
+**Incident.** TASK-33620.15.5 put a first-send warm-up (75 modules, about 213 ms
+CPU, paced 1:1) at the front of the app's post-UI-ready pre-import thread,
+ahead of the speculative screen routes. Five live rounds measured the first
+send and found it faster; none measured the screen routes the warm-up had
+pushed back. Measured afterwards, paired with origin/dev: a Library click one
+second after the Console's first frame found Library cold in 8 of 8 launches
+(0 of 8 on dev), imported about 200 modules on the UI loop, and painted a
+median 451 ms after the click (dev 356). Clicks at 3 and 6 s were unchanged,
+so only the earliest plausible moment showed it. Moving the warm-up after the
+last route removed it, and the first send kept most of its gain.
+
+**What to do.** When you add work to a queue that something else already
+depends on (an idle pass, a worker pool, a boot stagger), list what it now
+runs ahead of, and measure the first use of each of those at the earliest
+moment a user could reach it, not only the path you sped up.
 
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
@@ -78,6 +95,26 @@ refreshes; that remains the separate lesson below.
 **Incident.** The response-rules phase test holds config's rebuild lock and prints where the UI loop blocked. Three times (TASK-35444, its round 2, and a local 1-in-13 failure) the stack named one read, the fix moved it, and the next run blocked at another. A real hold can only show the first wait: the loop stops there. One scratch run instead patched the two lock accessors with a proxy that recorded every blocking acquire from the main thread, refused non-blocking probes as if held, and forced the warm-cache checks to miss. Over a full UI sync it listed 2 sites (14 waits), and 0 after the fix. A third site turned up later: the attach reconcile's screen resume, which runs once, before that window opened. Calling seven refresh entry points inside the window listed it (35 waits at 5 sites on dev).
 
 **What to do.** When a held-lock test keeps finding the next blocked read, enumerate instead of iterating: record the lock's acquires from the UI thread during the window, with the caches forced cold, and fix the whole list at once. A window only sees the paths that run in it, so also call each refresh entry point (resume, polls, one-shot reconciles) inside it. Then pin with a real hold, and check each fix's revert fails it.
+
+## A profiler "call" event fires again at every coroutine resume, and a gate list picked by module name misses it (TASK-33620.15.5, 2026-10-20)
+
+**Incident.** The run-start branch added one `await asyncio.sleep(0)` inside `UnifiedMCPControlPlaneService.run_catalog_fingerprint`, between its two store reads. Its first round gated "the touched modules' tests", chosen by module name, and called them clean. After the rebase, a grep of `Tests/` for the changed functions' names found `Tests/Chat/test_console_shared_tool_cache.py`. It had 6 reds on the branch and none on origin/dev (`assert 4 == 2`). Its stock-cache probe counts `sys.setprofile` "call" events on the fingerprint's code object. A coroutine frame raises another "call" event each time it resumes after an await, so two fingerprint calls counted as four. The fix counts only an entry at the code's first `RESUME` (oparg 0). `frame.f_lasti` equals that offset on a fresh entry, and a later `RESUME` offset on a resume (CPython 3.12). With that probe the file is 8/8 on the branch and 8/8 on dev.
+
+**What to do.** Before gating a change, grep `Tests/` for every function and attribute name it changes, not only for its module's test file. A test can reach a function through `inspect.unwrap(...).__code__` and never import the module by the name you searched for. When you add an await to a coroutine, check for probes that count calls through `sys.setprofile` or `sys.settrace`: they count resumes too.
+
+## `current_config_identity()` does not move on a forced reload (TASK-33620.15.5, 2026-10-20)
+
+**Incident.** The run-start branch kept `default_prompt_history_path()` while the config module, `current_config_identity()` and `HOME` were unchanged. A forced reload (`load_cli_config_and_ensure_existence(force_reload=True)`, which Settings, the briefing service and others call) installs the re-read file as a new `_CONFIG_CACHE` without a new generation. So after the file was edited outside the app, `get_cli_setting` returned the new `users_name`, the identity was the same, and the kept path still named the old profile. A history opened afterwards bound the old path, and its first append was refused (`RecoveryRequired`). origin/dev appended to the new profile's path. The earlier test patched `_CONFIG_CACHE` in memory and asserted only the refusal of the already-bound history, which both versions refuse. Keying the memo on the installed mapping by identity, as `get_user_data_dir`'s own memo does, fixed it. The test now edits the file and forces the reload: red on the pre-fix head, green on dev. Once TASK-34700 lands, a throttled external-edit reload will take the same path.
+
+**What to do.** A memo of anything derived from config needs the installed mapping (`config._CONFIG_CACHE`, compared with `is`) in its key, as well as `current_config_identity()`. Test it with a real file edit plus `force_reload=True`, not a patched cache.
+
+**Second miss, same memo (2026-10-20 review).** After that fix the key still left out the disk: with no configured `data_dir`, `get_user_data_dir()` picks ADR-127's conventional root unless only the fallback root (`~/.tldw_cli-data`) exists. With the conventional root moved away and the fallback present, config and `HOME` unchanged, the memo kept naming the old root while `get_user_data_dir()` selected the fallback, and the bound history's state check compared the stale path with itself instead of refusing it. The reviewer found it by reading the memo's key beside the key of the memo it wraps: `get_user_data_dir`'s own memo stamps every path the selection reads. Keying on whether each root exists (two `lstat` calls) fixed it; the test moves the root, red on the pre-fix head, green on dev. **So:** when you memoise a call that already has its own memo, list that inner memo's inputs and account for each one in yours, the filesystem entries included.
+
+## A `builtins.__import__` hook never sees `from package import submodule` load the submodule (TASK-33620.15.5, 2026-10-20)
+
+**Incident.** The run-start branch's guard test recorded every import statement a harness send ran (by hooking `builtins.__import__`) and failed on any lazy module that the first-send warm-up did not list. Parent packages of listed modules counted as covered. It passed, and review pointed out the blind spot: for `from tldw_chatbook.Chat import x`, the hook is called with the package name and `fromlist=("x",)`, and the import system loads `tldw_chatbook.Chat.x` itself (`_handle_fromlist`), past the hook. The hook therefore recorded only the covered package. Once fromlist names that resolve to loaded submodules were also recorded, the guard went red at once on a real miss: the composer's `from ...Chat import console_voice_input`, run by every harness send. Dropping that recording turns the guard's non-vacuity assertion red.
+
+**What to do.** An import-recording hook must also record `f"{package}.{name}"` for each fromlist name that is in `sys.modules` after the call. Pin one known fromlist submodule import in the test so the path cannot silently go vacuous.
 
 ## A plain gated Tests/UI test that reads config fails in CI too (TASK-34982, 2026-10-19)
 
