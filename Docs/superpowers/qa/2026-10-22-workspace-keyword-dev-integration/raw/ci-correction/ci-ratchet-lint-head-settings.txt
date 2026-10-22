@@ -1,0 +1,239 @@
+[
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 29,
+      "row": 895
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 895
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 895,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 39,
+      "row": 945
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 8,
+      "row": 945
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 945,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 75,
+      "row": 945
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 43,
+      "row": 945
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 945,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 38,
+      "row": 3244
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from tldw_chatbook.Tools.remote_workspace_executor import (\r\n        RemoteWorkspaceToolExecutor,\r\n        ssh_binding_identity,\r\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 3247
+          },
+          "location": {
+            "column": 5,
+            "row": 3243
+          }
+        }
+      ],
+      "message": "Remove unused import: `tldw_chatbook.Tools.remote_workspace_executor.RemoteWorkspaceExecutionError`"
+    },
+    "location": {
+      "column": 9,
+      "row": 3244
+    },
+    "message": "`tldw_chatbook.Tools.remote_workspace_executor.RemoteWorkspaceExecutionError` imported but unused",
+    "noqa_row": 3244,
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 56,
+      "row": 4622
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 30,
+      "row": 4622
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 4622,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 44,
+      "row": 6298
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 6298
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 6298,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 45,
+      "row": 22653
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 22653
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 22653,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 43,
+      "row": 22655
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 22655
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 22655,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 45,
+      "row": 22657
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 22657
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 22657,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 42,
+      "row": 28249
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 28249
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 28249,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 48,
+      "row": 32786
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 32786
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 32786,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 55,
+      "row": 32794
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 29,
+      "row": 32794
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 32794,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 48,
+      "row": 32849
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\UI\\Screens\\settings_screen.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 32849
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 32849,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  }
+]

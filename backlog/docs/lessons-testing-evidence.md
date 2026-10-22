@@ -21104,6 +21104,8 @@ screen keybindings to accommodate a test.
 
 During the Textual follow-up gate on 2026-10-20, the Evals report referenced original-code child receipts under pytest-74/75. By final review the normal numbered-temp rotation retained pytest-82/83/84, so the controller could independently inspect named final logs and reproduce baseline lint, but could not reinspect those early raw RED logs. Contemporaneous reports remain evidence, with this qualification disclosed. Copy the needed RED/GREEN receipt to a named artifact outside the rotating pytest directory before later targeted runs; do not disable retention, bypass private-temp permissions, or replay product tests only to recreate an aged-out log.
 
+The same retention gap recurred during PR #3204 / TASK-36006 on 2026-10-22: later targeted runs removed all eight earlier Settings child log/XML files before QA copying. The outer five-pass output and a captured hash/result/XML-line manifest survived; the final record explicitly qualifies them as snapshots, not original raw files. Copy original child files when their run retires, before starting later pytest processes. No missing receipt was reconstructed and no passed test was replayed to replace it.
+
 ## Recovery failure tests must reach the real mutation boundary
 
 **PR #3189 / TASK-35992, 2026-10-20.** A test that made the cancellation entry

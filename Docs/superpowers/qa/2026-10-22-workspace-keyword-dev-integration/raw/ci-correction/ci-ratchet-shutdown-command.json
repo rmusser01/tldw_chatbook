@@ -1,0 +1,21 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Workspaces/test_project_index_service.py::test_real_app_shutdown_without_console_drains_index_writer",
+    "Tests/Chat/test_console_settings_durability.py::test_cancelled_drain_does_not_cancel_admitted_thread_work",
+    "Tests/Chat/test_console_settings_durability.py::test_close_fences_admission_and_waits_for_lease_transfer",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "temp": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\ci-ratchet-profile-shutdown",
+  "started_unix": 1792654127.7490559,
+  "elapsed_seconds": 45.13352060317993,
+  "exit_code": 0,
+  "timed_out": false
+}
