@@ -1890,7 +1890,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
 SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
     ("Settings", "edits saved defaults; changes apply after you save"),
     ("Console", "live chat and run controls stay on the Console screen"),
-    ("MCP", "tool servers are managed on the MCP screen"),
+    ("MCP", "tool servers are managed in Settings ▸ Tools & MCP"),
     ("ACP", "agent runtime and sessions are managed on the ACP screen"),
     ("Sync & workspaces", "status shown here is read-only"),
 )
@@ -10784,6 +10784,8 @@ class SettingsScreen(BaseAppScreen):
             return "Applies immediately"
         if category is SettingsCategoryId.TOOL_PROFILES:
             return "Reviewed actions"
+        if category is SettingsCategoryId.TOOLS:  # the category list's own words
+            return TOOLS_HUB_CATEGORY_SUMMARY.status
         if category is SettingsCategoryId.AGENTS:
             return "Applies immediately"
         if category is SettingsCategoryId.THEME:
@@ -10796,9 +10798,7 @@ class SettingsScreen(BaseAppScreen):
             return "Pending — save with s"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
-        if category is SettingsCategoryId.SCHEDULES:
-            return "Applies immediately"
-        if category is SettingsCategoryId.DREAMS:
+        if category in (SettingsCategoryId.SCHEDULES, SettingsCategoryId.DREAMS):
             return "Applies immediately"
         if category is SettingsCategoryId.GUARDIAN:
             return "Applies immediately"
@@ -23532,7 +23532,7 @@ class SettingsScreen(BaseAppScreen):
             "Mode: <title>", with the runtime disclaimer only on Overview.
         """
         if summary.category is SettingsCategoryId.OVERVIEW:
-            return f"Mode: {summary.title} | Runtime controls stay in MCP and ACP"
+            return f"Mode: {summary.title} | Runtime controls are in Tools & MCP and ACP"
         return f"Mode: {summary.title}"
 
     def _render_impact_pane_header(self) -> ComposeResult:

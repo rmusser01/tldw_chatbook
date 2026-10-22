@@ -3493,7 +3493,8 @@ async def test_settings_destination_uses_three_column_workbench_contract():
             "Settings | Global preferences, appearance, storage, and app behavior | Local"
             in text
         )
-        assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
+        # TASK-35647, rewritten on purpose: MCP is Settings ▸ Tools & MCP now.
+        assert "Mode: Overview | Runtime controls are in Tools & MCP and ACP" in text
         assert "Scope Inspector" in text
         assert "Overview" in text
         # task-1369: the lead readiness section is titled "Status" now.

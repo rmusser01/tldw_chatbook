@@ -1,5 +1,6 @@
 """Settings hosts the MCP workbench as the Tools & MCP category."""
 
+import re
 import time
 
 import pytest
@@ -15,8 +16,19 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
+from tldw_chatbook.UI.Navigation.screen_registry import (
+    registered_screen_aliases,
+    resolve_screen_route,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
+from tldw_chatbook.UI.Screens.settings_screen import (
+    SETTINGS_OVERVIEW_BOUNDARY_ROWS,
+    SettingsScreen,
+)
+from tldw_chatbook.UI.Screens.settings_tools_hub import (
+    TOOLS_HUB_CATEGORY_SUMMARY,
+    ToolsHubPanel,
+)
 
 
 class _PanelHarnessApp(ConsolidatedCSSApp):
@@ -39,6 +51,63 @@ def test_tools_category_id_exists_and_mcp_defaults_retired():
     assert SettingsCategoryId.TOOLS.value == "tools"
     with pytest.raises(AttributeError):
         _ = SettingsCategoryId.MCP_DEFAULTS
+
+
+_SETTINGS_PLACE = re.compile(r"Settings [▸>] ")
+_NAMED_SCREEN = re.compile(r"\bthe ([A-Z][\w&]*(?: [A-Z][\w&]*)*) screen\b")
+
+
+def _unregistered_destinations(text: str, category_titles: list[str]) -> list[str]:
+    """The places ``text`` sends a user that the app cannot open.
+
+    "Settings ▸ <X>" needs a Settings category titled X. "the <X> screen"
+    needs a route ``resolve_screen_route`` finds, reached other than through
+    ``_SCREEN_ALIASES``: an alias is a retired screen's redirect ("mcp"
+    has been one since ADR-240), so a name only an alias resolves names a
+    screen that is gone.
+    """
+    missing = []
+    for match in _SETTINGS_PLACE.finditer(text):
+        rest = text[match.end() :]
+        if not any(rest.startswith(title) for title in category_titles):
+            missing.append(match.group(0) + rest)
+    aliases = registered_screen_aliases()
+    for name in _NAMED_SCREEN.findall(text):
+        route_id = name.lower().replace(" ", "_")
+        if route_id in aliases or resolve_screen_route(route_id) is None:
+            missing.append(f"the {name} screen")
+    return missing
+
+
+@pytest.mark.bootstrap_profile
+def test_overview_rows_and_tools_badge_name_only_registered_destinations():
+    """TASK-35647: task-35150 retired the MCP screen into Settings ▸ Tools &
+    MCP, but the Overview still sent users to "the MCP screen", and the Tools
+    & MCP State banner said "Read-only here" beside a category list that
+    says "Immediate actions"."""
+    screen = SettingsScreen(_build_test_app())
+    titles = [summary.title for summary in screen._category_summaries()]
+    # The scan catches what this task replaced, so it cannot pass vacuously.
+    assert _unregistered_destinations(
+        "MCP: tool servers are managed on the MCP screen", titles
+    ) == ["the MCP screen"]
+    assert _unregistered_destinations("open Settings ▸ MCP Servers", titles) == [
+        "Settings ▸ MCP Servers"
+    ]
+
+    badge = screen._persistence_badge(SettingsCategoryId.TOOLS)
+    for label, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS:
+        row = f"{label}: {value}"
+        assert _unregistered_destinations(row, titles) == [], row
+    assert _unregistered_destinations(badge, titles) == [], badge
+    assert "Settings ▸ Tools & MCP" in dict(SETTINGS_OVERVIEW_BOUNDARY_ROWS)["MCP"]
+
+    # One definition: the category list's summary IS the shared record, and
+    # the banner's badge reads its save model from it.
+    assert TOOLS_HUB_CATEGORY_SUMMARY in screen._category_summaries()
+    assert badge == TOOLS_HUB_CATEGORY_SUMMARY.status
+    banner = screen._category_state_banner_text(SettingsCategoryId.TOOLS)
+    assert banner.startswith(f"State: {TOOLS_HUB_CATEGORY_SUMMARY.status} | ")
 
 
 # task-35597: every test that mounts a harness app or a _build_test_app

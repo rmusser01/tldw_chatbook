@@ -3644,7 +3644,9 @@ async def test_settings_overview_renders_ownership_contract_boundaries(request):
 
         assert "Settings: edits saved defaults; changes apply after you save" in text
         assert "Console: live chat and run controls stay on the Console screen" in text
-        assert "MCP: tool servers are managed on the MCP screen" in text
+        # TASK-35647, rewritten on purpose: the MCP screen is retired.
+        assert "MCP: tool servers are managed in Settings ▸ Tools & MCP" in text
+        assert "MCP screen" not in text
         assert "ACP: agent runtime and sessions are managed on the ACP screen" in text
         assert "Sync & workspaces: status shown here is read-only" in text
         # task-181: internal architecture/ownership phrasing must not leak.
@@ -13387,7 +13389,8 @@ async def test_mode_line_disclaimer_only_on_overview(request):
     theme = screen._mode_line_text(
         screen._category_summary_by_id(SettingsCategoryId.THEME)
     )
-    assert overview == "Mode: Overview | Runtime controls stay in MCP and ACP"
+    # TASK-35647, rewritten on purpose: MCP is Settings ▸ Tools & MCP now.
+    assert overview == "Mode: Overview | Runtime controls are in Tools & MCP and ACP"
     assert theme == "Mode: Theme"
 
 
