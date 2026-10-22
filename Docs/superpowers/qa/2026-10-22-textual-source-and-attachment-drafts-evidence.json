@@ -458,5 +458,165 @@
       "stdout": "OK: 599 Tests/UI entries in the PR gate (floor 599); every listed path exists.\n",
       "stderr": ""
     }
-  ]
+  ],
+  "rebase_integration": {
+    "base_dev": "e2cffbed60ae1bceb3eb26f295de15968aae9811",
+    "source_and_architecture_fingerprints_unchanged": {
+      "tldw_chatbook/UI/STTS_Window.py": true,
+      "tldw_chatbook/UI/Screens/personas_screen.py": true,
+      "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py": true,
+      "tldw_chatbook/UI/Study_Modules/flashcards_handler.py": true,
+      "Tests/UI/test_audiobook_import_source_integrity.py": true,
+      "Tests/UI/test_personas_pending_avatar_saves.py": true,
+      "Tests/UI/test_study_flashcard_create_drafts.py": true,
+      "Docs/Architecture/speech.md": true,
+      "Docs/Architecture/ccp.md": true,
+      "Docs/Architecture/study.md": true
+    },
+    "census": {
+      "base": "e2cffbed60ae1bceb3eb26f295de15968aae9811",
+      "prefix_count": 588,
+      "count": 603,
+      "shards": 13,
+      "prefix_sha256_utf8_lf": "15c5bfa24c71a8673ed1a5873c25becbe3806551e6bc8bcebb73252d7fc11c55",
+      "old_slots_preserved": true,
+      "added_nodes": [
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[900]",
+          "index": 589,
+          "shard": 4,
+          "seconds": 9.745,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[1000]",
+          "index": 590,
+          "shard": 5,
+          "seconds": 9.402,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[1600]",
+          "index": 591,
+          "shard": 6,
+          "seconds": 9.736,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_service_import_generate_retains_complete_source[notes]",
+          "index": 592,
+          "shard": 7,
+          "seconds": 9.699,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_service_import_generate_retains_complete_source[conversation]",
+          "index": 593,
+          "shard": 8,
+          "seconds": 9.705,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_editing_import_before_detection_finishes_owns_generate[clear]",
+          "index": 594,
+          "shard": 9,
+          "seconds": 9.766,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_editing_import_before_detection_finishes_owns_generate[replace]",
+          "index": 595,
+          "shard": 10,
+          "seconds": 9.774,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[create]",
+          "index": 596,
+          "shard": 11,
+          "seconds": 27.099,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[update]",
+          "index": 597,
+          "shard": 12,
+          "seconds": 28.055,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_upload_before_save_persists_normally",
+          "index": 598,
+          "shard": 13,
+          "seconds": 28.129,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_failed_pending_save_retains_upload_for_same_record_retry",
+          "index": 599,
+          "shard": 1,
+          "seconds": 27.957,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_fields_and_editing_context[create_deck]",
+          "index": 600,
+          "shard": 2,
+          "seconds": 9.592,
+          "receipt": "task36132-green-final/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_fields_and_editing_context[create_flashcard]",
+          "index": 601,
+          "shard": 3,
+          "seconds": 12.849,
+          "receipt": "task36132-green-final/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_deck]",
+          "index": 602,
+          "shard": 4,
+          "seconds": 8.952,
+          "receipt": "task36132-green-final/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_flashcard]",
+          "index": 603,
+          "shard": 5,
+          "seconds": 10.027,
+          "receipt": "task36132-green-final/result.xml"
+        }
+      ],
+      "native_added_seconds_by_shard": [
+        27.957,
+        9.592,
+        12.849,
+        18.697,
+        19.429,
+        9.736,
+        9.699,
+        9.705,
+        9.766,
+        9.774,
+        27.099,
+        28.055,
+        28.129
+      ]
+    },
+    "targeted_suites": [
+      {
+        "tests": "87",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "10.469"
+      }
+    ],
+    "receipts": {
+      "command.json": "f0af5045748d77e61bcb907b58f993a8d9ace90c6a60edc2c68b89b21e7f2cc4",
+      "result.xml": "d1c73adfa3be81e1c4a7adccdb0b4b52aa5423466ab89ff62193564f48351352",
+      "run.log": "44a089a942cf867b4609cd2209c940886502738a82ac072507fc6796a7d82032"
+    },
+    "qualification": "Original native receipts remain historical; all implementation/test/doc fingerprints are unchanged. Current-head hosted CI verifies the rebased dependency graph and new dev guard pins."
+  }
 }
