@@ -270,8 +270,22 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
   for two to five of them. Even a collection run exactly at Enter would have
   removed only 8 of the 45 passes in round 9's dev send windows: median
   generation-2 CPU per window 189 -> about 162 ms, against 189 -> 77 ms with
-  the re-freeze. The owner's ruling between the current cadence and dropping
-  the re-freeze is pending (TASK-33620.15.9).
+  the re-freeze. The owner ruled on 2026-10-22 (next consequence).
+- **Owner decision (2026-10-22, TASK-33620.15.9): "Keep it as built".**
+  The owner re-ruled once the 2026-10-20 bound proved impossible on CPython,
+  and accepted this amendment's design unchanged: the re-freeze, the
+  compaction after a switch away from a transcript a freeze caught, and the
+  25% budget compaction, all after 5 s without input and with nothing in
+  flight. The trade accepted is the measured one. Main-thread generation-2
+  CPU per send window drops (median about 189 -> 77 ms in round 9), and in
+  exchange an idle compaction costs at least about 235 ms of UI-loop CPU
+  (worst seen about 490 ms) after a conversation switch, and about once per
+  20 runs otherwise. A key pressed while one runs waits until it ends. The
+  bound on a compaction's pause is waived, not met; the other rules of this
+  amendment (never in a send window, never within the quiet period after
+  input, frozen garbage reclaimed and bounded) still hold and stay pinned by
+  the tests under Verification. Revisit if a later CPython adds an
+  incremental or interruptible full collection (see Python versions).
 - The "boot-era garbage becomes permanent" consequence above is now temporary:
   the first compaction reclaims it.
 - Re-freezing ends CPython's habit, noted in the measured result above, of
