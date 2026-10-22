@@ -209,27 +209,29 @@ class ProjectIndexBindingCard(Vertical):
             return
         if self.status is None:
             return
-        try:
-            prefixes = tuple(
-                p.strip()
-                for p in self.query_one(".project-index-prefixes", Input).value.split(
-                    ";"
+        policy = self.policy
+        if event.button.name in {"enable", "apply"}:
+            try:
+                prefixes = tuple(
+                    p.strip()
+                    for p in self.query_one(
+                        ".project-index-prefixes", Input
+                    ).value.split(";")
+                    if p.strip()
                 )
-                if p.strip()
-            )
-            suffixes = tuple(
-                p.strip()
-                for p in self.query_one(".project-index-suffixes", Input).value.split(
-                    ";"
+                suffixes = tuple(
+                    p.strip()
+                    for p in self.query_one(
+                        ".project-index-suffixes", Input
+                    ).value.split(";")
+                    if p.strip()
                 )
-                if p.strip()
-            )
-            policy = ProjectIndexPolicy(prefixes, suffixes)
-        except ValueError:
-            self._feedback(
-                "Use relative folders and suffixes starting with a dot. Separate choices with semicolons."
-            )
-            return
+                policy = ProjectIndexPolicy(prefixes, suffixes)
+            except ValueError:
+                self._feedback(
+                    "Use relative folders and suffixes starting with a dot. Separate choices with semicolons."
+                )
+                return
         self.post_message(
             self.ActionRequested(
                 self.binding_id,

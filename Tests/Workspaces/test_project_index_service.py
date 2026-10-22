@@ -458,6 +458,23 @@ async def test_real_app_shutdown_without_console_drains_index_writer(tmp_path, r
     scanner = BarrierScanner()
     rig = Rig(tmp_path, scanner)
     app = TldwCli()
+    proof_reached = threading.Event()
+
+    class Factory:
+        def __call__(self, key):
+            return rig.store(key)
+
+        def assert_retired(self):
+            assert rig.service._closed
+            assert scanner.retired and scanner.pipes_closed
+            assert rig.service._runs
+            for run in rig.service._runs.values():
+                assert run.db_closed and run.registry_closed and run.native_retired
+                assert not run.writer.is_alive()
+                assert not run.supervisor.is_alive()
+            proof_reached.set()
+
+    rig.service._factory = Factory()
     app._project_index_service = rig.service
     try:
         (rig.root / "a.txt").write_text("app shutdown marker")
@@ -469,9 +486,10 @@ async def test_real_app_shutdown_without_console_drains_index_writer(tmp_path, r
         )
         closing = asyncio.create_task(app._shutdown_app_owned_lifecycles())
         await asyncio.sleep(0.05)
-        assert not closing.done()
+        assert not closing.done() and not proof_reached.is_set()
         scanner.release.set()
         await closing
+        assert proof_reached.is_set()
         assert scanner.retired and scanner.pipes_closed
         assert all(not run.writer.is_alive() for run in rig.service._runs.values())
     finally:

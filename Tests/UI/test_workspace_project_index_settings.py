@@ -570,3 +570,66 @@ async def test_mounted_legacy_management_clear_needs_no_upgrade_space(
     finally:
         await runtime.close_project_index_service(app)
         registry.db.close()
+
+
+@pytest.mark.parametrize(
+    "action,field,draft",
+    [
+        ("clear", "suffixes", "py"),
+        ("disable", "prefixes", "../outside"),
+        ("enable", "suffixes", "py"),
+        ("apply", "prefixes", "../outside"),
+    ],
+)
+@private_profile_test
+async def test_invalid_policy_draft_only_blocks_policy_actions(
+    tmp_path, request, monkeypatch, action, field, draft
+):
+    mod = card_module()
+    rig = Rig(tmp_path)
+    if action != "enable":
+        rig.enable()
+    monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+    monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+    card = mod.ProjectIndexBindingCard(
+        rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+    )
+    execute = card._execute
+    dispatched = []
+
+    def record(app, requested):
+        dispatched.append(requested)
+        return execute(app, requested)
+
+    monkeypatch.setattr(card, "_execute", record)
+    host = CardApp(card)
+    try:
+        async with host.run_test(size=(100, 45)) as pilot:
+            await pilot.pause()
+            await wait_for_card(card, pilot)
+            before = card.status
+            saved = card.policy
+            card.query_one(f".project-index-{field}", Input).value = draft
+            button = next(b for b in card.query(Button) if b.name == action)
+            button.focus()
+            button.scroll_visible(immediate=True)
+            await pilot.press("enter")
+            await pilot.pause()
+            await host.workers.wait_for_complete()
+            if action in {"clear", "disable"}:
+                assert len(dispatched) == 1
+                requested = dispatched[0]
+                assert requested.policy == saved
+                assert requested.expected_scope == before.scope
+                assert requested.job_id == before.job_id
+                assert requested.job_revision == before.job_revision
+                assert card.status.state == "Off"
+                assert rig.service.status(rig.key).scope == card.status.scope
+            else:
+                assert not dispatched
+                assert "relative folders and suffixes" in str(
+                    card.query_one(".project-index-feedback", Static).render()
+                )
+                assert rig.service.status(rig.key).scope == before.scope
+    finally:
+        await rig.close()
