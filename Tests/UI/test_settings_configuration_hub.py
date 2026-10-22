@@ -7349,6 +7349,7 @@ def test_settings_console_background_workbench_raw_scope_unrelated_save_includes
         chat_default_values,
         workbench_scope_fallback=False,
         agents_values=None,
+        submitted=None,
     ):
         saved_args.append(
             (console_values, chat_default_values, workbench_scope_fallback)
