@@ -36,8 +36,17 @@ silently replace or relabel an existing kept copy; Keep refuses that conflict.
 **Export…** writes Markdown through the file picker. **Scripts…** opens the
 existing kept-report manager on that copy. **Play** is available when the live
 report has usable audio. **Watchlists** returns to the selected live report's
-source. Empty Reports and failed runs offer **Try report demo**; this uses the
-existing demo service and configured provider.
+source. Empty Reports offers **Watchlists** and **Set up a daily brief…**
+directly under the "No reports yet" sentence. The latter is not a one-off
+demo: it first shows what it creates — a recurring "Daily Brief" watchlist
+over three live RSS feeds (Hacker News front page, BBC World News, Ars
+Technica) checked hourly, a brief written every 24 h with your persisted
+provider · model (using your API quota), a cast script and audio through
+your TTS provider when a voice profile exists, and the removal path (delete
+the Daily Brief watchlist in Watchlists) — and only **Set up and write
+today's brief** starts it; **Cancel** or Escape writes and fetches nothing.
+If the newest report failed, the same buttons stay under the list so you can
+run it again; the consent then says it reuses your existing Daily Brief.
 
 If a source fails, Library shows an error and Retry instead of claiming that
 its last successful count is current. Other healthy artifact views remain

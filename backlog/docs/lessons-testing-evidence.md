@@ -1047,6 +1047,36 @@ control (`.approval-row-decision` widened to full width) failed it. Before you
 call a guard "environmental", check whether any runner runs it, and make it
 reach its assertions once.
 
+**TASK-34000.23, 2026-10-09: the wall is not a `Tests/UI` wall, and the scratch
+plugin's path filter decides who gets rescued.** `Tests/Subscriptions/
+test_daily_report_demo.py` (pure: real SubscriptionsDB, faked chat and fetch) read
+12 failed / 1 passed locally -- every `run_demo` test dead at
+`RecoveryRequired: raw_source_selection_changed` from the first config read inside
+`LocalWatchlistsService.create_source` -- and so did a new pure pin that only
+creates one source. `Tests/Watchlists/test_watchlists_demo_banner.py` showed six of
+the same. The harness's `w1b_bootstrap_plugin` marks only items whose path contains
+`Tests/UI/`, so running these files "with the plugin" rescues nothing and the red
+looks like the product. A copy of the plugin that marks EVERY item (local run only,
+never committed) gave 15 passed for the pure file and the same 3 failed / 3 passed
+for the banner file on both base and head (the shared profile's persisted banner
+dismissal, not the change under test). Pair the arms on base under the SAME plugin
+before attributing anything, and read the plugin's filter before trusting its
+rescue.
+
+**TASK-34000.27, 2026-10-09: a paired arm can flip on its own when the test
+counts pauses.** `test_screen_navigation.py::test_skills_route_lands_on_library_
+with_skills_row_selected` failed only on the branch in the paired plugin run (37
+red at base, 42 at head), then failed twice alone on the branch and passed twice
+alone at base -- every sign of a regression. The next pair, run with
+`-o log_cli=true`, came out the other way round: base failed, branch passed, and
+BOTH logs read `Splash screen enabled: True ... duration: 7.0` with no
+`Navigating to screen` line at all. The test waits `150 x pilot.pause(0.02)` for
+the initial screen and again for the route, so whether it outlasts the splash is
+whether 300 pauses took more than 7 s of wall clock on that run. A paired arm
+settles attribution only for a test whose waits are wall-clock bounded (or whose
+profile has the splash off); for an iteration-counting wait, read the captured
+log for the splash line before believing either arm.
+
 **TASK-33003.20 follow-up, 2026-10-04.** The guard now lives in
 `Tests/UI/test_approval_batch_geometry.py`, on the UI PR census. The supported
 `private_profile_test` wrapper selects the profile before imports, and the test
@@ -1142,6 +1172,31 @@ Patch from a late hook (`pytest_collection_modifyitems`), never at plugin
 import -- module import runs before the Tests/conftest.py config sandbox and
 dies on the real profile's `RecoveryRequired` instead of red-proofing
 anything.
+
+## A RED arm that fails for a different reason than its design stated is a design error, not evidence (TASK-34000.24, 2026-10-19)
+
+The brief's arm 5 said: with no active workspace, the Media reader's "Use in
+Console" refuses with "Select an active workspace before using this item in
+Console." -- base: a toast, nothing staged. The arm WAS red on base, and a
+"7 failed" summary would have passed as RED evidence. Reading the one failure
+line showed the opposite reason: `open_chat_with_handoff` had been CALLED.
+`build_library_workspace_depth_state` treats no active workspace as the
+global scope (task-15120, an owner ruling in
+`registry_service.clear_active_workspace`'s docstring) and returns the
+"Local Default" snapshot with every row eligible, so the `no_active_workspace`
+reason code the design assumed never reaches the row model on any tree.
+Implementing to the brief would have turned a deliberate global-scope stage
+into a refusal. The arm was rewritten (a failed link write refuses; no active
+workspace stages unlinked, pinned as such) and the AC sharpened in the task
+file before the fix went in.
+
+- **Read every RED failure's reason, not the count.** A red arm proves only
+  that the assertion is not met on base; the design is right only if it is
+  not met for the reason the design named.
+- **A refusal sentence existing in the code is not evidence the path that
+  shows it is reachable.** Trace the producer (`eligibility.py`) to its
+  consumer (`display_state.py`) before pinning a refusal that nobody has
+  seen live.
 
 ## That plugin's shared profile turns config-writing tests red together
 

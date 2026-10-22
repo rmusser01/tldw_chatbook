@@ -46,6 +46,7 @@ class _AgenticFamilySources:
         ROOT / "tldw_chatbook/css/features/_console_panels.tcss",
         ROOT / "tldw_chatbook/css/features/_library.tcss",
         ROOT / "tldw_chatbook/css/features/_library_panels.tcss",
+        ROOT / "tldw_chatbook/css/features/_library_notes_panels.tcss",
         ROOT / "tldw_chatbook/css/features/_settings.tcss",
         ROOT / "tldw_chatbook/css/features/_home.tcss",
         ROOT / "tldw_chatbook/css/layout/_destination.tcss",

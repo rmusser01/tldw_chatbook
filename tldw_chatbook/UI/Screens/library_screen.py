@@ -385,6 +385,12 @@ from ...Workspaces.eligibility import (
     LIBRARY_GENERIC_WORKSPACE_BLOCK,
     linkable_ineligibility_label,
 )
+from ...Workspaces.link_on_use import (
+    UnlinkOutcome,
+    decide_link_on_use,
+    registry_unavailable_copy,
+    unlink_item_from_workspace,
+)
 from ...Workspaces.registry_service import WorkspaceRegistryServiceError
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -513,6 +519,7 @@ from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_ingest_state import LibraryIngestState
 from ..Library_Modules.library_media_state import (
+    LibraryMediaLinkReceipt,
     LibraryMediaState,
 )
 from ..Library_Modules.library_notes_state import LibraryNotesState
@@ -1097,6 +1104,12 @@ class LibraryScreen(BaseAppScreen):
         # cancels behavior (``action_library_media_viewer_back``'s
         # ``_library_media_confirming_delete`` branch).
         ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
+        # TASK-34000.23 review 1 (Minor 2): Escape closes the Reports
+        # "Set up a daily brief…" consent block. Nothing is armed behind it
+        # (the demo starts only from the block's own run button), so this is
+        # a dismissal, gated on the block being open; declared before the
+        # generic rail/blur hops below for the same declaration-order reason.
+        ("escape", "library_artifacts_demo_cancel", "Cancel daily-brief setup"),
         ("escape", "library_emergency_return", "Return to Library rail"),
         # task-32225: the adaptive-reader twin of the binding above. That one
         # covers the ordinary (shell-less) routes; this one covers a route
@@ -2708,6 +2721,12 @@ class LibraryScreen(BaseAppScreen):
             rag_search_state_accessor=lambda: self._rag_search_state,
             active_library_rail=lambda: self._active_library_rail(),
             console_setup_would_block=lambda: self._console_setup_would_block(),
+            library_workspace_depth_state=(
+                lambda *a, **k: self._library_workspace_depth_state(*a, **k)
+            ),
+            invalidate_library_workspace_depth_state=(
+                lambda: self._invalidate_library_workspace_depth_state()
+            ),
             open_library_item_by_id=(
                 lambda *a, **k: self._open_library_item_by_id(*a, **k)
             ),
@@ -11293,7 +11312,9 @@ class LibraryScreen(BaseAppScreen):
             return False
         return self._acquire_file_notes_transition("screen")
 
-    async def flush_pending_work(self, *, quitting: bool = False) -> bool:
+    async def flush_pending_work(
+        self, *, quitting: bool = False, destination: str = ""
+    ) -> bool:
         """Persist pending note edits before the app navigates away or quits.
 
         The app awaits this from ``handle_screen_navigation`` before
@@ -11306,6 +11327,9 @@ class LibraryScreen(BaseAppScreen):
             quitting: The quit hook asks its own question, so the veto toasts
                 stay quiet, and an untouched new note waits for
                 ``prepare_for_quit`` (after every quit prompt said yes).
+            destination: The nav-bar label of where the user was going
+                (``"Console"``), named in every veto toast (TASK-34000.27);
+                empty when the caller does not know.
 
         Returns:
             True only for the coordinator's typed ``PERMITTED`` result and
@@ -11313,7 +11337,19 @@ class LibraryScreen(BaseAppScreen):
             blocked, and stale Notes outcomes all veto navigation even when a
             presentation scalar or snapshot appears clean.
         """
+        from ..Library_Modules import library_pending_work as pending
+
+        # One click, at most one toast (review 1 Minor 6): the first refusal
+        # speaks; the others are visible in their own editors.
+        spoken: list[str] = []
+
+        def say(text: str) -> None:
+            if not quitting and not spoken:
+                spoken.append(text)
+                pending.notify_library_flush_veto(self, text)
+
         if self._prompts_state.mutation_in_flight:
+            say(pending.library_prompt_mutation_veto_notice(destination=destination))
             return False
         file_notes_flush_allowed = await self._flush_active_file_notes()
         note_flush = await (
@@ -11323,14 +11359,19 @@ class LibraryScreen(BaseAppScreen):
         )
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
-        if not prompt_flush_allowed and not quitting:
+        # task-449 / TASK-34000.27: the app-level navigation veto only logs
+        # and rolls the nav bar back, so every refusing draft says why the
+        # tab switch was refused -- the same toasts as the in-screen Back /
+        # row-switch / rail-switch vetoes. The Notes veto carries its own
+        # reason (the save's message names the field and the fix).
+        if not file_notes_flush_allowed:
+            say(pending.library_file_notes_flush_veto_notice(destination=destination))
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            say(pending.library_note_flush_veto_notice(note_flush, destination=destination))
+        if not prompt_flush_allowed and not quitting and not spoken:
+            spoken.append("prompt")
             self._notify_prompt_dirty_veto()
-        if not skill_flush_allowed and not quitting:
-            # task-449: the app-level navigation veto only logs, so tell
-            # the user why the tab switch was refused -- same toast as the
-            # in-screen Back / row-switch / rail-switch vetoes. Notes show
-            # their own conflict banner and prompts predate this pattern,
-            # so only the skill veto reports here.
+        if not skill_flush_allowed and not quitting and not spoken:
             self._notify_skill_dirty_veto()
         return (
             file_notes_flush_allowed
@@ -14882,6 +14923,10 @@ class LibraryScreen(BaseAppScreen):
             # Search mode never calls a provider and stays unaffected
             # regardless of this value.
             provider_name=provider_gate.provider,
+            # TASK-34000.21: the persisted `[chat_defaults]` model rides the
+            # same gate, so the quiet line names the model that will be
+            # billed, not just the provider.
+            provider_model=provider_gate.model,
             provider_credential_recovery=provider_gate.credential_recovery,
             selected_source_types=selected_source_types,
             history=self._rag_search_state.history,
@@ -23727,6 +23772,11 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_bulk_delete_cancel(self) -> None:
         return self._media_controller.action_library_media_bulk_delete_cancel()
 
+    def action_library_artifacts_demo_cancel(self) -> None:
+        """Escape on the Reports consent block (TASK-34000.23 review 1)."""
+        if self._artifacts_controller is not None:
+            self._artifacts_controller.action("demo-cancel")
+
     async def _delete_library_media_selection(self, media_ids: tuple[str, ...]) -> None:
         """Soft-delete every selected Library media item (task-2853 AC3).
 
@@ -25971,6 +26021,15 @@ class LibraryScreen(BaseAppScreen):
             return (
                 self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS
                 and not self._library_emergency_return_eligibility().enabled
+            )
+        if action == "library_artifacts_demo_cancel":
+            # TASK-34000.23 review 1: only while the Reports consent block
+            # is open on an active Artifacts destination.
+            controller = self._artifacts_controller
+            return bool(
+                controller is not None
+                and controller.demo_consent is not None
+                and controller.active()
             )
         if action == "library_media_bulk_delete_cancel":
             # task-3020 AC2: only while the bulk-delete confirmation is
@@ -36673,49 +36732,205 @@ class LibraryScreen(BaseAppScreen):
         self.open_chunking_lab(use_selected=True)
 
     def _open_selected_media_handoff(self) -> None:
-        """Stage the media item open in the viewer into Console via the shared handoff.
+        """Stage the media item open in the viewer into Console, linking it on use.
 
-        Mirrors ``_open_selected_conversation_handoff``: builds the payload,
-        then guards on having an open media item, the workspace
-        context-handoff gate, and the app exposing ``open_chat_with_handoff``
-        at all. The workspace gate is not conversation-specific --
-        ``build_library_workspace_depth_state`` computes
-        ``context_handoff_enabled`` across every visible Library source
-        (notes, media, and conversations together) -- so media handoff
-        eligibility follows the identical workspace-staging policy as
-        conversations.
+        TASK-34000.24: the per-item workspace gate used to refuse every
+        media item on a fresh profile with a sentence naming an action that
+        does not exist for media ("Copy or link this media into workspace
+        workspace-default …"). Notes (task-32536) and conversations
+        (task-32107) already link on use; media now takes the same path
+        through the shared seam's ONE decision (``decide_link_on_use``,
+        fix round 1 I-2): a block a LINK can resolve -- or an item the
+        depth state never sampled (I-1: the sample holds the first 50 local
+        media) -- is resolved by linking the item into the active workspace,
+        then staging, with a receipt ("Linked to Local Default · staged in
+        Console") and an Undo in the Reader; only a sampled row whose block a
+        link cannot resolve refuses, with its own sentence; no active
+        workspace is the global scope (task-15120) and stages as-is; a server
+        detail stages as-is. An item already in the workspace stages with the
+        "Already linked" receipt. The notes rule holds: Console's availability
+        is read BEFORE the write, and a membership this press added is
+        unlinked again if Console refuses the hand-off -- which
+        ``open_chat_with_handoff`` now reports (fix round 1, M-1), so the
+        receipt never claims "staged" for a refused stage.
         """
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_media_handoff_payload()
         notify = getattr(self.app_instance, "notify", None)
+
+        def say(message: str, severity: str = "warning") -> None:
+            if callable(notify):
+                notify(message, severity=severity, markup=False)
+
         if payload is None:
-            if callable(notify):
-                notify(
-                    "Open a media item before using it in Console.", severity="warning"
-                )
-            return
-        # Single-item action: same per-item gate as the conversation
-        # handoff above (TASK-15423).
-        item_eligible, item_reason = library_item_context_handoff(
-            workspace_state,
-            item_type=payload.item_type,
-            item_id=str(payload.source_id or ""),
-        )
-        if not item_eligible:
-            if callable(notify):
-                notify(item_reason, severity="warning")
+            say("Open a media item before using it in Console.")
             return
         open_chat_with_handoff = getattr(
             self.app_instance, "open_chat_with_handoff", None
         )
+        # Read BEFORE the link below: a hand-off that cannot succeed must
+        # not write a membership (the notes hand-off's rule).
         if not callable(open_chat_with_handoff):
-            if callable(notify):
-                notify(
-                    "Console handoff is unavailable for Library Media.",
-                    severity="warning",
-                )
+            say("Console handoff is unavailable for Library Media.")
             return
-        open_chat_with_handoff(payload, action_label="Use in Console")
+        item_id = str(payload.source_id or "")
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        decision = decide_link_on_use(
+            workspace_state.source_rows,
+            registry,
+            item_type=payload.item_type,
+            item_id=item_id,
+            title=payload.title,
+            local=not self._media_state.reader_session.external_detail,
+        )
+        if decision.kind == "refuse":
+            say(decision.copy)
+            return
+        link = decision.result
+        if link is not None and link.written:
+            # The cached eligibility that sent us here is stale now; without
+            # this the rail and the next press would still call the item
+            # blocked.
+            self._invalidate_library_workspace_depth_state()
+        try:
+            staged = open_chat_with_handoff(payload, action_label="Use in Console")
+        except Exception:
+            logger.opt(exception=True).warning("Library media Console handoff failed.")
+            staged = False
+            failure = (
+                "Can't use this media in Console — Console could not take it. "
+                "Next: try again."
+            )
+        else:
+            # ``None`` is a caller that does not report (a test double, an
+            # older seam): treat it as staged, as before; only an explicit
+            # ``False`` is a refusal -- and that one has already notified.
+            failure = ""
+        if staged is False:
+            if link is not None and link.written:
+                outcome = unlink_item_from_workspace(
+                    registry,
+                    link.workspace_id,
+                    item_type=payload.item_type,
+                    item_id=item_id,
+                )
+                self._invalidate_library_workspace_depth_state()
+                if outcome is UnlinkOutcome.FAILED:
+                    say(
+                        "Can't use this media in Console — Console could not take "
+                        f"it, and the media stayed linked to {link.workspace_name}. "
+                        "Next: try again."
+                    )
+                    return
+            if failure:
+                say(failure)
+            return
+        if link is not None:
+            self._set_library_media_link_receipt(
+                workspace_id=link.workspace_id,
+                workspace_name=link.workspace_name,
+                item_id=item_id,
+                written=link.written,
+            )
+
+    def _set_library_media_link_receipt(
+        self,
+        *,
+        workspace_id: str,
+        workspace_name: str,
+        item_id: str,
+        written: bool,
+    ) -> None:
+        """Record the workspace the last "Use in Console" press linked into.
+
+        The id is stored beside the NAME because Undo has to remove the
+        membership a press here added, not whatever is active by the time
+        it is pressed (the conversation reader's review fix round 1). An
+        "Already linked" press keeps the Undo of an earlier press on the
+        same item and workspace: the membership is still the one this
+        session wrote.
+
+        Args:
+            workspace_id: The linked workspace's id.
+            workspace_name: Its display name, for the receipt line.
+            item_id: The media membership id the receipt names.
+            written: Whether THIS press inserted the membership.
+        """
+        prior = self._media_state.link_receipt
+        undo_offered = written or (
+            prior is not None
+            and prior.undo_offered
+            and prior.item_id == item_id
+            and prior.workspace_id == workspace_id
+        )
+        self._media_state.link_receipt = LibraryMediaLinkReceipt(
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
+            item_id=item_id,
+            written=written,
+            undo_offered=undo_offered,
+        )
+        self._sync_library_media_viewer_or_recompose()
+
+    @on(Button.Pressed, "#library-media-link-undo")
+    def handle_library_media_link_undo(self, event: Button.Pressed) -> None:
+        """Remove the membership the last "Use in Console" press added.
+
+        The exact inverse of the link in ``_open_selected_media_handoff``:
+        the RECEIPT's workspace by id (never the active one), the receipt
+        cleared, the cached eligibility invalidated, the Reader re-synced.
+
+        Fix round 1: a press that lands after the workspace moved elsewhere
+        (switched from Console, say) must not remove a membership of a
+        workspace that is no longer active -- it says so once and re-syncs
+        the Reader so the dead control disappears (M-3); and a membership
+        that is already gone is the outcome the user wanted, so the receipt
+        clears instead of looping on "could not be undone" (M-4).
+
+        Args:
+            event: The Undo button press.
+        """
+        event.stop()
+        receipt = self._media_state.link_receipt
+        payload = self._selected_media_handoff_payload()
+        open_item_id = str(payload.source_id or "") if payload is not None else ""
+        notify = getattr(self.app_instance, "notify", None)
+
+        def say(message: str) -> None:
+            if callable(notify):
+                notify(message, severity="warning", markup=False)
+
+        block = self._media_controller.library_media_link_receipt_block(open_item_id)
+        if receipt is None or not open_item_id or block in ("no_receipt", "other_item"):
+            self._sync_library_media_viewer_or_recompose()
+            return
+        if block == "registry_unavailable":
+            # Fix round 2 (item 4): a registry that is missing or cannot be
+            # read is not a workspace that moved -- say which (the M-6
+            # sentence) and withhold the control.
+            say(registry_unavailable_copy("media"))
+            self._sync_library_media_viewer_or_recompose()
+            return
+        if block == "workspace_inactive" or not receipt.undo_offered:
+            say(
+                "This link was made in a workspace that is no longer active, "
+                "so it can't be undone from here."
+            )
+            self._sync_library_media_viewer_or_recompose()
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        outcome = unlink_item_from_workspace(
+            registry,
+            receipt.workspace_id,
+            item_type="media",
+            item_id=receipt.item_id,
+        )
+        if outcome is UnlinkOutcome.FAILED:
+            say("This link could not be undone. Try again.")
+            return
+        self._media_state.link_receipt = None
+        self._invalidate_library_workspace_depth_state()
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-use-in-chat")
     def use_media_in_chat(self, event: Button.Pressed) -> None:

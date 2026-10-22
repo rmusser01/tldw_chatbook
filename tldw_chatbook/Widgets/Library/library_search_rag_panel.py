@@ -853,7 +853,10 @@ def library_rag_query_quiet_text(state: LibraryRagPanelState) -> str:
     if query_state.blocked_is_no_scope and state.scope.has_available_sources:
         return "Select at least one source."
     if query_state.ready_answer_provider:
-        return library_rag_paid_mode_notice(query_state.ready_answer_provider)
+        return library_rag_paid_mode_notice(
+            query_state.ready_answer_provider,
+            query_state.ready_answer_model or None,
+        )
     return ""
 
 

@@ -55,6 +55,26 @@ FAST_LANE_TARGETS = (
     # carrying its time. About 6 s together; nothing else gated them.
     "Tests/Library/test_library_file_export.py",
     "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-34000.24: the link-on-use seam (real registry over a temp
+    # WorkspaceDB: written-once, already-linked, no-active, registry-raises,
+    # unlink inverse, row-id resolution) and the shared refusal copy that
+    # names the workspace, never its id; pure, a few seconds.
+    "Tests/Workspaces/test_link_on_use.py",
+    "Tests/Workspaces/test_workspace_eligibility.py",
+    # TASK-34000.27: the sentence a vetoed nav-bar click gets from Library
+    # (the save's own field-naming reason, the Esc path's sentence for
+    # the other kinds, the destination in its head); pure, a few seconds.
+    "Tests/UI/Library_Modules/test_library_pending_work_veto_notice.py",
+    # TASK-32451: every Manage sync folders row is titled with its folder's
+    # name through the published snapshot (real runtime over a tmp DB and
+    # vault; the honest fallbacks; no path on the snapshot, row or log).
+    # About 7 s.
+    "Tests/Notes/test_notes_sync_root_display_name.py",
+    # TASK-34000.21: Library RAG Answer resolves the persisted
+    # `[chat_defaults]` provider AND model (never borrowing one across
+    # providers), names both on the line above Run, and the scheduled
+    # fallback takes the same pair; pure, about a second.
+    "Tests/Library/test_library_rag_answer_provider_resolution.py",
     # TASK-34000.25: the ``[<title>](media://<uuid>)`` source line a note
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).

@@ -50,6 +50,35 @@ class ArtifactItems(Vertical):
             yield Button("Kept", id="library-artifacts-kept", compact=True)
             yield Button("Newest", id="library-artifacts-sort", compact=True)
         yield Static("Loading reports…", id="library-artifacts-count", markup=False)
+        # TASK-34000.23: the empty-state sentence above names these, so they
+        # sit directly under it in this pane. The CTA opens a consent block;
+        # nothing is seeded, fetched or billed until the run button inside it.
+        # Both start hidden so the frame before the first `sync` paints
+        # neither an orphaned CTA nor an empty framed card.
+        empty_actions = Vertical(id="library-artifacts-empty-actions")
+        empty_actions.display = False
+        confirm = Vertical(id="library-artifacts-demo-confirm")
+        confirm.display = False
+        with empty_actions:
+            with Horizontal(classes="library-artifacts-toolbar"):
+                yield Button(
+                    "Watchlists", id="library-artifacts-watchlists-items", compact=True
+                )
+                yield Button(
+                    "Set up a daily brief…", id="library-artifacts-demo", compact=True
+                )
+            with confirm:
+                yield Static("", id="library-artifacts-demo-copy", markup=False)
+                with Horizontal(classes="library-artifacts-toolbar"):
+                    yield Button(
+                        "Set up and write today's brief",
+                        id="library-artifacts-demo-confirm-run",
+                        classes="console-action-primary",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Cancel", id="library-artifacts-demo-cancel", compact=True
+                    )
         yield OptionList(id="library-artifacts-list")
         with Horizontal(classes="library-artifacts-toolbar"):
             yield Button("First", id="library-artifacts-first", compact=True)
@@ -130,9 +159,29 @@ class ArtifactItems(Vertical):
                     if c.scope.view == "chatbooks"
                     else "No Dreams yet. Enable Dreams in F4 Settings to begin."
                     if c.scope.view == "dreams"
-                    else "No reports yet. Open Watchlists or try the report demo."
+                    else "No reports yet. Open Watchlists, or set up a daily brief below."
                 )
             self.query_one("#library-artifacts-count", Static).update(status)
+            # Empty Reports (or a failed first run): the press reaches the
+            # same consent, which reads the existing schedule and shows the
+            # reuse copy. `empty_actions_visible` is the controller's one
+            # predicate; the work pane reads it too (F4).
+            actions_visible = c.empty_actions_visible
+            self.query_one("#library-artifacts-empty-actions").display = actions_visible
+            consent = c.demo_consent if actions_visible else None
+            self.query_one("#library-artifacts-demo-confirm").display = bool(consent)
+            if consent:
+                self.query_one("#library-artifacts-demo-copy", Static).update(
+                    "\n".join(consent.lines)
+                )
+                run = self.query_one("#library-artifacts-demo-confirm-run", Button)
+                run.label = (
+                    "Write today's brief"
+                    if consent.existing
+                    else "Set up and write today's brief"
+                )
+                run.disabled = not consent.available
+                run.tooltip = None if consent.available else consent.lines[0]
             self.query_one("#library-artifacts-retry").display = bool(
                 c.error or c.detail_error
             )
@@ -223,7 +272,6 @@ class ArtifactWork(Vertical):
             yield Button("Open source", id="library-artifacts-source", compact=True)
         with Horizontal(classes="library-artifacts-toolbar"):
             yield Button("Watchlists", id="library-artifacts-watchlists", compact=True)
-            yield Button("Try report demo", id="library-artifacts-demo", compact=True)
 
     def sync(self) -> None:
         c = self.controller
@@ -325,13 +373,14 @@ class ArtifactWork(Vertical):
             button = self.query_one(f"#library-artifacts-{name}", Button)
             button.display = bool(allowed)
             button.disabled = not ready
-        self.query_one("#library-artifacts-demo").display = (
-            c.scope.view not in ("chatbooks", "dreams")
-            and not dream
-            and (not c.selected or bool(row and row.status == "failed"))
-        )
+        # Final review (2026-10-20) F4: while the items pane offers the
+        # empty-state "Watchlists" beside the daily-brief CTA, this standing
+        # copy stays hidden so the empty state paints the control once.
         self.query_one("#library-artifacts-watchlists").display = (
-            c.scope.view not in ("chatbooks", "dreams") and not chatbook and not dream
+            c.scope.view not in ("chatbooks", "dreams")
+            and not chatbook
+            and not dream
+            and not c.empty_actions_visible
         )
         for toolbar in self.query(Horizontal):
             toolbar.display = any(button.display for button in toolbar.query(Button))

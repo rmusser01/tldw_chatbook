@@ -954,7 +954,49 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: owner decision: the Reader's Note action titles an untitled document
     #: with the source line's own `MEDIA_SOURCE_UNTITLED_TITLE` (one import
     #: line, one two-line comment). No new method.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36968, 1343),
+    #: 2026-10-09, TASK-34000.21: 36968 -> 36972 (+4), same owner decision
+    #: (2026-10-04: raise the row to the measured value rather than move
+    #: unrelated code to fit): the panel-state builder forwards the gate's
+    #: model (`provider_model=provider_gate.model`, one kwarg and a
+    #: three-line comment) so the quiet line names the model that will be
+    #: billed. No new method.
+    #: 2026-10-09, TASK-34000.23 review 1: 36972/1343 -> 36992/1344 (+20 /
+    #: +1), same owner decision: Escape dismisses the Reports "Set up a
+    #: daily brief…" consent block -- one `check_action`-gated escape
+    #: binding (with its declaration-order comment), its `check_action`
+    #: branch, and the one-line delegating action method
+    #: (`action_library_artifacts_demo_cancel`). Re-set to the exact
+    #: measurement, never above it.
+    #: 2026-10-09, TASK-34000.27: 36992 -> 37008 (+16), same owner decision:
+    #: `flush_pending_work` takes the clicked destination's label and
+    #: says why every refusing draft vetoed the switch (the Notes veto
+    #: through the pure `library_note_flush_veto_notice`, the two formerly
+    #: silent vetoes through their own sentences) -- one kwarg, its Args
+    #: entry, a three-line nested `say`, and the comment. No new method.
+    #: Review 1: 37008 -> 37014 (+6), one click says at most one toast
+    #: (the `spoken` guard). No new method.
+    #: 2026-10-19, TASK-34000.24: the row moved 37014 -> 37134 (+120); the
+    #: FILE grew 36968 -> 37134 (+166) in this task (it was 46 under the row
+    #: before). Same owner decision: the Media reader's hand-off links the
+    #: item on use through the shared seam's one decision
+    #: (`_open_selected_media_handoff`, a screen-resident wiring exclusion,
+    #: rewritten in place), the receipt setter
+    #: `_set_library_media_link_receipt`, the `#library-media-link-undo`
+    #: handler (screen-resident: it needs the depth-state invalidation the
+    #: media controller does not bind; fix round 1 made it say why a stale
+    #: Undo cannot act and clear an already-removed link), two imports and
+    #: the two lambdas that inject the depth state into the Search/RAG
+    #: controller.
+    #: 2026-10-20, fix round 2 (item 4): 37134 -> 37137 (+3), the Undo
+    #: handler says the registry-unavailable sentence for a registry it
+    #: cannot read and "no longer active" only for a moved workspace.
+    #: 2026-10-20, rebased onto dev 2d071d6d71 (same owner decision): dev's own
+    #: file is 36929 there (+7 since the last base); this branch's net
+    #: +215 is unchanged: 37137 -> 37144.
+    #: 2026-10-22, rebased onto dev 7700c63a68 (same owner decision): dev's own
+    #: file is 37062 there (+133 since the last base); this branch's net
+    #: +215 is unchanged: 37144 -> 37277.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37277, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

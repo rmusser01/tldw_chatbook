@@ -460,7 +460,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # the 430 above.
 # TASK-36036/36037 append four entries without changing dev slots or limits.
 # TASK-36097..36100 append thirty-five regression selectors without moving dev slots.
-MINIMUM_FILES = 584
+# TASK-34000 clarify batch (2026-10-22, rebased onto dev 7700c63a68) raised it
+# by 4, to 588: test_library_rag_answer_names_model.py (.21, the pre-Run line
+# names provider and model), test_library_reports_demo_consent.py (.23, the
+# paid-demo consent), test_nav_veto_keeps_highlight.py (.27, a vetoed nav
+# switch says why) and test_library_media_use_in_console_links.py (.24, link
+# on use; 3-4 boots, ~11-13 s quiet). All four are appended at the census
+# tail so every existing entry keeps its round-robin shard
+# (derived-artifacts.yml: a mid-file insert re-deals every later entry).
+MINIMUM_FILES = 588
 
 
 def read_census(path: Path) -> list[str]:

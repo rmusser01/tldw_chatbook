@@ -1729,7 +1729,11 @@ async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review(
 ):
     """A fresh remount keeps projected attention and its next action."""
     root = NotesSyncRootRuntimeSnapshot(
-        "root.attention:opaque", "needs_attention", "review_changes", "op-1"
+        "root.attention:opaque",
+        "needs_attention",
+        "review_changes",
+        "op-1",
+        display_name="Vault sync",
     )
     for visit in range(2):
         app = _build_test_app()
@@ -1751,7 +1755,10 @@ async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review(
 
             assert review.has_class("console-action-primary"), visit
             assert "Needs attention · Next: Review changes" in _painted_text(host)
-            assert "name unavailable before cutover" in _painted_text(host)
+            # task-32451: the row is titled with the runtime's name for the
+            # root, not a placeholder.
+            assert "Vault sync" in _painted_text(host)
+            assert "name unavailable" not in _painted_text(host)
             assert screen.query_one("#notes-sync-root-retarget-0", Button).disabled
             retarget = screen.query_one("#notes-sync-root-retarget-0", Button)
             assert retarget.disabled

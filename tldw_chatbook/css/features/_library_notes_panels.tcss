@@ -1,0 +1,106 @@
+/* Library Notes panels: the workbench's row wrappers, New note, and lasting sync
+   (roots, status, review and history rows). Carved verbatim from the tail of
+   _library_panels.tcss on 2026-10-20 (ADR-161 spec 3.5's 2,000-line ceiling,
+   TASK-24451: "split the sheet by vocabulary"); it is listed directly after
+   that sheet in CSS_MODULES and the library split, so cascade order is
+   unchanged. */
+/* Presentation-only row wrappers keep the established wide stacked
+   workbench. Compact rules below switch only these wrappers to rows. */
+#library-notes-filter-row,
+#library-notes-status-row,
+#library-note-heading,
+#library-note-title-row,
+#library-note-keywords-row,
+#library-note-context-keywords-row,
+#library-notes-create-heading {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-0;
+}
+
+#library-notes-create-viewport {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* TASK-19010: lasting Notes sync inherits the retained Neon Workbench canvas.
+   Authority/status and the nearest valid action stay fixed; setup, review, and
+   recovery effects share one bounded scroll owner at the 60x20 floor. */
+.library-notes-lasting-sync-canvas {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    overflow: hidden;
+}
+
+#notes-sync-authority,
+#notes-sync-roots-authority,
+.library-notes-lasting-status {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    max-height: $ds-size-2;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+.library-notes-sync-review-row,
+.library-notes-sync-root-row,
+.library-notes-sync-root-actions {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.library-notes-sync-attention-actions {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+}
+
+/* TASK-32625: safe review rows have no body requiring a trailing gap.
+   Both class tokens stay in the same Library-owned split as the base row. */
+.library-notes-sync-review-row.library-notes-sync-review-plain {
+    margin: $ds-space-0;
+}
+
+.library-notes-sync-conflict-choices,
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    overflow: hidden;
+}
+
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    background: $surface-darken-1;
+}
+
+.notes-sync-conflict-view,
+.library-notes-sync-attention-actions > .notes-sync-conflict-choice {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+}
+
+.library-notes-sync-root-status {
+    color: $text-muted;
+}
+
+.library-notes-sync-root-actions > Button {
+    width: $ds-width-full;
+}
+
+.library-notes-sync-attention-actions > Button {
+    width: $ds-width-full;
+}

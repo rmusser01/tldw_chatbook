@@ -95,7 +95,18 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_lifecycle.py": 2134,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
-    "tldw_chatbook/app_navigation.py": 1110,
+    # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
+    # 2026-10-04 (raise the row to the measured value rather than move
+    # unrelated code to fit): the one nav-bar rollback helper
+    # (`_restore_nav_bar_highlight`, extracted from the crash path) is
+    # now called from every refusing branch of the locked navigation
+    # body, and a flush that accepts `destination` is told the clicked
+    # destination's label (`_navigation_destination_label`,
+    # `_flush_accepts_destination`). Review 1: 1195 -> 1208 (+13), the
+    # admission-veto branch says the honest generic ("Couldn't leave this
+    # screen yet; try again in a moment.") -- no admission hook speaks on
+    # its own.
+    "tldw_chatbook/app_navigation.py": 1208,
     # TASK-33011: the command-palette providers moved verbatim out of app.py;
     # governed there, so governed here.
     "tldw_chatbook/app_command_providers.py": 1123,
@@ -264,7 +275,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-35677/35678: bounded paste ownership and action support (-13).
     # TASK-35680: parallel-run origin handling removes one more line.
     # TASK-36098 retains dev decomposition and moves media completion out.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35662,
+    # 2026-10-22, TASK-34000.27, owner decision ("expand the limits, don't modify
+    # other code to make it fit", 2026-10-04): dev 7700c63a68's 35662 -> 35668
+    # (+6) -- the audio_cpp fence's QueryError arm says why it refused a nav
+    # switch instead of rolling back silently.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35668,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

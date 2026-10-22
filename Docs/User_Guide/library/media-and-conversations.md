@@ -565,7 +565,7 @@ still spans the pane.
 |---|---|
 | "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. When the tab you are on has nothing to search — Highlights and Info have no text — it reads "○ Find" and prints that tab's own reason on the line directly under the toolbar, not only in a tooltip (task-32362). |
 | "Note" | Opens a new note that names this document: the note is titled after the item and its first line is a `[title](media://…)` link back to it, with the caret on the line below, ready to type. `n` does the same from the keyboard (not while the Find box or the Items filter has focus — there it types an `n`). The Reader keeps your place: pressing the Media rail row brings back the same item, on the same tab, at the same scroll position, and the note stays open on your next visit to Notes. For a server item the button reads "○ Note" with the reason "Notes beside server items need server support". |
-| "Use in Console" | Stages this item as context for your next Console message. |
+| "Use in Console" | Stages this item as context for your next Console message, linking it to the active workspace on the way if it is not a member yet — the same one-press link that notes and conversations do. A receipt under the toolbar says which workspace by name ("Linked to Local Default · staged in Console", or "Already linked to …" when it was a member already) with an **Undo link** beside it that removes the membership a press in this reader session added (a link made by Search ▸ evidence ▸ `u` has no Undo there; remove it from the workspace's own sources). An Undo pressed after the active workspace changed says so instead of removing anything. The receipt stands only while that workspace is the active one; after a switch it is withheld and the next press links into the new workspace. `c` does the same from the keyboard. If the link itself fails, nothing is staged and the message names the workspace and the next step; a raw workspace id is never shown. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line, never off the fold. The button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
@@ -951,6 +951,17 @@ Escape's return to the list live at 100x30).*
   majority of a wide terminal — measured at 235x52: reader 132 columns,
   list 49. At 100x30 the rail steps aside and the two panes share the stage
   (reader 44, list 45); at 60x24 the reader is the single stage.
+- **Media links on use, like notes and conversations.** The Media
+  reader's "Use in Console" (and `c`) used to refuse every item that was
+  not already a member of the active workspace, naming a raw workspace id
+  and a "copy or link" action that does not exist for media, while Search
+  ▸ evidence ▸ `u` staged the same item with no workspace rule at all.
+  Both now take the same path: the item is linked to the active workspace
+  and staged in one step, and the receipt names the workspace by its display
+  name. Only a link the reader's own press made offers "Undo link" there; a
+  link made from Search evidence has no Undo in the reader (remove it from
+  the workspace's sources). An item that is never used stays unlinked, so
+  the Default workspace still means what it meant.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent

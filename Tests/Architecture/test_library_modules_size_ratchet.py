@@ -371,7 +371,21 @@ _BUDGETS: dict[str, int] = {
     # filter handler now arms its timer with (it previously reused
     # SELECTION_SETTLE_SECONDS, a row-selection paint-settle value, as its
     # search debounce). No moved body was touched.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4769,
+    # 2026-10-19, TASK-34000.24 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value): 4769 -> 4874. origin/dev
+    # 4de437a5c5 was ALREADY at 4812 against this row (one of dev's own
+    # pre-existing ratchet reds, 43 over); this task added 62 lines: the
+    # "Use in Console" link receipt threaded through the Reader build and
+    # the unchanged-compare (+10), the receipt's visibility rule
+    # `_library_media_visible_link_receipt` (+41), and the per-item clear at
+    # the selection entry (+6, with its comment). No code was moved or
+    # reflowed to fit. Re-measured after fix round 1: still 4874.
+    # 2026-10-20, fix round 2 (item 4): 4874 -> 4898 (+24),
+    # `library_media_link_receipt_block` -- why a standing receipt is
+    # withheld (other item / registry unavailable / workspace inactive), so
+    # the Undo handler can tell an unreadable registry from a moved
+    # workspace; the visibility rule now reads it.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4898,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -487,7 +501,15 @@ _BUDGETS: dict[str, int] = {
     # modify other code to make it fit", 2026-10-04): 2366 -> 2375 (+9). The
     # third per-root label overlay (a healthy root nothing watches reads
     # "Sync stopped") sits inline beside the other two in `_project_root`.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2375,
+    #
+    # 2026-10-09, TASK-32451, owner decision ("expand the limits, don't
+    # modify other code to make it fit", 2026-10-04): 2375 -> 2378 (+3). The
+    # row title is the runtime's `display_name` (the folder's name) instead
+    # of a placeholder literal; three comment lines name the source.
+    # 2026-10-20, TASK-32451 rebase onto dev 250159834c, same owner decision:
+    # 2378 -> 2397. Dev itself already measures 2394 against its own 2375
+    # row (a pre-existing dev red); this branch adds the same +3 above.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2397,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -575,7 +597,23 @@ _BUDGETS: dict[str, int] = {
     # bottom. Reworded to match the module docstring's corrected past-tense
     # phrasing. Comment-only growth (+1 line); no method body touched.
     # 1897 -> 1898.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1923,
+    # 2026-10-19, TASK-34000.24 (owner decision 2026-10-04, same rule): 1923 ->
+    # 2028 (+105). Search ▸ evidence ▸ `u` now obeys the readers' link-on-use
+    # rule: `_link_library_rag_result_on_use` (resolves the row-model id,
+    # links through `Workspaces/link_on_use`, refuses a non-linkable block)
+    # plus the two injected dependencies it needs (the workspace depth
+    # state and its invalidation) with their properties and Args entries.
+    # 2026-10-20, TASK-34000.24 fix rounds 1-2 (owner decision 2026-10-04,
+    # same rule): 2028 -> 2051. Fix round 1 added +17 (the seam's one
+    # decision call, the receipt said after the stage, the press's own
+    # write taken back on a refused stage) -- the row raise that round's
+    # commit missed; fix round 2 added +6 (one plain sentence whether the
+    # opener refused or raised).
+    # 2026-10-20, TASK-34000.24 final-review fix (F7; owner decision
+    # 2026-10-04, same rule): 2051 -> 2056 (+5). The locked-Console "staged"
+    # notice is read before the opener but sent only after it succeeds, so
+    # a refused stage no longer shows "staged" beside "could not take it".
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2056,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
     # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
     # Library-only `include_disabled_builtins` flag through the browse read so
@@ -650,7 +688,32 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 
 # ADR-172 / TASK-32870–32872: initial exact pins for the new artifact owners.
 # PR #2754 reviews: initial pin includes finite workers, reader reveal, typed builders and normalized exports.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 806
+# 2026-10-09, TASK-34000.23: 806 -> 876 (+70), owner decision ("expand the
+# limits, don't contort code", 2026-10-04). The Reports demo CTA now asks
+# before seeding: `DemoConsent` (the block's state), `open_demo_consent`
+# (resolves the billed provider · model through
+# `resolve_persisted_briefing_defaults`, reads `list_briefing_schedules`
+# for the reuse wording, no-provider -> disabled run button),
+# `close_demo_consent`, and `start_demo` (the old no-confirm press, now the
+# only way in). Nothing was moved out to make it fit.
+# 2026-10-09, TASK-34000.23 review 1: 876 -> 909 (+33), same owner decision.
+# The 876 pin was measured before the round's last two lines landed (878 at
+# the head commit, review Important #1); this round adds
+# `_reused_schedule_pair` (a reused schedule's default preset bills its own
+# provider/model, so the consent names that pair) and the schedule read it
+# hangs off. Measured with `len(read_text().splitlines())` after the edits.
+# 2026-10-20, TASK-34000.23 rebase onto dev 250159834c, same owner decision:
+# 909 -> 1020. Dev itself already measures 904 against its own 806 row (a
+# pre-existing dev red); this branch adds the same +116 the rows above
+# record (the demo consent block). Measured with `len(read_text().splitlines())`.
+# 2026-10-20, TASK-34000.23 final-review fix (F4; owner decision 2026-10-04,
+# same rule): 1020 -> 1057 (+37). `empty_actions_visible`, the ONE predicate
+# for the Reports empty-state actions (empty page, or a failed newest first
+# run), moved out of the items pane's `sync` so the work pane can hide its
+# standing "Watchlists" button while the items pane offers the empty-state
+# one; plus the reused schedule's name handed to the consent copy (F3).
+# Measured with `len(read_text().splitlines())`.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1057
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

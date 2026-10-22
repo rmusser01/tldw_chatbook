@@ -2199,6 +2199,12 @@ class LibraryMediaController:
         if self._library_media_selection_timer is not None:
             self._library_media_selection_timer.stop()
             self._library_media_selection_timer = None
+        if canonical_id != current.selected_id:
+            # TASK-34000.24: the "Use in Console" link receipt is per item --
+            # opening another item drops it (the conversation reader's
+            # per-load rule); a reload of the SAME item (retry, re-entry
+            # from Console) keeps a receipt that is still true.
+            self._library_media_link_receipt = None
         self._selected_media_id = canonical_id
         self._library_media_view = "viewer"
         self._library_media_reader_session = begin_selection(
@@ -3737,6 +3743,66 @@ class LibraryMediaController:
             id="library-media-canvas",
         )
 
+    def library_media_link_receipt_block(self, media_id: str) -> str:
+        """Why the standing link receipt is withheld for ``media_id``, if it is.
+
+        Fix round 2 (item 4): the Undo handler has to tell a registry it
+        cannot read apart from a workspace that genuinely moved -- the
+        first gets the registry-unavailable sentence, only the second "no
+        longer active".
+
+        Args:
+            media_id: The membership id of the item the Reader is showing.
+
+        Returns:
+            ``""`` when the receipt stands; ``"no_receipt"``,
+            ``"other_item"``, ``"registry_unavailable"`` or
+            ``"workspace_inactive"`` otherwise.
+        """
+        receipt = self._library_media_link_receipt
+        if receipt is None:
+            return "no_receipt"
+        if not media_id or receipt.item_id != media_id:
+            return "other_item"
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return "registry_unavailable"
+        try:
+            active = registry.get_active_workspace()
+        except Exception:
+            # An unreadable current context cannot authorize a standing Undo.
+            return "registry_unavailable"
+        if active is None or active.workspace_id != receipt.workspace_id:
+            return "workspace_inactive"
+        return ""
+
+    def _library_media_visible_link_receipt(self, media_id: str) -> tuple[str, bool]:
+        """Project the "Use in Console" link receipt into the Reader (TASK-34000.24).
+
+        The receipt is shown only while its claim holds: the item it names is
+        the one the Reader shows AND the workspace it names is still the
+        active one (the conversation reader's rule, task-32107 fix rounds 1
+        and 2). After a workspace switch or archive the stale line -- and the
+        Undo that could only remove a membership of a workspace that is no
+        longer active -- is withheld; it reappears untouched if that
+        workspace is made active again, and the next press links into the
+        NEW active workspace with a fresh receipt.
+
+        Args:
+            media_id: The membership id of the item the Reader is showing
+                (``LibraryMediaViewerState.media_id``, the same id the
+                hand-off payload carries as ``source_id``).
+
+        Returns:
+            ``(line, undo_offered)``: the receipt sentence or ``""``, and
+            whether "Undo link" renders beside it.
+        """
+        if self.library_media_link_receipt_block(media_id):
+            return "", False
+        receipt = self._library_media_link_receipt
+        assert receipt is not None  # the block check above covers None
+        return receipt.line, receipt.undo_offered
+
     def _build_library_media_reader(self) -> LibraryMediaViewer:
         """Build the permanent Reader from loaded detail or its empty state."""
         detail = (
@@ -3754,10 +3820,14 @@ class LibraryMediaController:
             preview_available,
             preview_source,
         ) = self._library_media_image_preview_projection()
+        viewer_state = self._build_library_media_viewer_display_state(
+            detail, arrival_note=arrival_note
+        )
+        link_receipt, link_undo_offered = self._library_media_visible_link_receipt(
+            viewer_state.media_id
+        )
         viewer = LibraryMediaViewer(
-            self._build_library_media_viewer_display_state(
-                detail, arrival_note=arrival_note
-            ),
+            viewer_state,
             editing=self._library_media_editing,
             confirming_delete=self._library_media_confirming_delete,
             highlights=build_library_media_highlight_rows(
@@ -3807,6 +3877,11 @@ class LibraryMediaController:
             # persist a rename (harmless when the state says it cannot).
             media_db=getattr(self.app_instance, "media_db", None),
             speaker_rename_media_id=self._library_media_selected_backing_id(),
+            # TASK-34000.24: the "Use in Console" workspace-link receipt and
+            # whether its Undo is offered (see the twin read in
+            # ``_sync_library_media_viewer_state``).
+            link_receipt=link_receipt,
+            link_undo_offered=link_undo_offered,
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -3978,9 +4053,18 @@ class LibraryMediaController:
             if self._library_media_reader_session.mode == "analysis"
             else ""
         )
+        # TASK-34000.24: a compose input like any other -- the receipt's
+        # visibility depends on the ACTIVE workspace, which changes under a
+        # standing receipt, so it is re-read on every sync (a no-op read
+        # while no receipt stands).
+        link_receipt, link_undo_offered = self._library_media_visible_link_receipt(
+            viewer_state.media_id
+        )
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
+            and viewer.link_receipt == link_receipt
+            and viewer.link_undo_offered == link_undo_offered
             and viewer.back_visible == back_visible
             and viewer.trash_list_open == trash_list_open
             and viewer.editing == self._library_media_editing
@@ -4061,6 +4145,8 @@ class LibraryMediaController:
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
             viewer.trash_list_open = trash_list_open
+            viewer.link_receipt = link_receipt
+            viewer.link_undo_offered = link_undo_offered
             # TASK-31745: the backing id follows the selection like any other
             # compose input (the state's own rename fields are in the compare
             # above, so a stale id here could never outlive them).

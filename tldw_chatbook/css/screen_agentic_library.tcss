@@ -1,10 +1,10 @@
 /* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss
+ * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss + features/_library_notes_panels.tcss + features/_library_artifacts.tcss
  * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
  * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss and re-run build_css.py.
+ * first paint. Edit features/_library.tcss + features/_library_panels.tcss + features/_library_notes_panels.tcss + features/_library_artifacts.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -3309,6 +3309,49 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
+/* TASK-34000.24: the "Use in Console" workspace-link receipt row under the
+   Reader's primary toolbar ("Linked to Local Default · staged in Console" +
+   "Undo link"). One row at every width: the receipt text ellipsises, the
+   Undo keeps its own label-sized cells (the conversation reader stacks its
+   receipt and Undo on two rows; the Media Reader at 80x24 has no second row
+   to give). Library-prefixed tokens only, so the block lands on the lazily
+   loaded Library sheet (ADR-097). */
+#library-media-viewer #library-media-link-receipt-row {
+    width: $ds-width-full;
+    height: $ds-home-control-button-height;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+/* Id-scoped on purpose: `#library-media-viewer Static { width: 100% }`
+   (specificity 1,0,1) beat a bare class here and gave the receipt the whole
+   row, pushing "Undo link" off the pane -- found live at 160x45 while the
+   button's `.display` was True (the separator in the viewer's DEFAULT_CSS
+   lost its width the same way). */
+#library-media-viewer #library-media-link-receipt {
+    width: $ds-width-fill;
+    height: $ds-home-control-button-height;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    /* Left gutter only, and an Undo with neither margin nor padding:
+       measured at 160x45 (fix round 1, M-9) the Reader pane gives this row
+       56 cells; "Linked to Local Default · staged in Console" is 43, the
+       gutter 1, and the compact Undo paints 9 + 2 intrinsic = 11, so the
+       default receipt fits with one cell to spare (receipt 45, Undo 11).
+       With the canvas-action padding the Undo took 13 and the receipt
+       clipped to "staged in Conso…". The "Already linked to …" spelling
+       (51) cannot fit beside the Undo at this width and ellipsises after
+       the workspace name; a long custom name ellipsises at the name. */
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+#library-media-viewer #library-media-link-undo {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+
 #library-media-title {
     width: $ds-width-full;
     min-width: $ds-size-0;
@@ -3947,6 +3990,18 @@ Input.library-media-speaker-input:focus {
     color: $ds-text-muted;
 }
 
+/* TASK-34000.21: the query row's reserved quiet line now names the model
+ * that will be billed ("To openai · gpt-4.1-mini: question + evidence").
+ * The row is one cell high (`h-1`), so a sentence wider than the panel --
+ * a real `claude-sonnet-4-5-20250929` at 80 columns, not only a contrived
+ * name -- used to word-wrap onto a clipped second row, leaving the user
+ * with "To openai ·" and no model at all. Clip on one row with an ellipsis
+ * instead: the recipient and the start of the model stay readable. */
+#library-rag-query-quiet-line {
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 .library-rag-empty-guidance {
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     padding: $ds-space-0 $ds-space-1;
@@ -4287,7 +4342,12 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     height: auto;
     text-style: bold;
 }
-
+/* Library Notes panels: the workbench's row wrappers, New note, and lasting sync
+   (roots, status, review and history rows). Carved verbatim from the tail of
+   _library_panels.tcss on 2026-10-20 (ADR-161 spec 3.5's 2,000-line ceiling,
+   TASK-24451: "split the sheet by vocabulary"); it is listed directly after
+   that sheet in CSS_MODULES and the library split, so cascade order is
+   unchanged. */
 /* Presentation-only row wrappers keep the established wide stacked
    workbench. Compact rules below switch only these wrappers to rows. */
 #library-notes-filter-row,
@@ -4398,6 +4458,26 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     width: $ds-width-auto;
     min-width: $ds-space-0;
     margin-right: $ds-space-inline;
+}
+/* TASK-34000.23: the Reports empty-state actions sit under the sentence that
+   names them; the consent block is a quiet framed card the CTA opens. Every
+   selector token is Library-owned so the splitter keeps these rules on the
+   Library sheet (ADR-097 boot budget). */
+#library-artifacts-empty-actions {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+}
+#library-artifacts-demo-confirm {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    border: round $ds-grid-line;
+    padding: $ds-space-0 $ds-space-inset;
+    margin-bottom: $ds-space-stack;
+}
+#library-artifacts-demo-copy {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-stack;
 }
 #library-artifacts-list,
 #library-artifacts-body {

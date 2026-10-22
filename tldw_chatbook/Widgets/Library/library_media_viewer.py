@@ -182,11 +182,22 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         trash_list_open: bool = False,
         media_db: Any = None,
         speaker_rename_media_id: int | None = None,
+        link_receipt: str = "",
+        link_undo_offered: bool = False,
         **kwargs: Any,
     ) -> None:
         """Hold the viewer's compose inputs.
 
         Args:
+            link_receipt: The workspace-link receipt line the last "Use in
+                Console" press earned ("Linked to Local Default · staged in
+                Console"), or "" when none stands (TASK-34000.24). The
+                screen decides visibility (the receipt's workspace must be
+                the active one and the receipt must name the open item), so
+                this widget paints exactly what it is handed.
+            link_undo_offered: Whether "Undo link" renders beside the
+                receipt -- only for a membership a press in this reader
+                session wrote.
             viewer: Pure display state for the loaded item.
             analysis_provider_reason: Why the Analysis tab's Generate
                 action cannot run (no configured provider, an unready
@@ -258,6 +269,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.trash_list_open = trash_list_open
         self.media_db = media_db
         self.speaker_rename_media_id = speaker_rename_media_id
+        self.link_receipt = link_receipt
+        self.link_undo_offered = link_undo_offered
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -562,6 +575,32 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 classes="library-media-action-reason",
                 markup=False,
             )
+        if self.link_receipt:
+            # TASK-34000.24: the receipt for the membership "Use in Console"
+            # just wrote (or found), and its inverse -- the conversation
+            # reader's shape (task-32107). Workspace membership decides what
+            # a Console turn may read, so the widening is a visible,
+            # reversible act rather than a silent side effect. One row: the
+            # receipt text ellipsises, the Undo keeps its own cells. Yielded
+            # AFTER the ``ds-toolbar`` Horizontal closes, like the Find
+            # reason above, for the same non-rendering reason.
+            with Horizontal(
+                id="library-media-link-receipt-row",
+                classes="library-media-link-receipt-row",
+            ):
+                yield Static(
+                    self.link_receipt,
+                    id="library-media-link-receipt",
+                    classes="library-media-link-receipt",
+                    markup=False,
+                )
+                if self.link_undo_offered:
+                    yield Button(
+                        "Undo link",
+                        id="library-media-link-undo",
+                        classes="library-canvas-action library-media-link-undo",
+                        compact=True,
+                    )
         # The same condition the More button above is composed under: a stale
         # ``more_open`` carried onto a server-only detail would otherwise paint
         # an empty actions row under a button that is no longer there.
