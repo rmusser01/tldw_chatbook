@@ -137,7 +137,14 @@ _SERVER_MODULE_AST: tuple[tuple, ast.Module] | None = None
 
 def _server_source_identity(path: Path) -> tuple:
     info = path.stat()
-    return (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    return (
+        str(path),
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
 
 
 def _load_server_module_ast() -> ast.Module:

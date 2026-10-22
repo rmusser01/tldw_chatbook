@@ -61,7 +61,9 @@ class LoopTurns:
         self._wrap(service, "effective_tool_states", "tool_states")
         self._wrap(local, "get_inventory", "inventory")
         self._wrap(local, "catalog_fingerprint", "local_store_fingerprint")
-        self._wrap(service.permission_store, "catalog_fingerprint", "permission_fingerprint")
+        self._wrap(
+            service.permission_store, "catalog_fingerprint", "permission_fingerprint"
+        )
 
     def _tick(self) -> None:
         self.turn += 1
@@ -119,7 +121,9 @@ async def test_a_full_composition_reads_each_store_in_its_own_loop_turn():
             "inventory",
             "tool_states",
         } <= set(labels), labels
-        assert not turns.shared(), f"store reads shared one loop callback: {turns.shared()}"
+        assert not turns.shared(), (
+            f"store reads shared one loop callback: {turns.shared()}"
+        )
 
     await _with_console(check)
 
@@ -139,7 +143,11 @@ async def test_a_reused_catalog_checks_each_store_in_its_own_loop_turn():
         assert labels == ["permission_fingerprint", "local_store_fingerprint"], (
             f"expected the reuse check alone: {labels}"
         )
-        assert [e.id for e in second.list_catalog()] == [e.id for e in first.list_catalog()]
-        assert not turns.shared(), f"store reads shared one loop callback: {turns.shared()}"
+        assert [e.id for e in second.list_catalog()] == [
+            e.id for e in first.list_catalog()
+        ]
+        assert not turns.shared(), (
+            f"store reads shared one loop callback: {turns.shared()}"
+        )
 
     await _with_console(check)

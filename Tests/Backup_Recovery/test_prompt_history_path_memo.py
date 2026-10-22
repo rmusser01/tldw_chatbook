@@ -150,7 +150,9 @@ def _edit_users_name(config, name: str) -> None:
     source = config._get_effective_config_path()
     text = source.read_text()
     if re.search(r"^users_name\s*=", text, flags=re.M):
-        text = re.sub(r'^users_name\s*=\s*"[^"]*"', f'users_name = "{name}"', text, flags=re.M)
+        text = re.sub(
+            r'^users_name\s*=\s*"[^"]*"', f'users_name = "{name}"', text, flags=re.M
+        )
     else:
         text = text.replace("[general]", f'[general]\nusers_name = "{name}"', 1)
     source.write_text(text)
