@@ -13,6 +13,7 @@ references:
 - backlog/decisions/033-application-session-state-ownership.md
 documentation:
 - Docs/superpowers/qa/2026-10-22-textual-book-after-pr3207.md
+updated_date: 2026-10-22 20:51
 ---
 
 ## Description
@@ -36,11 +37,10 @@ Related tasks: [TASK-35865](task-35865%20-%20Prevent-repeated-automation-Save-fr
 
 ADR required: no new ADR for the bounded correction.
 ADR paths: [018-local-server-hybrid-scheduled-tasks](../decisions/018-local-server-hybrid-scheduled-tasks.md); [033-application-session-state-ownership](../decisions/033-application-session-state-ownership.md).
-Reason: No new ADR is expected for retaining the existing form draft and actual saved identity. Existing ADR018 owns persistence/outbox/owner semantics;033 owns narrow ephemeral state. ADR099/116 remain Proposed context, not ratified by this task.
+Reason: No new ADR is expected for retaining the existing form draft and actual saved identity. Existing ADR018 owns persistence/outbox/owner semantics;033 owns narrow ephemeral state. [ADR-099 schedule editor shape](../decisions/099-schedule-editor-shape.md) and [ADR-116 schedules inspector editing](../decisions/116-schedules-inspector-editing.md) remain Proposed context, not ratified by this task.
 
 [Post-merge audit and evidence](../../Docs/superpowers/qa/2026-10-22-textual-book-after-pr3207.md). These are findings and future regression requirements, not implemented fixes.
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 For both local create and edit, newer raw Name, Question or other editable values accepted during pending Save remain visible and dirty after that earlier Save succeeds, including invalid or whitespace-only later text.
