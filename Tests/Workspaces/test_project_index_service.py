@@ -514,7 +514,7 @@ async def test_failed_supervisor_dispatch_waits_for_started_writer_retirement(
         return start(thread)
 
     monkeypatch.setattr(threading.Thread, "start", fail_owner)
-    task = None
+    task = closing = None
     try:
         (rig.root / "a.txt").write_text("dispatch marker")
         rig.enable()
@@ -522,9 +522,21 @@ async def test_failed_supervisor_dispatch_waits_for_started_writer_retirement(
         assert await asyncio.to_thread(failed.wait, 10)
         await asyncio.sleep(0.03)
         assert not task.done(), "caller completed while its real writer was still alive"
+        closing = asyncio.create_task(rig.service.aclose())
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if rig.service._closed:
+                break
+        assert (
+            rig.service._closed
+        ), "failed dispatch joined the writer under the service lock"
+        assert not closing.done(), "close abandoned the actual failed-dispatch owner"
+        with pytest.raises(RuntimeError, match="project_index_closed"):
+            await asyncio.to_thread(rig.service.status, rig.key)
         scanner.release.set()
         with pytest.raises(RuntimeError, match="synthetic owner dispatch"):
             await task
+        await closing
         assert scanner.retired
         assert all(not run.writer.is_alive() for run in rig.service._runs.values())
     finally:
@@ -534,6 +546,8 @@ async def test_failed_supervisor_dispatch_waits_for_started_writer_retirement(
                 await task
             except RuntimeError:
                 pass
+        if closing is not None:
+            await closing
         await rig.close()
 
 
@@ -1603,3 +1617,19 @@ async def test_runtime_close_shields_composition_snapshot_and_actual_drain(
         with pytest.raises(asyncio.CancelledError):
             await closer
     assert app._project_index_closed and rig.service._closed
+
+
+@private_profile_test
+async def test_completed_refresh_history_is_bounded(tmp_path, request):
+    rig = Rig(tmp_path)
+    try:
+        rig.enable()
+        for _ in range(20):
+            job = rig.refresh()
+            run = rig.service._runs[job]
+            await asyncio.to_thread(run.supervisor.join, 15)
+            assert run.native_retired
+        assert len(rig.service._runs) <= 16
+        assert all(run.error is None for run in rig.service._runs.values())
+    finally:
+        await rig.close()

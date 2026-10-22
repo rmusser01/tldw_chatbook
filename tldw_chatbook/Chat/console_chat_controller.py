@@ -15517,12 +15517,15 @@ class ConsoleChatController:
 
     def _prepare_project_index_scopes(self, admitted_roots):
         """Retire registry handles opened by scope preparation, including guards."""
-        from tldw_chatbook.Workspaces.project_index.runtime import project_index_registry_connections
+        from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
 
-        registry = getattr(self.app, "workspace_registry_service", None)
-        database = getattr(registry, "db", None)
-        with project_index_registry_connections(database) if database is not None else nullcontext():
-            return self._prepare_project_index_scopes_owned(admitted_roots)
+        try:
+            service = get_project_index_service(self.app)
+            with service.registry_connection_scope():
+                return self._prepare_project_index_scopes_owned(admitted_roots)
+        except Exception:
+            logger.debug("Project index preparation unavailable")
+            return None, {}
 
     def _prepare_project_index_scopes_owned(self, admitted_roots):
         """Read compatible immutable scopes off-loop after exact run capture."""
@@ -15549,7 +15552,17 @@ class ConsoleChatController:
                 )
                 service = get_project_index_service(self.app)
                 status = service.status(key)
-                if status.state in {"Ready", "Partial"}:
+                compatible = status.state in {"Ready", "Partial"}
+                if status.state == "Building" and status.indexed > 0:
+                    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+                    paths = authority.exclusions_provider() if authority.exclusions_provider else ()
+                    floor = tuple(
+                        SensitiveExclusion("subtree", Path(path).relative_to(root).as_posix())
+                        for path in paths
+                    )
+                    compatible = service.building_coverage(status.scope, floor)
+                if compatible and authority.guard(False):
                     scopes[authority.alias] = status.scope
             except Exception:  # unavailable optional capability grants no authority
                 logger.debug("Project index unavailable for this run binding")

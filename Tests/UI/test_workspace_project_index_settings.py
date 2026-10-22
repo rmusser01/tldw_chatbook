@@ -322,7 +322,7 @@ async def test_actual_settings_card_enable_build_clear_preserves_library(
                 theme == "textual-dark"
             )
             app.save_screenshot(
-                filename=f"k5-settings-{theme}-{size[0]}.svg", path=str(qa)
+                filename=f"final-fix-settings-{theme}-{size[0]}.svg", path=str(qa)
             )
             stable_request = card._request
             await pilot.pause(2.2)
@@ -334,9 +334,30 @@ async def test_actual_settings_card_enable_build_clear_preserves_library(
             assert list(screen.query(mod.ProjectIndexBindingCard)) == [card]
             await action("clear", "Off")
             app.save_screenshot(
-                filename=f"k5-settings-clear-{theme}-{size[0]}.svg", path=str(qa)
+                filename=f"final-fix-settings-clear-{theme}-{size[0]}.svg", path=str(qa)
             )
             assert card.status.indexed == 0
+            cleanup = screen.query_one("#settings-project-index-cleanup", Button)
+            cleanup.focus()
+            await pilot.pause()
+            cleanup.scroll_visible(animate=False)
+            await pilot.pause()
+            _assert_painted(screen, cleanup)
+            assert app.focused is cleanup
+            await pilot.press("enter")
+            for _ in range(200):
+                await pilot.pause(0.02)
+                cleanup_text = str(
+                    screen.query_one(
+                        "#settings-project-index-cleanup-result", Static
+                    ).render()
+                )
+                if "Cache cleanup:" in cleanup_text:
+                    break
+            assert "0 completed; 0 pending; 0 could not be verified" in cleanup_text
+            app.save_screenshot(
+                filename=f"final-fix-cleanup-{theme}-{size[0]}.svg", path=str(qa)
+            )
             assert before_library == (
                 repr(app.app_config.get("AppRAGSearchConfig")),
                 repr(app.app_config.get("search")),
@@ -382,6 +403,7 @@ async def test_busy_action_keeps_exact_scope_and_readable_retry(
 ):
     mod = card_module()
     rig = Rig(tmp_path)
+    monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
     status = rig.service.status(rig.key)
     card = mod.ProjectIndexBindingCard(
         rig.key.binding_id,
@@ -632,4 +654,132 @@ async def test_invalid_policy_draft_only_blocks_policy_actions(
                 )
                 assert rig.service.status(rig.key).scope == before.scope
     finally:
+        await rig.close()
+
+
+@pytest.mark.parametrize("phase", ["initial", "reload", "apply"])
+@private_profile_test
+async def test_status_completion_preserves_newer_dirty_choices(
+    tmp_path, request, monkeypatch, phase
+):
+    import asyncio
+    import threading
+
+    mod = card_module()
+    rig = Rig(tmp_path)
+    monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+    monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+    card = mod.ProjectIndexBindingCard(
+        rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+    )
+    entered, release = threading.Event(), threading.Event()
+    original = card._execute if phase == "apply" else card._load
+    hold = phase == "initial"
+
+    def delayed(*args):
+        result = original(*args)
+        if hold:
+            entered.set()
+            assert release.wait(30)
+        return result
+
+    monkeypatch.setattr(card, "_execute" if phase == "apply" else "_load", delayed)
+    host = CardApp(card)
+    try:
+        async with host.run_test(size=(100, 35)) as pilot:
+            if phase != "initial":
+                await wait_for_card(card, pilot)
+                hold = True
+                if phase == "apply":
+                    card._launch(
+                        card.ActionRequested(
+                            card.binding_id,
+                            card.workspace_id,
+                            card.status,
+                            "enable",
+                            POLICY,
+                        )
+                    )
+                else:
+                    card.reload_status()
+            assert await asyncio.to_thread(entered.wait, 10)
+            card.query_one(".project-index-prefixes", Input).value = "new-draft"
+            card.query_one(".project-index-suffixes", Input).value = ".draft"
+            await pilot.pause()
+            release.set()
+            await wait_for_card(card, pilot)
+            assert card.query_one(".project-index-prefixes", Input).value == "new-draft"
+            assert card.query_one(".project-index-suffixes", Input).value == ".draft"
+    finally:
+        release.set()
+        await rig.close()
+
+
+@private_profile_test
+async def test_card_clear_shutdown_drains_physical_cleanup_and_outer_scope(
+    tmp_path, request, monkeypatch
+):
+    import asyncio
+    import threading
+
+    mod = card_module()
+    rig = Rig(tmp_path)
+    monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+    monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+    (rig.root / "a.txt").write_text("clear marker", encoding="utf-8")
+    rig.enable()
+    rig.refresh()
+    rig.settle()
+    for run in tuple(rig.service._runs.values()):
+        await asyncio.to_thread(run.supervisor.join)
+    entered, release, retired = (threading.Event() for _ in range(3))
+    clear = rig.service._clear_binding
+
+    def held(*args):
+        entered.set()
+        assert release.wait(30)
+        result = clear(*args)
+        retired.set()
+        return result
+
+    monkeypatch.setattr(rig.service, "_clear_binding", held)
+    card = mod.ProjectIndexBindingCard(
+        rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+    )
+    host = CardApp(card)
+    closing = None
+    try:
+        async with host.run_test(size=(100, 35)) as pilot:
+            await wait_for_card(card, pilot)
+            card._launch(
+                card.ActionRequested(
+                    card.binding_id, card.workspace_id, card.status, "clear", POLICY
+                )
+            )
+            assert await asyncio.to_thread(entered.wait, 10)
+            closing = asyncio.create_task(rig.close())
+            await asyncio.sleep(0.05)
+            closing.cancel()
+            await asyncio.sleep(0.05)
+            closing.cancel()
+            await pilot.pause()
+            assert (
+                not closing.done()
+            ), "close returned while the issued Clear still owned native work"
+            with pytest.raises(RuntimeError, match="closed"):
+                await asyncio.to_thread(rig.service.management_snapshot, rig.key)
+            release.set()
+            try:
+                await closing
+            except asyncio.CancelledError:
+                pass
+            await host.workers.wait_for_complete()
+            assert retired.is_set() and card.status.state == "Off"
+    finally:
+        release.set()
+        if closing is not None:
+            try:
+                await closing
+            except asyncio.CancelledError:
+                pass
         await rig.close()

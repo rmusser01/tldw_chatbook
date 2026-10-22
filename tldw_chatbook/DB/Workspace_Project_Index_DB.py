@@ -928,6 +928,83 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             )
             return True
 
+    @staticmethod
+    def _eligibility_predicate(policy, floor):
+        """Share exact policy/floor semantics between coverage and ranking."""
+
+        prefixes = tuple(prefix.casefold() for prefix in policy.include_prefixes)
+        all_prefixes = not prefixes or "" in prefixes
+        prefix_heads = tuple(prefix + "/" for prefix in prefixes)
+        # Normalize once with the running stdlib's suffix semantics (including
+        # trailing-dot behavior), without constructing a Path for every hit.
+        suffixes = frozenset(
+            suffix
+            for suffix in policy.text_suffixes
+            if Path("x" + suffix).suffix.casefold() == suffix
+        )
+
+        # Freeze this query's current run floor before SQLite evaluates rows.
+        # Keep the same normalization as the live-validation predicate.
+        exclusions = tuple(
+            (item.kind, item.value.replace("\\", "/").strip("/").casefold())
+            for item in floor
+        )
+        subtrees = frozenset(value for kind, value in exclusions if kind == "subtree")
+        denied_paths = frozenset(
+            value for kind, value in exclusions if kind in {"file", "subtree"}
+        )
+        denied_names = frozenset(value for kind, value in exclusions if kind == "name")
+        denied_parents = frozenset(
+            value for kind, value in exclusions if kind == "direct_children"
+        )
+        subtree_heads = tuple(value + "/" for value in subtrees)
+        deny_all = "" in subtrees
+
+        def allowed(path):
+            value = path.casefold()
+            if (
+                deny_all
+                or value in denied_paths
+                or value.startswith(subtree_heads)
+                or value.rsplit("/", 1)[-1] in denied_names
+                or value.rpartition("/")[0] in denied_parents
+            ):
+                return 0
+            if (
+                not all_prefixes
+                and value not in prefixes
+                and not value.startswith(prefix_heads)
+            ):
+                return 0
+            if not policy.text_suffixes:
+                return 1
+            name = path.rsplit("/", 1)[-1]
+            stem, dot, tail = name.rpartition(".")
+            return int(bool(stem) and (dot + tail).casefold() in suffixes)
+
+        return allowed
+
+    @_activated
+    def has_compatible_files(self, scope, exclusions) -> bool:
+        """Read only the existence of metadata under this exact enabled scope."""
+        with self.transaction() as conn:
+            row = self._current(conn, scope)
+            if row is None or not row["enabled"]:
+                return False
+            policy = ProjectIndexPolicy(*json.loads(row["policy"]))
+            conn.create_function(
+                "index_path_allowed", 1, self._eligibility_predicate(policy, exclusions)
+            )
+            try:
+                return (
+                    conn.execute(
+                        "SELECT 1 FROM files WHERE index_path_allowed(path)=1 LIMIT 1"
+                    ).fetchone()
+                    is not None
+                )
+            finally:
+                conn.create_function("index_path_allowed", 1, None)
+
     @_activated
     def lexical_candidates(
         self, authority: ProjectIndexSearchAuthority, query: str, *, limit: int
@@ -953,59 +1030,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 return ()
             policy = ProjectIndexPolicy(*json.loads(row["policy"]))
 
-            prefixes = policy.include_prefixes
-            all_prefixes = not prefixes or "" in prefixes
-            prefix_heads = tuple(prefix + "/" for prefix in prefixes)
-            # Normalize once with the running stdlib's suffix semantics (including
-            # trailing-dot behavior), without constructing a Path for every hit.
-            suffixes = frozenset(
-                suffix
-                for suffix in policy.text_suffixes
-                if Path("x" + suffix).suffix.casefold() == suffix
-            )
-
-            # Freeze this query's current run floor before SQLite evaluates rows.
-            # Keep the same normalization as the live-validation predicate.
-            exclusions = tuple(
-                (item.kind, item.value.replace("\\", "/").strip("/").casefold())
-                for item in authority.exclusions
-            )
-            subtrees = frozenset(
-                value for kind, value in exclusions if kind == "subtree"
-            )
-            denied_paths = frozenset(
-                value for kind, value in exclusions if kind in {"file", "subtree"}
-            )
-            denied_names = frozenset(
-                value for kind, value in exclusions if kind == "name"
-            )
-            denied_parents = frozenset(
-                value for kind, value in exclusions if kind == "direct_children"
-            )
-            subtree_heads = tuple(value + "/" for value in subtrees)
-            deny_all = "" in subtrees
-
-            def allowed(path):
-                value = path.casefold()
-                if (
-                    deny_all
-                    or value in denied_paths
-                    or value.startswith(subtree_heads)
-                    or value.rsplit("/", 1)[-1] in denied_names
-                    or value.rpartition("/")[0] in denied_parents
-                ):
-                    return 0
-                if (
-                    not all_prefixes
-                    and path not in prefixes
-                    and not path.startswith(prefix_heads)
-                ):
-                    return 0
-                if not policy.text_suffixes:
-                    return 1
-                name = path.rsplit("/", 1)[-1]
-                stem, dot, tail = name.rpartition(".")
-                return int(bool(stem) and (dot + tail).casefold() in suffixes)
+            allowed = self._eligibility_predicate(policy, authority.exclusions)
 
             conn.create_function(
                 "index_path_allowed",

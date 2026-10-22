@@ -19,7 +19,6 @@ from tldw_chatbook.Workspaces.project_index.models import (
 from tldw_chatbook.Workspaces.project_index.runtime import (
     get_project_index_service,
     project_index_key,
-    project_index_registry_connections,
 )
 
 DEFAULT_POLICY = ProjectIndexPolicy((), ())
@@ -83,6 +82,10 @@ class ProjectIndexBindingCard(Vertical):
         self._visit = 0
         self._request = 0
         self._pending = 0
+        self._painted_choices = (
+            "; ".join(p or "." for p in policy.include_prefixes),
+            "; ".join(policy.text_suffixes),
+        )
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -285,15 +288,14 @@ class ProjectIndexBindingCard(Vertical):
         if action:
             self._feedback(f"{action.action.title()} requested…")
         app = self.app
+        submitted_choices = tuple(field.value for field in self.query(Input))
 
         async def run():
             try:
-                database = getattr(
-                    getattr(app, "workspace_registry_service", None), "db", None
-                )
 
                 def owned_call():
-                    with project_index_registry_connections(database):
+                    service = get_project_index_service(app)
+                    with service.registry_connection_scope():
                         return self._execute(app, action) if action else self._load(app)
 
                 result = await asyncio.to_thread(owned_call)
@@ -311,12 +313,17 @@ class ProjectIndexBindingCard(Vertical):
                 return
             if result:
                 self.status, self.policy, self.requires_upgrade = result
-                if action or self.status.state != "Building":
+                choices = tuple(field.value for field in self.query(Input))
+                applied = action is not None and action.action in {"enable", "apply"}
+                if choices == (submitted_choices if applied else self._painted_choices):
                     self.query_one(".project-index-prefixes", Input).value = "; ".join(
                         p or "." for p in self.policy.include_prefixes
                     )
                     self.query_one(".project-index-suffixes", Input).value = "; ".join(
                         self.policy.text_suffixes
+                    )
+                    self._painted_choices = tuple(
+                        field.value for field in self.query(Input)
                     )
                 guidance = {
                     "Off": "Off. Enable saves choices; Refresh starts a scan. Clear removes cached content.",

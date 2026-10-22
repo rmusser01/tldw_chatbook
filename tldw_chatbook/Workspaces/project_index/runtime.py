@@ -103,8 +103,8 @@ class _DataAuthorityPin:
 
     def close(self):
         if not self.closed:
-            self.closed = True
             self.stack.close()
+            self.closed = True
 
     def __enter__(self):
         return self
@@ -267,6 +267,7 @@ def get_project_index_service(app) -> ProjectIndexService:
             registry_connections=lambda: project_index_registry_connections(
                 registry.db
             ),
+            detached_fence=registry.project_index_detached_fence,
         )
         service._unsubscribe = registry.subscribe_project_index_changes(
             service.binding_changed

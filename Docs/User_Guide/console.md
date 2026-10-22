@@ -1636,3 +1636,22 @@ An older cache may show **upgrade required**. Refresh explicitly to upgrade and 
 In Console **Workspace Files**, keyword status follows the selected folder. **Index settings** closes the inspector safely and opens the existing Workspaces Settings category; select the desired workspace row there. This does not switch the active Console workspace.
 
 Only UTF-8 files up to1 MiB are eligible. Dependency/generated/VCS directories, sensitive paths, binding exclusions, binaries, archives and filesystem aliases are skipped. Limits are250,000 eligible entries and1 GiB total owned cache per binding; reaching a limit produces Partial coverage. No embeddings or network provider is required. This feature leaves saved Library search choices and sources unchanged.
+
+
+### Removed-folder keyword caches
+
+Removing a folder binding or archiving its workspace immediately stops keyword
+search and publication for that binding. Chatbook attempts to remove its cached
+source content after active work retires. If cleanup is busy or fails, open
+**Settings → Workspaces → Retry removed-folder cache cleanup**. This action also
+works after restart and does not need the original folder to be reattached. It
+reports completed, pending and unverified cleanup; an unverified old cache is not
+silently treated as deleted. Empty control and ownership metadata may remain.
+**Disable** deliberately retains cached content; use **Clear** while the binding
+exists to remove it.
+
+Previously committed compatible files remain searchable during Refresh or a
+partly committed initial build. Results say partial until the build is complete;
+stale file content is still withheld. Included-folder choices compare without
+case distinctions, consistently during scan and search. **Check status** preserves
+unsaved processing choices; **Enable** or **Apply choices** saves them.

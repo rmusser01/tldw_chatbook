@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager, nullcontext, ExitStack
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import json
+import hashlib
 import os
 import re
 import stat
@@ -56,7 +57,15 @@ class _SearchRun:
     key: ProjectIndexKey
     done: threading.Event
     pin: object | None = None
+    store: object | None = None
     retirement_unproven: bool = False
+
+
+@dataclass(eq=False)
+class _Operation:
+    done: threading.Event
+    retirement_unproven: bool = False
+    retained: list[object] = field(default_factory=list)
 
 
 def binding_bytes(directory: Path) -> int:
@@ -97,21 +106,60 @@ class ProjectIndexService:
         authority_fence: IndexAuthorityFence,
         *,
         registry_connections=nullcontext,
+        detached_fence=None,
     ):
         self._factory = store_factory
         self._scanner = scanner
         self._reader = authority_reader
         self._fence = authority_fence
         self._registry_connections = registry_connections
+        self._detached_fence = detached_fence
+        self._cleanup_thread: threading.Thread | None = None
         self._lock = threading.RLock()
         self._runs: dict[str, _Run] = {}
         self._closed = False
+        self._operations: set[_Operation] = set()
+        self._operation_local = threading.local()
         self._searches: set[_SearchRun] = set()
         self._read_slots = threading.BoundedSemaphore(2)
 
+    @contextmanager
     def registry_connection_scope(self):
-        """Own only registry handles newly opened by this finite caller operation."""
-        return self._registry_connections()
+        """Admit a complete finite operation through its last native registry close.
+
+        Nested calls borrow the physical thread's admission and registry owner.
+        This lifecycle record grants no data, source or tool authority.
+        """
+        if getattr(self._operation_local, "operation", None) is not None:
+            yield
+            return
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("project_index_closed")
+            if any(operation.retirement_unproven for operation in self._operations):
+                raise ProjectIndexRetirementUnproven(
+                    "index_operation_retirement_unproven"
+                )
+            operation = _Operation(threading.Event())
+            self._operations.add(operation)
+            self._operation_local.operation = operation
+        try:
+            with self._registry_connections():
+                yield
+        except ProjectIndexRetirementUnproven:
+            operation.retirement_unproven = True
+            raise
+        finally:
+            self._operation_local.operation = None
+            with self._lock:
+                if not operation.retirement_unproven:
+                    self._operations.discard(operation)
+            operation.done.set()
+
+    def _admission_closed(self):
+        return (
+            self._closed and getattr(self._operation_local, "operation", None) is None
+        )
 
     @contextmanager
     def _store(self, key, *, cleanup_only=False):
@@ -123,13 +171,18 @@ class ProjectIndexService:
     @contextmanager
     def _store_owned(self, key, *, cleanup_only=False):
         pin = self._retain(key)
+        retired = True
         try:
             with self._bind(pin):
                 with self._opened_store(key, cleanup_only=cleanup_only) as store:
                     yield store
+        except ProjectIndexRetirementUnproven:
+            retired = False
+            self._operation_local.operation.retained.append(pin)
+            raise
         finally:
-            if pin is not None:
-                pin.close()
+            if pin is not None and retired:
+                self._close_capability(pin)
 
     def _retain(self, key):
         retain = getattr(self._factory, "retain", None)
@@ -141,7 +194,7 @@ class ProjectIndexService:
 
     @contextmanager
     def _opened_store(self, key, *, cleanup_only=False):
-        if self._closed:
+        if self._admission_closed():
             raise RuntimeError("project_index_closed")
         opener = (
             getattr(self._factory, "open_cleanup", self._factory)
@@ -153,7 +206,15 @@ class ProjectIndexService:
             store.status_cache_bytes = binding_bytes(self._binding_root(store))
             yield store
         finally:
-            store.close_native()
+            try:
+                store.close_native()
+            except BaseException as error:
+                operation = self._operation_local.operation
+                operation.retirement_unproven = True
+                operation.retained.append(store)
+                raise ProjectIndexRetirementUnproven(
+                    "index_store_retirement_unproven"
+                ) from error
 
     @staticmethod
     def _binding_root(store):
@@ -185,6 +246,21 @@ class ProjectIndexService:
     def status(self, key: ProjectIndexKey) -> ProjectIndexStatus:
         with self._store(key) as store:
             return self._status_from_store(store, key)
+
+    def building_coverage(self, scope: ProjectIndexScope, exclusions=()) -> bool:
+        """Check committed compatibility without granting a search authority."""
+        with self._store(scope.key) as store:
+            with self._admitted(store, scope.key) as live:
+                if live is None:
+                    return False
+                status = store.load_status(scope.key)
+                return (
+                    status.scope == scope
+                    and status.state in {"Building", "Partial", "Ready"}
+                    and store.has_compatible_files(
+                        scope, tuple(set(exclusions + live.exclusions))
+                    )
+                )
 
     def management_snapshot(
         self, key: ProjectIndexKey
@@ -221,7 +297,7 @@ class ProjectIndexService:
                             store.suspend_job(claim, state="Interrupted", advance=False)
                             result = store.load_status(key)
                 finally:
-                    lease.close()
+                    self._close_capability(lease)
         return replace(result, cache_bytes=binding_bytes(self._binding_root(store)))
 
     def policy(self, scope: ProjectIndexScope) -> ProjectIndexPolicy:
@@ -239,7 +315,7 @@ class ProjectIndexService:
         if not self._read_slots.acquire(blocking=False):
             raise RuntimeError("project_index_search_busy")
         with self._lock:
-            if self._closed or any(
+            if self._admission_closed() or any(
                 run.key == key and run.retirement_unproven for run in self._searches
             ):
                 self._read_slots.release()
@@ -250,6 +326,7 @@ class ProjectIndexService:
             run.pin = self._retain(key)
             with self._bind(run.pin):
                 store = self._factory(key)
+                run.store = store
                 try:
                     store.status_cache_bytes = binding_bytes(self._binding_root(store))
                     yield store
@@ -264,13 +341,18 @@ class ProjectIndexService:
             run.retirement_unproven = True
             raise
         finally:
-            if not run.retirement_unproven:
-                if run.pin is not None:
-                    run.pin.close()
-                with self._lock:
-                    self._searches.discard(run)
-                self._read_slots.release()
-            run.done.set()
+            try:
+                if not run.retirement_unproven:
+                    if run.pin is not None:
+                        self._close_capability(run.pin)
+                    with self._lock:
+                        self._searches.discard(run)
+                    self._read_slots.release()
+            except ProjectIndexRetirementUnproven:
+                run.retirement_unproven = True
+                raise
+            finally:
+                run.done.set()
 
     def search(
         self, authority: ProjectIndexSearchAuthority, query: str, *, limit: int = 10
@@ -308,16 +390,26 @@ class ProjectIndexService:
                 ):
                     return unavailable
                 status = store.load_status(authority.scope.key)
-                if status.scope != authority.scope or status.state not in {
-                    "Ready",
-                    "Partial",
-                }:
+                if (
+                    status.scope != authority.scope
+                    or status.state
+                    not in {
+                        "Ready",
+                        "Partial",
+                        "Building",
+                    }
+                    or (status.state == "Building" and not status.indexed)
+                ):
                     return unavailable
                 admitted = replace(
                     authority,
                     exclusions=tuple(set(authority.exclusions + live.exclusions)),
                     authority_revision=live.authority_revision,
                 )
+                if status.state == "Building" and not store.has_compatible_files(
+                    admitted.scope, admitted.exclusions
+                ):
+                    return unavailable
                 candidates = store.lexical_candidates(admitted, query, limit=100)
             hits = []
             stale = False
@@ -331,7 +423,7 @@ class ProjectIndexService:
                     if (
                         current != live
                         or current_status.scope != status.scope
-                        or current_status.state not in {"Ready", "Partial"}
+                        or current_status.state not in {"Ready", "Partial", "Building"}
                         or current_status.manifest_revision != status.manifest_revision
                         or not _path_allowed(
                             candidate.relative_path, admitted.exclusions
@@ -365,7 +457,7 @@ class ProjectIndexService:
                     excerpt,
                 )
                 proposed = ProjectSearchResult(
-                    "partial" if stale or status.state == "Partial" else "ready",
+                    "partial" if stale or status.state != "Ready" else "ready",
                     tuple(hits + [hit]),
                     None,
                     stale,
@@ -390,11 +482,11 @@ class ProjectIndexService:
                     current != live
                     or final.scope != status.scope
                     or final.manifest_revision != status.manifest_revision
-                    or final.state not in {"Ready", "Partial"}
+                    or final.state not in {"Ready", "Partial", "Building"}
                 ):
                     return unavailable
                 result = ProjectSearchResult(
-                    "partial" if stale or final.state == "Partial" else "ready",
+                    "partial" if stale or final.state != "Ready" else "ready",
                     tuple(hits),
                     None,
                     stale,
@@ -422,7 +514,13 @@ class ProjectIndexService:
         with self._lock, self._store(key) as store:
             lease = self._lifetime(store, key)
             try:
+                with self._admitted(store, key) as enrolled:
+                    if enrolled is None:
+                        raise ValueError("authority_unavailable")
+                self._enroll_cleanup_owner(store, key, enrolled)
                 with self._admitted(store, key) as authority:
+                    if authority != enrolled:
+                        raise ValueError("authority_changed")
                     store.assert_native_lifetime()
                     if authority is None:
                         raise ValueError("authority_unavailable")
@@ -432,7 +530,7 @@ class ProjectIndexService:
                     )
                     return store.load_status(key)
             finally:
-                lease.close()
+                self._close_capability(lease)
 
     def _stop_local(self, runs: tuple[_Run, ...]) -> None:
         for run in runs:
@@ -464,44 +562,107 @@ class ProjectIndexService:
                 store.status_cache_bytes = binding_bytes(self._binding_root(store))
             return store.load_status(key)
 
+    def _close_capability(self, capability):
+        operation = self._operation_local.operation
+        if operation.retirement_unproven:
+            operation.retained.append(capability)
+            return
+        try:
+            capability.close()
+        except BaseException as error:
+            operation.retirement_unproven = True
+            operation.retained.append(capability)
+            raise ProjectIndexRetirementUnproven(
+                "index_capability_retirement_unproven"
+            ) from error
+
+    def _close_cleanup_store(self, store):
+        try:
+            store.close_native()
+        except BaseException as error:
+            operation = self._operation_local.operation
+            operation.retirement_unproven = True
+            operation.retained.append(store)
+            raise ProjectIndexRetirementUnproven(
+                "index_store_retirement_unproven"
+            ) from error
+
+    @staticmethod
+    def _binding_inventory(group, lifetime_name):
+        # Full bounded preflight, including aliases/sidecars, precedes any deletion.
+        binding_bytes(group)
+        namespaces = []
+        leases = {group / lifetime_name}
+        for count, entry in enumerate(group.iterdir(), 1):
+            if count > 4096:
+                raise ValueError("index_cleanup_inventory_limit")
+            if entry.name == "cleanup-owner-v1.lock" and entry.is_file():
+                continue
+            if entry.is_file() and re.fullmatch(
+                r"[0-9a-f]{64}\.lifetime\.lock", entry.name
+            ):
+                leases.add(entry)
+            elif entry.is_dir() and re.fullmatch(r"[0-9a-f]{64}", entry.name):
+                path = entry / "workspace_project_index.db"
+                allowed = {
+                    path.name + suffix for suffix in ("", "-journal", "-wal", "-shm")
+                }
+                if not path.is_file() or any(
+                    child.name not in allowed for child in entry.iterdir()
+                ):
+                    raise ValueError("index_cleanup_namespace_unknown")
+                namespaces.append(path)
+            else:
+                raise ValueError("index_cleanup_namespace_unknown")
+        return namespaces, leases
+
+    def _preflight_cleanup(self, namespaces, binding_namespace):
+        for path in namespaces:
+            store = WorkspaceProjectIndexDB(path, cleanup_only=True)
+            try:
+                store.cleanup_eligible(path.parent.name, binding_namespace)
+            finally:
+                self._close_cleanup_store(store)
+
+    def _reclaim_namespaces(
+        self, group, namespaces, binding_namespace, current_store=None, revoked=None
+    ):
+        self._preflight_cleanup(namespaces, binding_namespace)
+        for path in sorted(namespaces, key=lambda value: value.stat().st_size):
+            total = binding_bytes(group)
+            size = path.stat().st_size
+            headroom = size + size // 64 + 65536
+            if total + headroom > MAX_CACHE_BYTES:
+                raise ValueError("index_cleanup_headroom_required")
+            store = (
+                current_store
+                if current_store is not None and path == current_store.db_path
+                else WorkspaceProjectIndexDB(path, cleanup_only=True)
+            )
+            try:
+                with store.connection() as conn:
+                    pages = conn.execute("PRAGMA page_count").fetchone()[0]
+                    conn.execute(f"PRAGMA max_page_count={pages}")
+                if store is current_store:
+                    if not store.clear_revoked(revoked):
+                        raise ValueError("stale_scope")
+                else:
+                    store.clear_owned_namespace(path.parent.name, binding_namespace)
+                store.reclaim_free_pages()
+            finally:
+                if store is not current_store:
+                    self._close_cleanup_store(store)
+
     def _clear_binding(self, current_store, key, revoked):
         group = self._binding_root(current_store)
-        # This inventory is bounded and grants cleanup ownership only. Unknown
-        # layouts, aliases and legacy namespaces never become inferred owners.
-        binding_bytes(group)
-
-        def inventory():
-            namespaces = []
-            leases = {group / key.lifetime_name}
-            for count, entry in enumerate(group.iterdir(), 1):
-                if count > 4096:
-                    raise ValueError("index_cleanup_inventory_limit")
-                if entry.is_file() and re.fullmatch(
-                    r"[0-9a-f]{64}\.lifetime\.lock", entry.name
-                ):
-                    leases.add(entry)
-                elif entry.is_dir() and re.fullmatch(r"[0-9a-f]{64}", entry.name):
-                    path = entry / "workspace_project_index.db"
-                    allowed = {
-                        path.name + suffix
-                        for suffix in ("", "-journal", "-wal", "-shm")
-                    }
-                    if not path.is_file() or any(
-                        child.name not in allowed for child in entry.iterdir()
-                    ):
-                        raise ValueError("index_cleanup_namespace_unknown")
-                    namespaces.append(path)
-                else:
-                    raise ValueError("index_cleanup_namespace_unknown")
-            return namespaces, leases
-
-        namespaces, leases = inventory()
+        namespaces, leases = self._binding_inventory(group, key.lifetime_name)
         with ExitStack() as resources:
             for path in sorted(leases):
-                lease = BindingLifetime.acquire(path)
-                resources.callback(lease.close)
-            namespaces, observed_leases = inventory()
-            if observed_leases != leases:
+                resources.callback(
+                    self._close_capability, BindingLifetime.acquire(path)
+                )
+            observed = self._binding_inventory(group, key.lifetime_name)
+            if observed != (namespaces, leases):
                 raise ValueError("index_cleanup_inventory_changed")
             with self._fence(key) as authority:
                 if authority is None:
@@ -509,42 +670,184 @@ class ProjectIndexService:
                 current = current_store.load_status(key)
                 if current.scope != revoked or current.state != "Off":
                     raise ValueError("stale_scope")
-            # Preflight all namespaces before any derived-data cleanup. In
-            # particular, opening a v1 namespace for cleanup cannot migrate it.
-            for path in namespaces:
-                store = WorkspaceProjectIndexDB(path, cleanup_only=True)
-                try:
-                    store.cleanup_eligible(path.parent.name, key.binding_namespace)
-                finally:
-                    store.close_native()
-            for path in sorted(namespaces, key=lambda value: value.stat().st_size):
-                total = binding_bytes(group)
-                size = path.stat().st_size
-                # A DELETE-journal transaction cannot journal a page twice.
-                # Reserve all existing DB pages plus 8-byte records and headers.
-                headroom = size + size // 64 + 65536
-                if total + headroom > MAX_CACHE_BYTES:
-                    raise ValueError("index_cleanup_headroom_required")
-                store = (
-                    current_store
-                    if path == current_store.db_path
-                    else WorkspaceProjectIndexDB(path, cleanup_only=True)
+            self._reclaim_namespaces(
+                group, namespaces, key.binding_namespace, current_store, revoked
+            )
+
+    @staticmethod
+    def _read_cleanup_owner(lease, group):
+        receipt = json.loads(lease.read_cleanup_receipt().decode("utf-8"))
+        if not isinstance(receipt, dict) or set(receipt) != {
+            "version",
+            "workspace_id",
+            "binding_id",
+            "authority_revision",
+        }:
+            raise ValueError("invalid_cleanup_receipt")
+        if (
+            type(receipt["version"]) is not int  # noqa: E721 - reject bool
+            or receipt["version"] != 1
+            or type(receipt["authority_revision"]) is not int  # noqa: E721 - reject bool
+            or receipt["authority_revision"] < 1
+        ):
+            raise ValueError("invalid_cleanup_receipt")
+        ids = (receipt["workspace_id"], receipt["binding_id"])
+        if any(
+            not isinstance(value, str) or not 0 < len(value) <= 256 or "\x00" in value
+            for value in ids
+        ):
+            raise ValueError("invalid_cleanup_receipt")
+        namespace = hashlib.sha256(
+            json.dumps(ids, separators=(",", ":")).encode()
+        ).hexdigest()
+        if namespace != group.name:
+            raise ValueError("cleanup_receipt_owner_mismatch")
+        return receipt
+
+    def _enroll_cleanup_owner(self, store, key, authority):
+        """Caller holds the current generation lifetime; no registry lock for I/O."""
+        from tldw_chatbook.Utils.private_paths import (
+            secure_private_directory,
+            PrivatePathError,
+        )
+
+        group = self._binding_root(store)
+        private = secure_private_directory(group, create=False, application_owned=True)
+        if not private.verified_private:
+            raise PrivatePathError(private)
+        path = group / "cleanup-owner-v1.lock"
+        if not path.exists() and binding_bytes(group) + 65536 > MAX_CACHE_BYTES:
+            raise ValueError("index_cache_limit")
+        with ExitStack() as resources:
+            receipt = BindingLifetime.acquire(path)
+            resources.callback(self._close_capability, receipt)
+            try:
+                existing = self._read_cleanup_owner(receipt, group)
+            except (ValueError, UnicodeError):
+                existing = None
+            if existing is not None:
+                return
+            namespaces, leases = self._binding_inventory(group, key.lifetime_name)
+            for lifetime in sorted(leases - {group / key.lifetime_name}):
+                resources.callback(
+                    self._close_capability, BindingLifetime.acquire(lifetime)
                 )
-                try:
-                    with store.connection() as conn:
-                        pages = conn.execute("PRAGMA page_count").fetchone()[0]
-                        conn.execute(f"PRAGMA max_page_count={pages}")
-                    if store is current_store:
-                        if not store.clear_revoked(revoked):
-                            raise ValueError("stale_scope")
-                    else:
-                        store.clear_owned_namespace(
-                            path.parent.name, key.binding_namespace
-                        )
-                    store.reclaim_free_pages()
-                finally:
-                    if store is not current_store:
-                        store.close_native()
+            if self._binding_inventory(group, key.lifetime_name) != (
+                namespaces,
+                leases,
+            ):
+                raise ValueError("index_cleanup_inventory_changed")
+            self._preflight_cleanup(namespaces, key.binding_namespace)
+            if binding_bytes(group) + 65536 > MAX_CACHE_BYTES:
+                raise ValueError("index_cache_limit")
+            receipt.write_cleanup_receipt(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "workspace_id": key.workspace_id,
+                        "binding_id": key.binding_id,
+                        "authority_revision": authority.authority_revision,
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+        # The caller must still compare the captured authority before any write.
+
+    def retry_detached_cleanup(self):
+        """Retry bounded cleanup-only groups without opening any source folder."""
+        from tldw_chatbook.Utils.private_paths import (
+            secure_private_directory,
+            PrivatePathError,
+        )
+
+        result = {"completed": 0, "pending": 0, "refused": 0}
+        with self.registry_connection_scope():
+            pin = self._retain(None)
+            try:
+                with self._bind(pin):
+                    if pin is None or self._detached_fence is None:
+                        raise ValueError("index_cleanup_owner_unavailable")
+                    root = pin.data_root / "project_index"
+                    if not root.exists():
+                        return result
+                    private = secure_private_directory(
+                        root, create=False, application_owned=True
+                    )
+                    if not private.verified_private:
+                        raise PrivatePathError(private)
+                    lifetime_name = (
+                        hashlib.sha256(pin.identity.encode()).hexdigest()
+                        + ".lifetime.lock"
+                    )
+                    with os.scandir(root) as groups:
+                        for count, entry in enumerate(groups, 1):
+                            if count > 4096:
+                                result["pending"] += 1
+                                break
+                            group = Path(entry.path)
+                            try:
+                                if entry.is_symlink() or not re.fullmatch(
+                                    r"[0-9a-f]{64}", entry.name
+                                ):
+                                    raise ValueError("index_cleanup_namespace_unknown")
+                                private = secure_private_directory(
+                                    group, create=False, application_owned=True
+                                )
+                                if not private.verified_private:
+                                    raise PrivatePathError(private)
+                                with ExitStack() as resources:
+                                    receipt = BindingLifetime.acquire(
+                                        group / "cleanup-owner-v1.lock",
+                                        existing_only=True,
+                                    )
+                                    resources.callback(self._close_capability, receipt)
+                                    owner = self._read_cleanup_owner(receipt, group)
+                                    with self._detached_fence(
+                                        owner["workspace_id"],
+                                        owner["binding_id"],
+                                        owner["authority_revision"],
+                                    ) as detached:
+                                        if not detached:
+                                            continue
+                                    namespaces, leases = self._binding_inventory(
+                                        group, lifetime_name
+                                    )
+                                    for path in sorted(leases):
+                                        resources.callback(
+                                            self._close_capability,
+                                            BindingLifetime.acquire(path),
+                                        )
+                                    if self._binding_inventory(
+                                        group, lifetime_name
+                                    ) != (namespaces, leases):
+                                        raise ValueError(
+                                            "index_cleanup_inventory_changed"
+                                        )
+                                    with self._detached_fence(
+                                        owner["workspace_id"],
+                                        owner["binding_id"],
+                                        owner["authority_revision"],
+                                    ) as detached:
+                                        if not detached:
+                                            continue
+                                    self._reclaim_namespaces(
+                                        group, namespaces, group.name
+                                    )
+                                result["completed"] += 1
+                            except ProjectIndexRetirementUnproven:
+                                raise
+                            except (ValueError, UnicodeError, FileNotFoundError):
+                                result["refused"] += 1
+                            except (OSError, RuntimeError):
+                                result["pending"] += 1
+            except ProjectIndexRetirementUnproven:
+                self._operation_local.operation.retained.append(pin)
+                pin = None
+                raise
+            finally:
+                if pin is not None:
+                    self._close_capability(pin)
+        return result
 
     def disable(
         self, key: ProjectIndexKey, *, expected_scope: ProjectIndexScope
@@ -628,27 +931,34 @@ class ProjectIndexService:
                 if pin is not None and not any(
                     run.pin is pin for run in self._runs.values()
                 ):
-                    pin.close()
+                    self._close_capability(pin)
                 raise
 
     def _start_pinned(self, scope, revision, resume_id, pin, read_admission):
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("project_index_closed")
-            if any(
-                run.key == scope.key and run.retirement_unproven
-                for run in self._searches
-            ):
-                raise ProjectIndexRetirementUnproven("index_reader_retirement_unproven")
-            if any(not run.native_retired for run in self._runs.values()):
-                raise LifetimeBusy("scanner_busy")
-            store = self._factory(scope.key)
-            lease = None
-            run = None
-            try:
+        store = lease = run = None
+        try:
+            with self._lock:
+                if self._admission_closed():
+                    raise RuntimeError("project_index_closed")
+                if any(
+                    run.key == scope.key and run.retirement_unproven
+                    for run in self._searches
+                ):
+                    raise ProjectIndexRetirementUnproven(
+                        "index_reader_retirement_unproven"
+                    )
+                if any(not run.native_retired for run in self._runs.values()):
+                    raise LifetimeBusy("scanner_busy")
+                store = self._factory(scope.key)
                 store.status_cache_bytes = binding_bytes(self._binding_root(store))
                 lease = self._lifetime(store, scope.key)
+                with self._admitted(store, scope.key) as enrolled:
+                    if enrolled is None:
+                        raise ValueError("authority_unavailable")
+                self._enroll_cleanup_owner(store, scope.key, enrolled)
                 with self._admitted(store, scope.key) as authority:
+                    if authority != enrolled:
+                        raise ValueError("authority_changed")
                     if authority is None:
                         raise ValueError("authority_unavailable")
                     current = store.load_status(scope.key)
@@ -720,24 +1030,29 @@ class ProjectIndexService:
                 run.writer.start()
                 run.supervisor.start()
                 return claim.job_id
-            except BaseException:
-                if run is not None and run.writer.ident is not None:
-                    # A failed supervisor launch cannot release a live writer's
-                    # capability. The dispatch caller becomes its physical owner.
-                    run.stop.set()
-                    run.supervisor = None
-                    self._retire(run, store, lease, pin)
-                else:
-                    store.close_native()
-                    if lease is not None:
-                        lease.close()
-                    if run is not None:
-                        run.native_retired = True
-                        run.supervisor = None
-                        if pin is not None:
-                            pin.close()
-                        run.read_admission.close()
+        except BaseException:
+            if store is None:
                 raise
+            if run is not None and run.writer.ident is not None:
+                # A failed supervisor launch cannot release a live writer's
+                # capability. The dispatch caller becomes its physical owner.
+                # The dispatch lock has exited before this physical join.
+                run.stop.set()
+                run.supervisor = None
+                self._retire(run, store, lease, pin)
+            else:
+                try:
+                    self._close_cleanup_store(store)
+                finally:
+                    if lease is not None:
+                        self._close_capability(lease)
+                if run is not None:
+                    run.supervisor = None
+                    if pin is not None:
+                        self._close_capability(pin)
+                    run.read_admission.close()
+                    run.native_retired = True
+            raise
 
     def _write(self, run, store, authority, policy, pin):
         try:
@@ -851,6 +1166,17 @@ class ProjectIndexService:
                         pin.close()
                     run.read_admission.close()
                     run.native_retired = True
+                    # Keep a small diagnostic tail, never traceback-owned stores
+                    # or an unbounded collection of completed Refresh/Resume runs.
+                    with self._lock:
+                        run.error = None
+                        retired = [
+                            job
+                            for job, item in self._runs.items()
+                            if item.native_retired
+                        ]
+                        for job in retired[:-16]:
+                            self._runs.pop(job, None)
         except BaseException as error:
             run.error = error
 
@@ -888,6 +1214,26 @@ class ProjectIndexService:
         for run in tuple(self._runs.values()):
             if run.claim.scope.key.binding_id == binding_id:
                 run.stop.set()
+        if self._detached_fence is None:
+            return
+        with self._lock:
+            if self._closed or (
+                self._cleanup_thread is not None and self._cleanup_thread.is_alive()
+            ):
+                return
+
+            def attempt():
+                try:
+                    self.retry_detached_cleanup()
+                except Exception:
+                    # Durable receipt permits explicit retry; unknown native
+                    # ownership is also retained by the operation record.
+                    pass
+
+            self._cleanup_thread = threading.Thread(
+                target=attempt, name="project-index-cleanup"
+            )
+            self._cleanup_thread.start()
 
     async def aclose(self) -> None:
         """Stop admission and await actual owner threads despite waiter cancellation."""
@@ -897,12 +1243,20 @@ class ProjectIndexService:
                 self._closed = True
                 runs = tuple(self._runs.values())
                 searches = tuple(self._searches)
+                operations = tuple(self._operations)
                 for run in runs:
                     run.stop.set()
-                return runs, searches
+                return runs, searches, operations
 
         async def drain():
-            runs, searches = await asyncio.to_thread(stop_and_snapshot)
+            _, _, operations = await asyncio.to_thread(stop_and_snapshot)
+            if self._cleanup_thread is not None:
+                await asyncio.to_thread(self._cleanup_thread.join)
+            for operation in operations:
+                await asyncio.to_thread(operation.done.wait)
+            # An already-admitted start may have dispatched while close waited.
+            # Its operation retires before this final writer/search snapshot.
+            runs, searches, _ = await asyncio.to_thread(stop_and_snapshot)
             for search in searches:
                 await asyncio.to_thread(search.done.wait)
             for run in runs:
@@ -912,6 +1266,10 @@ class ProjectIndexService:
                     raise RuntimeError("index_retirement_unproven") from run.error
             if any(search.retirement_unproven for search in searches):
                 raise ProjectIndexRetirementUnproven("index_reader_retirement_unproven")
+            if any(operation.retirement_unproven for operation in operations):
+                raise ProjectIndexRetirementUnproven(
+                    "index_operation_retirement_unproven"
+                )
 
         task = asyncio.create_task(drain())
         cancelled = False

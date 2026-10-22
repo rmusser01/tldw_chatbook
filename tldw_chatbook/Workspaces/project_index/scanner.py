@@ -291,8 +291,8 @@ class ProjectScanner:
         authority: ProjectIndexAuthority,
         scope: ProjectIndexScope,
         job_id: str,
-        frontier: Iterator[str],
-        emit: Callable[[ScanPage], bool],
+        frontier: Iterator[str] | Callable[[], tuple[str, ...]],
+        emit: Callable[[ScanPage], bool] | Callable[[ScanUnit], bool],
         stop: threading.Event,
         *,
         admit_unit: Callable[[str], ProjectIndexAuthority | None],
@@ -304,8 +304,10 @@ class ProjectScanner:
             authority: Initial exact root and authority floor.
             scope: Exact index scope already claimed by the caller.
             job_id: Opaque claimed job identity (never sent on argv).
-            frontier: Caller-owned iterator of incomplete relative directories.
-            emit: Synchronous bounded handoff; False stops all further admission.
+            frontier: Singleton compatibility iterator, or production callback returning
+                the next bounded tuple of eligible relative directories.
+            emit: Synchronous ScanPage handoff for the iterator, or ScanUnit handoff
+                for the production callback; False stops further admission.
             stop: Cooperative cancellation, also monitored during blocked pipe IO.
             admit_unit: Fresh authority callback before every page request.
             policy: Immutable per-job processing policy snapshot.

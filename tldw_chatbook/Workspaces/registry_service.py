@@ -1033,6 +1033,10 @@ class LocalWorkspaceRegistryService:
         now = self._now_factory()
         try:
             with self.db.transaction() as conn:
+                index_bindings = tuple(row[0] for row in conn.execute(
+                    "SELECT binding_id FROM workspace_runtime_bindings WHERE workspace_id=?",
+                    (safe_workspace_id,),
+                ))
                 conn.execute(
                     """
                     UPDATE workspace_records
@@ -1044,6 +1048,8 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
+        for binding_id in index_bindings:
+            self._notify_project_index_change(binding_id)
         if was_active:
             self.ensure_default_workspace()
             self.set_active_workspace(DEFAULT_WORKSPACE_ID)
@@ -2720,6 +2726,27 @@ class LocalWorkspaceRegistryService:
                 return authority
 
         return reader, fence
+
+    @contextmanager
+    def project_index_detached_fence(self, workspace_id: str, binding_id: str, revision: int):
+        """Accept cleanup-only ownership after a later detach/archive witness.
+
+        No locator is read and this does not grant source or query authority.
+        Caller already holds every native generation capability for the group.
+        """
+        with self.db.transaction(immediate=True) as conn:
+            witness = conn.execute(
+                "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            row = conn.execute(
+                "SELECT b.workspace_id,w.archived FROM workspace_runtime_bindings b "
+                "JOIN workspace_records w USING(workspace_id) WHERE b.binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            yield bool(witness and witness[0] > revision and (
+                row is None or (row[0] == workspace_id and row[1])
+            ))
 
     def binding_authority_revision(self, binding_id: str) -> int:
         """Read the durable witness, including a detached binding's tombstone."""

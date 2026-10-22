@@ -26,9 +26,11 @@ class BindingLifetime:
         self.path = path
         self.handle = handle
         self.closed = False
+        self._receipt_descriptors: set[int] = set()
+        self._receipt_handles: set[int] = set()
 
     @classmethod
-    def acquire(cls, path: Path) -> BindingLifetime:
+    def acquire(cls, path: Path, *, existing_only: bool = False) -> BindingLifetime:
         """Acquire an existing-or-new stable object; caller admits private parent."""
         path = Path(path)
         if os.name == "nt":
@@ -47,7 +49,13 @@ class BindingLifetime:
             ]
             create.restype = wintypes.HANDLE
             handle = create(
-                str(path), 0x80000000 | 0x40000000, 0, None, 4, 0x00200000, None
+                str(path),
+                0x80000000 | 0x40000000,
+                0,
+                None,
+                3 if existing_only else 4,
+                0x00200000,
+                None,
             )  # OPEN_ALWAYS, OPEN_REPARSE_POINT
             if handle == wintypes.HANDLE(-1).value:
                 error = ctypes.get_last_error()
@@ -94,7 +102,12 @@ class BindingLifetime:
             import fcntl
 
             handle = os.open(
-                path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+                path,
+                (0 if existing_only else os.O_CREAT)
+                | os.O_RDWR
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
+                0o600,
             )
             try:
                 info = os.fstat(handle)
@@ -110,6 +123,82 @@ class BindingLifetime:
         else:
             raise RuntimeError("lifetime_backend_unavailable")
         return cls(path, handle)
+
+    @contextmanager
+    def _cleanup_receipt_descriptor(self):
+        """Duplicate only this pinned control file, never reopen a pathname."""
+        if self.closed or self.path.name != "cleanup-owner-v1.lock":
+            raise ValueError("invalid_cleanup_receipt_handle")
+        if os.name == "nt":
+            import msvcrt
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            duplicate = kernel.DuplicateHandle
+            duplicate.argtypes = [
+                wintypes.HANDLE,
+                wintypes.HANDLE,
+                wintypes.HANDLE,
+                ctypes.POINTER(wintypes.HANDLE),
+                wintypes.DWORD,
+                wintypes.BOOL,
+                wintypes.DWORD,
+            ]
+            duplicate.restype = wintypes.BOOL
+            copied = wintypes.HANDLE()
+            process = wintypes.HANDLE(-1)
+            if not duplicate(
+                process, self.handle, process, ctypes.byref(copied), 0, False, 2
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            self._receipt_handles.add(copied.value)
+            try:
+                descriptor = msvcrt.open_osfhandle(
+                    copied.value, os.O_RDWR | os.O_BINARY
+                )
+            except BaseException:
+                if not kernel.CloseHandle(copied):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                self._receipt_handles.remove(copied.value)
+                raise
+            self._receipt_handles.remove(copied.value)
+        else:
+            descriptor = os.dup(self.handle)
+        self._receipt_descriptors.add(descriptor)
+        try:
+            yield descriptor
+        finally:
+            os.close(descriptor)
+            self._receipt_descriptors.remove(descriptor)
+
+    def read_cleanup_receipt(self) -> bytes:
+        """Read at most 4096 control bytes through the exclusive native handle."""
+        with self._cleanup_receipt_descriptor() as descriptor:
+            if os.fstat(descriptor).st_size > 4096:
+                raise ValueError("cleanup_receipt_too_large")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            chunks = bytearray()
+            while len(chunks) <= 4096:
+                block = os.read(descriptor, 4097 - len(chunks))
+                if not block:
+                    return bytes(chunks)
+                chunks.extend(block)
+            raise ValueError("cleanup_receipt_too_large")
+
+    def write_cleanup_receipt(self, payload: bytes) -> None:
+        """Enroll/repair bounded live-owned metadata, flush before publication."""
+        if not isinstance(payload, bytes) or not 0 < len(payload) <= 4096:
+            raise ValueError("invalid_cleanup_receipt_size")
+        with self._cleanup_receipt_descriptor() as descriptor:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            remaining = memoryview(payload)
+            while remaining:
+                count = os.write(descriptor, remaining)
+                if count <= 0:
+                    raise OSError("cleanup_receipt_write_incomplete")
+                remaining = remaining[count:]
+            os.ftruncate(descriptor, len(payload))
+            os.fsync(descriptor)
 
     @contextmanager
     def inheritance(self):
@@ -137,6 +226,8 @@ class BindingLifetime:
     def close(self) -> None:
         if self.closed:
             return
+        if self._receipt_descriptors or self._receipt_handles:
+            raise OSError("cleanup_receipt_descriptor_retirement_unproven")
         if os.name == "nt":
             from ctypes import wintypes
 

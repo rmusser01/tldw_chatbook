@@ -603,7 +603,7 @@ async def test_unproven_native_reader_retains_admission_and_refuses_reuse(
         with pytest.raises(ProjectIndexRetirementUnproven):
             rig.service.search(auth, "marker")
         assert released == []
-        with pytest.raises(RuntimeError, match="unavailable"):
+        with pytest.raises(ProjectIndexRetirementUnproven):
             rig.service.search(auth, "marker")
         assert rig.service._read_slots.acquire(blocking=False)
         assert not rig.service._read_slots.acquire(blocking=False)
@@ -619,10 +619,13 @@ async def test_unproven_native_reader_retains_admission_and_refuses_reuse(
             issued[query_pin + 1 :]
         ), "other operations release their own pins"
     finally:
-        # This injected reader owns no native resource; preserve product failure
-        # state through assertions, then discard the synthetic pin with the test.
-        rig.service._searches.clear()
-        await rig.close()
+        # The injected reader owns no native resource. Keep the unresolved
+        # service record intact, including its repeated-close failure contract.
+        if any(operation.retirement_unproven for operation in rig.service._operations):
+            with pytest.raises(ProjectIndexRetirementUnproven):
+                await rig.close()
+        else:
+            await rig.close()
 
 
 @pytest.mark.parametrize("native", [False, True], ids=["synthesized", "native"])
@@ -847,10 +850,11 @@ async def test_valid_then_stale_exact_serialized_boundary(
         await rig.close()
 
 
+@pytest.mark.parametrize("caller", ["provider", "controller"])
 @pytest.mark.parametrize("close_failure", [False, True])
 @private_profile_test
 async def test_real_provider_registry_owner_spans_outer_close(
-    tmp_path, request, monkeypatch, close_failure
+    tmp_path, request, monkeypatch, close_failure, caller, _closing_first=True
 ):
     import asyncio
     import threading
@@ -902,7 +906,7 @@ async def test_real_provider_registry_owner_spans_outer_close(
         ),
     )
     entered, release, returned, repair = (threading.Event() for _ in range(4))
-    pins, results, errors = [], [], []
+    pins, results, errors, refused_again = [], [], [], []
     retain = service._retain
     native_close = None
     registry_close = registry.db.close
@@ -947,10 +951,24 @@ async def test_real_provider_registry_owner_spans_outer_close(
 
     def query():
         try:
-            results.append(invoke(tool, {"query": "outerclosemarker"}))
+            if caller == "provider":
+                results.append(invoke(tool, {"query": "outerclosemarker"}))
+            else:
+                from tldw_chatbook.Chat.console_chat_controller import (
+                    ConsoleChatController,
+                )
+
+                controller = object.__new__(ConsoleChatController)
+                controller.app = app
+                results.append(controller._prepare_project_index_scopes(roots))
         except BaseException as error:
             errors.append(error)
         finally:
+            if close_failure:
+                try:
+                    service.status(key)
+                except BaseException as error:
+                    refused_again.append(error)
             returned.set()
             assert repair.wait(30)
             # The same native owner retries only after the failure assertion.
@@ -958,6 +976,7 @@ async def test_real_provider_registry_owner_spans_outer_close(
 
     query_thread = threading.Thread(target=query, name="query-close-proof")
     pause = None
+    closing = None
     try:
         query_thread.start()
         assert await asyncio.to_thread(entered.wait, 30), (results, errors)
@@ -968,15 +987,39 @@ async def test_real_provider_registry_owner_spans_outer_close(
         assert not pause.drain(
             time.monotonic()
         ), "outer registry handle lost native admission"
+        if _closing_first:
+            closing = asyncio.create_task(service.aclose())
+            await asyncio.sleep(0.05)
+            assert not closing.done(), "close omitted the actual outer provider owner"
+            closing.cancel()
+            await asyncio.sleep(0.05)
+            closing.cancel()
+            await asyncio.sleep(0.05)
+            assert (
+                not closing.done()
+            ), "cancelled close abandoned the outer provider owner"
         release.set()
         assert await asyncio.to_thread(returned.wait, 10)
         if close_failure:
+            from tldw_chatbook.Workspaces.project_index.models import (
+                ProjectIndexRetirementUnproven,
+            )
+
             assert (
-                errors and not results
-            ), "swallowed native close returned successful tool evidence"
+                (errors and not results)
+                if caller == "provider"
+                else results == [(None, {})]
+            )
+            assert len(refused_again) == 1
+            if _closing_first:
+                assert str(refused_again[0]) == "project_index_closed"
+            else:
+                assert isinstance(refused_again[0], ProjectIndexRetirementUnproven)
+                closing = asyncio.create_task(service.aclose())
             assert not pause.drain(time.monotonic())
         else:
-            assert not errors and len(results) == 1 and results[0].ok
+            assert not errors and len(results) == 1
+            assert results[0].ok if caller == "provider" else results[0][0] is service
         repair.set()
         await asyncio.to_thread(query_thread.join, 10)
         assert not query_thread.is_alive()
@@ -987,8 +1030,35 @@ async def test_real_provider_registry_owner_spans_outer_close(
         await asyncio.to_thread(query_thread.join, 10)
         if pause is not None:
             pause.resume()
-        await service.aclose()
+        from tldw_chatbook.Workspaces.project_index.models import (
+            ProjectIndexRetirementUnproven,
+        )
+
+        if closing is not None:
+            if close_failure:
+                with pytest.raises(ProjectIndexRetirementUnproven):
+                    await closing
+            else:
+                try:
+                    await closing
+                except asyncio.CancelledError:
+                    pass
+        if close_failure and closing is not None:
+            with pytest.raises(ProjectIndexRetirementUnproven):
+                await service.aclose()
+        else:
+            await service.aclose()
         registry.db.close()
+
+
+@pytest.mark.parametrize("caller", ["provider", "controller"])
+@private_profile_test
+async def test_failed_outer_close_blocks_reused_thread_before_shutdown(
+    tmp_path, request, monkeypatch, caller
+):
+    await test_real_provider_registry_owner_spans_outer_close.__wrapped__(
+        tmp_path, request, monkeypatch, True, caller, _closing_first=False
+    )
 
 
 @private_profile_test
@@ -1030,4 +1100,174 @@ async def test_filename_only_empty_and_whitespace_use_live_capture(tmp_path, req
             result = invoke(tool, {"query": term}, call_id=term + "-stale")
             assert json.loads(result.content)["hits"] == []
     finally:
+        await rig.close()
+
+
+@pytest.mark.parametrize(
+    "directory,prefix", [("Src", "src"), ("Stra\u00dfe", "STRASSE")]
+)
+@private_profile_test
+async def test_scan_to_public_search_casefolded_prefix(
+    tmp_path, request, directory, prefix
+):
+    from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+
+    rig = Rig(tmp_path)
+    try:
+        for folder in (directory, directory + "-peer", "other"):
+            (rig.root / folder).mkdir()
+            (rig.root / folder / "example.txt").write_text(
+                "casefoldmarker", encoding="utf-8"
+            )
+        (rig.root / directory / "excluded.txt").write_text(
+            "casefoldmarker", encoding="utf-8"
+        )
+        excluded = SensitiveExclusion("file", directory + "/excluded.txt")
+        rig.live = replace(rig.live, exclusions=(excluded,))
+        off = rig.service.status(rig.key)
+        rig.service.enable(
+            rig.key, ProjectIndexPolicy((prefix,), (".txt",)), expected_scope=off.scope
+        )
+        rig.refresh()
+        assert rig.settle().indexed == 1
+        result = invoke(
+            provider(rig, exclusions=lambda: (rig.root / directory / "excluded.txt",)),
+            {"query": "casefoldmarker"},
+        )
+        assert result.ok, result.error
+        assert [hit["relative_path"] for hit in json.loads(result.content)["hits"]] == [
+            directory + "/example.txt"
+        ]
+    finally:
+        await rig.close()
+
+
+@pytest.mark.parametrize("refresh", [False, True])
+@private_profile_test
+async def test_committed_building_rows_reach_console_and_public_tool(
+    tmp_path, request, monkeypatch, refresh
+):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Workspaces.project_index import runtime
+
+    rig = Rig(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    try:
+        path = rig.root / "a.txt"
+        path.write_text("buildingmarker", encoding="utf-8")
+        rig.enable()
+        if refresh:
+            rig.refresh()
+            rig.settle()
+            for run in tuple(rig.service._runs.values()):
+                await asyncio.to_thread(run.supervisor.join)
+        scan = rig.service._scanner.scan
+
+        def held(authority, scope, job, frontier, emit, stop, **kwargs):
+            def publish(unit):
+                result = emit(unit)
+                if result and unit.captures:
+                    entered.set()
+                    assert release.wait(30)
+                return result
+
+            return scan(authority, scope, job, frontier, publish, stop, **kwargs)
+
+        monkeypatch.setattr(rig.service._scanner, "scan", held)
+        rig.refresh()
+        assert await asyncio.to_thread(entered.wait, 15)
+        status = rig.service.status(rig.key)
+        assert status.state == "Building" and status.indexed == 1
+        seed = provider(rig)
+        roots = tuple(seed._admitted_roots.values())
+        monkeypatch.setattr(
+            runtime, "get_project_index_service", lambda app: rig.service
+        )
+        monkeypatch.setattr(runtime, "project_index_key", lambda *args: rig.key)
+        controller = object.__new__(ConsoleChatController)
+        controller.app = SimpleNamespace()
+        service, scopes = await asyncio.to_thread(
+            controller._prepare_project_index_scopes, roots
+        )
+        assert service is rig.service and scopes == {"project": status.scope}
+        tool = provider(rig)
+        result = await asyncio.to_thread(invoke, tool, {"query": "buildingmarker"})
+        assert result.ok, result.error
+        payload = json.loads(result.content)
+        assert (
+            payload["status"] == "partial"
+            and payload["hits"][0]["excerpt"] == "buildingmarker"
+        )
+        path.write_text("changed source", encoding="utf-8")
+        result = await asyncio.to_thread(invoke, tool, {"query": "buildingmarker"})
+        assert json.loads(result.content)["hits"] == []
+        rig.live = None
+        result = await asyncio.to_thread(invoke, tool, {"query": "buildingmarker"})
+        assert json.loads(result.content)["status"] == "unavailable"
+    finally:
+        release.set()
+        await rig.close()
+
+
+@pytest.mark.parametrize("mode", ["narrowed", "empty", "run_floor"])
+@private_profile_test
+async def test_building_without_compatible_commits_is_not_advertised(
+    tmp_path, request, monkeypatch, mode
+):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Workspaces.project_index import runtime
+    from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+
+    rig = Rig(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    try:
+        (rig.root / "old.txt").write_text("oldmarker", encoding="utf-8")
+        rig.enable()
+        if mode != "empty":
+            rig.refresh()
+            ready = rig.settle()
+            for run in tuple(rig.service._runs.values()):
+                await asyncio.to_thread(run.supervisor.join)
+            if mode == "narrowed":
+                rig.service.enable(
+                    rig.key,
+                    ProjectIndexPolicy((), (".py",)),
+                    expected_scope=ready.scope,
+                )
+        scan = rig.service._scanner.scan
+
+        def held(*args, **kwargs):
+            entered.set()
+            assert release.wait(30)
+            return scan(*args, **kwargs)
+
+        monkeypatch.setattr(rig.service._scanner, "scan", held)
+        rig.refresh()
+        assert await asyncio.to_thread(entered.wait, 10)
+        assert rig.service.status(rig.key).state == "Building"
+        tool = provider(
+            rig,
+            exclusions=lambda: (rig.root / "old.txt",) if mode == "run_floor" else (),
+        )
+        monkeypatch.setattr(
+            runtime, "get_project_index_service", lambda app: rig.service
+        )
+        monkeypatch.setattr(runtime, "project_index_key", lambda *args: rig.key)
+        controller = object.__new__(ConsoleChatController)
+        controller.app = SimpleNamespace()
+        _, scopes = await asyncio.to_thread(
+            controller._prepare_project_index_scopes,
+            tuple(tool._admitted_roots.values()),
+        )
+        assert not scopes
+        result = await asyncio.to_thread(invoke, tool, {"query": "oldmarker"})
+        assert json.loads(result.content)["status"] == "unavailable"
+    finally:
+        release.set()
         await rig.close()

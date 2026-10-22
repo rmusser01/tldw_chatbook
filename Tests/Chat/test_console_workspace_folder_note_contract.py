@@ -374,7 +374,9 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
             root_identity_fingerprint(capture_directory_chain(root)),
         )
 
+    from tldw_chatbook.Workspaces.project_index.runtime import project_index_registry_connections
     service = SimpleNamespace(
+        registry_connection_scope=lambda: project_index_registry_connections(run.service.db),
         status=lambda key: ProjectIndexStatus(
             ProjectIndexScope(key, 1, 1), "Ready", 1, 1, 1, None, None, 0, 0
         )

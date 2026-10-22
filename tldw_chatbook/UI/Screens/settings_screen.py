@@ -2485,7 +2485,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "lifecycle and folder bindings apply immediately; there is no draft state here",
+            "lifecycle and folder bindings apply immediately; index processing choices require Apply",
         ),
     ),
     SettingsCategoryId.TOOL_PROFILES: (
@@ -6943,7 +6943,7 @@ class SettingsScreen(BaseAppScreen):
                 writes_allowed=True,
                 runtime_owner="Workspace registry (immediate actions)",
                 boundary_copy=(
-                    "Lifecycle and folder bindings apply immediately; no draft state."
+                    "Lifecycle and folder bindings apply immediately; index processing choices require Apply."
                 ),
                 recovery_copy=(
                     "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
@@ -21730,6 +21730,8 @@ class SettingsScreen(BaseAppScreen):
         active = registry.get_active_workspace()
         active_id = active.workspace_id if active is not None else None
         yield Button("Create workspace…", id="settings-workspace-create", compact=True)
+        yield Button("Retry removed-folder cache cleanup", id="settings-project-index-cleanup", compact=True)
+        yield Static("", id="settings-project-index-cleanup-result", classes="settings-status-row", markup=False)
         yield StateCheckbox(
             "Show archived", show_archived, id="settings-workspaces-show-archived"
         )
@@ -21765,6 +21767,29 @@ class SettingsScreen(BaseAppScreen):
                     "View archived", id="settings-workspace-archive-view", compact=True
                 )
         yield from self._render_workspace_card(registry, active_id)
+
+    @on(Button.Pressed, "#settings-project-index-cleanup")
+    def _retry_removed_folder_index_cleanup(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_static_text("#settings-project-index-cleanup-result", "Checking removed-folder caches…")
+        app = self.app_instance
+
+        async def retry():
+            from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
+
+            def owned():
+                return get_project_index_service(app).retry_detached_cleanup()
+
+            try:
+                result = await asyncio.to_thread(owned)
+                text = (f"Cache cleanup: {result['completed']} completed; {result['pending']} pending; "
+                        f"{result['refused']} could not be verified. Retry pending cleanup after current work finishes.")
+            except Exception:
+                text = "Cache cleanup unavailable. Restart Chatbook and retry; cached content may remain."
+            if self.is_attached:
+                self._set_static_text("#settings-project-index-cleanup-result", text)
+
+        self.run_worker(retry(), group="project-index-cleanup", exclusive=True, exit_on_error=False)
 
     def _render_workspace_card(
         self,
