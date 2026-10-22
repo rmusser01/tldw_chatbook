@@ -6,6 +6,15 @@
 
 **What to do.** Before placing a negative control in a config writer, find the mutation the surface actually builds and put the injection there, or in the writer that mutation reaches. Then check that the red is on the assertion the test is designed for. A first try here also tripped an earlier assertion on the seeded list, which is not that red.
 
+## When dev fixes the same bug while your PR waits, resolve by dev's tests, not by side (TASK-33621.20, 2026-10-22)
+
+**Incident.** PR #3066 sat in the merge queue while dev merged TASK-35992 (9206d1d395, 146565efb7), an independent fix for two of the same bugs: a cold Library build eating the search budget, and the unsent-turn shelf not releasing a paused send. The rebase conflicted in 4 files. Taking the branch's side would have broken two dev contracts that no conflict marker showed: dev's `test_recovery_storage_failure_is_nonfatal_and_retains_inputs_in_worker` monkeypatches the private `ConsoleRuntime._release_retrieval_pause` and expects the recovery kept when it raises (the branch popped the entry first and swallowed the error), and dev's `test_console_library_initialization.py` doubles define `prewarm()`, not the branch's `warm_up()`, so they would have searched cold inside the 0.001 s budget. A third loss was silent: dev's "Console Library retrieval failed" warning lived in the try block the branch replaced, and only the diagnostic inventory rebuild (after resetting it to dev's copy) showed the call count drop.
+
+**What to do.**
+- Before resolving, `git log <old-base>..origin/dev -S'<symbol>'` for every symbol in the conflict; a hit means dev changed the same behaviour, not just the same lines.
+- Grep dev's tests for the private names in the conflict (`monkeypatch.setattr(runtime, "_...")`). Keep those names as seams and keep the ordering their tests assert.
+- Run dev's new tests for that area on the rebased head, and reset the diagnostic inventory to dev's copy before rebuilding it.
+
 ## New regression files need an explicit PR lane (TASK-32755.3, PR #3202)
 
 **Incident.** The full review of transcription readiness found that its new
