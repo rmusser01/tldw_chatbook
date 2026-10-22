@@ -101,6 +101,7 @@ async def _release_save(pilot, screen, gate):
         ("generation-mode", ("enter", "down", "enter"), "required"),
         ("notify", ("space",), False),
     ],
+    ids=["name", "question", "run-at", "provider", "generation-mode", "notify"],
 )
 async def test_success_retains_later_raw_draft(
     local_service, db, monkeypatch, edit, field, keys, expected
