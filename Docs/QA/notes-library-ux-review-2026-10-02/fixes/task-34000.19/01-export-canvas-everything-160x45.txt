@@ -19,7 +19,7 @@
 │ │    Skills (1) — AI add-ons     ││                                                                                                                        │ │
 │ │    Collections (0)             ││   Choose destination…                                                                                                  │ │
 │ │    Search / RAG — find all     ││ No destination chosen                                                                                                  │ │
-│ │ ─────────────────────────────  ││ Bundle: 147 items · text + keywords · size known once it runs                                                          │ │
+│ │ ─────────────────────────────  ││ Bundle: 147 items · text + keywords only · size known once it runs                                                     │ │
 │ │ Artifacts                 ▾    ││                                                                                                                        │ │
 │ │    All artifacts               ││   ○ Export bundle (.zip)                                                                                               │ │
 │ │    Chatbooks                   ││ Choose a destination before exporting.                                                                                 │ │

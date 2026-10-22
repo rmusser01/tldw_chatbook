@@ -91,7 +91,7 @@ def test_an_unsizeable_scope_says_so_instead_of_guessing():
         item_count=None,
     )
     assert state.consequence_line == (
-        "Bundle: 29 items · text + keywords · size known once it runs"
+        "Bundle: 29 items · text + keywords only · size known once it runs"
     )
     assert state.contents_lines == ()
 

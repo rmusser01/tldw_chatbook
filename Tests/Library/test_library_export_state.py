@@ -212,7 +212,27 @@ def test_a_media_scope_bundle_line_says_the_text_and_keywords_travel():
     )
 
 
-@pytest.mark.parametrize("kind", ["notes", "conversations", "everything"])
+def test_the_everything_scope_keeps_the_only_because_it_carries_media():
+    """Fix round 1 I-1: Everything is media-bearing (the quality chooser and
+    its "copies full media files into the zip" caption sit directly above
+    this line), so the "only" that contradicts that caption stays."""
+    state = build_library_export_form_state(
+        scope=ExportScope(kind="everything"),
+        counts={"media": 1, "conversations": 1, "notes": 1, "prompts": 0},
+        name="x",
+        description="",
+        media_quality=DEFAULT_MEDIA_QUALITY,
+        destination="",
+        approx_bytes=None,
+        item_count=3,
+    )
+    assert state.show_media_fields is True
+    assert state.consequence_line == (
+        "Bundle: 3 items · text + keywords only · size known once it runs"
+    )
+
+
+@pytest.mark.parametrize("kind", ["notes", "conversations"])
 def test_every_other_scope_bundle_line_names_the_keywords_too(kind):
     """Notes and conversations carry their keywords as well, so the payload
     phrase appears for every scope kind -- it used to be media-only."""

@@ -75,6 +75,13 @@ from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from .chatbook_models import ChatbookManifest, ChatbookVersion, ContentType
 from .conflict_resolver import ConflictResolution, ConflictResolver
+
+#: Fixed-text import warning when a note's or conversation's keyword could
+#: not be re-linked (TASK-34000.19 fix round 1, M-3). Never carries the
+#: keyword: ADR-057's diagnostics boundary applies to the status too.
+KEYWORD_RESTORE_WARNING = (
+    "Some keywords could not be restored on an imported note/conversation."
+)
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 _PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
@@ -1784,6 +1791,7 @@ class ChatbookImporter:
                             str(new_conv_id),
                             conversation_keywords,
                             content_type=ContentType.CONVERSATION,
+                            status=status,
                         )
                         status.record_success(ContentType.CONVERSATION)
                         logger.debug(
@@ -2741,6 +2749,7 @@ class ChatbookImporter:
                         str(new_note_id),
                         note_keywords,
                         content_type=ContentType.NOTE,
+                        status=status,
                     )
                     status.record_success(ContentType.NOTE)
                     logger.debug(f"Imported note: {note_title}")
@@ -2814,17 +2823,23 @@ class ChatbookImporter:
         keywords: Any,
         *,
         content_type: ContentType,
+        status: ImportStatus,
     ) -> None:
         """Re-link an imported note's or conversation's keyword membership.
 
         ADR-057's rule, applied to notes and conversations (TASK-34000.19):
         membership comes back through the ordinary keyword write path
         (``link_note_to_keyword`` / ``link_conversation_to_keyword``, both
-        ``INSERT OR IGNORE``). Blanks are skipped and casefold duplicates
-        linked once. The item's content is the thing being restored, so a
+        ``INSERT OR IGNORE``). Blanks are skipped; repeats of the exact
+        stripped text are linked once. De-duplication is on the exact text,
+        never a casefold: the table's ``COLLATE NOCASE`` folds ASCII only, so
+        ``Café``/``CAFÉ`` are two source rows and must arrive as two (fix
+        round 1, M-1). The item's content is the thing being restored, so a
         keyword that cannot be created or linked is logged with the item id
-        and skipped; it never fails the item. The log names the exception
-        class only -- never the keyword (ADR-057's diagnostics boundary).
+        and skipped, and the import carries ONE fixed-text warning for the
+        item (``KEYWORD_RESTORE_WARNING``); it never fails the item. Neither
+        the log nor the warning names the keyword (ADR-057's diagnostics
+        boundary).
 
         Args:
             db: The destination ChaChaNotes database.
@@ -2833,22 +2848,25 @@ class ChatbookImporter:
             keywords: The bundle's list of keyword strings; anything that is
                 not a list is treated as no keywords.
             content_type: Named in the diagnostic.
+            status: The import's status; receives the fixed warning.
         """
         if not isinstance(keywords, (list, tuple)):
             return
         seen: set[str] = set()
+        failed = False
         for raw in keywords:
             if not isinstance(raw, str) or not raw.strip():
                 continue
             cleaned = raw.strip()
-            if cleaned.casefold() in seen:
+            if cleaned in seen:
                 continue
-            seen.add(cleaned.casefold())
+            seen.add(cleaned)
             try:
                 keyword_id = ChatbookImporter._ensure_chachanotes_keyword(db, cleaned)
                 if keyword_id is not None:
                     link(item_id, keyword_id)
             except Exception as exc:
+                failed = True
                 logger.warning(
                     "ChatbookImporter: could not restore a keyword on imported "
                     "{} {} ({})",
@@ -2856,6 +2874,8 @@ class ChatbookImporter:
                     item_id,
                     type(exc).__name__,
                 )
+        if failed:
+            status.add_warning(KEYWORD_RESTORE_WARNING)
 
     @content_call(_content_sources)
     def _import_characters(

@@ -353,13 +353,15 @@ def build_library_export_form_state(
     # a name and then wrote a bundle nobody had seen the contents of, at a
     # fidelity chosen by a control rendered at the same weight as "sort".
     # This states the consequence in one line, above the button.
-    # The "only" rides with the media-item noun: a media-only scope is the
-    # one place the line is read against the quality chooser directly
-    # above it. Every other scope (everything included) names the payload
-    # without it (TASK-34000.19).
+    # The "only" rides with the media-bearing scopes (media AND everything):
+    # those are the scopes that show the quality chooser and its "copies
+    # full media files into the zip" caption directly above this line, and
+    # the "only" is what contradicts that caption (task-32353 / Qodo #1;
+    # TASK-34000.19 fix round 1, I-1). Scopes that carry no media name the
+    # payload without it.
     payload = (
         f" · {_BUNDLE_PAYLOAD_COPY}"
-        if scope.kind == "media"
+        if show_media_fields
         else f" · {_BUNDLE_KEYWORDS_PAYLOAD_COPY}"
     )
     # "before compression" is load-bearing, not padding: this counts the

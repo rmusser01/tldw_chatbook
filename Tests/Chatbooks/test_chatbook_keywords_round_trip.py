@@ -25,6 +25,7 @@ is the destination database's keyword rows.
 from __future__ import annotations
 
 import json
+import sqlite3
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,13 +33,16 @@ from pathlib import Path
 import pytest
 
 from Tests.Chatbooks.factories import ContentItemFactory, ManifestFactory
+from tldw_chatbook.Chatbooks import chatbook_creator as creator_module
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from tldw_chatbook.Chatbooks.chatbook_models import (
     ChatbookManifest,
     ChatbookVersion,
+    ContentItem,
     ContentType,
 )
+from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
@@ -125,10 +129,15 @@ def _export(source: dict, selections: dict, out: Path) -> Path:
     return out
 
 
-def _import(dest: dict, bundle: Path) -> ImportStatus:
+def _import(
+    dest: dict,
+    bundle: Path,
+    *,
+    conflict_resolution: ConflictResolution = ConflictResolution.ASK,
+) -> ImportStatus:
     status = ImportStatus()
     success, message = ChatbookImporter(dest["db_paths"]).import_chatbook(
-        bundle, import_status=status
+        bundle, conflict_resolution=conflict_resolution, import_status=status
     )
     assert success is True, message
     assert status.errors == [], status.errors
@@ -448,3 +457,225 @@ def test_a_keyword_that_already_exists_in_the_destination_is_linked_not_duplicat
     assert _note_keywords(dest_db, "Standup") == ["archive", "meeting"]
     [note] = dest_db.search_notes("Standup")
     assert note["content"] == "Body of Standup"
+
+
+# --- Fix round 1 ---------------------------------------------------------------
+
+
+def test_a_large_selection_reads_keywords_in_slices_and_still_exports(
+    tmp_path, monkeypatch
+):
+    """I-2: each batch reader binds one SQL variable per id, so a selection
+    larger than SQLite's variable limit used to raise ``too many SQL
+    variables`` outside the per-item try and fail the whole export. The
+    reads now go in slices (``_KEYWORD_READ_BATCH_CAP``, the repo's
+    ``_ID_LIST_BATCH_CAP`` shape). The pin lowers the live variable limit on
+    every connection the creator opens to 100 and the cap to 40, then
+    exports 120 notes and 120 media (unsliced, both reads overflow) and 60
+    conversations -- two slices through the same helper, but kept under
+    the limit because ``Canvas.archive.export_canvas_archive`` binds one
+    variable per conversation id unsliced (pre-existing, outside this
+    task; parked as a follow-up)."""
+    source = _db_trio(tmp_path / "source", "kw-source")
+    note_ids = [
+        _add_note(source["chachanotes_db"], f"Note {i:03d}", [f"n{i % 7}"])
+        for i in range(120)
+    ]
+    conv_ids = [
+        _add_conversation(source["chachanotes_db"], f"Conv {i:03d}", [f"c{i % 5}"])
+        for i in range(60)
+    ]
+    media_ids = [
+        _add_media(
+            source["media_db"], f"Media {i:03d}", f"https://example.com/m/{i}", [f"m{i % 3}"]
+        )
+        for i in range(120)
+    ]
+
+    def _limited(original):
+        def get_connection(self):
+            connection = original(self)
+            connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 100)
+            return connection
+
+        return get_connection
+
+    monkeypatch.setattr(
+        CharactersRAGDB, "get_connection", _limited(CharactersRAGDB.get_connection)
+    )
+    monkeypatch.setattr(
+        MediaDatabase, "get_connection", _limited(MediaDatabase.get_connection)
+    )
+    # ``raising=False``: on the unsliced base the cap does not exist, and the
+    # export must then fail on the variable limit, not on this patch.
+    monkeypatch.setattr(creator_module, "_KEYWORD_READ_BATCH_CAP", 40, raising=False)
+
+    bundle = _export(
+        source,
+        {
+            ContentType.NOTE: note_ids,
+            ContentType.CONVERSATION: conv_ids,
+            ContentType.MEDIA: [str(media_id) for media_id in media_ids],
+        },
+        tmp_path / "big.zip",
+    )
+    for content_type, expected in (
+        (ContentType.NOTE, 120),
+        (ContentType.CONVERSATION, 60),
+        (ContentType.MEDIA, 120),
+    ):
+        items = _manifest_items(bundle, content_type)
+        assert len(items) == expected, content_type
+        assert all(len(item["tags"]) == 1 for item in items), content_type
+
+
+def test_keywords_that_differ_only_beyond_ascii_case_all_survive(tmp_path):
+    """M-1: the keyword table's ``COLLATE NOCASE`` folds ASCII only, so
+    ``Café``/``CAFÉ`` and ``Straße``/``STRASSE`` are four source rows; a
+    casefold de-duplication on import collapsed them to two."""
+    source = _db_trio(tmp_path / "source", "kw-source")
+    note_id = _add_note(
+        source["chachanotes_db"], "Unicode", ["Café", "CAFÉ", "Straße", "STRASSE"]
+    )
+    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "u.zip")
+    [item] = _manifest_items(bundle, ContentType.NOTE)
+    assert sorted(item["tags"]) == ["CAFÉ", "Café", "STRASSE", "Straße"]
+
+    dest = _db_trio(tmp_path / "dest", "kw-dest")
+    _import(dest, bundle)
+    assert sorted(_note_keywords(dest["chachanotes_db"], "Unicode")) == [
+        "CAFÉ",
+        "Café",
+        "STRASSE",
+        "Straße",
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("alpha, beta,,gamma ", ["alpha", "beta", "gamma"]),
+        (["a", "b"], ["a", "b"]),
+        (("a",), ["a"]),
+        (None, []),
+        (42, []),
+        ({"x": 1}, []),
+    ],
+)
+def test_a_manifest_tags_value_that_is_not_a_list_is_normalized(raw, expected):
+    """M-2: ``list("alpha,beta")`` split a string into characters; a string
+    splits on commas (as ``media_keywords`` does) and anything that is not
+    a list, tuple or string reads as no tags."""
+    item = ContentItem.from_dict(
+        {"id": "x", "type": "note", "title": "T", "tags": raw}
+    )
+    assert item.tags == expected
+
+
+def test_a_keyword_that_cannot_be_linked_leaves_the_item_restored_and_warns(
+    tmp_path, monkeypatch
+):
+    """M-3 / M-5: a refused link never fails the item; the import reports
+    one fixed-text warning (no keyword text) so the user learns something
+    was lost."""
+    source = _db_trio(tmp_path / "source", "kw-source")
+    note_id = _add_note(source["chachanotes_db"], "Fragile", ["meeting"])
+    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "f.zip")
+
+    def refuse(self, note_id, keyword_id, *, cursor=None):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(CharactersRAGDB, "link_note_to_keyword", refuse)
+    # Imported here, not at module scope: before the fix the constant does
+    # not exist, and that is this test's RED, not the whole file's.
+    from tldw_chatbook.Chatbooks.chatbook_importer import KEYWORD_RESTORE_WARNING
+
+    dest = _db_trio(tmp_path / "dest", "kw-dest")
+    status = _import(dest, bundle)
+    assert status.successful_items == 1
+    [note] = dest["chachanotes_db"].search_notes("Fragile")
+    assert note["content"] == "Body of Fragile"
+    assert _note_keywords(dest["chachanotes_db"], "Fragile") == []
+    assert status.warnings.count(KEYWORD_RESTORE_WARNING) == 1
+    assert "meeting" not in " ".join(status.warnings)
+
+
+def test_importing_the_same_bundle_twice_under_skip_adds_no_rows(tmp_path):
+    """M-5: a second import of the same bundle with SKIP leaves the keyword
+    table and every junction table exactly as the first import left them."""
+    source = _db_trio(tmp_path / "source", "kw-source")
+    note_id = _add_note(source["chachanotes_db"], "Twice", ["meeting", "moc"])
+    conv_id = _add_conversation(source["chachanotes_db"], "Twice conv", ["launch"])
+    media_id = _add_media(
+        source["media_db"], "Twice media", "https://example.com/twice", ["ref"]
+    )
+    bundle = _export(
+        source,
+        {
+            ContentType.NOTE: [note_id],
+            ContentType.CONVERSATION: [conv_id],
+            ContentType.MEDIA: [str(media_id)],
+        },
+        tmp_path / "twice.zip",
+    )
+    dest = _db_trio(tmp_path / "dest", "kw-dest")
+
+    def snapshot() -> dict:
+        cc = dest["chachanotes_db"]
+        md = dest["media_db"]
+        return {
+            "keywords": cc.execute_query("SELECT COUNT(*) FROM keywords").fetchone()[0],
+            "note_keywords": cc.execute_query(
+                "SELECT COUNT(*) FROM note_keywords"
+            ).fetchone()[0],
+            "conversation_keywords": cc.execute_query(
+                "SELECT COUNT(*) FROM conversation_keywords"
+            ).fetchone()[0],
+            "media_keywords": md.execute_query(
+                "SELECT COUNT(*) FROM MediaKeywords"
+            ).fetchone()[0],
+            "Keywords": md.execute_query("SELECT COUNT(*) FROM Keywords").fetchone()[0],
+        }
+
+    _import(dest, bundle, conflict_resolution=ConflictResolution.SKIP)
+    first = snapshot()
+    assert first == {
+        "keywords": 3,
+        "note_keywords": 2,
+        "conversation_keywords": 1,
+        "media_keywords": 1,
+        "Keywords": 1,
+    }
+    second_status = _import(dest, bundle, conflict_resolution=ConflictResolution.SKIP)
+    assert second_status.skipped_items == 3
+    assert snapshot() == first
+
+
+def test_a_keyword_that_would_break_the_frontmatter_stays_out_of_that_line(tmp_path):
+    """M-6: the frontmatter ``tags:`` line is plain text inside a ``---``
+    fence, so a keyword holding a newline or ``---`` could corrupt the
+    importer's body split. Such keywords stay in the manifest (the record)
+    and are left out of the frontmatter line only; the body and every
+    keyword still round-trip."""
+    source = _db_trio(tmp_path / "source", "kw-source")
+    unsafe_fence = "cut---here"
+    unsafe_newline = "two\nlines"
+    note_id = _add_note(
+        source["chachanotes_db"], "Edge", ["safe", unsafe_fence, unsafe_newline]
+    )
+    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "e.zip")
+
+    [item] = _manifest_items(bundle, ContentType.NOTE)
+    assert sorted(item["tags"]) == sorted(["safe", unsafe_fence, unsafe_newline])
+    markdown = _read_text(bundle, item["file_path"])
+    frontmatter = markdown.split("---", 2)[1]
+    tag_lines = [line for line in frontmatter.splitlines() if line.startswith("tags:")]
+    assert tag_lines == ["tags: safe"]
+
+    dest = _db_trio(tmp_path / "dest", "kw-dest")
+    _import(dest, bundle)
+    [note] = dest["chachanotes_db"].search_notes("Edge")
+    assert note["content"] == "Body of Edge"
+    assert sorted(_note_keywords(dest["chachanotes_db"], "Edge")) == sorted(
+        ["safe", unsafe_fence, unsafe_newline]
+    )

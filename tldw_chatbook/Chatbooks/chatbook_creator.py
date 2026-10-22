@@ -54,6 +54,14 @@ from ..Utils.path_validation import validate_filename
 from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from ..Utils.text import sanitize_filename
+
+#: Ids per keyword batch read (``_read_keywords_in_slices``). Each reader
+#: binds one SQL variable per id and SQLite caps bound variables (32,766;
+#: 999 before 3.32), so a Library with more items than that used to fail
+#: the whole export on ``too many SQL variables`` (TASK-34000.19 fix round
+#: 1, I-2). Same figure as ``ChaChaNotes_DB._ID_LIST_BATCH_CAP``.
+_KEYWORD_READ_BATCH_CAP = 500
+
 from .chatbook_models import (
     ChatbookContent,
     ChatbookManifest,
@@ -711,8 +719,9 @@ class ChatbookCreator:
         # manifest item's ``tags``; a conversation with none carries ``[]``
         # in both. The reader pre-seeds every requested id with ``[]`` and
         # returns keyword ROW dicts, so the text is ``row["keyword"]``.
-        keywords_by_conversation = db.get_keywords_for_conversations(
-            [str(conv_id) for conv_id in conversation_ids]
+        keywords_by_conversation = self._read_keywords_in_slices(
+            [str(conv_id) for conv_id in conversation_ids],
+            db.get_keywords_for_conversations,
         )
 
         total = len(conversation_ids)
@@ -882,6 +891,45 @@ class ChatbookCreator:
     # Messages per get_attachments_for_messages call during export: batches
     # queries while bounding how many attachment BLOBs sit in memory at once.
     _ATTACHMENT_FETCH_CHUNK = 50
+
+    @staticmethod
+    def _read_keywords_in_slices(
+        ids: Sequence[Any],
+        reader: Callable[[list[Any]], Mapping[Any, Any]],
+    ) -> dict[Any, Any]:
+        """Run one keyword batch reader over ``ids`` in bounded slices.
+
+        Each reader binds one SQL variable per id, so an unsliced read of a
+        selection larger than SQLite's variable limit raised ``too many SQL
+        variables`` before the per-item loop and failed the whole export
+        (TASK-34000.19 fix round 1, I-2). ``_KEYWORD_READ_BATCH_CAP`` ids
+        per slice, the shape of ``ChaChaNotes_DB._ID_LIST_BATCH_CAP``.
+
+        Args:
+            ids: The whole selection, already in the reader's own id type.
+            reader: One of the three batch readers, taking a list of ids.
+
+        Returns:
+            The merged per-id result of every slice.
+        """
+        merged: dict[Any, Any] = {}
+        cap = max(1, int(_KEYWORD_READ_BATCH_CAP))
+        for start in range(0, len(ids), cap):
+            merged.update(reader(list(ids[start : start + cap])))
+        return merged
+
+    @staticmethod
+    def _frontmatter_safe_keyword(keyword: str) -> bool:
+        """Whether ``keyword`` can sit on a note's frontmatter ``tags:`` line.
+
+        The line is plain text inside a ``---`` fence that the importer
+        splits on, so a keyword holding a line break or ``---`` would
+        corrupt the imported body. Such keywords stay in the manifest (the
+        record) and are left out of this one line (fix round 1, M-6).
+        """
+        return (
+            "---" not in keyword and "\n" not in keyword and "\r" not in keyword
+        )
 
     @staticmethod
     def _conversation_graph_messages(
@@ -1443,8 +1491,9 @@ class ChatbookCreator:
         # (ADR-057's shape for Prompts); the frontmatter ``tags:`` line and
         # the manifest item's ``tags`` both carry it. Ids with no keywords are
         # absent from the result, so a note with none carries ``[]``.
-        keywords_by_note = db.get_keywords_for_notes_batch(
-            [str(note_id) for note_id in note_ids]
+        keywords_by_note = self._read_keywords_in_slices(
+            [str(note_id) for note_id in note_ids],
+            db.get_keywords_for_notes_batch,
         )
 
         total = len(note_ids)
@@ -1485,8 +1534,13 @@ class ChatbookCreator:
                     f.write(f"title: {note['title']}\n")
                     f.write(f"created_at: {note_data['created_at']}\n")
                     f.write(f"updated_at: {note_data['updated_at']}\n")
-                    if note_data["tags"]:
-                        f.write(f"tags: {', '.join(note_data['tags'])}\n")
+                    frontmatter_tags = [
+                        tag
+                        for tag in note_data["tags"]
+                        if self._frontmatter_safe_keyword(tag)
+                    ]
+                    if frontmatter_tags:
+                        f.write(f"tags: {', '.join(frontmatter_tags)}\n")
                     f.write("---\n\n")
 
                     # Write content
@@ -1617,7 +1671,10 @@ class ChatbookCreator:
                 requested_media_ids.append(int(media_id))
             except (TypeError, ValueError):
                 continue
-        keywords_by_media = fetch_keywords_for_media_batch(db, requested_media_ids)
+        keywords_by_media = self._read_keywords_in_slices(
+            requested_media_ids,
+            lambda chunk: fetch_keywords_for_media_batch(db, chunk),
+        )
 
         total = len(media_ids)
         for idx, media_id in enumerate(media_ids):
