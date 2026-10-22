@@ -19,7 +19,10 @@ Observed twice on PR #3188 (2026-10-21, runs 39596258765 and its predecessor): u
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+**Evidence from PR #3190's eviction (2026-10-22, TASK-35660).** In both runs below, the cancelled shards ran out their own 20-minute job cap before the gate job started, so the gate cannot have cancelled them.
+- PR #3190, run 39610893391 attempts 2 and 3: UI Fast Lane (2), jobs 119259185494 and 119280385871, each carry the annotation 'The job has exceeded the maximum execution time of 20m0s', after 20m19s each, at 97% with no failing test. The gate job started afterwards: 14:12:22Z after 14:12:00Z, and 14:53:36Z after 14:48:29Z.
+- This task's run 39596258765: jobs 9, 10 and 2 ran 20m01s, 20m16s and 20m19s and ended by 12:31:29Z; the gate job started at 12:32:47Z. (The API lists no annotations for these three jobs now, so the cap is read from their durations.)
+- Both runs used the ten-shard deal. TASK-35834's thirteen-shard deal (PR #3182) merged at 15:07Z the same day. Its headroom has since eroded again on dev: TASK-36140.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 17:58'
-updated_date: '2026-10-21 00:48'
+updated_date: '2026-10-22 18:40'
 labels:
   - console
   - tests
@@ -45,6 +45,7 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
 7. (2026-10-19, third resume) Rebase onto 8136af6f6f, then 0fef489ece. Re-run the red/green, both changed test files on the branch and on dev, and repeats of the three tests on the branch. File anything the whole-file runs surface.
 8. (2026-10-20, fourth resume) Check the interrupted session's uncommitted review pass against the committed helper and by mutation, keep what holds, and re-run the changed files and a sample of the helper's callers on the branch and on dev.
 9. (2026-10-20, fifth resume) Rebase onto 2d071d6d71. Fix the independent review's blocking finding (a guard that cannot fail) and its cheap follow-ups test-first, file the rest, and re-run the gates.
+10. (2026-10-22, sixth resume) PR #3190 was evicted from the merge queue. Read run 39610893391's failed jobs and their annotations, decide whether the branch caused the failure, rebase onto 7700c63a68, replay the UI lane's shard minutes with the CI timing of the two new pilots, and re-run the gates on the branch and on dev.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -136,4 +137,25 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
 - **No live run.** Only test code and backlog docs change; no product code, CSS or visible behaviour does, so there is nothing new to verify in the running app.
 
 **Merge evidence (2026-10-20).** Evidence head 06a608d2cf (this note is committed on top of it) on dev 2d071d6d71 (up to date at the last fetch). All six ACs met, and the review's blocking item is fixed. The two new helper tests fail on the pre-pass helper and pass now; on dev they fail at setup, since dev has no retry bound. The stale-proof replay fails on dev's helper. Compared by test id with dev: projection file 31/32 vs 26/27 (TASK-35662 on both); resend UI file 17/17 vs 15/15; send-disabled file 8/10 vs 8/10, with every red tracked (TASK-35850, TASK-35883). ruff is clean on the three test files. No product module, CSS or ratchet-tracked file changed, so the ui-ready census, boot CSS budget and module-size rows are unaffected. ./scripts/preflight.sh passes.
+
+**Rebased onto dev 7700c63a68 (2026-10-22, sixth resume). PR #3190's eviction came from dev's ten-shard UI lane hitting its job cap, not from this branch.** The PR (head 07b36c94c3 on e639b720ca) was evicted after run 39610893391 went red in attempts 2 and 3.
+- **What failed.** Both times, only UI Fast Lane job 2 of 10 failed. It was cancelled at 97%, and every test that had run passed. Its check-run annotation reads "The job has exceeded the maximum execution time of 20m0s" (jobs 119259185494 and 119280385871, 20m19s each). The Derived Artifacts gate then reported "The required UI fast lane did not succeed". That job held none of this branch's census entries, and the branch does not change the census, so its 41 entries were dev's own at e639b720ca. Its heaviest file, Tests/UI/test_settings_advanced_disclosures.py, ran 7.3 min in attempt 3. The one census file this branch changes, Tests/UI/test_console_turn_resend_ui.py, ran in job 1: 17 of 17 in 75.7 s and 76.6 s, and job 1 took 15.0 min both times.
+- **Where it is tracked.** Dev re-dealt the census over 13 jobs in TASK-35834 (PR #3182, 5992b21526, merged at 15:07Z that day), and this rebase picks that up. PR #3188's eviction the day before, filed as TASK-35920 on the guess that the gate cancels in-flight shards, was the same cap; the evidence is added there. On dev's 13-job deal the margin has eroded again: in four green PR runs on 2026-10-22 the slowest job took 18.1, 17.4, 17.5 and 16.7 min, and the census has grown from 430 entries at #3182 to 584. Filed as TASK-36140.
+- **Shard minutes with this branch** (recorded in TASK-35882, whose AC #1 is now checked). In 7700c63a68's 13-shard deal the resend file lands in job 6. `scripts/ui_lane_shard_replay.py --shards 13` scores job 6 at 15.8 pytest min with or without this PR's two runs, because dev's own 15-test file was slower in CI (75.0-100.2 s) than this PR's 17 tests. Neither new pilot made the 25 slowest durations in CI, so each took under 10.6 s; locally each took 5.3 s at load ~28.
+- **Rebase.** No conflicts. Dev's 134 commits since 2d071d6d71 do not touch the three test files, console_spend_projection.py or config.py. chat_screen.py gains three TASK-34720 screen-stack guards in the chip-dialog openers, outside the control-bar sync. This resume changes no code: there is no new test and no fix, because nothing failed that this branch owns.
+- **Red/green on the new dev.** Copied into a scratch tree of 7700c63a68, the branch's two test files run against dev's helper. All six `control_bar_helper` tests fail there: the closing, disposed and stale-read tests at dev's bare `assert await projection.warm()` (line 4878), and the three bound tests with an AttributeError, since dev has no `_CONTROL_BAR_RENDER_TIMEOUT_S`. The stale-proof replay fails at dev's `assert rendered` (line 4881). All pass on the branch.
+- **Results by test id** (macOS, plain command; the branch and a detached 7700c63a68 ran side by side, one file per command, host load 19-45):
+  - Tests/UI/test_console_readiness_config_projection.py: branch 31 of 32, dev 26 of 27. The one red on both is TASK-35662's.
+  - Tests/UI/test_console_turn_resend_ui.py: branch 17 of 17 (92.9 s), dev 15 of 15 (81.7 s).
+  - Tests/UI/test_console_native_chat_flow.py (371 items): branch 108 passed, dev 109. 261 reds are the same test ids on both trees, mostly the environmental `RecoveryRequired: raw_source_selection_changed` at setup. The one difference is `test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft`: two cases red on the branch and a third on dev, all timing out at the same wait for `#console-settings-temperature`. That test does not reach the helper, and run alone it passed 3 of 3 on each tree. All 27 tests in the file that reach the helper, directly or through `_select_llamacpp_console`, passed on both trees.
+  - A sample of the helper's other callers, one file per command, same reds by test id on both trees:
+    - Tests/UI/test_console_send_acknowledgement.py (census): 9 of 9 on both.
+    - Tests/UI/test_console_composer_run_controls.py (census): 36 of 36 on both (14.3 min each at load ~40).
+    - Tests/UI/test_console_tab_switch_binds_composer.py (one node is in the census, and it passes): 22 of 27 on both. The five reds are TASK-35830's.
+    - Tests/UI/test_console_send_disabled_state.py: 8 of 10 on both. The reds are `test_idle_stop_button_has_no_unreachable_tooltip` (TASK-35883) and `test_enter_hotkey_still_sends_when_send_is_enabled` (TASK-35850).
+    - Tests/UI/test_console_regenerate_feedback.py: 0 of 4 on both, all the environmental `RecoveryRequired` at setup.
+    - Tests/UI/test_console_fork_fresh_lineage_flow.py: 2 of 4 on both, with a different pair red on each. Run alone, the three pilots other than the help-then-send one failed on both trees at the file's own wait for the row's Fork action, after the helper had returned and the sends had settled. Filed as TASK-36207.
+- **Rebased again onto e2cffbed60** (PR #3184 merged while the above ran). No conflicts. It changes no Console code or helper caller, and the lane still has 13 jobs. The census now has 588 entries; the resend file is still in job 6, which still replays at 15.8 min (dev-only maximum 16.9). On this head the projection file is again 31 of 32 (TASK-35662's red) and the resend file 17 of 17.
+- `./scripts/preflight.sh` passes on the final head.
+- **No live run**, for the same reason as before: only test code and backlog docs change.
 <!-- SECTION:NOTES:END -->
