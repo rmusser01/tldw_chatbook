@@ -15,7 +15,9 @@ way into a markup-on surface: the shared header's status chip gets
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 
 from rich.cells import cell_len
@@ -382,3 +384,537 @@ def build_header_view(inputs: RoleplayHeaderInputs, width: int) -> RoleplayHeade
         blocked_chip=blocked,
         status_plain=status,
     )
+
+
+# ===== Items list (frame slice B2a; spec section 1.5) =======================
+#
+# Everything the line-based items list paints is computed here as plain text
+# or as ``(text, style)`` spans; ``RoleplayItemList`` turns spans into literal
+# ``Content`` (markup off, spec R33). Untrusted names are measured and cut as
+# plain text, never escaped (a backslash would paint).
+
+#: Each entity kind's list words: singular noun, plural noun, border-title word.
+ITEM_KINDS: dict[str, tuple[str, str, str]] = {
+    "character": ("character", "characters", "Characters"),
+    "persona": ("persona", "personas", "Personas"),
+    "lore": ("lore book", "lore books", "Lore books"),
+    "dictionary": ("chat dictionary", "chat dictionaries", "Chat dictionaries"),
+}
+#: The workbench mode that lists each kind (``PersonasWorkbenchState.active_mode``).
+KIND_FOR_MODE: dict[str, str] = {
+    "characters": "character",
+    "personas": "persona",
+    "lore": "lore",
+    "dictionaries": "dictionary",
+}
+#: 2-line rows need at least this many cells inside the list (spec 1.5.2) ...
+TWO_LINE_MIN_WIDTH = 40
+#: ... and at most this many items in the kind; 1-line rows otherwise.
+TWO_LINE_MAX_ITEMS = 40
+#: A cut name keeps this many cells of its end (spec 1.5.2: "the last 9-10").
+NAME_TAIL_CELLS = 10
+#: A character scent's description snippet and first tag are cut to these.
+SNIPPET_MAX_CELLS = 72
+TAG_MAX_CELLS = 24
+#: No scent is longer than this as data; the prompt cuts it to the row.
+SCENT_MAX_CELLS = 96
+#: The delete modal names at most this many items, then "and N more" (R32).
+DELETE_MODAL_MAX_NAMES = 5
+#: The width prompts are built at before the list is laid out: nothing is cut,
+#: and the first real width rebuilds only the prompts it cuts.
+UNMEASURED_WIDTH = 10_000
+
+_LOADED_GLYPH = "▸"
+_MARK_GLYPH = "✓"
+
+
+def plural(count: int, singular: str, plural_form: str | None = None) -> str:
+    """The count and the noun in the number that matches it (RP-070: "1 entry").
+
+    Args:
+        count: How many.
+        singular: The noun for one.
+        plural_form: The noun for any other count; ``singular + "s"`` if omitted.
+
+    Returns:
+        ``"<count> <noun>"``.
+    """
+    noun = singular if count == 1 else (plural_form or f"{singular}s")
+    return f"{count} {noun}"
+
+
+def relative_age(timestamp: object, *, now: datetime) -> str | None:
+    """A timestamp as a short relative age (``now``, ``5m``, ``3h``, ``3d``, ``2mo``, ``2y``).
+
+    Raw UTC dates read as noise in a list (RP-070). A naive timestamp is UTC,
+    as the database writes them; a future one reads ``now``.
+
+    Args:
+        timestamp: An ISO-8601 string from the page query, or anything else.
+        now: The current time (injected, so the result is testable).
+
+    Returns:
+        The age, or ``None`` when ``timestamp`` is not a parseable date.
+    """
+    if not isinstance(timestamp, str) or not timestamp.strip():
+        return None
+    try:
+        moment = datetime.fromisoformat(timestamp.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    seconds = (now - moment).total_seconds()
+    if seconds < 60:
+        return "now"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h"
+    days = hours // 24
+    if days < 30:
+        return f"{days}d"
+    if days < 365:
+        return f"{days // 30}mo"
+    return f"{days // 365}y"
+
+
+def middle_ellipsize_cells(
+    text: str, budget: int, *, tail: int = NAME_TAIL_CELLS
+) -> str:
+    """Cut ``text`` to ``budget`` cells in the middle, keeping its last cells.
+
+    ``Highspire Gazette (imported from card) 2`` at 28 cells reads
+    ``Highspire Gazette…om card) 2``: the end of a name tells copies apart
+    (spec 1.5.2). Measures cells, so wide and zero-width characters fit by
+    what they paint; the ellipsis is the resolved glyph (``...`` in ASCII mode).
+
+    Args:
+        text: Plain (unescaped) one-line text.
+        budget: Cells available.
+        tail: Cells of the end to keep, at most half of what is left.
+
+    Returns:
+        ``text`` when it fits, else head + ellipsis + tail within ``budget``
+        (just as much of the ellipsis as fits when ``budget`` is tiny).
+    """
+    if cell_len(text) <= budget:
+        return text
+    ellipsis = resolve_glyph(_ELLIPSIS)
+    room = budget - cell_len(ellipsis)
+    if room <= 0:
+        return ellipsis if cell_len(ellipsis) <= budget else ""
+    keep = min(tail, room // 2)
+    end = ""
+    for character in reversed(text):
+        if cell_len(character + end) > keep:
+            break
+        end = character + end
+    head = ""
+    for character in text:
+        if cell_len(head + character) > room - cell_len(end):
+            break
+        head += character
+    return f"{head.rstrip()}{ellipsis}{end}"
+
+
+def item_gutter(*, loaded: bool, marked: bool) -> str:
+    """The row gutter: col 1 ``▸`` (loaded), col 2 ``✓`` (marked), col 3 a space.
+
+    In ASCII mode the glyphs resolve to ``>`` and ``[x]``, so the gutter is
+    5 cells (``>[x] ``, spec 1.5.2). Unset columns are spaces of the same width.
+    """
+    loaded_glyph = resolve_glyph(_LOADED_GLYPH)
+    mark_glyph = resolve_glyph(_MARK_GLYPH)
+    return (
+        (loaded_glyph if loaded else " " * cell_len(loaded_glyph))
+        + (mark_glyph if marked else " " * cell_len(mark_glyph))
+        + " "
+    )
+
+
+def gutter_mark_columns() -> range:
+    """The content columns of the mark cell: a click there toggles the mark (spec 4.10)."""
+    start = cell_len(resolve_glyph(_LOADED_GLYPH))
+    return range(start, start + cell_len(resolve_glyph(_MARK_GLYPH)))
+
+
+def item_density(*, inner_width: int, kind_total: int) -> int:
+    """2-line rows when the list is at least 40 cells wide and the kind holds at most 40 items."""
+    if inner_width >= TWO_LINE_MIN_WIDTH and kind_total <= TWO_LINE_MAX_ITEMS:
+        return 2
+    return 1
+
+
+@dataclass(frozen=True)
+class ItemPrompt:
+    """One row's prompt as styled spans: ``lines[i]`` is ``((text, style), ...)``.
+
+    ``full_cells`` is the row's widest line with nothing cut; ``cut`` says some
+    text gave way to ``width``; ``name_cut`` says the name did (its hover
+    tooltip then shows it whole).
+    """
+
+    lines: tuple[tuple[tuple[str, str], ...], ...]
+    full_cells: int
+    cut: bool
+    name_cut: bool
+    width: int
+    density: int
+
+    def needs_rebuild(self, *, width: int, density: int) -> bool:
+        """Whether this prompt reads differently at ``width``/``density`` (spec 1.5.6 RC-6).
+
+        A prompt that fitted and still fits is reused as it is, so a resize
+        rebuilds only the rows it actually changes.
+        """
+        if density != self.density:
+            return True
+        if self.cut:
+            return width != self.width
+        return self.full_cells > width
+
+
+def build_item_prompt(
+    *,
+    name: str,
+    state: str | None,
+    meta: str | None,
+    short: str | None,
+    loaded: bool,
+    marked: bool,
+    width: int,
+    density: int,
+) -> ItemPrompt:
+    """One row of the items list (spec 1.5.2, 1.5.3).
+
+    Line 1 is the gutter, the name and ``· <state>`` (``on``/``off``; the word
+    never drops, the name gives way through the middle ellipsis). At 1-line
+    density a book adds ``· <short>`` (its entry count) only when the full name
+    still fits. At 2-line density line 2 is the dim scent, or blank, so every
+    row of the list has the same height. The loaded row's name is bold; an
+    ``off`` book's name is muted. All text stays plain (spans, no markup).
+
+    Args:
+        name: The item's name (untrusted; any whitespace run paints as one space).
+        state: ``"on"``/``"off"`` for books, else ``None``.
+        meta: The scent for line 2, or ``None``.
+        short: The 1-line extra for books (``"250"``), or ``None``.
+        loaded: The row is loaded in the work pane.
+        marked: The row is marked.
+        width: The list's inner width in cells.
+        density: 1 or 2 (``item_density``).
+
+    Returns:
+        The prompt's spans and what a later width change must rebuild.
+    """
+    gutter = item_gutter(loaded=loaded, marked=marked)
+    separator = f" {resolve_glyph(_SEPARATOR)} "
+    clean_name = _one_line(name)
+    state_tail = f"{separator}{state}" if state else ""
+    short_tail = f"{separator}{short}" if density == 1 and short else ""
+    full_cells = cell_len(gutter + clean_name + short_tail + state_tail)
+    if full_cells <= width:
+        shown, tail, name_cut = clean_name, short_tail + state_tail, False
+    else:
+        tail = state_tail
+        room = max(0, width - cell_len(gutter) - cell_len(tail))
+        shown = middle_ellipsize_cells(clean_name, room)
+        name_cut = shown != clean_name
+    cut = name_cut or (short_tail != "" and short_tail not in tail)
+    name_style = "bold" if loaded else ("dim" if state == "off" else "")
+    lines: list[tuple[tuple[str, str], ...]] = [
+        ((gutter, ""), (shown, name_style), (tail, ""))
+    ]
+    if density == 2:
+        blank = " " * cell_len(gutter)
+        scent = _one_line(meta or "")
+        full_cells = max(full_cells, cell_len(blank + scent))
+        room = max(0, width - cell_len(blank))
+        if cell_len(scent) > room:
+            scent = ellipsize_cells(scent, room)
+            cut = True
+        lines.append(((blank, ""), (scent, "dim")) if scent else ((blank, ""),))
+    return ItemPrompt(tuple(lines), full_cells, cut, name_cut, width, density)
+
+
+def character_scent(record: Mapping[str, object], *, now: datetime) -> str | None:
+    """Line 2 of a character row from the page query's own fields (spec 1.5.2 v1 scent).
+
+    ``<age> · <first tag> · <description snippet>``. A missing part is absent,
+    never ``0``; the chat count arrives with frame slice B6's aggregates.
+    """
+    parts: list[str] = []
+    age = relative_age(record.get("last_modified"), now=now)
+    if age:
+        parts.append(age)
+    tags = record.get("tags")
+    if isinstance(tags, (list, tuple)) and tags:
+        tag = _one_line(str(tags[0]))
+        if tag:
+            parts.append(ellipsize_cells(tag, TAG_MAX_CELLS))
+    snippet = _one_line(str(record.get("description") or ""))
+    if snippet:
+        parts.append(ellipsize_cells(snippet, SNIPPET_MAX_CELLS))
+    if not parts:
+        return None
+    return ellipsize_cells(
+        f" {resolve_glyph(_SEPARATOR)} ".join(parts), SCENT_MAX_CELLS
+    )
+
+
+def persona_scent(record: Mapping[str, object]) -> str | None:
+    """Line 2 of a persona row: the first words of its system prompt (the field that reaches the model)."""
+    prompt = _one_line(str(record.get("system_prompt") or ""))
+    return ellipsize_cells(prompt, SNIPPET_MAX_CELLS) if prompt else None
+
+
+def lore_scent(entry_count: int) -> str:
+    """Line 2 of a lore-book row (``· N off`` and ``used by`` arrive with B6 and C)."""
+    return plural(entry_count, "entry", "entries")
+
+
+def dictionary_scent(entry_count: int) -> str:
+    """Line 2 of a chat-dictionary row (regex and invalid counts arrive with B6)."""
+    return plural(entry_count, "rule")
+
+
+def items_border_title(
+    kind: str,
+    *,
+    total: int | None,
+    matched: int | None = None,
+    tag: str | None = None,
+    enabled: int | None = None,
+    total_known: bool = True,
+    failed: bool = False,
+) -> str:
+    """The items pane's top-border title (spec 1.5.1, 1.4.2).
+
+    ``Characters 28``; ``Characters 3 of 28`` while a search or tag narrows the
+    list; ``Characters 20 of 348 · tag fantasy``; ``Characters (…)`` before the
+    first count; ``Characters 100+`` while a server total is unknown;
+    ``Characters (?)`` when the list failed; books add ``· N on``. Plain text:
+    the pane paints it as literal ``Content`` (the tag is untrusted).
+    """
+    word = ITEM_KINDS.get(kind, ("item", "items", "Items"))[2]
+    separator = f" {resolve_glyph(_SEPARATOR)} "
+    if failed:
+        return f"{word} (?)"
+    if total is None:
+        return f"{word} ({resolve_glyph(_ELLIPSIS)})"
+    count = f"{total}{'' if total_known else '+'}"
+    text = f"{word} {matched} of {count}" if matched is not None else f"{word} {count}"
+    if tag:
+        text += f"{separator}tag {_one_line(tag)}"
+    if enabled is not None:
+        text += f"{separator}{enabled} on"
+    return text
+
+
+def loaded_position(index: int | None, total: int | None) -> str:
+    """The bottom border's ``#4 of 28``; blank with nothing loaded or the row not listed (RC-10)."""
+    if index is None or total is None:
+        return ""
+    return f"#{index + 1} of {total}"
+
+
+def hidden_mark_count(
+    marked_ids: Collection[str], loaded_ids: Collection[str], *, filtered: bool
+) -> int:
+    """Marks the current search or tag hides (spec 1.5.5 "(2 hidden)").
+
+    With no search or tag every marked row is reachable by scrolling, so none
+    is hidden. While a filter is on, a marked id absent from the loaded rows
+    is counted: exact when the filtered result is fully loaded (≤ 200 matches
+    at first load), and an unloaded match counts until it is scrolled in.
+    """
+    if not filtered:
+        return 0
+    return len(set(marked_ids) - set(loaded_ids))
+
+
+@dataclass(frozen=True)
+class MarksBarView:
+    """What the one-row marks bar shows (spec 1.5.5)."""
+
+    count_text: str
+    count_tooltip: str
+    labels: tuple[str, ...]
+    separator: str
+
+
+def marks_bar_view(
+    count: int, hidden: int, width: int, *, can_export: bool
+) -> MarksBarView | None:
+    """The marks bar's text at ``width`` cells, or ``None`` while nothing is marked.
+
+    Full form ``✓ 2 marked · Export… · Delete… · Clear esc``. When it does not
+    fit the bar degrades in a fixed order: the separators and the ``esc`` hint
+    go, then ``marked``, then the hidden count; the actions never drop (the
+    tooltip keeps the full count). Export applies to characters and personas.
+    """
+    if count <= 0:
+        return None
+    mark = resolve_glyph(_MARK_GLYPH)
+    dot = f" {resolve_glyph(_SEPARATOR)} "
+    hidden_part = f" ({hidden} hidden)" if hidden else ""
+    long_labels = (
+        ("Export…", "Delete…", "Clear esc") if can_export else ("Delete…", "Clear esc")
+    )
+    short_labels = ("Export", "Delete", "Clear") if can_export else ("Delete", "Clear")
+    tooltip = f"{count} marked" + (
+        f", {hidden} hidden by the search or tag" if hidden else ""
+    )
+    ladder = (
+        (f"{mark} {count} marked{hidden_part}", long_labels, dot),
+        (f"{mark} {count} marked{hidden_part}", short_labels, " "),
+        (f"{mark} {count}{hidden_part}", short_labels, " "),
+        (f"{mark} {count}", short_labels, " "),
+    )
+    for text, labels, separator in ladder:
+        cells = cell_len(text) + sum(cell_len(separator + label) for label in labels)
+        if cells <= width:
+            return MarksBarView(text, tooltip, labels, separator)
+    text, labels, separator = ladder[-1]
+    return MarksBarView(text, tooltip, labels, separator)
+
+
+@dataclass(frozen=True)
+class DeleteModalCopy:
+    """The one delete modal's strings (R32); shown by ``ConfirmationDialog`` with markup off."""
+
+    title: str
+    message: str
+    confirm_label: str
+    cancel_label: str = "Cancel"
+
+
+def delete_modal_copy(
+    kind: str, names: Sequence[str], *, bulk: bool
+) -> DeleteModalCopy:
+    """Copy for every Roleplay delete (R32): it names up to 5 items plus "and N more".
+
+    A single delete keeps dev's wording. A bulk delete names what it will
+    delete, so it never hits an unseen row (RP-039, F-040), and its button
+    says ``Delete N marked``.
+    """
+    singular, plural_noun, _word = ITEM_KINDS.get(kind, ("item", "items", "Items"))
+    clean = [_one_line(name) or "Unnamed" for name in names]
+    if not bulk:
+        subject = clean[0] if clean else f"this {singular}"
+        return DeleteModalCopy(
+            title="Delete",
+            message=f"Delete {subject}? This cannot be undone here.",
+            confirm_label="Delete",
+        )
+    count = len(clean)
+    question = (
+        f"Delete this {singular}?"
+        if count == 1
+        else f"Delete these {count} {plural_noun}?"
+    )
+    lines = [f"{question} This cannot be undone here.", ""]
+    lines += [f"  {name}" for name in clean[:DELETE_MODAL_MAX_NAMES]]
+    if count > DELETE_MODAL_MAX_NAMES:
+        lines.append(f"  and {count - DELETE_MODAL_MAX_NAMES} more")
+    return DeleteModalCopy(
+        title=f"Delete {count} marked",
+        message="\n".join(lines),
+        confirm_label=f"Delete {count} marked",
+    )
+
+
+def turned_off_toast(name: str) -> str:
+    """R33's one undo copy string, shown when Space turns a book off."""
+    return f"{_one_line(name)} turned off {resolve_glyph(_SEPARATOR)} space to undo"
+
+
+@dataclass(frozen=True)
+class ListFence:
+    """Everything a window must still match when it arrives (spec 1.5.6 "Window fence")."""
+
+    mode: str
+    query: str
+    sort_key: str
+    tag: str | None
+    runtime_source: str
+    server_id: str | None
+    generation: int
+
+
+@dataclass(frozen=True)
+class ListAnchor:
+    """Where the list stood before a reload from the anchor (spec 1.5.6 "Writes")."""
+
+    cursor_id: str | None
+    cursor_index: int | None
+    top_index: int
+    loaded: int
+
+
+def window_wants_more(
+    *,
+    loaded: int,
+    last_window: int,
+    window_rows: int,
+    total: int | None,
+    target_index: int | None = None,
+    target_found: bool = True,
+    to_end: bool = False,
+) -> bool:
+    """Whether the window worker fetches another window before it applies (load-through).
+
+    One window per request, unless the request moves to a row past the loaded
+    end (an index, an id not yet seen, or the end), in which case windows load
+    until the target is in. A short window means the list is exhausted.
+    """
+    if last_window < window_rows:
+        return False
+    if total is not None and loaded >= total:
+        return False
+    if to_end or not target_found:
+        return True
+    return target_index is not None and loaded <= target_index
+
+
+def new_option_ids(
+    existing: Collection[str], incoming: Sequence[str]
+) -> tuple[tuple[int, ...], tuple[str, ...]]:
+    """Indexes of ``incoming`` to append, and the duplicate ids dropped (spec 1.5.6 "No duplicates").
+
+    Textual 8.2.8 appends options one at a time and raises ``DuplicateID``
+    part-way through a batch, so ``add_options`` must only ever see new ids.
+    """
+    seen = set(existing)
+    keep: list[int] = []
+    dropped: list[str] = []
+    for index, option_id in enumerate(incoming):
+        if option_id in seen:
+            dropped.append(option_id)
+            continue
+        seen.add(option_id)
+        keep.append(index)
+    return tuple(keep), tuple(dropped)
+
+
+@dataclass(frozen=True)
+class ListWindowRequest:
+    """One run of the window worker (spec 1.5.6).
+
+    ``replace`` reloads from row 0 (``set_options``); otherwise the run
+    appends after ``offset`` (``add_options``). ``anchor`` makes a reload load
+    through every previously loaded row; ``target_id`` (an item id) and
+    ``to_end`` make an append load through to that row or to the end.
+    """
+
+    fence: ListFence
+    offset: int
+    replace: bool
+    anchor: ListAnchor | None = None
+    target_id: str | None = None
+    to_end: bool = False

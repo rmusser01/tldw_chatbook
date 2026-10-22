@@ -152,7 +152,12 @@ _BUDGETS: dict[str, int] = {
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
     # server label on one header row adds 15 lines; the row rises 369 -> 384,
     # never squeezed code.
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 384,
+    # Roleplay frame B2a (TASK-33910.3), owner decision 2026-10-19 ("expand
+    # limits, never contort code"): the items-list state (prompt builder,
+    # density, count text, marks-bar and delete-modal copy, window rules;
+    # spec 5.11's B2a row) adds +536 lines (384 -> 920); the row rises
+    # with it, never squeezed code (Roleplay frame B2a).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 920,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
