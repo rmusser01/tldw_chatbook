@@ -129,9 +129,7 @@ def _entry_hold(database, controller, boundary, executor, observed):
             # TASK-33620.15.6: the display qualifies its one decide-and-load
             # batch before any read; there is no preliminary probe.
             assert observed["callbacks"] == 0 and observed["pairs"] == 0
-            assert all(
-                _closed(connection) for connection in observed["connections"]
-            )
+            assert all(_closed(connection) for connection in observed["connections"])
             assert not worker_leases(database)
             facts["readers"] = argument
             facts["native_before"] = observed["native_opens"]
