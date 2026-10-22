@@ -12,6 +12,8 @@ They are pinned here so the focus-independent autosave guard can never be
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual import events as events_module
 from textual.widgets import Input, Static
@@ -271,7 +273,23 @@ async def test_typing_in_the_body_under_a_standing_title_veto_keeps_the_hint_ste
                     )
                     assert "Fix the marked field" in status, status
                     assert "save automatically" not in status, status
-                await _vetoed(pilot, screen)
+                # Fix round 2: the next autosave is refused again; sample the
+                # layout THROUGH it, every frame, including the "Saving…" one
+                # that used to paint a one-row status and move the body.
+                seen_y: set[int] = set()
+                seen_hint: set = set()
+                try:
+                    async with asyncio.timeout(10.0):
+                        while screen._notes_state.autosave_state != "validation":
+                            seen_y.add(body.region.y)
+                            seen_hint.add(hint.region)
+                            await pilot.pause(0.005)
+                except TimeoutError as exc:
+                    raise AssertionError("no refused autosave followed the keys") from exc
+                seen_y.add(body.region.y)
+                seen_hint.add(hint.region)
+                assert seen_y == {body_y}, f"the body moved through the refused autosave: {sorted(seen_y)}"
+                assert seen_hint == {hint_region}, f"the hint row moved: {seen_hint}"
                 await pilot.pause(0.3)
                 assert hint.display and hint.region == hint_region
                 assert body.region.y == body_y

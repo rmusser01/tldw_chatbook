@@ -6,11 +6,11 @@
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │   N  ┌──────────────────────────────────────────────────────────────┐  N  Title is 301/300 characters — shorten it to save. · Next: Fix the marked field, or │
 │   a  │ Library notes · Ready                                        │  o  press Save to go to it.                                                            │
-│   v  │ Notes (125)                                                  │  t    ‹ Notes   xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+│   v  │ Notes (127)                                                  │  t    ‹ Notes   xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
 │      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
 │      │ that live in a folder on disk, switch to Folder files. To    │  s                                                                                     │
 │      │ copy or keep a folder synced, choose Add from files.         │      In the Library database only — no file on disk                                    │
-│      │                                                              │     Title is 301/300 characters — shorten it to save. Next: Retry Save.                │
+│      │                                                              │     Title is 301/300 characters — shorten it to save.                                  │
 │      │ Filter                                                       │         Edit     Preview     Info                                                      │
 │      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Save     Use in Console                                                        │
 │      │ ▊ Filter notes… (Enter)                                    ▎ │     Title                                                                              │
@@ -24,21 +24,21 @@
 │      │                                                              │     ▊ Comma-separated keywords                                                       ▎ │
 │      │                                                              │<--- ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
 │      │  ▾ Unfiled                                                   │                                                                                        │
-│      │    Untitled · Unfiled · now · 03:23                          │     Body                                                                               │
-│      │    Untitled · Unfiled · now · 03:22                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
-│      │    Groceries · 6m                                            │     ▊                                                                                ▎ │
-│ ---> │    Quotes · 13m                                              │     ▊                                                                                ▎ │
-│      │    Scratch · 13m                                             │     ▊                                                                                ▎ │
-│      │    Untitled · Unfiled · 13m                                  │     ▊                                                                                ▎ │
+│      │    Untitled · Unfiled · now                                  │     Body                                                                               │
+│      │    Untitled · Unfiled · 11m                                  │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    Untitled · Unfiled · 1d · 03:23                           │     ▊                                                                                ▎ │
+│ ---> │    Untitled · Unfiled · 1d · 03:22                           │     ▊                                                                                ▎ │
+│      │    Groceries · 1d                                            │     ▊                                                                                ▎ │
+│      │    Quotes · 1d                                               │     ▊                                                                                ▎ │
+│      │    Scratch · 1d                                              │     ▊                                                                                ▎ │
+│      │    Untitled · Unfiled · 1d · 03:09                           │     ▊                                                                                ▎ │
 │      │    A very long note title that keeps going so we can test …  │     ▊                                                                                ▎ │
-│      │    📚 Reading queue 2026 ✨ · 13m                            │     ▊                                                                                ▎ │
-│      │    Gardening log · 13m                                       │     ▊                                                                                ▎ │
-│      │    Meeting Notes 2026-09-30 · 13m                            │     ▊                                                                                ▎ │
-│      │    Index — start here · 13m                                  │     ▊                                                                                ▎ │
-│      │    Reading list · 13m                                        │     ▊                                                                                ▎ │
-│      │    Ideas inbox · 13m                                         │     ▊                                                                                ▎ │
-│      │                                                              │     ▊                                                                                ▎ │
-│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    📚 Reading queue 2026 ✨ · 1d                             │     ▊                                                                                ▎ │
+│      │    Gardening log · 1d                                        │     ▊                                                                                ▎ │
+│      │    Meeting Notes 2026-09-30 · 1d                             │     ▊                                                                                ▎ │
+│      │    Index — start here · 1d                                   │     ▊                                                                                ▎ │
+│      │    Reading list · 1d                                         │     ▊                                                                                ▎ │
+│      │    Ideas inbox · 1d                                          │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
 │      │                                                              │                                                                                        │
 │      └──────────────────────────────────────────────────────────────┘                                                                         0 words · 1:1  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

@@ -496,12 +496,17 @@ refused — a title with a leading or trailing space, unsafe markup, a
 duplicate keyword — or the write fails, the status line says why, and your
 cursor stays where it is, whether that is the field you are typing in, the
 Info pane or a button. Nothing jumps to another field or pane mid-sentence.
-The field that needs fixing is marked — outlined on a wide terminal, its
-text shown in the error colour on a narrow one (under 120 columns) — with
-the reason directly under it (on the narrowest terminals that one-row
-reason may be cut short at its end; the status line above still carries
-all of it), and the status line reads "Fix the marked field, or press Save
-to go to it"; pressing **Save** takes you there. Leaving the Title field
+The field that needs fixing is marked, with the reason directly under it.
+On a wide terminal the field is outlined. On a narrow one (under 120
+columns) the Title and Keywords boxes have no outline, so their text is
+shown in the error colour instead — a title that is only spaces has no
+text to colour, and shows its mark as the reason row alone — while the
+Body keeps its outline at every width. On the narrowest terminals that
+one-row reason may be cut short at its end; the status line above still
+carries all of it. The status line reads "Fix the marked field, or press
+Save to go to it", and it keeps saying so (never "changes save
+automatically") until you change the marked field; pressing **Save**
+takes you there. Leaving the Title field
 tidies a leading or trailing space, and leaving Keywords drops a duplicate
 that differs only in case ("x, X" becomes "x") and spells the list the one
 way ("a,b" becomes "a, b"), so an ordinary slip like that never leaves the

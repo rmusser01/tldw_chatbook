@@ -1517,12 +1517,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # one that does.
                 next_action = "Press Edit to change this note."
             elif state.validation:
-                # TASK-34000.10 (N-07): a veto stands and nothing is armed (a
-                # refused autosave ends its burst, TASK-34000.9), so neither
-                # promise below is true; name the way out -- the outlined
-                # field, or Save, which routes to it. Above the empty-body
-                # arm: a vetoed title on an empty note needs this, not
-                # "Start typing".
+                # TASK-34000.10 (N-07): a veto stands, or a field is still
+                # marked -- and a marked field means the next save is refused
+                # by the same rule until that field changes (fix round 1,
+                # M-5) -- so neither promise below is true; name the way out:
+                # the marked field, or Save, which routes to it. Above the
+                # empty-body arm: a vetoed title on an empty note needs this,
+                # not "Start typing".
                 next_action = "Fix the marked field, or press Save to go to it."
             elif not state.snapshot.body:
                 # Review F4: "Keep editing" presumes editing has started.
@@ -4016,8 +4017,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         TASK-34000.10 (N-07): the only veto styling used to be the compact
         status-row rule on the whole canvas. The mark follows the state on
-        every sync, so a keystroke (which clears the veto) removes it, and
-        a veto on another field moves it. Difference-checked like the other
+        every sync: editing the marked field itself clears it (fix round 1,
+        M-5 -- a key typed into another field leaves it where it is), and a
+        veto on another field moves it. Difference-checked like the other
         surfaces: ``display`` flips lay the pane out.
         """
         for field_selector, hint_selector, field in _NOTE_FIELD_MARKS:

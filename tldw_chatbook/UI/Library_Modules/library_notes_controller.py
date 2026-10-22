@@ -1440,17 +1440,20 @@ class LibraryNotesController:
         # note will not survive being abandoned.
         if self._library_note_is_pending_blank():
             return "Empty note — type to keep it"
-        if self._library_note_autosave_state == "saving" or snapshot.saving:
-            return "Saving…"
-        if snapshot.in_conflict:
-            return snapshot.status_message or "Conflict — review the choices below."
         # TASK-34000.10 fix round 1 (M-5): while a field is marked, the next
         # save is refused again by the same rule (only editing that field
         # clears the mark), so the veto's reason stays the status through
         # keys typed elsewhere -- the authority line keeps its height and
-        # the hint row under the field does not shift.
-        if self._notes_state.validation_field:
+        # the hint row under the field does not shift. Fix round 2: checked
+        # BEFORE "Saving…" too -- a refused autosave painted that one-row
+        # status for a frame and the body moved for it (y 27 -> 26 at
+        # 160x45). A conflict still outranks the mark (it clears it).
+        if self._notes_state.validation_field and not snapshot.in_conflict:
             return self._notes_state.validation_message
+        if self._library_note_autosave_state == "saving" or snapshot.saving:
+            return "Saving…"
+        if snapshot.in_conflict:
+            return snapshot.status_message or "Conflict — review the choices below."
         if snapshot.status_message:
             return snapshot.status_message
         return "Unsaved changes" if snapshot.dirty else "Saved"
