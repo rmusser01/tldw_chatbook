@@ -566,21 +566,11 @@ async def test_r_key_re_stages_when_focus_is_not_in_a_text_field(monkeypatch, tm
             message="`r` never completed mounting the restored form",
         )
 
-        # Guard: inside the path field, `r` types.
-        path_input = screen.query_one("#library-ingest-path", Input)
-        path_input.value = ""
-        screen.set_focus(path_input)
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                screen.query_one("#library-ingest-path", Input).value == ""
-                and host.focused is screen.query_one("#library-ingest-path", Input)
-                and not screen._recompose_required
-            ),
-            message="clearing the restored path never returned a focused empty input",
-        )
+        # Guard: inside the path field, `r` replaces the selected text.
+        # Use the real editing gesture; assigning an empty value first can
+        # trigger a separate clear-form recompose before the keystroke.
         await pilot.click("#library-ingest-path")
-        await pilot.press("r")
+        await pilot.press("home", "shift+end", "r")
         await pilot.pause()
         assert screen.query_one("#library-ingest-path", Input).value == "r"
 
