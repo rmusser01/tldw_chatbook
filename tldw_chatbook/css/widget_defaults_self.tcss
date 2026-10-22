@@ -3376,10 +3376,6 @@ ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;bac
         align: center middle;
     }
 
-/* ===== WIDGET: SessionSummaryDialog (Widgets/session_summary_dialog.py) ===== */
-
-    SessionSummaryDialog { align: center middle; }
-
 /* ===== WIDGET: TemplateSelectorDialog (Widgets/template_selector.py) ===== */
 
     TemplateSelectorDialog {

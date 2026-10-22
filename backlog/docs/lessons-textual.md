@@ -1299,16 +1299,26 @@ guesswork.
 The allowlist ratchet (`test_class_level_css_stays_within_the_allowlist`) prescribes one
 fix: rename `DEFAULT_CSS` to `BUNDLED_CSS` and rebuild. That trades one live stylesheet
 source per class for bytes in `widget_defaults_{self,scoped}.tcss`, and those sheets are
-parsed before first paint. Six small declarations (padding, `height: auto`, two modals)
-took `MAX_BOOT_PARSED_CSS_BYTES` from 2,363 B of headroom to a 94 B breach. The
-per-segment diff charged 2,457 B to them: each lifted class pays a
-`/* ===== WIDGET: X (path) ===== */` banner in every stream it lands in, about 75 B, and
-the class body's indentation and blank lines are copied verbatim. Rewriting the two
-modals' blocks as one-line rules recovered 267 B, which left 173 B, with byte-identical
-screenshots. **What to do:** run `Tests/Performance/test_boot_css_byte_budget.py` with
-the allowlist test whenever you convert a declaration. If the budget is tight, write the
-moved block compactly before reaching for an allowlist entry. A rarely opened modal's
-rules are the legitimate allowlist case (ADR-097's "defer the cost").
+parsed before first paint. Converting six small declarations (padding, `height: auto`,
+two modals) took the headroom under `MAX_BOOT_PARSED_CSS_BYTES` from 2,363 B to a 94 B
+breach. The constant itself never moved. The per-segment diff charged 2,457 B to the six:
+each lifted class pays a `/* ===== WIDGET: X (path) ===== */` banner in every stream it
+lands in, about 75 B, and the class body's indentation and blank lines are copied
+verbatim. Rewriting the two modals' blocks as one-line rules recovered 267 B, but that
+left only 173 B, which is the near-zero headroom ADR-097's Context warns about. Review then
+kept the quit-only `SessionSummaryDialog` on `DEFAULT_CSS` with a reasoned allowlist
+entry, which left 775 B. Screenshots were byte-identical throughout.
+
+**What to do:**
+- Run `Tests/Performance/test_boot_css_byte_budget.py` with the allowlist test whenever
+  you convert a declaration, and write the moved block compactly.
+- An allowlist entry is sound only where the class's own source registers when no later
+  first mount can pay the parse-cache cliff: a quit-only dialog imported only at quit.
+- For a mid-session modal, per-class `DEFAULT_CSS` deferral was rejected (TASK-31500
+  AC#3). The repo's deferral mechanism is `MODAL_OWNED_SPLIT_SHEETS` in `build_css.py`:
+  a sheet the modal loads through its own `CSS_PATH` on first open (TASK-33628.2's
+  Console Delete receipt). Those rules load as app CSS, not widget defaults, so render
+  before and after.
 
 ## A UI-thread owner method must never take the owner's stop lock (TASK-31826)
 

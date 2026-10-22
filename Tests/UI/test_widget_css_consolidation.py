@@ -1439,6 +1439,12 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
             "ServerSwitchModal",
             "DEFAULT_CSS",
         ),
+        # TASK-35649: opt-in ([session_summary] enabled = false) and shown only
+        # after a confirmed quit; app_lifecycle imports the module only at quit,
+        # so this source registers at quit, when no later first mount can pay
+        # the parse-cache cliff. As BUNDLED_CSS it would ride every boot's parse
+        # instead (ADR-097: "defer the cost"). Reviewed exception.
+        ("Widgets/session_summary_dialog.py", "SessionSummaryDialog", "DEFAULT_CSS"),
         ("Widgets/status_widget.py", "EnhancedStatusWidget", "DEFAULT_CSS"),
         ("Widgets/Study/quiz_session_widget.py", "QuizSessionWidget", "DEFAULT_CSS"),
         ("Widgets/Study/study_dashboard.py", "StudyDashboard", "DEFAULT_CSS"),

@@ -2936,17 +2936,6 @@
         align-horizontal: right;
     }
 
-/* ===== WIDGET: SessionSummaryDialog (Widgets/session_summary_dialog.py) ===== */
-
-
-    SessionSummaryDialog #session-summary-dialog {
-        width: 44; height: auto; background: $panel;
-        border: round $secondary; padding: 1 2;
-    }
-    SessionSummaryDialog .session-summary-title { text-style: bold; color: $accent; }
-    SessionSummaryDialog .session-summary-line { color: $text; }
-    SessionSummaryDialog .session-summary-hint { color: $text-muted; }
-
 /* ===== WIDGET: WorkspaceCreateModal (Widgets/workspace_create_modal.py) ===== */
 
 
