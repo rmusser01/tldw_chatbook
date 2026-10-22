@@ -48,6 +48,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     ModelDiscoveryResult,
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, SettingsScreen
+from tldw_chatbook.UI.Wizards.first_run_setup_state import validate_first_run_model_id
 from tldw_chatbook.Widgets.model_search_picker import (
     CURRENT_MARK,
     ModelSearchPicker,
@@ -501,10 +502,10 @@ async def test_rolling_back_to_a_bracketed_model_id_names_it_literally(request):
 
 #: TASK-35712: one more than the save writes, and a zero-width space -- a
 #: character the old 256-character check let through and the save refuses.
-_UNWRITABLE_IDS = ("m" * (MAX_MODEL_ID_CHARS + 1), "gpt​4")
+_UNWRITABLE_IDS = ("m" * (MAX_MODEL_ID_CHARS + 1), "gpt\u200b4")
 _INVALID_ID_STATUS = (
     "Invalid model ID. Use a single-line value of at most "
-    f"{MAX_MODEL_ID_CHARS} characters."
+    f"{MAX_MODEL_ID_CHARS} characters, with no invisible or control characters."
 )
 
 
@@ -514,19 +515,26 @@ _INVALID_ID_STATUS = (
         "vendor/model",
         "m" * MAX_MODEL_ID_CHARS,
         *_UNWRITABLE_IDS,
-        "gpt 4",  # no-break space
-        "local‮q4",  # right-to-left override
+        "gpt\u00a04",  # no-break space
+        "local\u202eq4",  # right-to-left override
         "a\x7fb",
-        "a b",  # line separator
+        "a\u2028b",  # line separator
     ],
 )
 def test_custom_id_and_the_combined_save_refuse_the_same_ids(monkeypatch, model_id):
     """TASK-35712 AC#3: Custom ID held ids of up to 256 characters that the
     combined save refuses past 120 (and some characters it refuses at any
     length). One limit and one check now serve both: an id Custom ID holds
-    is one the save writes, and an id it refuses is one the save refuses."""
+    is one the save writes, and an id it refuses is one the save refuses.
+    The first-run wizard, which feeds the same save, had its own copy of the
+    check (review of TASK-35712); it agrees through the same predicate."""
     writes = _capture_provider_settings_mutations(monkeypatch)
     held = normalize_custom_model_id(model_id) == model_id
+    try:
+        wizard_held = validate_first_run_model_id(model_id) == model_id
+    except ValueError:
+        wizard_held = False
+    assert wizard_held == held, model_id
     try:
         persist_provider_settings_atomic(
             None,
@@ -615,8 +623,8 @@ async def test_an_id_the_save_refuses_is_named_as_the_cause_not_config_access(
         result = screen._provider_save_result
         assert result == (
             "Provider settings not saved: the model ID is invalid. Use a "
-            f"single-line value of at most {MAX_MODEL_ID_CHARS} characters. "
-            "Draft retained."
+            f"single-line value of at most {MAX_MODEL_ID_CHARS} characters, "
+            "with no invisible or control characters. Draft retained."
         )
         assert result in [str(n.message) for n in host._notifications]
         assert mutations == []

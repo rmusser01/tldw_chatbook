@@ -77,7 +77,6 @@ def normalize_model_id(value: object | None) -> str | None:
     return text
 
 
-
 def normalize_custom_model_id(value: object | None) -> str | None:
     """Return a typed Custom ID, or None unless Settings' save writes it.
 
@@ -705,7 +704,8 @@ class ModelSearchPicker(Widget):
                 if custom_value and normalize_custom_model_id(custom_value) is None:
                     self._set_status(
                         "Invalid model ID. Use a single-line value of at most "
-                        f"{MAX_MODEL_ID_CHARS} characters."
+                        f"{MAX_MODEL_ID_CHARS} characters, with no invisible or "
+                        "control characters."
                     )
                     return
             self._set_status(

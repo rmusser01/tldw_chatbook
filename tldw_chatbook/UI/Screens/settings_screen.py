@@ -33389,8 +33389,8 @@ class SettingsScreen(BaseAppScreen):
                 # The save refuses it before touching the file; say why.
                 self._provider_save_result = (
                     "Provider settings not saved: the model ID is invalid. Use a "
-                    f"single-line value of at most {MAX_MODEL_ID_CHARS} characters. "
-                    "Draft retained."
+                    f"single-line value of at most {MAX_MODEL_ID_CHARS} characters, "
+                    "with no invisible or control characters. Draft retained."
                 )
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-20 09:30
-updated_date: 2026-10-22 23:03
+updated_date: 2026-10-22 23:41
 labels:
 - follow-up
 - settings
@@ -104,3 +104,21 @@ The Custom ID check (`normalize_model_id`, 256 characters) admitted U+200B, U+00
   - Tests/UI/test_settings_default_model_picker.py
   - Tests/Architecture/test_module_size_ratchet.py
   - Docs/User_Guide/settings.md
+
+**Review round 1 (verdict "With fixes")**
+
+- **I3 (wrong reason).** An id of 4 characters holding U+200B or a no-break space was told "…at most 120 characters". The picker's status line and the save message now add the guide's own clause, "with no invisible or control characters". The test constant `_INVALID_ID_STATUS`, the AC#2 expectation and the User Guide quotes were updated to match.
+  - Red under the old copy (temporary revert): 3 failed, namely AC#1 for both unwritable ids and both AC#2 routes.
+  - Green after: 11 passed.
+  - `check_markup_interpolation`: OK.
+- **AC#3, the wizard copy (unticked until fixed).** `UI/Wizards/first_run_setup_state.py` kept `_MAX_MODEL_CHARS = 120`, and `validate_first_run_model_id` hand-copied `_safe_model` for the same combined save. The validator now calls `is_writable_model_id` (lazy import, as the module does elsewhere) and the private constant is gone. Its "Model is invalid." message is unchanged.
+  - The AC#3 test now also asserts the wizard holds exactly the ids the Custom ID check holds. Red with the dev wizard code and its constant drifted to 121 (temporary edit): `AssertionError: mmm…`. Green after.
+  - first_run_setup_state.py has no size-ratchet row.
+  - Left alone on purpose: the discovery caches' and `local_server_discovery`'s 120s. They truncate listed ids, which is a different concern.
+- **M1.** The test source used literal U+200B, U+00A0, U+202E and U+2028. It now uses `\u200b`, `\u00a0`, `\u202e` and `\u2028` escapes; a scan of every changed file finds no Cf, Zl, Zp, Co or non-space Zs characters.
+- **M2.** One blank line removed before `normalize_custom_model_id`, leaving two.
+- **Runs (`-n 4`):**
+  - tools_hub, default_model_picker, both Widgets picker files, provider_setup_persistence, pick_joins, custom_id rollback and fast typing, saved_lists_follow_file, plus the four import-budget files: 504 passed.
+  - Wizard tests (test_first_run_setup_state, test_first_run_setup_wizard, test_first_run_setup_integration, test_first_run_wizard_live_contract): 739 passed, 49 failed and 31 errors. The same 80 node IDs fail identically at HEAD without these fixes and at dev 28beeb9ed5 (76 are `RecoveryRequired: raw_source_selection_changed`). `test_real_discovery_result_rejects_malformed_or_unsafe_models`, which reaches `validate_first_run_model_id`, passes.
+  - Module and screen size ratchets for the touched rows: passed.
+  - Preflight: passed.

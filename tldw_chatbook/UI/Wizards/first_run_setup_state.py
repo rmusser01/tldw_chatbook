@@ -49,7 +49,6 @@ _MAX_SETUP_DRAFT_FIELDS = 64
 _MAX_SETUP_DRAFT_BYTES = 16 * 1024
 _MAX_PROVIDER_CHARS = 128
 _MAX_ENDPOINT_CHARS = 4096
-_MAX_MODEL_CHARS = 120
 _MAX_CREDENTIAL_CHARS = 8192
 _MAX_IDENTITY_COUNTER = 2**63 - 1
 _SECRET_FIELD_TOKENS = ("api_key", "credential", "password", "token", "secret")
@@ -437,17 +436,17 @@ def build_current_first_run_model_discovery_key(
 
 
 def validate_first_run_model_id(model_id: object) -> str:
-    """Return one bounded display/config-safe model identifier."""
+    """Return one model id the combined provider save writes (TASK-35712).
+
+    The save's own check (``is_writable_model_id``, ``MAX_MODEL_ID_CHARS``),
+    not a copy of it: this id feeds the same save Settings does.
+    """
+    from tldw_chatbook.Chat.provider_setup_persistence import is_writable_model_id
 
     if type(model_id) is not str:
         raise ValueError("Model is invalid.")
     model = model_id.strip()
-    if (
-        not model
-        or len(model) > _MAX_MODEL_CHARS
-        or not model.isprintable()
-        or _contains_unsafe_text(model)
-    ):
+    if not is_writable_model_id(model):
         raise ValueError("Model is invalid.")
     return model
 
