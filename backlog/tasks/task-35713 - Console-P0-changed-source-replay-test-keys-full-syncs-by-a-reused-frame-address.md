@@ -63,3 +63,7 @@ together (70.75s). The older hosted logs did not retain those scheduling
 rows, so this establishes the setup hazard rather than every historical
 first-wait cause. The 25-run qualification remains outstanding; the task's
 acceptance checklist is unchanged.
+
+The hosted Console P0 gate on ea48677119 subsequently passed both variants
+in run 39704168922, job 119580155764 (120 + 238 cases across its two steps).
+This remains separate from the outstanding 25-run qualification.
