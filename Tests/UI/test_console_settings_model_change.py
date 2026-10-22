@@ -32,7 +32,6 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     readiness_words,
 )
-from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
@@ -735,28 +734,48 @@ async def test_a_listing_feeds_pick_mode_but_never_picks() -> None:
         )
 
 
+#: TASK-35578: the Settings pointer as every Chat settings pointer spells it.
+_POINTER = "Settings ▸ Providers & Models (F4) ▸ Advanced ▸ "
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("served", "line"),
+    ("provider", "served", "line"),
     [
-        (("model-a", "served-y"), f"2 models listed. {SAVED_LIST_NOTE}"),
-        ((), "No models reported"),
+        (
+            "llama_cpp",
+            ("model-a", "served-y"),
+            "2 models listed. A pick here is not added to the saved model list. "
+            f"To add one, use {_POINTER}Saved model list: after Discover models, "
+            "choose it in Default model and press s, or check it and press Add "
+            "to model list.",
+        ),
+        ("llama_cpp", (), "No models reported"),
+        (
+            "custom-ep:gpu-box",
+            ("model-a", "served-y"),
+            "2 models listed. A pick here is not added to this endpoint's model "
+            f"list. To add one, use {_POINTER}Custom endpoints: press Edit on this "
+            "endpoint, add it to Models and press Save endpoint.",
+        ),
     ],
-    ids=["listed", "none"],
+    ids=["listed", "none", "custom-ep"],
 )
 async def test_a_listing_says_its_picks_are_not_added_to_the_saved_model_list(
-    served, line
+    provider, served, line
 ) -> None:
     """TASK-35578 AC#1: a listing that found models says a pick from it is
     not added to the saved model list, and where Settings adds one; a listing
-    that found none says only that."""
+    that found none says only that. A named custom endpoint keeps its own
+    model list, which Settings edits in Custom endpoints, not in the saved
+    list (review of 92334c2087: its Discover models is disabled there)."""
     from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
 
     async def connection(_identity):
         return ProviderProbeResult("reachable", served)
 
     app = CoreFirstHarness()
-    modal = pick_modal(app, _settings(), connection_tester=connection)
+    modal = pick_modal(app, _settings(provider), connection_tester=connection)
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         modal.query_one("#console-settings-model-discover", Button).press()

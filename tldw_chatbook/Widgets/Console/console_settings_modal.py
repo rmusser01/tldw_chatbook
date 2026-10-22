@@ -106,7 +106,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
     probe_models_endpoint,
 )
-from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE, provider_display_name
+from tldw_chatbook.Chat.provider_catalog import listed_pick_note, provider_display_name
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     canonical_connection_identity,
@@ -5334,8 +5334,11 @@ class ConsoleSettingsModal(
             )
             return
         count = self._keep_served_models(provider, result.model_ids)
-        note = f". {SAVED_LIST_NOTE}" if count else ""  # TASK-35578
-        self._set_model_discover_status(_model_availability_copy(count, "") + note)
+        listed = _model_availability_copy(count, "")
+        if count:  # TASK-35578: a pick joins no model list; say where one is added
+            entry = self._custom_endpoint_entry_for(provider) is not None
+            listed += ". " + listed_pick_note(entry=entry, settings_key=" (F4)")
+        self._set_model_discover_status(listed)
         if fenced:
             self._current_model_discovery_identity = identity
         self._sync_readiness_display()

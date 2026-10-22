@@ -11917,24 +11917,34 @@ async def test_model_step_subtitle_display_cases_provider_and_marks_recommended(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("discover", "rows", "note"),
+    ("discover", "tested", "rows", "note"),
     [
-        (AsyncMock(return_value=["model-alpha"]), True, True),
-        (AsyncMock(return_value=[]), True, False),
-        (AsyncMock(side_effect=RuntimeError("refused")), False, False),
+        (AsyncMock(return_value=["model-alpha"]), None, True, True),
+        (AsyncMock(return_value=[]), None, True, False),
+        (AsyncMock(side_effect=RuntimeError("refused")), None, False, False),
+        (AsyncMock(return_value=[]), "empty", True, True),
+        (AsyncMock(return_value=[]), "connection_failed", True, True),
     ],
-    ids=["listed", "saved-list", "failed"],
+    ids=["listed", "saved-list", "failed", "tested-empty", "tested-failed"],
 )
 async def test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list(
-    monkeypatch, discover, rows, note
+    monkeypatch, discover, tested, rows, note
 ):
     """TASK-35578 AC#2: rows a server listed come with the saved-list note
     on the subtitle; rows from the saved [providers] list (the fallback when
-    nothing was listed) and a failed listing come without it."""
+    nothing was listed) and a failed listing come without it.
+
+    Review of 92334c2087: rows a Test connection listed count as listed even
+    when the Provider step's own discovery found none ("empty") or failed
+    ("connection_failed", as when it timed out)."""
     from types import SimpleNamespace
 
     from tldw_chatbook import config as config_module
-    from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE
+    from tldw_chatbook.Chat.provider_catalog import listed_pick_note
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryResult,
+    )
 
     monkeypatch.setattr(
         config_module,
@@ -11950,6 +11960,21 @@ async def test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_lis
         rerun=False,
     )
     step = _model_step(wizard, discover_models=discover)
+    if tested is not None:
+        key = step._current_discovery_key()
+        owner = _provider_step()
+        owner._test_evidence_for_discovery_key = lambda _key: ProviderProbeResult(
+            "reachable", ("tested-model",)
+        )
+        wizard._first_run_provider_discovery_owner = owner
+        if tested == "empty":  # the Provider step's listing found no models
+            wizard._first_run_selected_provider_outcomes = {
+                key: ModelDiscoveryResult("anthropic", None, None, "success")
+            }
+        else:  # the Provider step's listing failed
+            wizard._first_run_selected_provider_models = {key: []}
+            owner._selected_discovery_key = key
+            owner._selected_discovery_state = "failed"
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -11958,7 +11983,8 @@ async def test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_lis
         assert bool(list(step.query("#setup-model-option-0"))) is rows
         subtitle = str(step.query_one("#setup-model-provider-line", Static).render())
     line = "Models for Anthropic."
-    assert subtitle == (f"{line} {SAVED_LIST_NOTE}" if note else line)
+    assert subtitle == (f"{line} {listed_pick_note()}" if note else line)
+    assert "(F4)" not in subtitle  # the wizard has no Settings key
 
 
 @pytest.mark.asyncio

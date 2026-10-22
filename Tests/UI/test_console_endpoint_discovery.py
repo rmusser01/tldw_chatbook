@@ -27,7 +27,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     console_send_connection,
 )
-from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE
+from tldw_chatbook.Chat.provider_catalog import listed_pick_note
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
@@ -50,6 +50,8 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettings
 # module attribute for every test, so a test that runs the switcher's own
 # probe sets this back (as Tests/UI/test_console_switcher_local_probe.py does).
 _REAL_SWITCHER_PROBER = connection_probe.switcher_connection_prober
+#: TASK-35578: what a listing that found models adds after its count.
+_LISTED_NOTE = listed_pick_note(settings_key=" (F4)")
 
 
 @pytest.fixture(autouse=True)
@@ -749,7 +751,7 @@ async def test_a_models_listing_never_changes_the_model():
         assert modal._current_model_value() == "model-a"
         assert modal._current_model_discovery_matches_current_draft()
         status = modal.query_one("#console-settings-model-discover-status", Static)
-        assert str(status.content) == f"1 model listed. {SAVED_LIST_NOTE}"
+        assert str(status.content) == f"1 model listed. {_LISTED_NOTE}"
 
 
 @pytest.mark.asyncio

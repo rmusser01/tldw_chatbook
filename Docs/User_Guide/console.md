@@ -644,9 +644,14 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   **Change** does, and pick mode then lists the served models too. A model
   picked from a listing is not added to the provider's saved model list, and
   the listing's line says so after its count. To add one, use Settings ▸
-  Providers & Models (Advanced ▸ Saved model list): after **Discover models**,
+  Providers & Models ▸ Advanced ▸ Saved model list: after **Discover models**,
   a model chosen in **Default model** joins the list when **s** saves, and
-  **Add to model list** adds the models you check. When the chat is not ready (a missing key, an endpoint to
+  **Add to model list** adds the models you check. A named custom endpoint
+  (one made with **New endpoint…**) keeps its own model list instead, which
+  the Saved model list controls do not change, so its line says the pick is
+  not added to that endpoint's model list. To add one there, use Settings ▸
+  Providers & Models ▸ Advanced ▸ Custom endpoints: **Edit** on the endpoint,
+  add the model to **Models**, and press **Save endpoint**. When the chat is not ready (a missing key, an endpoint to
   set, no model), Chat settings opens with **Connection** already open and
   the fix focused (**Change** when the model is missing). Help that points at
   Settings names **F4**, the key that opens it.

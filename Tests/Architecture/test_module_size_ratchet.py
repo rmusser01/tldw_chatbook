@@ -379,7 +379,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-33002.7 shrank it to 6,153 (2629dafe36, then 4f1110488e).
     # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint added 13: 6,166.
     # TASK-35578: 6,159; the dead _snapshot_model went, the saved-list note came.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6159,
+    # Its review: 6,162; a named custom endpoint's listing gets its own note.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6162,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

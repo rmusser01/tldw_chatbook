@@ -73,7 +73,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsCommittedSubmission,
 )
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
-from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE, provider_display_name
+from tldw_chatbook.Chat.provider_catalog import listed_pick_note, provider_display_name
 from Tests.UI.test_console_settings_model_change import real_rebase
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
@@ -138,6 +138,9 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
+
+#: TASK-35578: what a listing that found models adds after its count.
+_LISTED_NOTE = listed_pick_note(settings_key=" (F4)")
 
 
 def _assert_private_values_absent(
@@ -14022,7 +14025,7 @@ async def test_stale_discovery_results_never_clear_or_overwrite_newer_state() ->
             ),
         )
         status = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
-        assert str(status.renderable) == f"2 models listed. {SAVED_LIST_NOTE}"
+        assert str(status.renderable) == f"2 models listed. {_LISTED_NOTE}"
         assert modal._current_model_discovery_identity == newer
 
         endpoint = modal.query_one("#console-settings-base-url", Input)
@@ -14095,7 +14098,7 @@ async def test_discovery_scope_is_visible_before_activation_and_persists_after_r
         assert str(scope.renderable) == settings_modal_module.MODEL_DISCOVER_SCOPE_COPY
         assert str(
             modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
-        ) == f"1 model listed. {SAVED_LIST_NOTE}"
+        ) == f"1 model listed. {_LISTED_NOTE}"
 
         modal._model_picked(("openai", "gpt-4.1"))  # pick mode's result
         await pilot.pause(0.1)
@@ -14141,7 +14144,7 @@ async def test_selecting_served_now_row_rebinds_listing_to_new_model_generation(
         await pilot.pause()
         before_generation = modal._model_discovery_generation
         status = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
-        assert str(status.renderable) == f"2 models listed. {SAVED_LIST_NOTE}"
+        assert str(status.renderable) == f"2 models listed. {_LISTED_NOTE}"
         modal._model_picked(("llama_cpp", "served-b"))  # pick mode's result
         await pilot.pause()
 
@@ -14150,7 +14153,7 @@ async def test_selecting_served_now_row_rebinds_listing_to_new_model_generation(
         assert modal._current_model_discovery_identity == (
             modal._current_draft_discovery_identity()
         )
-        assert str(status.renderable) == f"2 models listed. {SAVED_LIST_NOTE}"
+        assert str(status.renderable) == f"2 models listed. {_LISTED_NOTE}"
 
 
 @pytest.mark.asyncio

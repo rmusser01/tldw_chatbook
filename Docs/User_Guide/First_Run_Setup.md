@@ -58,7 +58,7 @@ refused test reads Not ready in Console too.
 A model you pick from the server's list becomes the default that setup saves,
 but it is not added to the provider's saved model list, and the line under
 **Pick a default model** says so after "Models for *Provider*.". To add one
-later, use Settings ▸ Providers & Models (Advanced ▸ Saved model list): after
+later, use Settings ▸ Providers & Models ▸ Advanced ▸ Saved model list: after
 **Discover models**, a model chosen in **Default model** joins the list when
 **s** saves, and **Add to model list** adds the models you check. When the
 server listed nothing and the step offers the provider's saved model list

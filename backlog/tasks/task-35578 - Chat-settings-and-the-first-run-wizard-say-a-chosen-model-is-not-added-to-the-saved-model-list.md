@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-19 21:50
-updated_date: 2026-10-22 20:16
+updated_date: 2026-10-22 22:54
 labels:
 - console
 - first-run
@@ -59,16 +59,26 @@ Both files are still exactly on their module size ratchet rows at Phase 9's head
 <!-- SECTION:NOTES:BEGIN -->
 Copy only; neither surface's persistence changed.
 
-- One sentence, `SAVED_LIST_NOTE` in `Chat/provider_catalog.py` (shared provider display data that Chat settings and the wizard already import), names the controls as `UI/Settings_Modules/saved_model_list.py` does: "A pick here is not added to the saved model list. To add one, use Settings ▸ Providers & Models: after Discover models, choose it in Default model and press s, or check it and press Add to model list." No F4, since the wizard has no Settings shortcut.
-- Chat settings (AC#1): a Test connection & list models result that found models ends its status line with the note ("2 models listed. A pick here …"). A listing that found none still reads "No models reported". The Connection test toast is unchanged.
-- Wizard (AC#2): the Model step's subtitle moved to `first_run_model_discovery.show_provider_line`. `_render_models` repaints it on every render, adding the note only while the rows came from a server's listing. The curated fallback (the `[providers]` saved list itself) is marked `discovery_state = "saved"`, so it reads "Models for *Provider*." alone, as does a failed listing. `on_show` paints the subtitle only when it will re-render: the first version reset it on every show, so going Back and forward to a listed step lost the note. The new test caught that.
+- One source for the copy: `listed_pick_note(entry=False, settings_key="")` in `Chat/provider_catalog.py`, shared provider display data that Chat settings and the wizard already import. It names the controls as Settings names them (`UI/Settings_Modules/saved_model_list.py`, `providers_models_card.compose_custom_endpoints_children`):
+  - For a provider: "A pick here is not added to the saved model list. To add one, use Settings ▸ Providers & Models ▸ Advanced ▸ Saved model list: after Discover models, choose it in Default model and press s, or check it and press Add to model list."
+  - For a named custom endpoint (`custom-ep:<slug>`), whose list is `custom_endpoints.<slug>.models`: "A pick here is not added to this endpoint's model list. To add one, use Settings ▸ Providers & Models ▸ Advanced ▸ Custom endpoints: press Edit on this endpoint, add it to Models and press Save endpoint."
+  - Chat settings passes `settings_key=" (F4)"`, so its pointer reads "Settings ▸ Providers & Models (F4) ▸ Advanced ▸ …", the spelling of its other pointers. The wizard passes nothing, since it has no Settings key.
+- Chat settings (AC#1): a Test connection & list models result that found models ends its status line with the note ("2 models listed. A pick here …"). It uses the endpoint variant when the draft is a registry entry (`_custom_endpoint_entry_for`). Settings disables Discover models for registry ids (`_model_discovery_available`), so the saved-list controls cannot add an entry's model. A listing that found none still reads "No models reported". The Connection test toast is unchanged.
+- Wizard (AC#2): the Model step's subtitle moved to `first_run_model_discovery.show_provider_line`. `_render_models` repaints it on every render, adding the note whenever it shows rows that are not marked `discovery_state = "saved"`. That marker is set only on the curated fallback, the `[providers]` saved list itself. So rows a Test connection listed count as listed even when the Provider step's discovery found none ("empty") or failed ("connection_failed"). The saved-list fallback and a failed listing read "Models for *Provider*." alone. Setup cannot reach a named custom endpoint: its Provider step lists only the 61 fixed keys in `CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS`, none a `custom-ep:` id. So the wizard always uses the saved-list variant. `on_show` paints the subtitle only when it will re-render: the first version reset it on every show, so going Back and forward to a listed step lost the note. The new test caught that.
 - AC#3: no existing test pinned this, so there are two new private-profile tests. One picks a served-only model in the real Console (Test connection, Change, Make default for new chats). The other commits a discovered pick through `SetupWizardContainer.commit_staged_provider_setup` with the real writer. Each asserts that the file's `chat_defaults.model` is the pick and that its `[providers]` table is unchanged.
-- AC#4: `console_settings_modal.py` 6,166 → 6,159. The note costs 1 line (its import joined the existing one-line provider_catalog import). The dead `_snapshot_model` helper went (no caller since TASK-33006.4). `first_run_model_step.py` 997 → 990. Both ratchet rows were lowered to those sizes.
-- AC#5: `Docs/User_Guide/console.md` (Connection paragraph) and `Docs/User_Guide/First_Run_Setup.md` (before the Model step's status lines) now say this and point to Advanced ▸ Saved model list.
+- AC#4 (dev's rows are 6,166 and 997):
+  - `console_settings_modal.py` is 6,162. The note and its endpoint variant cost 4 lines; the import joined the existing one-line provider_catalog import. The dead `_snapshot_model` helper went (no caller since TASK-33006.4).
+  - `first_run_model_step.py` is 990.
+  - Both ratchet rows are set to those exact sizes.
+- AC#5: `Docs/User_Guide/console.md` (Connection paragraph) and `Docs/User_Guide/First_Run_Setup.md` (before the Model step's status lines) now say this and point to Settings ▸ Providers & Models ▸ Advanced ▸ Saved model list. console.md also covers a named custom endpoint, whose model list is edited in Advanced ▸ Custom endpoints (Edit, Models, Save endpoint).
 
 Red/green evidence:
 - AC#1 `test_a_listing_says_its_picks_are_not_added_to_the_saved_model_list[listed]` failed `'2 models listed' == '2 models listed. A pick here…'` before the change.
 - AC#2 `test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list[listed]` failed `'Models for Anthropic.' == 'Models for Anthropic. A pick here…'`.
+- Review of 92334c2087, red before its fix:
+  - `…[custom-ep]` showed the saved-list note for `custom-ep:gpu-box`.
+  - `…[listed]` lacked "(F4) ▸ Advanced ▸ Saved model list".
+  - The wizard's `[tested-empty]` and `[tested-failed]` read 'Models for Anthropic.' without the note while showing the rows a Test listed.
 - AC#3 tests are green on dev behaviour. Each went red on its last assertion (`{'Llama_cpp': ['model-a', 'served-y']} != {'Llama_cpp': ['model-a']}`) under a temporary source edit: the Console one when a `providers` write was injected into the Make-default mutation (`console_settings_defaults`), the wizard one when it was injected into `apply_settings_mutation_to_cli_config`. Both edits were reverted.
 
 Updated exact pins of the status line: four in `Tests/UI/test_console_session_settings.py` and one in `Tests/UI/test_console_endpoint_discovery.py`.
