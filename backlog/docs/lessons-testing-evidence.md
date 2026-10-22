@@ -88,7 +88,20 @@ assertions and bounded test budget. Here eight targeted controls passed;
 deliberately incomplete attachment still failed the setup assertion, and
 disabling poll arming still failed the original assertion with
 `reconciled=True`. This barrier does not witness retirement of later queued
-refreshes; that remains the separate lesson below.
+refreshes; that remains TASK-34406.5's separate lesson below ("Attach
+completion does not retire queued mount refreshes").
+
+**TASK-35833 follow-up, 2026-10-22.** Reconcile-ended is not effect-landed
+on a cached Console. The headless-delivery test reopens the same ChatScreen,
+so its reconcile skips the view start, and the poll is armed through the
+wake hook's `screen.call_later`. An instrumented run showed the timer still
+unset at the line that sets `_console_attach_reconciled = True` in 5 of 5
+runs, and the test's flag wait could check inside that gap. If a test asserts
+what an attach arms, wait for `_console_attach_reconciled and not
+_console_attach_reconcile_running`, then for one round trip through the
+screen's queue: `Tests/UI/pump_probe.py::pump_runs(screen)` posts a
+`call_later` and waits for it with a bound. (This task was also filed from
+runs that predated TASK-35710's fix, the TASK-35443 trap below.)
 
 ## A held lock shows one waiting read per run; a recording lock shows them all (TASK-35645, 2026-10-20)
 
