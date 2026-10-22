@@ -1,0 +1,719 @@
+{
+  "base_dev": "814becf3cabc42a622c4ed6f7eeca17d4c6266e5",
+  "merged_pr": {
+    "baseRefName": "dev",
+    "headRefOid": "bb0d8520fc544f68a78c74cad1845b4aa3c90f1f",
+    "mergeCommit": {
+      "oid": "814becf3cabc42a622c4ed6f7eeca17d4c6266e5"
+    },
+    "mergedAt": "2026-10-22T20:23:49Z",
+    "state": "MERGED",
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/3207"
+  },
+  "reviewed_pr_head": "bb0d8520fc544f68a78c74cad1845b4aa3c90f1f",
+  "ci": {
+    "required_run": 39840153541,
+    "perf_run": 39840153640,
+    "required_and_perf": "SUCCESS at merge; exact-head prior final-pr-verification.json retained",
+    "review": "Superpowers scoped review Approved on identical head; no-op rebase/no new source diff; no unresolved threads at merge"
+  },
+  "book": {
+    "source": "C:\\Users\\GDesktop-1\\Downloads\\textual-1.pdf",
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "page_count": 455
+  },
+  "tasks": [
+    {
+      "id": 36360,
+      "title": "Keep quiz final-answer retry from duplicating answers and inflating scores",
+      "priority": "medium",
+      "rank": 1,
+      "path": "backlog\\tasks\\task-36360 - Keep-quiz-final-answer-retry-from-duplicating-answers-and-inflating-scores.md"
+    },
+    {
+      "id": 36361,
+      "title": "Preserve newer Appearance Storage and Console Behavior drafts after pending Saves",
+      "priority": "medium",
+      "rank": 2,
+      "path": "backlog\\tasks\\task-36361 - Preserve-newer-Appearance-Storage-and-Console-Behavior-drafts-after-pending-Saves.md"
+    },
+    {
+      "id": 36362,
+      "title": "Keep newer Recurring Question drafts when an earlier Save completes",
+      "priority": "medium",
+      "rank": 3,
+      "path": "backlog\\tasks\\task-36362 - Keep-newer-Recurring-Question-drafts-when-an-earlier-Save-completes.md"
+    },
+    {
+      "id": 36363,
+      "title": "Keep newer audiobook source edits when a pending file import completes",
+      "priority": "medium",
+      "rank": 4,
+      "path": "backlog\\tasks\\task-36363 - Keep-newer-audiobook-source-edits-when-a-pending-file-import-completes.md"
+    }
+  ],
+  "source_fingerprints": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "git_blob": "9edccf20d6f693dea96ce93ed1887bb900fae6d5",
+      "sha256_lf_utf8": "f04a85f8b9295a020515c52111af7b7ab714a3eb30882e498e3bd989f8fc8ada",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py": {
+      "git_blob": "4dafcd85015696e00317d4b4da26520c0f78e996",
+      "sha256_lf_utf8": "ba4c1ae598cadf6ae795d2b114f1a5a262fed736ad570c9d5531054fc2bb6e17",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/Scheduling/services/scheduling_service.py": {
+      "git_blob": "32e2cac85083d26481fd2e334d2d7dbe15f46f79",
+      "sha256_lf_utf8": "ba48729a76ad76d2aecdf38a284ad17b3c719dbec8fbb3b1342c12ab4cd45b04",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
+      "git_blob": "1d044739abd2d551cb53bae347cc4637ffc1e9fd",
+      "sha256_lf_utf8": "e6f87f0d9b67567746b3ef67f99d3bea11e5cebe59fe56992bb542178eeb0ea6",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": {
+      "git_blob": "b6c9a0cab5c991d41aaefcb341ec0c40db02e076",
+      "sha256_lf_utf8": "f1734731303d34bc323c92fbcb5ff8cbb2a7a712a7b15ad9f4e5b0f4c59b8c49",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/UI/Study_Window.py": {
+      "git_blob": "be48e8ca2b1fa154def3d19fc30f9e582f18f116",
+      "sha256_lf_utf8": "b8e04726b5ca172fef9873c814d3d0193fd697e80b376cce5e1b0817e0a0f0b7",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/Study_Interop/quiz_scope_service.py": {
+      "git_blob": "cbb969cba0f9bf6d99a46742919205a2b807b687",
+      "sha256_lf_utf8": "78910df671ae8ccd23598ca48c7170fbd7f691c4425f8525c2fd5188e83103dc",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/Study_Interop/local_quiz_service.py": {
+      "git_blob": "3038f7e7d30dd0553c910f2b464653912f6606bf",
+      "sha256_lf_utf8": "a5302d4b257a91028b39da4932b0c3b9ae49b00960b5652d2b0cc2f217c11546",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+      "git_blob": "145f7579446df0bb198e0307775de1eea79ceb69",
+      "sha256_lf_utf8": "f58f289110acfbf6b1dee93b03d11acfce5cd90f53157e2de6ad359ae8b6c67f",
+      "matches_audited_dev": true
+    },
+    "tldw_chatbook/UI/STTS_Window.py": {
+      "git_blob": "0511b1b9d45643aa34c56b8a7e301919ca29d254",
+      "sha256_lf_utf8": "dac5d22a25386ee8b2f2790db4eb3403fc87ea74da95c1b72b36a746f78b9b63",
+      "matches_audited_dev": true
+    }
+  },
+  "native_runs": {
+    "quiz": {
+      "path": ".test-tmp\\post-3207-audit\\evals-study\\run-ac439bed",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "2",
+          "time": "15.419",
+          "timestamp": "2026-10-22T13:29:24.581541-07:00",
+          "hostname": "DESKTOP-BISU2HE"
+        }
+      ],
+      "command": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\evals-study\\test_quiz_retry.py",
+        "-q",
+        "--tb=short",
+        "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\evals-study\\run-ac439bed\\pytest",
+        "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\evals-study\\run-ac439bed\\result.xml"
+      ],
+      "sha256": {
+        "command.json": "2f81ba6bbb6ef7f293aac252cb10fe91ae370832f7bb4db0b29caff438be5aa4",
+        "result.xml": "33509a8eb6ee1ac41158f9cef8df985aa6bfcff8b1a586b38890474be7082c0e",
+        "run.log": "6075feab9cdea82750457005559a30adab83f7c7f3eb45965a6e9821bd952ac1"
+      }
+    },
+    "settings-initial": {
+      "path": ".test-tmp\\post-3207-audit\\settings\\run-1",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "4",
+          "skipped": "0",
+          "tests": "6",
+          "time": "159.037",
+          "timestamp": "2026-10-22T13:28:15.737638-07:00",
+          "hostname": "DESKTOP-BISU2HE"
+        }
+      ],
+      "command": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\test_pending_staged.py",
+        "-q",
+        "--tb=short",
+        "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest",
+        "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\result.xml"
+      ],
+      "sha256": {
+        "command.json": "f23e34232d433de36c872282e37e65b44c0bf67211f2cef0785712ef43b911d0",
+        "result.xml": "656cbd6f5505b7def0ea0ad45a068da873d5001c236377b5bcb1c2000b69c3b5",
+        "run.log": "153b1e253281f915a5bf64ffd180dd1001cbfcab7583d8a404ca11130fe44533"
+      }
+    },
+    "settings-console": {
+      "path": ".test-tmp\\post-3207-audit\\settings\\run-2-console",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "2",
+          "time": "49.859",
+          "timestamp": "2026-10-22T13:31:08.442500-07:00",
+          "hostname": "DESKTOP-BISU2HE"
+        }
+      ],
+      "command": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\test_pending_staged.py",
+        "-k",
+        "console_behavior",
+        "-q",
+        "--tb=short",
+        "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-2-console\\pytest",
+        "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-2-console\\result.xml"
+      ],
+      "sha256": {
+        "command.json": "67767500cf3a9d4788d6441529b9077a4e277860e4fcbbdf30c673723c5d73b6",
+        "result.xml": "787e83d08215915b61fdfb5621715bd57340c8f1910a814400a3a19c0f15ca10",
+        "run.log": "9664db8932bfd71d64b0be39195084d8ac976abce9d4c7c6c8c0b2fba3c9cb7a"
+      }
+    },
+    "automation": {
+      "path": ".test-tmp\\post-3207-audit\\scheduling\\run-4f6f1d4de9a94033a2bccd2fc58cc2a4",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "4",
+          "time": "12.825",
+          "timestamp": "2026-10-22T13:31:12.176540-07:00",
+          "hostname": "DESKTOP-BISU2HE"
+        }
+      ],
+      "command": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "-p",
+        "Tests.conftest",
+        "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\scheduling\\test_save_acknowledgement.py",
+        "-q",
+        "--tb=short",
+        "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\scheduling\\run-4f6f1d4de9a94033a2bccd2fc58cc2a4\\pytest",
+        "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\scheduling\\run-4f6f1d4de9a94033a2bccd2fc58cc2a4\\result.xml"
+      ],
+      "sha256": {
+        "command.json": "8f4ba92d284900321b374b7f54a29d35794b44589e712fcb145aa092fc33fe9c",
+        "result.xml": "6bc372ff772c76b07e72a0ea14f5fb0dab63d1f37d62c152d062e402ee676881",
+        "run.log": "b77afe8439e6e8d34af1baaa39d2e78faba20d936cef57bd4b2ded40da9bff1f"
+      }
+    },
+    "audiobook": {
+      "path": ".test-tmp\\post-3207-audit\\audiobook\\probe-5",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "2",
+          "time": "17.073",
+          "timestamp": "2026-10-22T13:35:17.539172-07:00",
+          "hostname": "DESKTOP-BISU2HE"
+        }
+      ],
+      "command": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        ".test-tmp/post-3207-audit/audiobook/test_pending_import.py",
+        "-q",
+        "--tb=short",
+        "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\audiobook\\probe-5\\pytest",
+        "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\audiobook\\probe-5\\result.xml"
+      ],
+      "sha256": {
+        "command.json": "002f6131c7162bb68d2fc7bf46af74226c1da6faf4775f4384e9496525792574",
+        "result.xml": "34fd101e41c42e31e6637b307f3df58b06dff7d3e049d4af43f01870f5ace10d",
+        "run.log": "8b087a82b258948fd78d5bce27317ebf6c0fb43f5ddf3c5e2422644fade94ff0"
+      }
+    }
+  },
+  "qualified_cases": {
+    "quiz": "1controlpass/1intendedscorefailure",
+    "settings": "3controlpass/3intendedretentionfailures;2initialenumfailuresexcluded",
+    "automation": "4observationchecksconfirmexistingbug,notgreenrepairtests",
+    "audiobook": "1controlpass/1intendedretentionfailure"
+  },
+  "observations": {
+    "quiz": {
+      "False": {
+        "case": "ordinary_control",
+        "service_payloads": [
+          [
+            {
+              "question_id": "bfdb9d32-5d85-4034-811e-2e6e16100de2",
+              "user_answer": "4"
+            }
+          ]
+        ],
+        "after_failure": null,
+        "stored": {
+          "id": "74665a21-bdca-4a09-a690-6a5bea775555",
+          "quiz_id": "25f07d41-b9e5-4c07-98df-a3bab94abd71",
+          "started_at": "2026-10-22 20:29:31.288000+00:00",
+          "completed_at": "2026-10-22 20:29:31.842000+00:00",
+          "score": 1,
+          "total_possible": 1,
+          "time_spent_seconds": null,
+          "answers": [
+            {
+              "question_id": "bfdb9d32-5d85-4034-811e-2e6e16100de2",
+              "user_answer": "4",
+              "is_correct": true,
+              "correct_answer": "4",
+              "explanation": null,
+              "hint_used": false,
+              "hint_penalty_points": 0,
+              "source_citations": null,
+              "points_awarded": 1,
+              "time_spent_ms": null
+            }
+          ],
+          "questions": [
+            {
+              "id": "bfdb9d32-5d85-4034-811e-2e6e16100de2",
+              "quiz_id": "25f07d41-b9e5-4c07-98df-a3bab94abd71",
+              "question_type": "fill_blank",
+              "question_text": "Two plus two",
+              "options": null,
+              "correct_answer": "4",
+              "explanation": null,
+              "hint": null,
+              "hint_penalty_points": 0,
+              "points": 1,
+              "order_index": 0,
+              "deleted": 0,
+              "client_id": "unknown",
+              "version": 1,
+              "created_at": "2026-10-22 20:29:30.527000+00:00",
+              "last_modified": "2026-10-22 20:29:30.527000+00:00",
+              "tags": null,
+              "source_citations": null
+            }
+          ]
+        },
+        "visible_status": "Score: 1 / 1"
+      },
+      "True": {
+        "case": "prewrite_failure_retry",
+        "service_payloads": [
+          [
+            {
+              "question_id": "35aa4b8f-f6d3-4ca3-857d-427cd3880905",
+              "user_answer": "4"
+            }
+          ],
+          [
+            {
+              "question_id": "35aa4b8f-f6d3-4ca3-857d-427cd3880905",
+              "user_answer": "4"
+            },
+            {
+              "question_id": "35aa4b8f-f6d3-4ca3-857d-427cd3880905",
+              "user_answer": "4"
+            }
+          ]
+        ],
+        "after_failure": {
+          "completed_at": null,
+          "persisted_answers": [],
+          "pending_answers": [
+            {
+              "question_id": "35aa4b8f-f6d3-4ca3-857d-427cd3880905",
+              "user_answer": "4"
+            }
+          ],
+          "answer_input": "4"
+        },
+        "stored": {
+          "id": "7e524d2e-0479-4d02-88e2-9a6dd2ff9062",
+          "quiz_id": "cf049c70-0b31-4043-bf9e-1d0ab1f87423",
+          "started_at": "2026-10-22 20:29:38.194000+00:00",
+          "completed_at": "2026-10-22 20:29:38.770000+00:00",
+          "score": 2,
+          "total_possible": 1,
+          "time_spent_seconds": null,
+          "answers": [
+            {
+              "question_id": "35aa4b8f-f6d3-4ca3-857d-427cd3880905",
+              "user_answer": "4",
+              "is_correct": true,
+              "correct_answer": "4",
+              "explanation": null,
+              "hint_used": false,
+              "hint_penalty_points": 0,
+              "source_citations": null,
+              "points_awarded": 1,
+              "time_spent_ms": null
+            },
+            {
+              "question_id": "35aa4b8f-f6d3-4ca3-857d-427cd3880905",
+              "user_answer": "4",
+              "is_correct": true,
+              "correct_answer": "4",
+              "explanation": null,
+              "hint_used": false,
+              "hint_penalty_points": 0,
+              "source_citations": null,
+              "points_awarded": 1,
+              "time_spent_ms": null
+            }
+          ],
+          "questions": [
+            {
+              "id": "35aa4b8f-f6d3-4ca3-857d-427cd3880905",
+              "quiz_id": "cf049c70-0b31-4043-bf9e-1d0ab1f87423",
+              "question_type": "fill_blank",
+              "question_text": "Two plus two",
+              "options": null,
+              "correct_answer": "4",
+              "explanation": null,
+              "hint": null,
+              "hint_penalty_points": 0,
+              "points": 1,
+              "order_index": 0,
+              "deleted": 0,
+              "client_id": "unknown",
+              "version": 1,
+              "created_at": "2026-10-22 20:29:37.501000+00:00",
+              "last_modified": "2026-10-22 20:29:37.501000+00:00",
+              "tags": null,
+              "source_citations": null
+            }
+          ]
+        },
+        "visible_status": "Score: 2 / 1"
+      }
+    },
+    "settings": {
+      "receipt-appearance-False.json": {
+        "kind": "appearance",
+        "later": false,
+        "before": {
+          "value": "18",
+          "dirty": true,
+          "selection": "Selection(start=2, end=2)",
+          "focus": "settings-appearance-font-size"
+        },
+        "after": {
+          "value": "18",
+          "dirty": false,
+          "selection": "Selection(start=2, end=2)",
+          "focus": "settings-appearance-font-size",
+          "same_input": true,
+          "saved": "18"
+        },
+        "submitted": "18",
+        "changed": "19"
+      },
+      "receipt-appearance-True.json": {
+        "kind": "appearance",
+        "later": true,
+        "before": {
+          "value": "19",
+          "dirty": true,
+          "selection": "Selection(start=2, end=1)",
+          "focus": "settings-appearance-font-size"
+        },
+        "after": {
+          "value": "18",
+          "dirty": false,
+          "selection": "Selection(start=2, end=1)",
+          "focus": "settings-appearance-font-size",
+          "same_input": true,
+          "saved": "18"
+        },
+        "submitted": "18",
+        "changed": "19"
+      },
+      "receipt-console_behavior-False.json": {
+        "kind": "console_behavior",
+        "later": false,
+        "before": {
+          "value": "120",
+          "dirty": true,
+          "selection": "Selection(start=3, end=3)",
+          "focus": "settings-console-paste-collapse-threshold"
+        },
+        "after": {
+          "value": "120",
+          "dirty": false,
+          "selection": "Selection(start=3, end=3)",
+          "focus": "settings-console-paste-collapse-threshold",
+          "same_input": true,
+          "saved": "120"
+        },
+        "submitted": "120",
+        "changed": "121"
+      },
+      "receipt-console_behavior-True.json": {
+        "kind": "console_behavior",
+        "later": true,
+        "before": {
+          "value": "121",
+          "dirty": true,
+          "selection": "Selection(start=3, end=2)",
+          "focus": "settings-console-paste-collapse-threshold"
+        },
+        "after": {
+          "value": "120",
+          "dirty": false,
+          "selection": "Selection(start=3, end=2)",
+          "focus": "settings-console-paste-collapse-threshold",
+          "same_input": true,
+          "saved": "120"
+        },
+        "submitted": "120",
+        "changed": "121"
+      },
+      "receipt-storage-False.json": {
+        "kind": "storage",
+        "later": false,
+        "before": {
+          "value": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_False1\\private-profile-process\\pytest\\test_pending_staged_save_False0\\submitted.db",
+          "dirty": true,
+          "selection": "Selection(start=227, end=227)",
+          "focus": "settings-storage-workspaces-db-path"
+        },
+        "after": {
+          "value": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_False1\\private-profile-process\\pytest\\test_pending_staged_save_False0\\submitted.db",
+          "dirty": false,
+          "selection": "Selection(start=227, end=227)",
+          "focus": "settings-storage-workspaces-db-path",
+          "same_input": true,
+          "saved": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_False1\\private-profile-process\\pytest\\test_pending_staged_save_False0\\submitted.db"
+        },
+        "submitted": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_False1\\private-profile-process\\pytest\\test_pending_staged_save_False0\\submitted.db",
+        "changed": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_False1\\private-profile-process\\pytest\\test_pending_staged_save_False0\\later.db"
+      },
+      "receipt-storage-True.json": {
+        "kind": "storage",
+        "later": true,
+        "before": {
+          "value": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_True_1\\private-profile-process\\pytest\\test_pending_staged_save_True_0\\later.db",
+          "dirty": true,
+          "selection": "Selection(start=223, end=222)",
+          "focus": "settings-storage-workspaces-db-path"
+        },
+        "after": {
+          "value": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_True_1\\private-profile-process\\pytest\\test_pending_staged_save_True_0\\submitted.db",
+          "dirty": false,
+          "selection": "Selection(start=223, end=222)",
+          "focus": "settings-storage-workspaces-db-path",
+          "same_input": true,
+          "saved": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_True_1\\private-profile-process\\pytest\\test_pending_staged_save_True_0\\submitted.db"
+        },
+        "submitted": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_True_1\\private-profile-process\\pytest\\test_pending_staged_save_True_0\\submitted.db",
+        "changed": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3207-audit\\settings\\run-1\\pytest\\test_pending_staged_save_True_1\\private-profile-process\\pytest\\test_pending_staged_save_True_0\\later.db"
+      }
+    },
+    "automation": {
+      "save-existing-False-late-False.json": {
+        "edit_existing": false,
+        "original": "Daily standup digest",
+        "pending_name": "Daily standup digest",
+        "name_disabled": false,
+        "save_disabled": true,
+        "dirty": true,
+        "focus": "automation-preview-btn",
+        "outcome": "saved",
+        "persisted_name": "Daily standup digest",
+        "form_still_current": false,
+        "form_mounted": true,
+        "form_attached": false,
+        "writes": 1
+      },
+      "save-existing-False-late-True.json": {
+        "edit_existing": false,
+        "original": "Daily standup digest",
+        "pending_name": "Daily standup digest LATER",
+        "name_disabled": false,
+        "save_disabled": true,
+        "dirty": true,
+        "focus": "automation-name",
+        "outcome": "saved",
+        "persisted_name": "Daily standup digest",
+        "form_still_current": false,
+        "form_mounted": true,
+        "form_attached": false,
+        "writes": 1
+      },
+      "save-existing-True-late-False.json": {
+        "edit_existing": true,
+        "original": "Daily standup digest",
+        "pending_name": "Daily standup digest",
+        "name_disabled": false,
+        "save_disabled": true,
+        "dirty": true,
+        "focus": "automation-preview-btn",
+        "outcome": "saved",
+        "persisted_name": "Daily standup digest",
+        "form_still_current": false,
+        "form_mounted": true,
+        "form_attached": false,
+        "writes": 1
+      },
+      "save-existing-True-late-True.json": {
+        "edit_existing": true,
+        "original": "Daily standup digest",
+        "pending_name": "Daily standup digest LATER",
+        "name_disabled": false,
+        "save_disabled": true,
+        "dirty": true,
+        "focus": "automation-name",
+        "outcome": "saved",
+        "persisted_name": "Daily standup digest",
+        "form_still_current": false,
+        "form_mounted": true,
+        "form_attached": false,
+        "writes": 1
+      }
+    },
+    "audiobook": {
+      "False": {
+        "callback_task": "message pump AudioBookGenerationWidget()",
+        "held": true,
+        "edit": false,
+        "during": "Chapter 1: Initial\nINITIAL_DRAFT",
+        "working_during": "Chapter 1: Initial\nINITIAL_DRAFT",
+        "after": "Chapter 1: Imported\nFILE_SOURCE",
+        "working": "Chapter 1: Imported\nFILE_SOURCE",
+        "submitted": "Chapter 1: Imported\nFILE_SOURCE",
+        "original_file": "Chapter 1: Imported\nFILE_SOURCE"
+      },
+      "True": {
+        "callback_task": "message pump AudioBookGenerationWidget()",
+        "held": true,
+        "edit": true,
+        "during": "xChapter 1: Initial\nINITIAL_DRAFT",
+        "working_during": "Chapter 1: Initial\nINITIAL_DRAFT",
+        "after": "Chapter 1: Imported\nFILE_SOURCE",
+        "working": "Chapter 1: Imported\nFILE_SOURCE",
+        "submitted": "Chapter 1: Imported\nFILE_SOURCE",
+        "original_file": "Chapter 1: Imported\nFILE_SOURCE"
+      }
+    }
+  },
+  "raw_diagnostic_proof_hashes": {
+    "open-pr-paths.json": "81c2e540a579cb01845bf255e65112ddb444ebfede4a3a3e9abfd7b9938930c5",
+    "id-claim-sweep.json": "927c0c0a86b1dd65f9fade9d4b45f9c01c6a8c6325d1888d9c70a382a2081657",
+    "settings/report.md": "f43618eba7adf6176544680803887e552d05d50d82756160c9285dfb939b5374",
+    "settings/evidence.json": "57976cd3024b8df4344c6384fd61c64b18beb7f0caff8887693cc54d138657ae",
+    "settings/remote-ast.json": "0503e970a840b6d710aeffb4feff6661364217023e0a3aef2a4245fae3829c7f",
+    "evals-study/report.md": "1c8e564f956cbc331644ad7ab1610e5f1f38bbd1179e81fafbeb1153b5ae5122",
+    "evals-study/screening.json": "649d1c9f06ad8b56e8fa5bbe543099e4ea8ccbcb6680f89cf75f2d193ec45ae4",
+    "scheduling/report.md": "ddc848410191f880ccd8cf2d15137eee48687953b04f3ddb19e78d6c4ae6b1bc",
+    "audiobook/report.md": "1ba9032bebfa0b4dbd462a1e2323a4712f2074286df0ee9d244fd4c19bac92f4",
+    "audiobook/evidence.json": "3e1ea1fb7aef58e2a9530b39812ffbfa45a173e83ec24fdce47d2ab03482c741",
+    "audiobook/screening.json": "6c872f643ea0c6ad0a67afa7f70c33a8ef7e13f0470b4a7d54fb088485e6652c"
+  },
+  "deduplication": {
+    "current_archive_markdown_tasks_at_root_screen": 5625,
+    "open_prs": 27,
+    "complete_changed_paths": 3450,
+    "refs_and_worktrees": {
+      "remote_ref_count": 197,
+      "all_ref_reachable_path_max": 36330,
+      "worktree_count": 52,
+      "worktree_maxima": {
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui": 35678,
+        "C:/Users/GDesktop-1/.claude/worktrees/send-admission/tldw_tui": 34601,
+        "C:/Users/GDesktop-1/.claude/worktrees/send-baseline/tldw_tui": 34563,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-approval-baseline/tldw_tui": 34416,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-approval-pr/tldw_tui": 34569,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-approval-ux/tldw_tui": 34416,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-cold-trust/tldw_tui": 34563,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-commit-baseline/tldw_tui": 34601,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-config-css-profile/tldw_tui": 35615,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-preparation-baseline/tldw_tui": 34563,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-response-rules/tldw_tui": 34362,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-send-lag-integration/tldw_tui": 34669,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-send-preparation/tldw_tui": 34563,
+        "C:/Users/GDesktop-1/.codex/worktrees/console-watch-baseline/tldw_tui": 34667,
+        "C:/Users/GDesktop-1/.codex/worktrees/incremental-send-speed/tldw_tui": 34563,
+        "C:/Users/GDesktop-1/.codex/worktrees/older-pr-review/tldw_tui": 33125,
+        "C:/Users/GDesktop-1/.codex/worktrees/pr-2196-review/tldw_tui": 33125,
+        "C:/Users/GDesktop-1/.codex/worktrees/pr-2439-review/tldw_tui": 33080,
+        "C:/Users/GDesktop-1/.codex/worktrees/pr-2595-review/tldw_tui": 33125,
+        "C:/Users/GDesktop-1/.codex/worktrees/pr2563-native-goals/tldw_tui": 33151,
+        "C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui": 36132,
+        "C:/Users/GDesktop-1/.codex/worktrees/transcription-import-readiness/tldw_tui": 36037,
+        "C:/Users/GDesktop-1/.codex/worktrees/web-default-typography/tldw_tui": 34409,
+        "C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui": 36037,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.codex-pr-task14801": 14810,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/collection-delete-undo-receipt": 15674,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-markdown-rp-flavor": 15482,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-model-picker": 14880,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-prompt-queue": 14920,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-queue-role-accents": 15261,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-transcript-windowing": 15530,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-uat-dev": 35312,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-conflict-compare": 15532,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-conflict-resolution": 15601,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-final-acceptance": 15530,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-p3-consistency": 15483,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-session-git-distill": 15261,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-workbench-polish": 14880,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/library-canvas-scoped-sync": 15702,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/library-rail-collapse-delete-safety": 15603,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/notes-compact-chrome-consistency": 15482,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/notes-delete-undo-receipt": 15671,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/pr-2595": 33080,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/prompt-delete-undo-receipt": 15674,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/roleplay-chat-identity": 14801,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15458-media-viewer-inplace": 15741,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15459-library-compose-once": 16199,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-207-live-ingest-progress": 15741,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task14810-dev-baseline": 14807,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task3795-base-compare": 3794,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/uat-ingestion-dev": 15702,
+        "C:/Users/GDesktop-1/Working/Github/tldw_tui_default_tools_uat": 14807
+      },
+      "errors": [],
+      "maximum": 36330,
+      "method": "Read-only collision discovery. No temporary task was created or deleted; allocator probe was rejected before execution."
+    },
+    "scope": "Fetched/committed work plus task-ID claims in registered worktrees; unseen uncommitted implementation not certified."
+  },
+  "qualifications": [
+    "No production/schema/provider/globalstate changes or passing repair is claimed. All four tasks remain To Do with unchecked AC.",
+    "No full local suite, live server/provider/audio synthesis, naturally occurring disk-latency benchmark or native terminal pointer UAT.",
+    "Quiz witness only definite pre-write failure; no uncertain-commit/server-wide idempotency claim.",
+    "Settings initial two Console enum failures, quiz initial diagnostic datetime serialization failures, audiobook probes1-4 invalid setup/readiness or masked-shutdown attempts are retained and excluded.",
+    "Native admission/ACL checks preserved; standalone scratch probe must load existing Tests.conftest plugin. Optional fitz render unavailable due native DLL; complete pypdf pages and existing PDF153 render inspected.",
+    "Allocator probe rejected before execution. Read-only scan followed by exactly four authorized CLI creates; no temporary backlog task created/deleted.",
+    "CLI supplies empty Implementation Notes templates; all remain empty, no premature Implementation Plans."
+  ]
+}
