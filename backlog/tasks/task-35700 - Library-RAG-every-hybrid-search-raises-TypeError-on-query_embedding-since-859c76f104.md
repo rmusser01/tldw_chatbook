@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-20 01:47'
+updated_date: '2026-10-22 18:22'
 labels:
   - library
   - rag
@@ -32,3 +33,9 @@ Found live during TASK-33621.20 on 2026-10-19 (head rebased onto dev ce4aa4a231)
 - [ ] #3 A test drives the real service class (not a double) through a hybrid search and fails on dev ce4aa4a231
 - [ ] #4 Live: a Console Automatic Library send on the default profile with an empty Library reaches the provider
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-10-22 (TASK-33621.20 rebase onto dev 7700c63a68): dev appears to have fixed this under TASK-35992. 9206d1d395 stops EnhancedRAGServiceV2.search forwarding query_embedding to RAGService.search (a non-None value now raises ValueError), and adds Tests/Library/test_enhanced_rag_search_contract.py, which drives the real EnhancedRAGServiceV2 through semantic, hybrid and keyword searches (AC#1-#3; not yet checked to fail on ce4aa4a231). Live on the rebased TASK-33621.20 head with the default hybrid_basic profile and an empty Library, a Console Automatic send logged 'Performing hybrid search ... Search completed ... found 0 results' and reached the provider, which replied (AC#4; evidence uxrev/evidence/bd5/L66/app-round1.log). Left To Do for the owner to confirm and close.
+<!-- SECTION:NOTES:END -->
