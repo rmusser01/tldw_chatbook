@@ -1960,6 +1960,7 @@ class LibraryIngestController:
                 # repeating, not consent -- ignore it (stays armed).
                 return
         self._disarm_library_ingest_retry_confirm()
+        self._invalidate_library_external_submission()
         form = self._library_ingest_form
         form.path = snapshot.source
         form.title = snapshot.title

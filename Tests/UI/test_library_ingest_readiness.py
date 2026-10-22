@@ -238,3 +238,39 @@ async def test_metadata_recompose_keeps_pending_readiness_alive():
         host.query_one("#library-ingest-title", Input).value = "Changed title"
         await pilot.pause()
         assert cancelled == [True]
+
+
+def test_restaging_same_source_and_options_fences_pending_readiness():
+    from tldw_chatbook.UI.Library_Modules.library_ingest_controller import (
+        LibraryIngestController,
+    )
+
+    screen, queued, checks, _ = _screen()
+    screen._do_submit_ingest("clip.mp4")
+    screen._library_ingest_form = screen._ingest_state.form
+    screen._library_ingest_last_submission = SimpleNamespace(
+        source="clip.mp4",
+        title="Previous title",
+        author="",
+        keywords="",
+        analyze=False,
+        chunk=False,
+        chunk_size=1000,
+        type_options=screen._build_ingest_options_snapshot(),
+    )
+    screen._library_ingest_restage_discards_work = lambda: False
+    screen._disarm_library_ingest_retry_confirm = lambda: None
+    screen._invalidate_library_external_submission = (
+        lambda: LibraryScreen._invalidate_library_external_submission(screen)
+    )
+    screen._clear_library_external_vad_progress = lambda: None
+    screen._invalidate_library_ingest_preflight = lambda: None
+    screen._refresh_library_ingest_canvas_preserving_context = lambda: None
+    screen._trigger_library_ingest_preflight = lambda source: None
+    screen._focus_library_ingest_path = lambda: None
+    screen.call_after_refresh = lambda callback: None
+
+    LibraryIngestController._restage_library_ingest_last_submission(screen)
+    assert screen._ingest_state.form.title == "Previous title"
+    LibraryScreen._apply_library_transcription_readiness(screen, *checks[0], None)
+    assert not queued

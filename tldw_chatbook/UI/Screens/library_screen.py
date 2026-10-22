@@ -28966,7 +28966,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._invalidate_library_external_submission()
         self._set_library_external_status(
-            "External preparation cancelled; no import was queued.",
+            "Import preparation cancelled; no import was queued.",
             busy=False,
         )
 

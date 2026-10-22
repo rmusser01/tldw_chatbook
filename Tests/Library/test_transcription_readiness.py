@@ -37,13 +37,15 @@ def test_missing_selected_package_names_its_install_remedy(provider, module, ext
     assert "Python environment" in str(caught.value)
 
 
-def test_whisper_checks_exact_selected_cache_without_downloading(tmp_path):
+@pytest.mark.parametrize("vocabulary", ["vocabulary.json", "vocabulary.txt"])
+def test_whisper_checks_exact_selected_cache_without_downloading(tmp_path, vocabulary):
     calls = []
     model = tmp_path / "cached"
     model.mkdir()
     (model / "model.bin").write_bytes(b"weights")
     (model / "config.json").write_text("{}")
     (model / "tokenizer.json").write_text("{}")
+    (model / vocabulary).write_text("[]")
 
     def cached(name, *, local_files_only):
         calls.append((name, local_files_only))
@@ -61,10 +63,10 @@ def test_whisper_checks_exact_selected_cache_without_downloading(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "absent", ["cache", "model.bin", "config.json", "tokenizer.json"]
+    "absent", ["cache", "model.bin", "config.json", "tokenizer.json", "vocabulary.json"]
 )
 def test_whisper_missing_or_incomplete_cache_has_model_remedy(tmp_path, absent):
-    for filename in ("model.bin", "config.json", "tokenizer.json"):
+    for filename in ("model.bin", "config.json", "tokenizer.json", "vocabulary.json"):
         if filename != absent:
             (tmp_path / filename).write_text("test")
 
@@ -195,3 +197,49 @@ def test_explicit_translation_target_wins_over_checkbox():
             },
             import_module=lambda name: _runtime(),
         )
+
+
+def test_whisper_accepts_model_directory_with_shell_punctuation(tmp_path):
+    root = tmp_path / "Whisper;custom"
+    root.mkdir()
+    for name in ("model.bin", "config.json", "tokenizer.json", "vocabulary.json"):
+        (root / name).write_text("test")
+    check_transcription_readiness(
+        {"transcription_provider": "default"},
+        default_model=str(root),
+        import_module=lambda name: _runtime(),
+    )
+
+
+@pytest.mark.parametrize(
+    "model", ["distil-large-v3", "deepdml/faster-whisper-large-v3-turbo-ct2"]
+)
+def test_missing_configured_whisper_catalog_model_names_exact_download(model):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("/private/cache")
+
+    with pytest.raises(TranscriptionReadinessError) as caught:
+        check_transcription_readiness(
+            {"transcription_provider": "default"},
+            default_model=model,
+            import_module=lambda name: _runtime(download_model=missing),
+        )
+    assert caught.value.reason == "model_missing"
+    assert f"download_model('{model}')" in str(caught.value)
+    assert "/private" not in str(caught.value)
+
+
+def test_missing_custom_whisper_path_is_not_echoed_in_remedy(tmp_path):
+    model = str(tmp_path / "private-model")
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError(model)
+
+    with pytest.raises(TranscriptionReadinessError) as caught:
+        check_transcription_readiness(
+            {"transcription_provider": "default"},
+            default_model=model,
+            import_module=lambda name: _runtime(download_model=missing),
+        )
+    assert caught.value.reason == "model_missing"
+    assert model not in str(caught.value)

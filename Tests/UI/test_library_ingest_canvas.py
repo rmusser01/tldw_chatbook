@@ -1613,7 +1613,7 @@ async def test_external_preparation_status_and_cancel_are_stable_and_path_free()
         assert str(status.renderable) == "Verifying external Parakeet model…"
         assert "/" not in str(status.renderable)
         assert cancel.display is True
-        assert "Cancel" in str(cancel.label)
+        assert str(cancel.label) == "Cancel import preparation"
         assert busy.query_one("#library-ingest-start", Button).disabled is True
         assert busy.query_one("#library-ingest-path", Input).disabled is True
         assert busy.query_one("#library-ingest-browse", Button).disabled is True
@@ -2811,7 +2811,7 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
     assert screen._ingest_state.form == prior
     assert screen._library_external_submit_busy is False
     assert screen._library_external_submit_status == (
-        "External preparation cancelled; no import was queued."
+        "Import preparation cancelled; no import was queued."
     )
 
 

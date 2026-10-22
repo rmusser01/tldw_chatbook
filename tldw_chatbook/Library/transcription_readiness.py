@@ -73,7 +73,10 @@ def check_transcription_readiness(
         ValueError: The selected provider or language route is invalid.
     """
     from tldw_chatbook.Local_Ingestion.stt_batch_routing import resolve_batch_stt_route
-    from tldw_chatbook.Library.ingest_capabilities import field_gate_open
+    from tldw_chatbook.Library.ingest_capabilities import (
+        field_gate_open,
+        get_capabilities,
+    )
 
     provider = options.get("transcription_provider") or "default"
     target = options.get("translation_target_language")
@@ -123,7 +126,9 @@ def check_transcription_readiness(
             else:
                 utilities = import_module("faster_whisper.utils")
                 root = Path(utilities.download_model(model, local_files_only=True))
-            root = validate_path_simple(root, require_exists=True)
+            root = validate_path_simple(
+                root, require_exists=True, reject_shell_metacharacters=False
+            )
             if not all(
                 (root / name).is_file()
                 for name in (
@@ -131,26 +136,20 @@ def check_transcription_readiness(
                     "config.json",
                     "tokenizer.json",
                 )
+            ) or not any(
+                (root / name).is_file()
+                for name in ("vocabulary.json", "vocabulary.txt")
             ):
                 raise FileNotFoundError
         except (OSError, ValueError, RuntimeError, ImportError):
             label = (
                 model
                 if model
-                in {
-                    "tiny",
-                    "tiny.en",
-                    "base",
-                    "base.en",
-                    "small",
-                    "small.en",
-                    "medium",
-                    "medium.en",
-                    "large",
-                    "large-v1",
-                    "large-v2",
-                    "large-v3",
-                }
+                in next(
+                    field.options
+                    for field in get_capabilities("audio_video").fields
+                    if field.name == "transcription_model"
+                )
                 else "selected"
             )
             raise TranscriptionReadinessError(

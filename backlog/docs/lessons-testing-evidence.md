@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## New regression files need an explicit PR lane (TASK-32755.3, PR #3202)
+
+**Incident.** The full review of transcription readiness found that its new
+Library and UI regression files were absent from every required PR invocation;
+the earlier green CI run therefore did not execute them. Existing snapshot and
+restaging tests outside those lanes also still assumed synchronous submission.
+The direct fixtures reproduced NoActiveAppError, and the mounted audio fixture
+queued nothing with no installed runtime/model.
+
+**What to do.** Check the actual workflow targets when adding regression files.
+Readiness and publication pins now run in the admission-sensitive lane with its
+matching target contract. Keep unmounted persistence tests at the post-readiness
+boundary; mounted journey fixtures retain the real worker/publication and await
+completion while stubbing only the separately tested package/model check.
+
+
+
 
 ## Repeated pytest file names need occurrence timestamps (TASK-35834, 2026-10-20)
 

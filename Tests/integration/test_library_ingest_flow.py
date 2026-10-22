@@ -271,7 +271,9 @@ def test_options_persist_to_config(monkeypatch):
     # the real method posts a message this unmounted shortcut cannot.
     screen.call_after_refresh = lambda *_args, **_kwargs: None
 
-    library_screen_module.LibraryScreen._do_submit_ingest(screen, "doc.pdf")
+    library_screen_module.LibraryScreen._do_submit_ingest(
+        screen, "doc.pdf", _readiness_checked=True
+    )
 
     assert len(submitted_jobs) == 1
 
@@ -356,7 +358,9 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     # the real method posts a message this unmounted shortcut cannot.
     screen.call_after_refresh = lambda *_args, **_kwargs: None
 
-    library_screen_module.LibraryScreen._do_submit_ingest(screen, "notes.txt")
+    library_screen_module.LibraryScreen._do_submit_ingest(
+        screen, "notes.txt", _readiness_checked=True
+    )
 
     assert len(submitted_jobs) == 1
     generic = submitted_jobs[0]["ingest_options"]["generic"]
