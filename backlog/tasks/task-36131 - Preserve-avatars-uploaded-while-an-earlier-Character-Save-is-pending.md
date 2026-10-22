@@ -1,7 +1,7 @@
 ---
 id: TASK-36131
 title: Preserve avatars uploaded while an earlier Character Save is pending
-status: In Progress
+status: Done
 created_date: 2026-10-22 15:29
 labels:
 - personas
@@ -10,10 +10,10 @@ labels:
 - attachments
 priority: medium
 documentation:
-- Docs/superpowers/qa/2026-10-22-textual-book-after-pr3205.md
+- Docs/superpowers/qa/2026-10-22-textual-source-and-attachment-drafts.md
 assignee:
 - '@codex'
-updated_date: 2026-10-22 17:29
+updated_date: 2026-10-22 18:16
 ---
 
 ## Description
@@ -44,10 +44,10 @@ Reason: No new ADR is required for a bounded correction within the existing Char
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 If a valid avatar upload is staged after an ordinary Character Save captures its submission, completing that Save retains the exact later bytes as an unsaved attachment while adopting the actual persisted record identity and version.
-- [ ] #2 The current editor preview/readout and existing aggregate leave/quit draft predicate continue to represent the retained attachment; choosing Stay preserves it without silently acknowledging or replacing it.
-- [ ] #3 A subsequent explicit Save persists the retained avatar to the same Character with the correct version and then becomes clean; uploads made before Save persist normally and failed saves retain staged bytes.
-- [ ] #4 Mounted real-picker-result and real-store regressions distinguish upload-before-Save, upload-during-pending-Save and same-record retry/failure outcomes while preserving path validation, storage admission, stale-editor fences and existing raw-text/greetings coverage.
+- [x] #1 If a valid avatar upload is staged after an ordinary Character Save captures its submission, completing that Save retains the exact later bytes as an unsaved attachment while adopting the actual persisted record identity and version.
+- [x] #2 The current editor preview/readout and existing aggregate leave/quit draft predicate continue to represent the retained attachment; choosing Stay preserves it without silently acknowledging or replacing it.
+- [x] #3 A subsequent explicit Save persists the retained avatar to the same Character with the correct version and then becomes clean; uploads made before Save persist normally and failed saves retain staged bytes.
+- [x] #4 Mounted real-picker-result and real-store regressions distinguish upload-before-Save, upload-during-pending-Save and same-record retry/failure outcomes while preserving path validation, storage admission, stale-editor fences and existing raw-text/greetings coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,3 +60,13 @@ Reason: Acknowledge the submitted attachment baseline while retaining later avat
 2. Verify the new/adjacent mounted tests, scoped static checks and existing size ceilings; retain exact receipts and source hashes.
 3. Independently review against all four acceptance criteria, update architecture/QA notes, then root integrates census/pins and completes task metadata.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Character Save now passes its submitted image/avatar pair through completion. The editor adopts persisted identity/version and attachment baseline while preserving a differing later upload as dirty; existing raw-text/greetings acknowledgement and authority/thumbnail fences stay intact. Changed personas_screen.py, personas_character_editor_widget.py, added test_personas_pending_avatar_saves.py and updated Architecture/ccp.md.
+
+Four new real-picker/SQLite regressions and 22 adjacent checks pass, including Stay, next same-record Save/version, definite failure/retry, raw drafts, rejected/stale uploads and screen budgets. Widget/test Ruff lint/format pass; existing screen diagnostics/format debt are qualified. Screen stays at its unchanged 16561-line ceiling. Independent task spec/quality review approved; stable-source shared guards and census integration pass.
+
+ADR required: no. Existing backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md and 033-application-session-state-ownership.md govern attachment/aggregate ownership. No uncertain-write policy is introduced. Verification and practical limits: Docs/superpowers/qa/2026-10-22-textual-source-and-attachment-drafts.md
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

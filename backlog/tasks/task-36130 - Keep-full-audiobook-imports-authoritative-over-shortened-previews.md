@@ -1,7 +1,7 @@
 ---
 id: TASK-36130
 title: Keep full audiobook imports authoritative over shortened previews
-status: In Progress
+status: Done
 created_date: 2026-10-22 15:29
 labels:
 - speech
@@ -9,10 +9,10 @@ labels:
 - source-integrity
 priority: medium
 documentation:
-- Docs/superpowers/qa/2026-10-22-textual-book-after-pr3205.md
+- Docs/superpowers/qa/2026-10-22-textual-source-and-attachment-drafts.md
 assignee:
 - '@codex'
-updated_date: 2026-10-22 17:29
+updated_date: 2026-10-22 18:15
 ---
 
 ## Description
@@ -43,10 +43,10 @@ Reason: Repair content ownership within the existing audiobook widget. No new st
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Successful audiobook file import preserves all imported text in the working source and actual Generate request, including text beyond character 1000; preview ellipsis is never silently substituted into that source.
-- [ ] #2 Chapter detection and its editor/table reflect the complete imported source, including a chapter beyond the preview cutoff; intentional later edits and clears retain TASK-36100 freshness guarantees.
-- [ ] #3 Equivalent Notes and Conversation import previews preserve the same full-source guarantee. Intentional source editing has a consistent, explicit relationship to the text submitted by Generate, without silently discarding unseen imported content.
-- [ ] #4 Bounded mounted regressions drive real import/change/Generate events for long, exactly-1000 and short sources, demonstrate the defect before the fix and preserve ordinary imports and deliberate edits without provider or synthesis effects.
+- [x] #1 Successful audiobook file import preserves all imported text in the working source and actual Generate request, including text beyond character 1000; preview ellipsis is never silently substituted into that source.
+- [x] #2 Chapter detection and its editor/table reflect the complete imported source, including a chapter beyond the preview cutoff; intentional later edits and clears retain TASK-36100 freshness guarantees.
+- [x] #3 Equivalent Notes and Conversation import previews preserve the same full-source guarantee. Intentional source editing has a consistent, explicit relationship to the text submitted by Generate, without silently discarding unseen imported content.
+- [x] #4 Bounded mounted regressions drive real import/change/Generate events for long, exactly-1000 and short sources, demonstrate the defect before the fix and preserve ordinary imports and deliberate edits without provider or synthesis effects.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,13 @@ Reason: Keep full imported content in the existing editable TextArea for file, N
 2. Verify the new/adjacent mounted tests, scoped static checks and existing size ceilings; retain exact receipts and source hashes.
 3. Independently review against all four acceptance criteria, update architecture/QA notes, then root integrates census/pins and completes task metadata.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Complete file, Notes and Conversation imports now remain in the existing editable TextArea, so Changed echoes, chapter detection and Generate retain the full source. Deliberate edits/clears keep the existing freshness authority. Changed STTS_Window.py, added test_audiobook_import_source_integrity.py and updated Architecture/speech.md.
+
+Seven new mounted real-service regressions and five adjacent freshness cases pass; thirteen legacy admission setup errors remain unqualified, as documented in the linked QA. New-test Ruff lint/format pass; unchanged production lint/format debt is explicitly compared with baseline. Independent task spec/quality review approved; stable-source shared guards and 87 census/shard/service checks pass. Concrete regression nodes are gated without moving prior CI slots or raising limits.
+
+ADR required: no. Existing backlog/decisions/033-application-session-state-ownership.md and 011-chatbook-workbench-ui-system.md apply to this existing-owner repair. Verification and practical limits: Docs/superpowers/qa/2026-10-22-textual-source-and-attachment-drafts.md
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

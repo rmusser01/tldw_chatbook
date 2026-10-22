@@ -1,7 +1,7 @@
 ---
 id: TASK-36132
 title: Preserve newer Flashcards drafts when earlier creates complete
-status: In Progress
+status: Done
 created_date: 2026-10-22 15:30
 labels:
 - study
@@ -9,10 +9,10 @@ labels:
 - drafts
 priority: medium
 documentation:
-- Docs/superpowers/qa/2026-10-22-textual-book-after-pr3205.md
+- Docs/superpowers/qa/2026-10-22-textual-source-and-attachment-drafts.md
 assignee:
 - '@codex'
-updated_date: 2026-10-22 17:29
+updated_date: 2026-10-22 18:16
 ---
 
 ## Description
@@ -43,10 +43,10 @@ Reason: ADR required: no new ADR. This bounded repair retains screen-local autho
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A successful pending deck create persists only its submitted deck name and preserves any exact newer raw name still in the current authoring field, including a whitespace-only edit.
-- [ ] #2 A successful pending flashcard create persists only its submitted front, back and parsed tags; independent or combined newer raw edits to any of those fields remain in the form. Completion preserves current editing context, including caret/selection and focus, without stealing focus deliberately moved elsewhere.
-- [ ] #3 Unchanged fields clear after one successful creation; a definite failed create preserves current drafts and remains retryable under the existing service contract. Uncertain-write retry/idempotency policy is outside this task.
-- [ ] #4 Bounded mounted regressions use the existing create events/workers, controlled service awaits and real StudyScopeService/LocalStudyService with SQLite; live drafts are asserted separately from stored records and unchanged-success/failure-retry controls pass.
+- [x] #1 A successful pending deck create persists only its submitted deck name and preserves any exact newer raw name still in the current authoring field, including a whitespace-only edit.
+- [x] #2 A successful pending flashcard create persists only its submitted front, back and parsed tags; independent or combined newer raw edits to any of those fields remain in the form. Completion preserves current editing context, including caret/selection and focus, without stealing focus deliberately moved elsewhere.
+- [x] #3 Unchanged fields clear after one successful creation; a definite failed create preserves current drafts and remains retryable under the existing service contract. Uncertain-write retry/idempotency policy is outside this task.
+- [x] #4 Bounded mounted regressions use the existing create events/workers, controlled service awaits and real StudyScopeService/LocalStudyService with SQLite; live drafts are asserted separately from stored records and unchanged-success/failure-retry controls pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,13 @@ Reason: Capture raw deck/card authoring fields before normalization; clear each 
 2. Verify the new/adjacent mounted tests, scoped static checks and existing size ceilings; retain exact receipts and source hashes.
 3. Independently review against all four acceptance criteria, update architecture/QA notes, then root integrates census/pins and completes task metadata.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Deck/card creates capture raw fields before normalization and clear each field only when its live value still matches submission. Later text, whitespace, selection/caret and moved focus receive no completion assignment. Existing service payloads, list/status behavior and definite pre-write failure contracts remain. Changed flashcards_handler.py, added test_study_flashcard_create_drafts.py and updated Architecture/study.md.
+
+Four new mounted real-service/SQLite nodes covering eleven edit variants plus unchanged/failure/retry controls and 19 adjacent checks pass. Handler/test Ruff lint and formatting pass. Independent task spec/quality review approved; stable-source shared guards and 87 census/shard/service checks pass. Corrected duplicate deck-name fixture and interrupted redundant RED are separately qualified. No ceiling, dependency or service contract changed.
+
+ADR required: no. Existing backlog/decisions/033-application-session-state-ownership.md and 011-chatbook-workbench-ui-system.md apply to this bounded owner repair. Verification and practical limits: Docs/superpowers/qa/2026-10-22-textual-source-and-attachment-drafts.md
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

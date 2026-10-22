@@ -21214,3 +21214,10 @@ During optional keyword scanner qualification (TASK-36003, 2026-10-21), retainin
 **Incident (TASK-36006, 2026-10-22).** Keyword qualification initially compared a canonical lexical method plus an in-memory test fence with a later real registry fence, sensitive-path acquisition and management-status read. The broader final clock failed all six500ms p95 cells; source audit confirmed the extra work was production work, not fixture overhead. The nested/common canonical component also failed577.305ms, so changing the reporting boundary alone could not satisfy the original target.
 
 **What to do.** Name and retain canonical lookup, admitted candidates, live validation and whole invocation separately, including their exact guards/owners and setup exclusions. A stronger admitted budget is a new requirement; accepting its miss requires an explicit recorded deviation, not relabeling the failure as invalid measurement. Profile the failing component before a local remedy, and retain adverse/source/load receipts. Never subtract independently computed percentile values or sum overlapping cumulative profiles to claim an exclusive phase cost.
+
+
+## Freeze shared source before repository-wide scans (2026-10-22)
+
+During TASK-36132, a repository-wide guard run overlapped an implementer temporarily restoring baseline source for a redundant RED run in the same worktree. All four guards returned zero, but that scan could not certify one source snapshot. The final guard run had to be repeated after implementation handoff, with matching before/after source hashes.
+
+Serialize baseline reversals and shared scans. Private test profiles isolate storage, not the Python source checkout. Finish implementation handoff before repository-wide verification; record the reviewed source identity and verify it stays unchanged for the scan.
