@@ -10673,8 +10673,8 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
         stored_source = f"config:api_settings.{provider}.api_key"
         assert before[:2] == after[:2] == (stored_key, stored_source)
         assert readiness_before == readiness_after == before[1]
-        # The quit rewrite (persist_cli_config_for_shutdown) merges the template
-        # back, restoring its env-var name; the stored decision still wins,
+        # A reload merges the template back in memory, restoring its env-var
+        # name; the stored decision still wins at quit and after the reload,
         # even once that variable is exported.
         monkeypatch.setenv(template_env, env_key or "sk-exported-later-33001")
         assert config_module.persist_cli_config_for_shutdown()
@@ -10730,7 +10730,7 @@ async def test_settings_model_save_writes_a_legacy_api_section_key_into_the_prov
     and left the table on disk without an ``api_key``. Once the variable was
     exported readiness found no stored key while requests spent the env key.
     The save now writes the key into the table, so both resolve the stored
-    key with the variable unset, set, and after the quit rewrite. The app's
+    key with the variable unset, set, and after the quit. The app's
     config is the real loader's and the real writer runs on this private
     profile's TLDW_CONFIG_PATH.
 
@@ -11195,9 +11195,8 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
             )
         ]
 
-    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
-        "llama_cpp"
-    ]
+    saved_bytes = config_path.read_bytes()
+    saved = tomllib.loads(saved_bytes.decode("utf-8"))["api_settings"]["llama_cpp"]
     assert saved["model"] == "qwen3-coder"
     after = resolve_provider_credential("llama_cpp", saved, environ=os.environ)
     assert after[:2] == before[:2]
@@ -11211,13 +11210,15 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
     else:
         assert after[0] == env_key
 
-    # The runtime reads the template merged under the file, and the app's quit
-    # (persist_cli_config_for_shutdown) writes that merge back: the live run's
-    # config regained the template name 12s after this save. Only the explicit
-    # decision keeps the name inert, even once the variable is exported.
+    # TASK-35835: the app's quit (persist_cli_config_for_shutdown) leaves the
+    # file the save wrote byte for byte. It used to write the template merge
+    # back, so the live run's config regained the template name 12s after
+    # this save. The runtime still reads the template merged under the file,
+    # so only the explicit decision keeps the name inert once it is exported.
     exported = env_key or "sk-exported-later"
     monkeypatch.setenv("LLAMA_CPP_API_KEY", exported)
     assert config_module.persist_cli_config_for_shutdown()
+    assert config_path.read_bytes() == saved_bytes
     expected = None if (env_key, persisted_source) == (None, None) else exported
     for config in (
         config_module.load_cli_config_and_ensure_existence(force_reload=True),

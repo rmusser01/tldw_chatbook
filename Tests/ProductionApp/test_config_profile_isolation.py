@@ -112,7 +112,8 @@ import os
 from pathlib import Path
 
 state = {{"mounted": False, "effective_path_selected": False,
-         "persistence_called": False, "persistence_succeeded": False}}
+         "persistence_called": False, "persistence_succeeded": False,
+         "persistence_left_file_unchanged": False}}
 phase = "import"
 
 try:
@@ -128,8 +129,11 @@ try:
             config_module.get_cli_config_path()
             == Path(os.environ["TLDW_CONFIG_PATH"])
         )
+        config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+        before = config_path.read_bytes()
         result = real_persist()
         state["persistence_succeeded"] = result is True
+        state["persistence_left_file_unchanged"] = config_path.read_bytes() == before
         return result
 
     lifecycle_module.persist_cli_config_for_shutdown = observed_persist
@@ -168,9 +172,9 @@ print({RESULT_PREFIX!r} + json.dumps(state, sort_keys=True))
         for stream in (result.stdout, result.stderr)
     )
     child_succeeded = result.returncode == 0
-    lifecycle_evidence_complete = child_succeeded and _result_payload(
-        result.stdout
-    ) == {
+    payload = _result_payload(result.stdout) if child_succeeded else {}
+    persisted_in_place = payload.pop("persistence_left_file_unchanged", False)
+    lifecycle_evidence_complete = payload == {
         "effective_path_selected": True,
         "mounted": True,
         "persistence_called": True,
@@ -192,3 +196,7 @@ print({RESULT_PREFIX!r} + json.dumps(state, sort_keys=True))
     assert lifecycle_evidence_complete, "isolated lifecycle evidence was incomplete"
     assert decoy_unchanged, "isolated lifecycle changed the decoy config"
     assert effective_present, "isolated lifecycle effective config was unavailable"
+    # TASK-35835: the quit's shutdown persist leaves the file as it found it.
+    # It used to write the template merge back. (Console's mount still saves
+    # its rail state, so the file is compared around the persist alone.)
+    assert persisted_in_place, "the shutdown persist rewrote the effective config"

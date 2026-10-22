@@ -1,8 +1,11 @@
 ---
 id: TASK-35835
 title: Quitting after a provider save rewrites config.toml and restores the key env var the save removed
-status: To Do
+status: In Progress
+assignee:
+  - '@claude'
 created_date: 2026-10-20 14:53
+updated_date: '2026-10-22 19:32'
 labels:
 - follow-up
 - settings
@@ -52,3 +55,11 @@ Found in S1's live verification (2026-10-20). It reproduces on plain dev 1bbc145
 - [ ] #2 After a provider save, quitting leaves config.toml byte-identical to what the save wrote
 - [ ] #3 A test pins it: save a keyless provider, quit, and the file keeps the saved credential fields
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Establish intent from history: the pre-TASK-491 quit code, a9ccde5723 (TASK-491 centralisation), b5251e9a6e (TASK-32628 recovery guard, "a defaults-only rewrite"), b04fc23ebc (TASK-33001.7 workaround), and ADR-029.
+2. Red first at dev: extend `test_settings_keyless_provider_save_keeps_template_env_name_out` (real Settings save on a private profile, then `persist_cli_config_for_shutdown()`) to require the saved bytes to survive; extend `test_real_app_quit_persists_only_the_effective_config` (the real quit path) to require the shutdown persist to leave the file byte-identical, as the no-save control.
+3. Fix in the shared `persist_cli_config_for_shutdown()`: keep its recovery guard and its "file loads safely" gate, drop the template-merge rewrite, and write only when the file itself holds a plaintext secret under unlocked encryption (the one thing it carries), encrypting the file's own contents.
+4. Update the pins that recorded the old rewrite (the hub test comments, `test_shutdown_persistence_uses_only_effective_path`), the User Guide Credentials row, and the TASK-33001.7 lesson.
+5. Run every test that names the shutdown persist, the recovery guard or the raw writer, plus preflight and the size ratchet.

@@ -95,6 +95,9 @@ def test_shutdown_persistence_uses_only_effective_path(tmp_path, monkeypatch):
         },
         password,
     )
+    # TASK-35835: a plaintext secret hand-added to the encrypted file is what
+    # the quit still persists; with none, it writes nothing.
+    encrypted["API"]["anthropic_api_key"] = "hand-added-SENTINEL"
     target.write_text(toml.dumps(encrypted), encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
     monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
@@ -104,10 +107,33 @@ def test_shutdown_persistence_uses_only_effective_path(tmp_path, monkeypatch):
 
     assert config.persist_cli_config_for_shutdown() is True
 
-    assert config_encryption.is_encrypted(toml.load(target)["API"]["openai_api_key"])
-    assert "shutdown-SENTINEL" not in target.read_text(encoding="utf-8")
+    for key in ("openai_api_key", "anthropic_api_key"):
+        assert config_encryption.is_encrypted(toml.load(target)["API"][key])
+    assert "SENTINEL" not in target.read_text(encoding="utf-8")
+    assert "api_settings" not in toml.load(target)  # its own contents, no template
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert not ignored_default.exists()
+
+
+def test_shutdown_persistence_leaves_a_fresh_template_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-35835: a quit with nothing to encrypt writes nothing.
+
+    It used to write the template merge back, which stripped a fresh file's
+    comments on the first quit and restored keys a save had deleted.
+    """
+    target = tmp_path / "override" / "config.toml"
+    target.parent.mkdir(mode=0o700)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
+    config.load_cli_config_and_ensure_existence(force_reload=True)
+    created = target.read_bytes()
+    assert created.lstrip().startswith(b"#")
+
+    assert config.persist_cli_config_for_shutdown() is True
+
+    assert target.read_bytes() == created
 
 
 @pytest.mark.parametrize("failure", ["malformed_toml", "decryption"])

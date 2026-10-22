@@ -7695,9 +7695,9 @@ def _write_raw_cli_config_unlocked(
         the post-round-trip view the next boot would see).
 
     TASK-13157: every config-rewrite pass (settings-screen edits, the
-    first-run wizard, and -- notably -- the full default+user re-merge every
-    process shutdown persists via ``persist_cli_config_for_shutdown``) ends
-    up here. The in-memory ``config_data`` is always a plain ``dict`` with
+    first-run wizard, and the quit's encryption pass in
+    ``persist_cli_config_for_shutdown``) ends up here. The in-memory
+    ``config_data`` is always a plain ``dict`` with
     inherently unique keys, so it cannot itself carry a duplicate key -- but
     ``toml.dumps`` (the third-party encoder) and ``tomllib`` (the stdlib
     reader the NEXT boot uses) are two independent implementations with no
@@ -8425,15 +8425,27 @@ def _replace_cli_config_serialized(
 
 
 def persist_cli_config_for_shutdown() -> bool:
-    """Re-persist the effective config through the normal encrypted owner."""
+    """Encrypt plaintext secrets left in an unlocked encrypted config at quit.
+
+    Every save has already written the file, and every load merges the
+    shipped template under it, so a quit has nothing else to carry to disk.
+    Writing that merge back re-inserted template keys a save had deleted,
+    reordered the file and stripped its comments (TASK-35835). The file can
+    still lack encryption at rest for a secret added in plaintext (a hand
+    edit) while encryption is enabled; only then is it rewritten, from its
+    own contents.
+
+    Returns:
+        False when the file cannot be loaded safely or the write fails.
+    """
 
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
             from .Backup_Recovery.profile_open import unchanged_selected_config
 
-            # Settings writes already persist. A defaults-only rewrite would
-            # invalidate the selected recovery generation's config fingerprint.
+            # Settings writes already persist. A rewrite would invalidate the
+            # selected recovery generation's config fingerprint.
             if unchanged_selected_config(config_path):
                 return True
             bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
@@ -8443,7 +8455,16 @@ def persist_cli_config_for_shutdown() -> bool:
                     "file could not be loaded safely."
                 )
                 return False
-            current = bootstrap.config
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+            current = tomllib.loads(serialized) if serialized is not None else {}
+            encryption = current.get("encryption", {})
+            if not (
+                isinstance(encryption, Mapping)
+                and encryption.get("enabled", False)
+                and get_encryption_password()
+                and _contains_unencrypted_sensitive_value(current)
+            ):
+                return True
             persisted = _config_data_for_persistence(current)
             raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             _publish_runtime_config_unlocked(
