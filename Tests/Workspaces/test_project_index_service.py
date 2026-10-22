@@ -1698,3 +1698,132 @@ async def test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
             except asyncio.CancelledError:
                 pass
         await rig.close()
+
+
+@private_profile_test
+async def test_failed_start_history_race_retires_unrecorded_production_pin(
+    tmp_path, request, monkeypatch
+):
+    from types import SimpleNamespace
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces.project_index.runtime import (
+        get_project_index_service,
+        project_index_key,
+        close_project_index_service,
+    )
+
+    root = tmp_path / "project"
+    root.mkdir()
+    registry = LocalWorkspaceRegistryService(WorkspaceDB(tmp_path / "registry.db"))
+    registry.create_workspace(workspace_id="race-ws", name="Race")
+    binding = registry.add_folder_binding("race-ws", root)
+    app = SimpleNamespace(workspace_registry_service=registry)
+    service = get_project_index_service(app)
+    key = project_index_key(app, "race-ws", binding.binding_id, root)
+    entered, attempted, mutated = (threading.Event() for _ in range(3))
+    errors, pins, close_calls = [], [], []
+    failure = ValueError("synthetic_start_failure")
+    pause = failing = pruning = None
+
+    class CoordinatedHistory(dict):
+        def values(self):
+            iterator = iter(super().values())
+            for run in iterator:
+                yield run
+                if threading.current_thread().name == "failed-index-start":
+                    entered.set()
+                    assert attempted.wait(10)
+                    # With a protected lookup, pruning waits until iteration ends.
+                    mutated.wait(0.2)
+
+    try:
+        initial = service.status(key)
+        enabled = service.enable(key, POLICY, expected_scope=initial.scope)
+        job = service.refresh(
+            key,
+            expected_scope=enabled.scope,
+            expected_job_revision=enabled.job_revision,
+        )
+        old_run = service._runs[job]
+        await asyncio.to_thread(old_run.supervisor.join, 15)
+        assert old_run.native_retired and not old_run.supervisor.is_alive()
+        ready = service.status(key)
+        service._runs = CoordinatedHistory(service._runs)
+        retain = service._retain
+
+        def retain_counted(selected):
+            pin = retain(selected)
+            pins.append(pin)
+            close = pin.close
+
+            def counted_close():
+                close_calls.append(pin)
+                unlocked = threading.Event()
+
+                def acquire_lock():
+                    with service._lock:
+                        unlocked.set()
+
+                observer = threading.Thread(target=acquire_lock)
+                observer.start()
+                observer.join(5)
+                assert unlocked.is_set(), "native pin close held the service lock"
+                close()
+
+            monkeypatch.setattr(pin, "close", counted_close)
+            return pin
+
+        def fail_start(*args):
+            raise failure
+
+        def fail_refresh():
+            try:
+                service.refresh(
+                    key,
+                    expected_scope=ready.scope,
+                    expected_job_revision=ready.job_revision,
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        def prune_retired_history():
+            assert entered.wait(10)
+            attempted.set()
+            with service._lock:
+                assert service._runs.pop(job) is old_run
+                mutated.set()
+
+        monkeypatch.setattr(service, "_retain", retain_counted)
+        monkeypatch.setattr(service, "_start_pinned", fail_start)
+        pruning = threading.Thread(target=prune_retired_history)
+        failing = threading.Thread(target=fail_refresh, name="failed-index-start")
+        pruning.start()
+        failing.start()
+        await asyncio.to_thread(failing.join, 15)
+        await asyncio.to_thread(pruning.join, 15)
+        assert not failing.is_alive() and not pruning.is_alive()
+        assert entered.is_set() and attempted.is_set() and mutated.is_set()
+        assert len(pins) == 1
+        assert errors == [failure], (errors, pins[0].closed, len(close_calls))
+        assert pins[0].closed and close_calls == pins
+        assert not service._operations and not service._runs
+        await close_project_index_service(app)
+        pause = storage._begin_local_pause()
+        _retire_current_thread_caches(pause)
+        assert pause.drain(time.monotonic() + 2), "failed start leaked a storage pin"
+    finally:
+        attempted.set()
+        for thread in (failing, pruning):
+            if thread is not None:
+                await asyncio.to_thread(thread.join, 15)
+                assert not thread.is_alive()
+        if pause is not None:
+            pause.resume()
+        for pin in pins:
+            if not pin.closed:
+                pin.close()
+        await close_project_index_service(app)
+        registry.db.close()

@@ -8683,6 +8683,9 @@ async def test_agent_controller_retry_anyway_preserves_explicit_recovery(
     )
 
 
+# The real gateway reads compaction config during construction. Keep the private
+# collection-time config participant instead of reselecting it per test.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
 async def test_controller_retry_retains_reservation_after_repreparation_failure(

@@ -928,9 +928,9 @@ class ProjectIndexService:
                         scope, revision, resume_id, pin, read_admission
                     )
             except BaseException:
-                if pin is not None and not any(
-                    run.pin is pin for run in self._runs.values()
-                ):
+                with self._lock:
+                    owned = any(run.pin is pin for run in self._runs.values())
+                if pin is not None and not owned:
                     self._close_capability(pin)
                 raise
 

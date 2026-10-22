@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-21 14:32'
-updated_date: '2026-10-22 04:54'
+updated_date: '2026-10-22 06:00'
 labels: []
 dependencies:
   - TASK-36005
@@ -14,14 +14,13 @@ documentation:
   - backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
 ---
 
-
-Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
-
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Let users explicitly manage folder-bound keyword indexing and understand coverage from Settings and Console.
 <!-- SECTION:DESCRIPTION:END -->
+
+Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -38,6 +37,7 @@ Let users explicitly manage folder-bound keyword indexing and understand coverag
 - [x] #11 Committed compatible Building coverage is discoverable through Console preparation and public search with truthful partial results, preserving scope/manifest/live-source/revocation gates.
 - [ ] #12 Proven-native-retired run/error history stays bounded without evicting unresolved native owners or a still-running supervisor; shutdown retains and joins an interrupted supervisor through physical exit, including repeated observer cancellation. Scanner annotations and dirty-input preservation remain covered. The prior deferred M1 qualification is resolved rather than carried into the PR.
 - [ ] #13 The rebased guidance/keyword composition preserves current dev dispatch/retry, Settings ownership and application shutdown behavior under selected integration checks; all saved Library policy/scope combinations and embedding-independent keyword operation remain intact.
+- [ ] #14 A failed index start preserves its original error and closes an unrecorded retained storage pin exactly once under concurrent run-history mutation; ownership lookup is synchronized, native close remains outside the service lock, and a recorded writer pin remains owned until physical retirement.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -82,6 +82,8 @@ Reason: direct implementation of accepted folder-bound storage/tool/management/r
 21. Final scoped review approves with one nonblocking M1 supervisor-tail residual. Explicitly qualify AC12 and retain its source-backed future correction, close the feature with that accepted debt and the measured admitted-latency deviation, retain all reports/raw/visual/ruling evidence and preserve the local branch/worktree. Existing ADR240 applies; no second fix wave, full sweep or integration.
 
 22. Newly user-authorized dev integration: preserve latest-dev2a5afa03b31f60e00bdcd10a161e3e351fad023b dispatch/retry/Settings/lifecycle behavior while replaying guidance and keyword indexing. Rebase completed99857a64e7 with only two documentation unions and all production/test patches retained; structural checks alone are not runtime proof. Resolve the sole introduced ADR240 collision by renumbering the unmerged project ADR to241 after all-ref/open-PR verification (landed MCP240 keeps ownership). Update active governance/real Markdown link targets, preserve historical raw receipts/hashes/rulings and source-qualified old labels. Before M1 code, establish actual interrupted-supervisor RED after native retirement with20later completions and cancellation/close barrier; apply the smallest eviction liveness predicate, run regression plus normal bounded history and affected native shutdown controls. Run selected latest-dev controller/bridge/Settings/lifecycle and Library-preservation checks, source-derived short CI guards, scoped lint/format/diff and fresh exact-dev-range independent requesting-code-review. Address all new review findings, then satisfy current-head Qodo/threads/required CI and merge via enabled queue. ADR required:yes, existing accepted project decision renumbered to backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; no new storage/permission architecture for this correction.
+
+23. Before the fresh-review correction, add AC14 for failed-start retained-pin ownership. Reproduce the concrete unlocked ownership-lookup interleaving with a coordinated real concurrent start/history mutation and actual storage lifetime; prove original exception, exactly-once unrecorded pin release, operation retirement and maintenance availability, retaining the recorded-writer control. Compute exact-pin ownership under the existing service lock, release the lock before capability close, with no native close inside it. Run only the affected regression and ownership/failed-dispatch controls after the current22-case e161 covering run physically retires. Preserve earlier-source covering results, retain RED/adverse receipts, commit the narrow fix, then final-source same-cache query-only qualification and one scoped correction/evidence rereview in the existing report. ADR required:yes, existing backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; direct correction of accepted ownership contract, no new architecture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
