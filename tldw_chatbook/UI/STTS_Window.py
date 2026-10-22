@@ -564,17 +564,29 @@ class AudioBookGenerationWidget(Widget):
             return
 
         try:
-            # Read the file content off the event loop.
+            content_preview = self.query_one("#content-preview", TextArea)
+            source_before_read = self.content_text
+            preview_before_read = content_preview.text
 
+            # Read the file content off the event loop.
             def _read_audiobook_text() -> str:
                 with open(path, "r", encoding="utf-8") as f:
                     return f.read()
 
             content = await asyncio.to_thread(_read_audiobook_text)
 
+            # Changed can still be queued behind this awaiting callback while
+            # the child editor has already accepted newer input.
+            if (
+                not self.is_attached
+                or self.content_text != source_before_read
+                or self.query_one("#content-preview", TextArea) is not content_preview
+                or content_preview.text != preview_before_read
+            ):
+                return
+
             # Update content preview
             self.content_text = content
-            content_preview = self.query_one("#content-preview", TextArea)
             content_preview.load_text(content)
             content_preview.disabled = False
 
