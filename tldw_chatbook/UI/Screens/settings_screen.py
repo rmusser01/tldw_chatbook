@@ -10841,7 +10841,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.WORKSPACES:
             return "Each action reversible: unarchive, rename again, or set active."
         if category is SettingsCategoryId.TOOLS:
-            return "Server, permission and tool-gate changes save as you make them."
+            return "Gates and permissions save at once; a server form has its own Save."
         if category is SettingsCategoryId.TOOL_PROFILES:
             return (
                 "Imports stay unbound; MCP owns policy editing; removal permanently "

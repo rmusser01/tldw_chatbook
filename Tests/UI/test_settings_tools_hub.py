@@ -125,10 +125,12 @@ def test_overview_rows_and_tools_badge_name_only_registered_destinations():
     # the banner's badge reads its save model from it.
     assert TOOLS_HUB_CATEGORY_SUMMARY in screen._category_summaries()
     assert badge == TOOLS_HUB_CATEGORY_SUMMARY.status
-    # The banner's scope half is Tools & MCP's own, not Overview's line.
+    # The banner's scope half is Tools & MCP's own, not Overview's line, and
+    # claims only what saves at once: a server form holds its edits until its
+    # own Save (review round 2).
     assert screen._category_state_banner_text(SettingsCategoryId.TOOLS) == (
-        "State: Immediate actions | Server, permission and tool-gate changes "
-        "save as you make them."
+        "State: Immediate actions | Gates and permissions save at once; a server "
+        "form has its own Save."
     )
 
 

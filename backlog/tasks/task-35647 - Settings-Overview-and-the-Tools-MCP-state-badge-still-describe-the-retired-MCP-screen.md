@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-20 03:07
-updated_date: 2026-10-22 23:30
+updated_date: 2026-10-22 23:54
 dependencies: []
 labels:
 - follow-up
@@ -80,5 +80,17 @@ Settings copy now names Settings ▸ Tools & MCP where it used to name the retir
 - **Runs:**
   - tools_hub, footer_hints and state_line_unsaved_count: 42 passed.
   - The shells Overview pin plus `test_state_banner_leads_with_persistence_badge` and `test_state_banner_text_has_exactly_one_state_segment`, under a temporary private-profile marker: 3 passed.
+  - settings_screen.py module ratchet: passed.
+  - preflight: passed.
+
+**Review round 2**
+
+- **N1.** The round-1 banner line ("Server, permission and tool-gate changes save as you make them.") overclaimed for servers. Adding or editing a server opens a form that keeps edits until **Save** or **Save and connect**, and its **Cancel** says "Discard changes." (mcp_profile_form.py, mcp_server_mutations.py).
+  - The line now reads "Gates and permissions save at once; a server form has its own Save." The banner is 94 cells, inside the 120-cell row, and the code still fits one line, so settings_screen.py stays at 35,663.
+  - The exact-string assert in test_settings_tools_hub.py was updated. It was red first against the round-1 line.
+  - The settings.md badge-table row no longer says "there is no draft". It says gates and permissions save at once, and that a server form keeps its edits until its Save (Cancel discards them).
+  - No other copy added by this task makes the claim: the added lines were checked for "immediate", "at once", "as you make/change" and "no draft".
+- **Runs:**
+  - test_settings_tools_hub.py: 18 passed.
   - settings_screen.py module ratchet: passed.
   - preflight: passed.
