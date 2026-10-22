@@ -116,7 +116,7 @@ when you set a field back by hand.
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
 | **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | Workspaces, [My Profile](settings/personal-context-profile.md), Theme |
-| **Immediate actions** | Tool gates and permissions save as you change them, with no category draft. Adding or editing a server opens a form that keeps your edits until its **Save** (or **Save and connect**); **Cancel** discards them. The category list names the same save model. | Tools & MCP |
+| **Immediate actions** | Tool gates and permissions save as you change them, with no category draft. Adding or editing a server opens a form that keeps your edits until its **Save** (or **Save and connect**); **Cancel** discards them. An edit form's credential actions (add slot, set or clear a secret, delete a slot) apply as you press them, so **Cancel** does not undo them. The category list names the same save model. | Tools & MCP |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
 | **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Diagnostics, and the eight view-only Domain Defaults pages |
