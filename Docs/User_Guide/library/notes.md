@@ -496,13 +496,18 @@ refused — a title with a leading or trailing space, unsafe markup, a
 duplicate keyword — or the write fails, the status line says why, and your
 cursor stays where it is, whether that is the field you are typing in, the
 Info pane or a button. Nothing jumps to another field or pane mid-sentence.
-The field that needs fixing is outlined, with the reason directly under it,
-and the status line reads "Fix the marked field, or press Save to go to
-it"; pressing **Save** takes you there. Leaving the Title field tidies a
-leading or trailing space, and leaving Keywords drops a duplicate that
-differs only in case ("x, X" becomes "x"), so an ordinary slip like that
-never leaves the note unsaved; you see the edit in the field, and nothing
-is rewritten at save. If the same note was changed somewhere else while you were editing,
+The field that needs fixing is marked — outlined on a wide terminal, its
+text shown in the error colour on a narrow one (under 120 columns) — with
+the reason directly under it (on the narrowest terminals that one-row
+reason may be cut short at its end; the status line above still carries
+all of it), and the status line reads "Fix the marked field, or press Save
+to go to it"; pressing **Save** takes you there. Leaving the Title field
+tidies a leading or trailing space, and leaving Keywords drops a duplicate
+that differs only in case ("x, X" becomes "x") and spells the list the one
+way ("a,b" becomes "a, b"), so an ordinary slip like that never leaves the
+note unsaved; you see the edit in the field, and nothing is rewritten at
+save. Switching to another window and back does not count as leaving the
+field: what you typed stays exactly as it was. If the same note was changed somewhere else while you were editing,
 a banner appears: "This note changed elsewhere — Overwrite saves your text;
 Reload discards it." — pick **Overwrite** or **Reload**.
 

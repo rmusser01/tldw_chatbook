@@ -527,7 +527,17 @@ _BUDGETS: dict[str, int] = {
     # Overwrite) each record the field in one line; the focus-independent
     # guard itself is in ``library_note_autosave.py``, the tidy in
     # ``Library/library_note_field_tidy.py``. Re-set to the exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6397,
+    # Fix round 1 (2026-10-22): 6397 -> 6425 (+28), same ruling. The mark
+    # clears only when the vetoed field itself changes (M-5): one
+    # ``clear_vetoed_field`` line in each of the four field handlers, one in
+    # ``_begin_library_note_load`` and one in ``_reset_library_note_editor_
+    # state`` (M-6); the two explicit veto presenters pass the veto's message
+    # (two lines each); ``safe_next_action`` is suppressed while a veto
+    # stands (M-4: one kwarg, three comment lines); the presentation comment
+    # on the ungated mark grew by two lines; the status line keeps the veto
+    # reason while a mark stands and a conflict or a landed save clears it
+    # (nine lines). Exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6425,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

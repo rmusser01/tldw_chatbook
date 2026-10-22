@@ -270,8 +270,9 @@ def keep_autosave_veto_in_place(
     screen._notes_state.autosave_state = (
         "validation" if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO else "error"
     )
-    screen._notes_state.validation_field = (
-        outcome.veto.field if outcome.veto is not None else ""
+    veto = outcome.veto
+    screen._notes_state.mark_vetoed_field(
+        veto.field if veto is not None else "", veto.message if veto is not None else ""
     )
     screen._update_library_note_meta_static(content=snapshot.body)
     return True

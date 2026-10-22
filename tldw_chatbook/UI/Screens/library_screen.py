@@ -21340,7 +21340,6 @@ class LibraryScreen(BaseAppScreen):
         if snapshot is None or snapshot.in_conflict or snapshot.saving:
             return
         self._notes_state.autosave_state = "idle"
-        self._notes_state.validation_field = ""  # TASK-34000.10: a keystroke clears the mark
         self._invalidate_library_note_autosave()
         from ..Library_Modules.library_note_autosave import arm_library_note_autosave
 
@@ -21635,9 +21634,11 @@ class LibraryScreen(BaseAppScreen):
             else "error"
         )
         validation_field = ""
+        validation_message = ""
         if outcome.save_outcome is not None and outcome.save_outcome.veto is not None:
             validation_field = outcome.save_outcome.veto.field
-        self._notes_state.validation_field = validation_field  # TASK-34000.10: the mark
+            validation_message = outcome.save_outcome.veto.message
+        self._notes_state.mark_vetoed_field(validation_field, validation_message)  # TASK-34000.10
         if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO:
             self._route_library_note_validation_field(validation_field)
         self._update_library_note_meta_static(content=snapshot.body)

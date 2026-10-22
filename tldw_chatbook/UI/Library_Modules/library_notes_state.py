@@ -504,11 +504,15 @@ class LibraryNotesState:
     load_state: str = "idle"
     load_message: str = ""
     autosave_state: str = "idle"
-    #: TASK-34000.10 (N-07): the field a standing validation veto named
-    #: ("title" / "body" / "keywords"), or "". Read only while
-    #: ``autosave_state == "validation"``; the editor outlines that field and
-    #: shows the reason under it. Cleared by the next keystroke.
+    #: TASK-34000.10 (N-07): the field the last validation veto named
+    #: ("title" / "body" / "keywords"), or "", and the coordinator's own
+    #: reason. The editor marks that field and shows the reason under it.
+    #: Fix round 1 (M-5/M-6): the mark outlives ``autosave_state`` -- a key
+    #: typed into ANOTHER field must not hide the hint row and shift the
+    #: body -- and clears only when the vetoed field itself changes
+    #: (``clear_vetoed_field``), the note loads or the editor resets.
     validation_field: str = ""
+    validation_message: str = ""
     autosave_timer: Timer | None = None
     autosave_generation: int = 0
     #: TASK-34000.1: ``((note_id, session_generation, saved_revision),
@@ -681,3 +685,23 @@ class LibraryNotesState:
     # Sync now run. None = not edited this panel visit; fall back to the
     # persisted config value.
     sync_folder_text: str | None = None
+
+    def mark_vetoed_field(self, field: str, message: str = "") -> None:
+        """Record the field a validation veto named and its reason.
+
+        TASK-34000.10. ``field`` empty (a failed write, no veto) clears the
+        mark. Called by every veto presenter, autosave or explicit.
+        """
+        self.validation_field = field
+        self.validation_message = message if field else ""
+
+    def clear_vetoed_field(self, field: str | None = None) -> None:
+        """Drop the mark -- for ``field`` only, or unconditionally.
+
+        TASK-34000.10 fix round 1 (M-5/M-6): a field's own ``Changed`` passes
+        its name, so a key typed into another field leaves the hint row where
+        it is; a note load, an editor reset or a discard passes nothing.
+        """
+        if field is None or field == self.validation_field:
+            self.validation_field = ""
+            self.validation_message = ""

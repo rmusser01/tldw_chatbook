@@ -4462,6 +4462,18 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: tall $ds-status-error-readable;
 }
 
+/* Compact (under 120 columns): the editor Inputs are borderless there
+   (`#library-shell-grid.library-notes-compact #library-note-title { border:
+   none }`, specificity (2,1,0), which beats the outline rule above), so the
+   mark is the field's text itself in the readable error colour, bold. Fix
+   round 1 (I-3); pinned by the painted cells at 80x24. */
+#library-shell-grid.library-notes-compact #library-note-title.library-note-field-invalid,
+#library-shell-grid.library-notes-compact #library-note-keywords.library-note-field-invalid,
+#library-shell-grid.library-notes-compact #library-note-context-keywords.library-note-field-invalid {
+    color: $ds-status-error-readable;
+    text-style: bold;
+}
+
 /* Compact (under 120 columns): the hint takes exactly one row while a veto
    stands, so the body gives up one row and no more. Measured at the 60x20
    floor: the wrapped reason took two rows and the body fell from five to

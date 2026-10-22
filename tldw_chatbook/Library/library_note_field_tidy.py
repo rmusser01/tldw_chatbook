@@ -96,7 +96,9 @@ def tidy_note_keywords(value: str) -> str:
 def tidy_library_note_field_on_blur(screen: LibraryScreen, event: Any) -> bool:
     """Tidy the note field the user just left, as a visible draft edit.
 
-    Guards, in order: the Input is one of the editor's fields; the editor is
+    Guards, in order: the Input is one of the editor's fields; the app has
+    terminal focus and focus has not already returned to the field (a
+    terminal focus loss is not the user leaving the field); the editor is
     the visible surface (editor view, on the Notes or Create row); the
     editor is armed and no presentation sync is writing the fields; the
     Input is still attached (a blur caused by a recompose teardown must not
@@ -119,6 +121,14 @@ def tidy_library_note_field_on_blur(screen: LibraryScreen, event: Any) -> bool:
     field = event.input
     entry = _TIDY_BY_FIELD_ID.get(field.id or "")
     if entry is None:
+        return False
+    # Fix round 1 (C-1): Textual clears focus when the TERMINAL loses focus
+    # (``App._watch_app_focus(False)`` -> ``set_focus(None)``), which blurs
+    # the Input too, and restores it on ``AppFocus``. That is not the user
+    # leaving the field: Cmd-Tab mid-word and back glued the next keys on
+    # ("Meeting withAlice"). The tidy runs only for a focus move made inside
+    # the app, and never when focus is already back on the field.
+    if not screen.app.app_focus or screen.focused is field:
         return False
     state = screen._notes_state
     if (

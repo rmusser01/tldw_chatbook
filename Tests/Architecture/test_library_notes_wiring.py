@@ -110,8 +110,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: "body-end" for the Media Reader's Note action) (109 + 1 = 110). **111**:
 #: TASK-34000.10 -- ``validation_field``, the field a standing validation
 #: veto named, which the editor outlines with the reason under it
-#: (110 + 1 = 111).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 111
+#: (110 + 1 = 111). **112**: TASK-34000.10 fix round 1 -- ``validation_message``,
+#: that veto's own reason, kept with the field so the mark can outlive a key
+#: typed into another field (111 + 1 = 112).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 112
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

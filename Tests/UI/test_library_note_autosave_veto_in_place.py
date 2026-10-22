@@ -155,15 +155,17 @@ async def test_an_autosave_veto_with_focus_on_info_keeps_focus_and_pane(
 async def test_a_duplicate_keyword_veto_marks_the_field_and_drops_the_promise(
     tmp_path, monkeypatch
 ):
-    """Review capture 12: a keyword veto landing while the body is typed.
+    """Review capture 12, as a user reaches it: "ok, x, X" typed in Keywords,
+    and the autosave fires while the cursor is still in the field.
 
-    Leaving the keywords box by Tab tidies a duplicate (AC#4), so the
-    duplicate reaches the autosave the one way it still can while the body
-    has focus: through the keywords Input's own ``Changed`` while the user
-    is in the body. The veto then lands mid-sentence; the keys keep landing
-    in the body, the keywords field is outlined with the reason under it,
-    the pane stays Edit, and the status names the fix instead of promising
-    a save that cannot happen.
+    Fix round 1 (I-2): the first version injected the duplicate through the
+    Input's ``Changed`` while the body had focus -- a state no user reaches,
+    because Tab, a click and a programmatic focus move all tidy the field on
+    the way out (AC#4). The veto now lands in the field the user is typing
+    in: focus stays there, the field is outlined with the reason under it,
+    the pane stays Edit, and the status names the fix with ONE instruction
+    (M-4: the meta line's "Retry Save" is suppressed while a veto stands).
+    Then Tab tidies the duplicate, the mark clears, and the note saves.
     """
     _scaled_autosave(monkeypatch)
     events: list = []
@@ -173,32 +175,24 @@ async def test_a_duplicate_keyword_veto_marks_the_field_and_drops_the_promise(
             async with app.run_test(size=SIZE) as pilot:
                 screen = await _library(app, pilot)
                 await _new_blank_note(screen, pilot)
+                note_id = screen._library_note_session.snapshot.note_id
                 title = screen.query_one("#library-note-title", Input)
                 keywords = screen.query_one("#library-note-keywords", Input)
                 body = screen.query_one("#library-note-body", TextArea)
                 await _until(pilot, lambda: screen.focused is title, "the title caret")
                 await pilot.press("tab")
                 await _until(pilot, lambda: screen.focused is keywords, "Tab to keywords")
-                await _type(pilot, "ok, x")
-                await pilot.press("tab")
-                await _until(pilot, lambda: screen.focused is body, "Tab to the body")
-                await _type(pilot, "milk")
-                keywords.value = "ok, x, X"  # the duplicate, while the body has focus
-                await _vetoed(pilot, screen)
-                await _type(pilot, " eggs")
-                # Typing cleared the veto; the next autosave is refused again.
-                await _vetoed(pilot, screen)
+                await _type(pilot, "ok, x, X")
+                await _vetoed(pilot, screen)  # the debounce fires in the field
                 await pilot.pause()
                 await pilot.pause(0.3)
 
-                assert screen.focused is body, (
+                assert screen.focused is keywords, (
                     f"focus moved to {getattr(screen.focused, 'id', None)!r}"
                 )
                 assert screen._notes_state.context is False, "the pane flipped to Info"
                 assert screen.query_one("#library-note-editor-region").display
-                assert "milk eggs" in _painted(app, screen, "#library-note-body")
-                assert body.text == "milk eggs"
-                assert keywords.value == "ok, x, X", "keys landed in Keywords"
+                assert keywords.value == "ok, x, X"
                 assert keywords.has_class(_INVALID), "the keywords field is not marked"
                 hint = screen.query_one("#library-note-keywords-hint", Static)
                 assert hint.display, "no reason under the keywords field"
@@ -206,6 +200,35 @@ async def test_a_duplicate_keyword_veto_marks_the_field_and_drops_the_promise(
                 status = _painted(app, screen, "#library-note-work-authority")
                 assert _FIX_THE_FIELD in status, status
                 assert _PROMISE not in status, status
+                # M-4: one instruction. The meta row clips at this width
+                # ("Next: Retry S…"), so the Static's own text is checked too.
+                meta_widget = screen.query_one("#library-note-status", Static)
+                meta_text = getattr(meta_widget.renderable, "plain", str(meta_widget.renderable))
+                assert _DUPLICATE_VETO in meta_text, meta_text
+                assert "Retry Save" not in meta_text, meta_text
+                assert "Retry" not in _painted(app, screen, "#library-note-status")
+
+                # Leaving the field tidies it: the duplicate goes, the mark
+                # clears, the note saves.
+                await pilot.press("tab")
+                await _until(pilot, lambda: screen.focused is body, "Tab to the body")
+                assert keywords.value == "ok, x", "leaving Keywords did not tidy them"
+                assert not keywords.has_class(_INVALID), "the mark outlived the veto"
+                assert not hint.display
+
+                def _stored_keywords() -> set[str]:
+                    return {
+                        row["keyword"] for row in profile.db.get_keywords_for_note(note_id)
+                    }
+
+                await _until(
+                    pilot,
+                    lambda: _stored_keywords() == {"ok", "x"}
+                    and not screen._library_note_session.snapshot.dirty,
+                    "the tidied keywords to be saved",
+                    timeout=10.0,
+                )
+                assert screen._notes_state.autosave_state != "validation"
     finally:
         profile.db.close_connection()
     assert events == []
@@ -219,8 +242,8 @@ async def test_leaving_the_title_with_a_trailing_space_tidies_it_and_the_note_sa
 ):
     """The review's title case, up to the Tab: the space goes, the note saves.
 
-    Twin arm: keywords "ok, x, X" → Tab → "ok, x", and the stored keyword
-    rows are exactly {ok, x}.
+    The keywords twin (Tab out of "ok, x, X" stores exactly {ok, x}) is the
+    second half of the duplicate-keyword arm above.
     """
     _scaled_autosave(monkeypatch)
     events: list = []
@@ -248,28 +271,6 @@ async def test_leaving_the_title_with_a_trailing_space_tidies_it_and_the_note_sa
                 )
                 assert not title.has_class(_INVALID)
 
-                await _type(pilot, "ok, x, X")
-                assert keywords.value == "ok, x, X"
-                await pilot.press("tab")
-                await _until(
-                    pilot,
-                    lambda: screen.focused is screen.query_one("#library-note-body"),
-                    "Tab to the body",
-                )
-                assert keywords.value == "ok, x", "leaving Keywords did not tidy them"
-
-                def _stored_keywords() -> set[str]:
-                    return {row["keyword"] for row in profile.db.get_keywords_for_note(note_id)}
-
-                await _until(
-                    pilot,
-                    lambda: _stored_keywords() == {"ok", "x"}
-                    and not screen._library_note_session.snapshot.dirty,
-                    "the tidied keywords to be saved",
-                    timeout=10.0,
-                )
-                assert screen._notes_state.autosave_state != "validation"
-                assert not keywords.has_class(_INVALID)
     finally:
         profile.db.close_connection()
     assert events == []

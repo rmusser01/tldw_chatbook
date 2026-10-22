@@ -1444,6 +1444,13 @@ class LibraryNotesController:
             return "Saving…"
         if snapshot.in_conflict:
             return snapshot.status_message or "Conflict — review the choices below."
+        # TASK-34000.10 fix round 1 (M-5): while a field is marked, the next
+        # save is refused again by the same rule (only editing that field
+        # clears the mark), so the veto's reason stays the status through
+        # keys typed elsewhere -- the authority line keeps its height and
+        # the hint row under the field does not shift.
+        if self._notes_state.validation_field:
+            return self._notes_state.validation_message
         if snapshot.status_message:
             return snapshot.status_message
         return "Unsaved changes" if snapshot.dirty else "Saved"
@@ -1471,7 +1478,10 @@ class LibraryNotesController:
             ("Words", word_copy),
         )
         operation = self._library_notes_operation_for_active_region()
-        vetoed = self._library_note_autosave_state == "validation"
+        # A standing mark counts as vetoed for the same reason (M-5).
+        vetoed = self._library_note_autosave_state == "validation" or bool(
+            self._notes_state.validation_field
+        )
         from .library_note_autosave import autosave_is_scheduled  # noqa: PLC0415 -- lazy: keeps the autosave policy module off the preimport census
 
         status_channels = resolve_database_note_status_channels(
@@ -1495,6 +1505,10 @@ class LibraryNotesController:
             status_channels = dataclasses.replace(
                 status_channels,
                 content_recovery=status_line,
+                # TASK-34000.10 fix round 1 (M-4): while a veto stands the
+                # authority line names the fix; a second "Next: Retry Save."
+                # on the meta row contradicted it. One instruction.
+                safe_next_action=None if vetoed else status_channels.safe_next_action,
             )
         return LibraryNotePresentationState(
             snapshot=snapshot,
@@ -1510,10 +1524,12 @@ class LibraryNotesController:
             compact=self._library_notes_compact,
             validation=vetoed,
             # TASK-34000.10 (N-07): the vetoed field and the coordinator's own
-            # reason, for the outline and the hint under the field; both
-            # empty the moment the veto no longer stands.
-            validation_field=self._notes_state.validation_field if vetoed else "",
-            validation_message=snapshot.status_message if vetoed else "",
+            # reason, for the mark and the hint under the field. Not gated on
+            # ``vetoed`` (fix round 1, M-5): a key typed into another field
+            # sets ``autosave_state`` idle, and the hint row must stay put;
+            # the state clears the mark when the vetoed field itself changes.
+            validation_field=self._notes_state.validation_field,
+            validation_message=self._notes_state.validation_message,
             autosave_scheduled=autosave_is_scheduled(self._notes_state, snapshot),
             conflict=snapshot.in_conflict,
             conflict_running=self._library_note_session.conflict_resolution_running,
@@ -3448,6 +3464,7 @@ class LibraryNotesController:
         self._clear_finished_library_notes_operation()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
+        self._notes_state.clear_vetoed_field()  # TASK-34000.10 fix round 1 (M-6): a mark never crosses notes
         self._library_note_load_state = "loading"
         self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
@@ -3648,6 +3665,7 @@ class LibraryNotesController:
         self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
         self._library_note_shortcut_status = ""
+        self._notes_state.clear_vetoed_field()  # TASK-34000.10 fix round 1 (M-6)
         self._library_note_confirming_delete = False
         self._library_note_preview = False
         self._library_note_context = False
@@ -3718,6 +3736,7 @@ class LibraryNotesController:
         if self._library_note_session.mutate(title=event.value):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("title")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     @on(TextArea.Changed, "#library-note-body")
@@ -3735,6 +3754,7 @@ class LibraryNotesController:
         if self._library_note_session.mutate(body=event.text_area.text):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("body")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     @on(Input.Changed, "#library-note-keywords")
@@ -3752,6 +3772,7 @@ class LibraryNotesController:
         if self._library_note_session.mutate(keywords_text=event.value):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("keywords")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     @on(Input.Changed, "#library-note-context-keywords")
@@ -3772,6 +3793,7 @@ class LibraryNotesController:
             # yet" (``_library_note_is_pending_blank`` stayed true).
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("keywords")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     def _fire_library_note_autosave(self, generation: int) -> None:
@@ -3928,6 +3950,7 @@ class LibraryNotesController:
                     exclusive=True,
                     group="library_note_location",
                 )
+        self._notes_state.clear_vetoed_field()  # TASK-34000.10: a landed save ends any mark
         is_current_clean_revision = (
             not snapshot.dirty
             and outcome.revision is not None
@@ -3952,6 +3975,7 @@ class LibraryNotesController:
             return
         if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
             self._library_note_autosave_state = "conflict"
+            self._notes_state.clear_vetoed_field()  # TASK-34000.10: a conflict replaces the veto
             self._library_note_preview = False
             self._library_note_context = False
             self._invalidate_library_note_autosave()
@@ -3965,7 +3989,9 @@ class LibraryNotesController:
             else "error"
         )
         validation_field = outcome.veto.field if outcome.veto is not None else ""
-        self._notes_state.validation_field = validation_field  # TASK-34000.10: the mark
+        self._notes_state.mark_vetoed_field(  # TASK-34000.10: the mark
+            validation_field, outcome.veto.message if outcome.veto is not None else ""
+        )
         if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO:
             self._route_library_note_validation_field(validation_field)
         elif self._library_note_preview:
@@ -4131,7 +4157,9 @@ class LibraryNotesController:
                 and outcome.save_outcome.veto is not None
             ):
                 validation_field = outcome.save_outcome.veto.field
-            self._notes_state.validation_field = validation_field  # TASK-34000.10
+                self._notes_state.mark_vetoed_field(  # TASK-34000.10
+                    validation_field, outcome.save_outcome.veto.message
+                )
         self._library_note_preview = False
         self._library_note_context = False
         if outcome.kind is ConflictOutcomeKind.VALIDATION_VETO:
