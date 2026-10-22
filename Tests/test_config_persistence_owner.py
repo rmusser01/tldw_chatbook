@@ -96,8 +96,9 @@ def test_shutdown_persistence_uses_only_effective_path(tmp_path, monkeypatch):
         },
         password,
     )
-    # TASK-35835: a plaintext secret hand-added to the encrypted file is what
-    # the quit still persists; with none, it writes nothing.
+    # TASK-35835: in this v2-only file, a hand-added plaintext secret is the
+    # one thing the quit persists (it would also re-encrypt v1 values as v2);
+    # with nothing to do, it writes nothing.
     encrypted["API"]["anthropic_api_key"] = "hand-added-SENTINEL"
     target.write_text(toml.dumps(encrypted), encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
