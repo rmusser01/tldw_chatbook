@@ -618,5 +618,175 @@
       "run.log": "44a089a942cf867b4609cd2209c940886502738a82ac072507fc6796a7d82032"
     },
     "qualification": "Original native receipts remain historical; all implementation/test/doc fingerprints are unchanged. Current-head hosted CI verifies the rebased dependency graph and new dev guard pins."
+  },
+  "console_ci_repair": {
+    "owner": "TASK-34974 (AC2/AC4; remains In Progress)",
+    "adr": "backlog/decisions/232-console-learned-response-rules.md",
+    "failed_head": "f3875a186322650df6bde1e48612a35eabcc2c7e",
+    "failed_run": 39833718134,
+    "failed_job": 120020947873,
+    "patch_file": "Tests/UI/test_response_rules_modal.py",
+    "baseline_git_blob": "1072a83075423e1695d13d0cd7a3510a63ebd232",
+    "corrected_git_blob": "de291ea6d7d3fc4bd1f72b192b03bdbf2017b3cf",
+    "assertion_asts_unchanged": 72,
+    "behavior": "Wait within asyncio.timeout(10) for expected durable state, idle modal and enabled current toggle control; preserve original assertions. No production change.",
+    "runs": {
+      "console-ci-exact-node-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "1",
+            "time": "20.709",
+            "timestamp": "2026-10-22T12:07:33.179838-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "1d2289df09000500d750e3044c9b177710f903fac60bfea83fc709b40be39817",
+          "result.xml": "276d0f1b879e2a9bc4d635f8540f1005be5147903376a089591f5c3d20062e01",
+          "run.log": "6b2d2d842c41d04d4d2120a4f01779f8bc7a326e51498876030ecc9a4094d0ac"
+        }
+      },
+      "console-ci-controlled-hold-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "1",
+            "skipped": "0",
+            "tests": "1",
+            "time": "17.706",
+            "timestamp": "2026-10-22T12:09:48.085510-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "45e91acd23a43c708e6a8306e917ff117338450df389450f1eb11758f6a6ef37",
+          "result.xml": "3aa941acb88498737148e124e636b3a7686dfad5bf914414de940342c8c4dd77",
+          "run.log": "237e1283a8d4499714b8429aa134aa39db9d237e531b282b9b9b469f079d276c"
+        }
+      },
+      "console-ci-finite-red-2": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "1",
+            "skipped": "0",
+            "tests": "1",
+            "time": "17.604",
+            "timestamp": "2026-10-22T12:14:12.455436-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "84a2c10be149ab2873394089936396bd27dd02646462d4fe55cfca8addac9bfd",
+          "result.xml": "3d01673bb4480977b8c9308ef618855a6247a9d4823eea8ebba8e0f05eb119ef",
+          "run.log": "f4c84adf81a0d433898b7e999785cbc6ce394436487e083a7dc80cb18764640c"
+        }
+      },
+      "console-ci-finite-green-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "1",
+            "time": "21.557",
+            "timestamp": "2026-10-22T12:14:57.598003-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "65735fee9b9a75a2b75758812e1ff3b480b242f639ac59f42364aabc4c6922ca",
+          "result.xml": "6f5c95c583e02b5b4dc02bd658cd45c74d239a2b69658c845bc8f44e47ce87f9",
+          "run.log": "726fa8577f58358758245efb87308428e6869bb17aa68417b77dc12d388a47f4"
+        }
+      },
+      "console-ci-modal-file-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "25",
+            "time": "199.804",
+            "timestamp": "2026-10-22T12:15:47.340503-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "cec06584e84e69aaf0e7aaedeaaf4a6843cf2d9fbe1b79d8bd2ad26d024670a1",
+          "result.xml": "cb6702addc9833c136e35135aa64a1c9c9ed7cdab28a49858d72615411626279",
+          "run.log": "4f5c1247b17d88854f6377457ef8b787882739bb10742f26b15e99a3c3a8f9e7"
+        }
+      }
+    },
+    "static": {
+      "baseline_ref": "7405afaa12d8fa07d50069c0234442fc970517b3",
+      "only_intended_replacement": true,
+      "assertions_unchanged": true,
+      "assertion_count": 72,
+      "files": {
+        "baseline": {
+          "normalized_sha256": "038f851ec804426fc219852fc106f0f7bb4c684c54b2e55ea1c3c4c1fba5cf8f",
+          "lint": {
+            "exit_code": 0,
+            "stdout": "[]",
+            "stderr": ""
+          },
+          "format_check": {
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": ""
+          },
+          "formatter_ast_preserved": true,
+          "format_edits": [
+            {
+              "tag": "delete",
+              "before": [
+                ""
+              ],
+              "after": []
+            }
+          ]
+        },
+        "current": {
+          "normalized_sha256": "6c9341798a5a4b560f499ac750e793473005a3950995aca81bc9eae7d7c7320c",
+          "lint": {
+            "exit_code": 0,
+            "stdout": "[]",
+            "stderr": ""
+          },
+          "format_check": {
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": ""
+          },
+          "formatter_ast_preserved": true,
+          "format_edits": [
+            {
+              "tag": "delete",
+              "before": [
+                ""
+              ],
+              "after": []
+            }
+          ]
+        }
+      },
+      "inherited_format_edits_unchanged": true,
+      "diff_check": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "warning: in the working copy of 'Tests/UI/test_response_rules_modal.py', LF will be replaced by CRLF the next time Git touches it\n"
+      }
+    },
+    "qualification": "Controlled real-reload delay proves the test barrier defect, not the exact unlogged hosted schedule. Invalid first finite observer cleanup failure and initial unqualified static assertion are retained as non-evidence. Hosted verification of the corrected head remains pending."
   }
 }

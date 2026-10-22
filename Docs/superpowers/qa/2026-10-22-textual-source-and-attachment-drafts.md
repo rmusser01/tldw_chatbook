@@ -40,3 +40,31 @@ Mounted tests do not claim terminal pointer UAT, live remote services/providers,
 Exact commands, JUnit/log hashes, source identities, review identities and census positions are in [the evidence manifest](2026-10-22-textual-source-and-attachment-drafts-evidence.json). Raw native receipts remain locally under `.test-tmp/task-36130-36132/`; complete task reports/reviews remain under the owned `.superpowers/sdd/2026-10-22-textual-source-and-attachment-drafts/` workspace. The earlier post-PR3205 audit is historical evidence of the repaired failures.
 
 Rebase integration on [PR #3207](https://github.com/rmusser01/tldw_chatbook/pull/3207) retained both lesson additions and resolved only the shared census floor/tail. The original source review remains applicable by exact fingerprints and range-diff; the scoped integration review and hosted checks are recorded in the PR.
+
+## Console P0 CI follow-up
+
+The first rebased-head CI run passed all thirteen UI shards and Perf Guard,
+but Console P0 stopped at one response-rule modal case (237 pass, one fail).
+The unchanged test could advance after Disable committed while its reload was
+still busy; Textual then ignored the next press on its disabled button.
+A controlled real-reload hold reproduced the same state assertion. The original
+hosted log does not establish its exact scheduler history.
+
+Existing TASK-34974 AC2/AC4 and ADR-232 own this test-only correction; that broader
+task remains In Progress with its acceptance criteria open. The toggle now waits
+within ten seconds for the expected durable state, idle modal and enabled current
+control. All 72 original assertion ASTs are unchanged. No production source,
+CAS/storage contract, guard, census, shard or CI timeout budget changed.
+
+With the same independent three-second real-reload delay, the original node
+fails in 17.604s and the corrected node passes in 21.557s. The plain full modal
+file passes all 25 cases in 199.804s, including eight saved-edit variants.
+Scoped Ruff lint passes. Both baseline and current file retain the exact same
+one-blank-line formatter difference; no broad format cleanup is claimed.
+Receipts and source identities are appended to the evidence manifest.
+
+The first finite-delay scratch observer masked its assertion during detached
+cleanup and is excluded; its corrected observer supplies the valid RED/GREEN.
+An initial static helper assumed a clean baseline formatter and failed; the
+qualified comparison records the actual identical baseline/current debt.
+Current-head hosted CI and scoped Superpowers review remain required PR gates.

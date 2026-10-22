@@ -50,6 +50,15 @@ Use actual screen visibility/layout events to resume deferred geometry work,
 and test quiescence as a bounded condition with a separate callback-stability
 check. A positive old region or a fixed count of Pilot turns establishes neither.
 
+**PR #3207 / TASK-34974, 2026-10-22.** The response-rule manager's
+Disable/Enable test exhausted fifteen Pilot pauses after Disable had committed
+but before its reload had enabled the button. The next `Button.press()` silently
+did nothing. Holding that real reload reproduced the failed enabled-state
+assertion; an independently released three-second delay failed the original
+test and passed a bounded wait for durable state, idle modal and enabled current
+control. Keep the original selection, revision and CAS assertions; a committed
+row alone does not establish readiness for the next action.
+
 ---
 
 ## `run_worker` does not forward positional arguments to the callable

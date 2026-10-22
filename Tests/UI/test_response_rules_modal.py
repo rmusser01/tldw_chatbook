@@ -454,13 +454,16 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
         else:
             for state in ("disabled", "enabled"):
                 modal.query_one("#rr-disable", Button).press()
-                for _ in range(15):
-                    await pilot.pause()
-                    if (
-                        not modal._busy
-                        and rules.store.list_bindings(scope)[0].state == state
-                    ):
-                        break
+                # Commit can precede the reload that enables the next press.
+                async with asyncio.timeout(10):
+                    while True:
+                        await pilot.pause()
+                        if (
+                            not modal._busy
+                            and not modal.query_one("#rr-disable", Button).disabled
+                            and rules.store.list_bindings(scope)[0].state == state
+                        ):
+                            break
                 binding = rules.store.list_bindings(scope)[0]
                 assert binding.state == state
             assert binding.revision == 2
