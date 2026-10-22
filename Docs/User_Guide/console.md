@@ -647,8 +647,9 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   Providers & Models ▸ Advanced ▸ Saved model list: after **Discover models**,
   a model chosen in **Default model** joins the list when **s** saves, and
   **Add to model list** adds the models you check. A named custom endpoint
-  (one made with **New endpoint…**) keeps its own model list instead, which
-  the Saved model list controls do not change, so its line says the pick is
+  (such as one made with **New endpoint…** or **Convert to named
+  endpoint**) keeps its own model list instead, which the Saved model list
+  controls do not change, so its line says the pick is
   not added to that endpoint's model list. To add one there, use Settings ▸
   Providers & Models ▸ Advanced ▸ Custom endpoints: **Edit** on the endpoint,
   add the model to **Models**, and press **Save endpoint**. When the chat is not ready (a missing key, an endpoint to
