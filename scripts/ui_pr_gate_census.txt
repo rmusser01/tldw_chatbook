@@ -991,3 +991,9 @@ Tests/UI/test_library_note_autosave_after_dialog.py
 Tests/UI/test_library_note_autosave_veto_in_place.py
 Tests/UI/test_library_media_reader_controls_in_list_view.py
 Tests/UI/test_settings_configuration_hub.py::test_settings_keyless_provider_save_keeps_template_env_name_out[legacy-env-unset]
+
+# TASK-35648 and TASK-35649: two CSS governance ratchets that ran in no PR lane.
+# TASK-35648: no lane ran the 2,000 active-line sheet ceiling (ADR-161 spec
+# 3.5), so dev reached 2,004 lines in features/_library_panels.tcss unseen.
+# Static (reads css/ only), about 4-6 s with its private-profile child.
+Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling

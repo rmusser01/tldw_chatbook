@@ -486,7 +486,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (test_settings_keyless_provider_save_keeps_template_env_name_out
 # [legacy-env-unset], one private-profile child, ~8 s) proves a quit keeps
 # the bytes a Settings save wrote. Appended at the tail, like the others.
-MINIMUM_FILES = 614
+# TASK-35648 raised it by 1, to 615: test_sheet_size_ceiling, which ran in no
+# PR lane while dev's Library panels sheet sat at 2,004 active lines. A
+# static node (about 4-6 s with its private-profile child), appended at the
+# tail so no existing entry changes shard.
+MINIMUM_FILES = 615
 
 
 def read_census(path: Path) -> list[str]:
