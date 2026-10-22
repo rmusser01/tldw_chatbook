@@ -104,6 +104,11 @@ import sys
 
 import tldw_chatbook.app as app_module
 import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401  (the initial route)
+
+# Loaded by the app and its initial route: resident at UI-ready in a live app.
+resident = sorted(
+    m for m in sys.modules if m == "tldw_chatbook" or m.startswith("tldw_chatbook.")
+)
 from tldw_chatbook.MCP import server
 
 expected = json.loads(sys.argv[1])
@@ -143,6 +148,7 @@ print(
             "at_routes": at_routes,
             "after": after,
             "manifest_parses": len(parses),
+            "resident": resident,
         }
     )
 )
@@ -349,6 +355,60 @@ def test_a_failing_warm_up_ends_quietly_after_the_screen_routes(monkeypatch, bro
     assert order == [("routes", ["routes"])]
 
 
+def _warm_at_ui_ready(outcome: dict) -> set[str]:
+    """The ``tldw_chatbook`` modules a send's import finds already loaded.
+
+    The ADR-097 snapshot (what a live app has loaded at ``_ui_ready``, mount
+    work included) united with what importing the app and its initial route
+    loads in a fresh interpreter: the census checks the snapshot's count, not
+    its contents, so a module that became resident since its last re-pin is
+    missing from it.
+    """
+    snapshot = {
+        line for line in SNAPSHOT.read_text().splitlines() if not line.startswith("#")
+    }
+    return snapshot | set(outcome["resident"])
+
+
+def _covered_by_the_warm_up() -> set[str]:
+    """``FIRST_SEND_MODULES`` and their parent packages."""
+    from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
+
+    return set(FIRST_SEND_MODULES) | {
+        name.rsplit(".", depth)[0] for name in FIRST_SEND_MODULES for depth in (1, 2)
+    }
+
+
+def _not_warmed(
+    seen: dict[str, str], warm: set[str], covered: set[str]
+) -> dict[str, str]:
+    return {
+        name: where
+        for name, where in seen.items()
+        if name.startswith("tldw_chatbook") and name not in warm and name not in covered
+    }
+
+
+def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(pass_outcome):
+    """The guard's warm set is what a live app has loaded, not only the snapshot.
+
+    The ADR-097 census enforces the snapshot's count, not its contents, and on
+    origin/dev 7700c63a68 it lacks ``pricing_display``, which the listed
+    ``console_spend_projection`` imports at module scope. The cost chip's
+    rebuild re-imports it inside ``pricing_snapshot_options``; when that
+    rebuild fell inside the send's frames, the harness guard below failed on
+    correct code (1 run in 26, this record).
+    """
+    warm = _warm_at_ui_ready(pass_outcome)
+    flake = {
+        "tldw_chatbook.UI.Console_Modules.pricing_display": "pricing_snapshot_options"
+    }
+    assert _not_warmed(flake, warm, _covered_by_the_warm_up()) == {}
+    # Still a guard: the send's own lazy modules are not warm at UI-ready.
+    record = {f"tldw_chatbook.{name}": "live" for name in LIVE_FIRST_SEND_IMPORTS}
+    assert _not_warmed(record, warm, set()) == record
+
+
 #: Frames that mark the send's own work (the acknowledgement, admission and run
 #: start); the UI's ticks and polls lazily import their own modules meanwhile.
 SEND_FRAMES = frozenset(
@@ -372,7 +432,7 @@ def _in_send() -> bool:
 
 
 @pytest.mark.asyncio
-async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
+async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome):
     """Every import a send runs inside a function is warm at UI-ready or listed.
 
     The mounted harness's send (llama.cpp, a held gateway, no agent tools)
@@ -380,6 +440,9 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
     the agent's tool providers. Function-local import statements under the
     send's own frames are recorded whether or not the module is already
     loaded, so the check does not depend on what earlier tests imported.
+    Which UI-loop work lands inside those frames depends on timing (the
+    cost chip's rebuild sometimes does), so "warm" is everything resident at
+    UI-ready, not only the snapshot's possibly stale contents.
     """
     from Tests.UI.test_console_send_acknowledgement import (
         build,
@@ -388,14 +451,9 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
         ready_console,
         until,
     )
-    from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
 
-    ready = {
-        line for line in SNAPSHOT.read_text().splitlines() if not line.startswith("#")
-    }
-    covered = set(FIRST_SEND_MODULES) | {
-        name.rsplit(".", depth)[0] for name in FIRST_SEND_MODULES for depth in (1, 2)
-    }
+    ready = _warm_at_ui_ready(pass_outcome)
+    covered = _covered_by_the_warm_up()
     seen: dict[str, str] = {}
     real = builtins.__import__
     main = threading.main_thread()
@@ -434,13 +492,7 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list():
             finally:
                 builtins.__import__ = real
 
-    lazy = {
-        name: where
-        for name, where in seen.items()
-        if name.startswith("tldw_chatbook")
-        and name not in ready
-        and name not in covered
-    }
+    lazy = _not_warmed(seen, ready, covered)
     assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
     assert "tldw_chatbook.Agents.hooks_v2.lifecycle" in seen, "the send never ran hooks"
     # The composer's ``from ...Chat import console_voice_input`` (its
