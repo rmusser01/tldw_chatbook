@@ -69,7 +69,7 @@ Red/green evidence:
   - accepting any path ending in the route turned the journey red on the new AC#3 assertion, plus 3 cases of the refusal test;
   - trusting any error-free contract resolution turned the uppercase test red.
 - Runs after the review fixes (`-n 4`):
-  - `Tests/LLM_Provider_Catalog`, the contract and local-server-discovery tests, `test_settings_saved_lists_follow_file.py` and `test_settings_pick_joins_saved_list.py`: 710 passed, 1 failed. The failure is `test_probe_handles_recursive_json_as_bounded_failure` ("network policy"), which fails the same way at base.
+  - `Tests/LLM_Provider_Catalog`, the contract and local-server-discovery tests, `test_settings_saved_lists_follow_file.py` and `test_settings_pick_joins_saved_list.py`: 710 passed, 1 failed. The failure is `test_probe_handles_recursive_json_as_bounded_failure` (`TypeError`: the test's `json.loads` stub does not accept `object_pairs_hook`), which fails the same way at base.
   - The picker, listing-dropped, key-check and switcher-probe files: 92 passed.
 - In the first round's wider run, 68 failures (`RecoveryRequired: raw_source_selection_changed` on plain Tests/UI nodes, and "network policy" on the endpoint probes) were identical in names and reasons with the source change reverted.
 - `preflight.sh` passes.
