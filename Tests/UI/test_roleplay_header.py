@@ -24,6 +24,7 @@ from Tests.UI.roleplay_frame_harness import (
     chrome_bottoms,
     first_list_item,
     open_styled_roleplay,
+    painted_option_rows,
     painted_rows,
     painted_text,
     seed_mock_characters,
@@ -62,6 +63,17 @@ CHARACTERS = [
         "last_modified": f"2026-09-{index:02d}T12:00:00",
     }
     for index in range(1, 13)
+]
+
+#: Twenty characters: more than a 120x36 list shows (B2a AC#2 needs 13 on screen).
+MANY_CHARACTERS = [
+    {
+        "id": index,
+        "name": f"Character {index:02d}",
+        "version": 1,
+        "last_modified": f"2026-09-{index:02d}T12:00:00",
+    }
+    for index in range(1, 21)
 ]
 
 #: 213 cells: longer than the item label is wide at every B1 size (220x55 included).
@@ -138,21 +150,25 @@ async def test_first_list_item_sits_right_under_the_unchanged_band(
 
 
 @styled_tiers
-async def test_seven_characters_show_at_120x36(
-    styled_tier, mock_app_instance, roleplay_data
+async def test_thirteen_characters_show_at_120x36(
+    styled_tier, mock_app_instance, monkeypatch
 ):
-    """AC#2: at least 7 two-line rows show their name line at 120x36 (5 before)."""
+    """B2a AC#2: 1-line rows at 120x36 (the list is under 40 cells wide there,
+    spec 1.5.2), so at least 13 characters show (B1 pinned 7 two-line rows)."""
+    seed_mock_characters(monkeypatch, MANY_CHARACTERS)
+    monkeypatch.setattr(
+        character_handler_module, "_default_character_db", lambda: object()
+    )
+    _install_conversation_db(monkeypatch, [_conversation_record(1)])
     async with open_styled_roleplay(
         styled_tier, mock_app_instance, size=(120, 36)
     ) as pilot:
         screen = pilot.app.screen
-        window = screen.query_one("#personas-library-rows").scrollable_content_region
-        items = list(screen.query("#personas-library-rows > ListItem"))
-        assert items and all(item.region.height == 2 for item in items[:3])
-        shown = [
-            item for item in items if window.contains(item.region.x, item.region.y)
-        ]
-        assert len(shown) >= 7, [item.region for item in items]
+        item_list = screen.query_one("#personas-library-rows")
+        assert item_list.density == 1
+        rows = painted_option_rows(item_list)
+        assert all(len(lines) == 1 for lines in rows.values())
+        assert len(rows) >= 13, rows
 
 
 @styled_tiers

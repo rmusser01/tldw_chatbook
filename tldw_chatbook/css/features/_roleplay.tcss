@@ -149,3 +149,46 @@
     tint: transparent;
     outline: none;
 }
+/* Frame slice B2a: the items list (spec 1.5.3). Rows are OptionList lines,
+   not widgets. The list keeps one edge column in BOTH focus states, so focus
+   never moves a row or a column (I10; D14 census F1: an edge that appears
+   only on focus shifted every row on mouse-down and the click landed on the
+   neighbour). The focus edge is $ds-active-fg, the token that clears 3:1 on
+   every shipped theme (Tests/UI/test_theme_contrast.py). The cursor row
+   paints only while the list has focus; the global OptionList rule
+   (components/_lists.tcss) paints it regardless. The list keeps OptionList's
+   own $surface background, on which the cursor colours clear AA. */
+.roleplay-items-list {
+    border: none;
+    border-left: blank;
+    padding: $ds-space-0;
+    scrollbar-gutter: stable;
+}
+
+.roleplay-items-list:focus {
+    border-left: thick $ds-active-fg;
+}
+
+.roleplay-items-list > .option-list--option-highlighted {
+    background: transparent;
+    color: $ds-text-primary;
+    text-style: none;
+}
+
+.roleplay-items-list:focus > .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+/* The empty or recovery line beside the list (one Static, mounted only when
+   the state changes); its container is only as tall as that line. */
+#personas-library-status {
+    height: auto;
+}
+
+.personas-library-status-copy {
+    height: auto;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}

@@ -100,6 +100,12 @@ def _quit_recorder(app, events: list[object]):
     return _record
 
 
+def _loaded_ids(screen) -> tuple[str, ...]:
+    from Tests.UI.roleplay_frame_harness import visible_item_ids
+
+    return visible_item_ids(screen)
+
+
 async def _roleplay_editor(app, pilot):
     """Open Roleplay on the saved character's editor; return (screen, name)."""
     await _until(
@@ -107,7 +113,7 @@ async def _roleplay_editor(app, pilot):
         lambda: (
             type(app.screen).__name__ == "PersonasScreen"
             and app.screen.is_mounted
-            and bool(app.screen.query("#personas-library-row-character-1"))
+            and "character:1" in _loaded_ids(app.screen)
         ),
         "the Roleplay screen and its character library",
     )

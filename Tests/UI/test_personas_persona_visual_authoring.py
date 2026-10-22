@@ -118,7 +118,9 @@ async def _open_editor(pilot) -> PersonasScreen:
     await pilot.click("#personas-mode-personas")
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
-    await pilot.click("#personas-library-row-persona-p-1")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
     await pilot.pause()
     screen.post_message(EditPersonaProfileRequested("p-1"))
     await pilot.pause()

@@ -246,7 +246,9 @@ async def test_credential_completion_uses_current_provider_and_selection(
             "provider": "openai",
             "model": "gpt-4o",
         }
-        await pilot.click("#personas-library-row-character-2")
+        from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+        await select_roleplay_item(pilot, screen, "character:2", via="click")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert screen.state.selected_entity_id == "2"
@@ -288,4 +290,3 @@ async def test_unmount_stops_handoff_refresh_before_credential_completion(
                 await asyncio.sleep(0.01)
         await pilot.pause(0.3)
         screen._poll_console_handoff_readiness()
-

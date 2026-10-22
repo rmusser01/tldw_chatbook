@@ -112,7 +112,11 @@ async def _mounted(pilot):
 
 async def _select_seeded_character(pilot, char_id):
     screen = await _mounted(pilot)
-    await pilot.click(f"#personas-library-row-character-{char_id}")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(
+        pilot, pilot.app.screen, f"character:{char_id}", via="click"
+    )
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()

@@ -13,7 +13,7 @@ import re
 import sqlite3
 import threading
 import weakref
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -245,6 +245,7 @@ from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspector
 from ...Widgets.Persona_Widgets.personas_library_pane import (
     LibraryRow,
     PersonasLibraryPane,
+    RoleplayItemList,
 )
 from ...Widgets.Persona_Widgets.personas_messages import (
     ActorPackImportRequested,
@@ -602,35 +603,6 @@ def _character_import_filters() -> Any:
 PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
 PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
 PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
-
-#: Longest character-row meta line. One row, one line: the library row is a
-#: two-line cell (name + meta) and a wrapped snippet would reflow the list.
-CHARACTER_ROW_META_MAX_CHARS = 72
-
-
-def _character_row_meta(record: dict) -> str | None:
-    """Return the secondary line for a character library row.
-
-    Prefers a one-line description snippet, because that is what makes a row
-    recognizable in a library of many characters. The previous meta was the
-    last-modified date alone, which in practice was identical across rows and
-    so identified nothing. Falls back to the date when a character carries no
-    description, so nothing loses its subtitle.
-
-    Args:
-        record: Character summary record from the library query.
-
-    Returns:
-        A single-line meta string, or ``None`` when neither a description nor
-        a last-modified timestamp is available.
-    """
-    description = " ".join(str(record.get("description") or "").split())
-    if description:
-        if len(description) > CHARACTER_ROW_META_MAX_CHARS:
-            return description[: CHARACTER_ROW_META_MAX_CHARS - 1].rstrip() + "…"
-        return description
-    last_modified = str(record.get("last_modified") or "")
-    return last_modified[:10] if last_modified else None
 
 
 #: Center-area widgets toggled by ``_show_center``.
@@ -2475,25 +2447,31 @@ class PersonasScreen(BaseAppScreen):
             )
 
     @staticmethod
-    def _build_library_rows(records: list[dict], kind: str) -> tuple[LibraryRow, ...]:
+    def _build_library_rows(
+        records: list[dict], kind: str, *, now: datetime | None = None
+    ) -> tuple[LibraryRow, ...]:
         """Map id/name records onto library rows, skipping id-less records.
 
-        Character rows carry a ``YYYY-MM-DD`` last-modified meta line; personas
-        (id/name summaries) render without one.
+        Line 2 is the v1 scent from fields the page query already returns
+        (spec 1.5.2): a character's age, first tag and description snippet; a
+        persona's system-prompt words. ``now`` is injectable for tests.
         """
+        moment = now or datetime.now(timezone.utc)
         rows: list[LibraryRow] = []
         for record in records:
             if record.get("id") is None:
                 continue
-            meta = None
             if kind == "character":
-                meta = _character_row_meta(record)
-            name = str(record.get("name") or "Unnamed")
+                meta = frame_state.character_scent(record, now=moment)
+            elif kind == "persona":
+                meta = frame_state.persona_scent(record)
+            else:
+                meta = None
             rows.append(
                 LibraryRow(
                     item_id=str(record.get("id")),
                     kind=kind,
-                    name=name,
+                    name=str(record.get("name") or "Unnamed"),
                     meta=meta,
                 )
             )
@@ -4289,7 +4267,8 @@ class PersonasScreen(BaseAppScreen):
             item_id=str(record.get("id")),
             kind="dictionary",
             name=str(record.get("name") or "Unnamed"),
-            meta=f"{count} entries · {state}",
+            meta=frame_state.dictionary_scent(int(count)),
+            state=state,
         )
 
     async def _render_dictionary_rows(self, query: str = "") -> None:
@@ -4360,13 +4339,15 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _lore_row(record: dict) -> LibraryRow:
-        count = record.get("entry_count") or 0
+        count = int(record.get("entry_count") or 0)
         state = "on" if record.get("enabled", True) else "off"
         return LibraryRow(
             item_id=str(record.get("id")),
             kind="lore",
             name=str(record.get("name") or "Unnamed"),
-            meta=f"{count} entries · {state}",
+            meta=frame_state.lore_scent(count),
+            state=state,
+            short=str(count),
         )
 
     @staticmethod
@@ -10699,23 +10680,9 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(PersonasInspectorPane).set_unsaved(True)
         except QueryError:
             pass
-        self._set_active_row_unsaved(True)
         # Attach availability changed (unsaved edits block Console actions),
         # and the title gains the "- unsaved" segment.
         self._sync_title_and_console_actions()
-
-    def _set_active_row_unsaved(self, unsaved: bool) -> None:
-        """Badge (or un-badge) the selected library row for the edit session."""
-        try:
-            pane = self.query_one(PersonasLibraryPane)
-        except QueryError:
-            return
-        kind = self.state.selected_entity_kind
-        entity_id = self.state.selected_entity_id
-        if unsaved and kind and entity_id:
-            pane.set_row_unsaved(kind, str(entity_id), True)
-        else:
-            pane.set_row_unsaved(None, None, False)
 
     def _full_character_record(self, character_id: str) -> dict | None:
         """Return the selected source's fully-loaded card, or ``None`` when stale.
@@ -15694,7 +15661,6 @@ class PersonasScreen(BaseAppScreen):
                 reconciliation_authority,
                 screen_generation=self._character_editor_generation,
             )
-        self._set_active_row_unsaved(False)
         card = self.query_one(PersonasCharacterCardWidget)
         if saved_record:
             # Keep the handler's cache in sync so other _full_character_record
@@ -15751,7 +15717,6 @@ class PersonasScreen(BaseAppScreen):
                 submitted_snapshot=submitted_snapshot,
                 submitted_attachment_snapshot=submitted_attachment_snapshot,
             )
-            self._set_active_row_unsaved(self.state.has_unsaved_changes)
             inspector.set_unsaved(self.state.has_unsaved_changes)
             self._show_center("#ccp-character-editor-view")
             if reconciliation_authority is not None:
@@ -16006,7 +15971,6 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_unsaved(False)
         # The editor closed: the inspector validation line returns to normal.
         inspector.show_validation(())
-        self._set_active_row_unsaved(False)
         if self.state.selected_entity_id:
             self._show_center("#ccp-character-card-view")
         else:
@@ -16034,7 +15998,6 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_unsaved(False)
         # The editor closed: the inspector validation line returns to normal.
         inspector.show_validation(())
-        self._set_active_row_unsaved(False)
         if self.state.selected_entity_id:
             self._show_center("#ccp-persona-card-view")
         else:
@@ -16236,9 +16199,6 @@ class PersonasScreen(BaseAppScreen):
             if not await self._confirm_discard_unsaved():
                 return
             self.state.has_unsaved_changes = False
-            # The discarded session's row badge must not survive the discard
-            # (the continuation may move the selection without a row rebuild).
-            self._set_active_row_unsaved(False)
             await self._drain_visual_identity_authoring()
             await self._drain_persona_shared_visual_identity_authoring()
             await self._drain_persona_visual_authoring()
@@ -16438,7 +16398,7 @@ class PersonasScreen(BaseAppScreen):
         if not force and self._focus_steal_blocked():
             return
         try:
-            self.query_one("#personas-library-rows", ListView).focus()
+            self.query_one("#personas-library-rows", RoleplayItemList).focus()
         except QueryError:
             pass
 

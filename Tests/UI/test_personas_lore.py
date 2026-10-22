@@ -10,12 +10,12 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.roleplay_frame_harness import list_state, select_roleplay_item
 from textual.coordinate import Coordinate
 from textual.widgets import (
     Button,
     DataTable,
     Input,
-    ListView,
     Static,
     Switch,
     TabbedContent,
@@ -770,9 +770,7 @@ async def _enter_lore(pilot):
 
 
 async def _select_first_lore(pilot, screen):
-    rows = screen.query_one("#personas-library-rows", ListView)
-    rows.index = 0
-    rows.action_select_cursor()
+    await select_roleplay_item(pilot, screen, index=0)
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
@@ -796,9 +794,7 @@ class TestLoreModeIntegration:
             )
             # The heavy detail widget is not mounted until a book is selected.
             assert not list(screen.query(PersonasLoreDetailWidget))
-            rows = screen.query_one("#personas-library-rows", ListView).children
-            texts = [str(s.renderable) for r in rows for s in r.query(Static).results()]
-            assert "Blackreach" in texts
+            assert "Blackreach" in [item.name for item in list_state(screen).items]
 
     async def test_selecting_book_loads_entries_into_detail(
         self, mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book

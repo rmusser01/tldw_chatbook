@@ -132,7 +132,6 @@ async def confirm_roleplay_drafts(screen: PersonasScreen, ask: AskPrompt) -> boo
         ):
             editor.discard_unsaved_form()
         screen.state.has_unsaved_changes = False
-        screen._set_active_row_unsaved(False)
         return not roleplay_has_unsaved_work(
             screen._aggregate_roleplay_draft_snapshot()
         )

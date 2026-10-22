@@ -16,6 +16,27 @@ from rich.cells import cell_len
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
+from textual.app import ComposeResult
+from textual.widgets import Input
+
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.roleplay_frame_harness import (
+    click_mark_column,
+    first_list_item,
+    highlighted_item_id,
+    item_at,
+    select_roleplay_item,
+    visible_item_ids,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
+    LibraryRow,
+    PersonasLibraryPane,
+    RoleplayItemList,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
+    PersonaEntitySelected,
+    PersonaMarksChanged,
+)
 from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
@@ -505,3 +526,229 @@ def test_a_fence_differs_when_any_field_differs():
         ),
     ):
         assert changed != fence
+
+
+# ==== The pane half (B2a plan Task 3): RoleplayItemList on a styled host ====
+#
+# The host composes the pane alone (no PersonasScreen, so no bootstrap
+# profile) under the app's stylesheets, Roleplay's lazy sheet included, so
+# the geometry assertions below are evidence (spec 5.7.1).
+
+
+class _PaneHost(ConsolidatedCSSApp):
+    """``PersonasLibraryPane`` alone, styled like the app."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+    # The pane's width follows the terminal, as in the workbench: about 23
+    # list cells at 120 columns, 31 at 160 (1-line rows at both, spec 1.5.2).
+    CSS = "#personas-library-pane { width: 20%; }"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.selected: list[str] = []
+        self.marks: list[tuple[tuple[str, str, str], ...]] = []
+        self.wanted: list[tuple[str, str | None]] = []
+
+    def compose(self) -> ComposeResult:
+        yield Input(id="host-input")
+        yield PersonasLibraryPane(id="personas-library-pane")
+
+    def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+        self.selected.append(message.entity_id)
+
+    def on_persona_marks_changed(self, message: PersonaMarksChanged) -> None:
+        self.marks.append(message.marks)
+
+    def on_roleplay_item_list_window_wanted(
+        self, message: RoleplayItemList.WindowWanted
+    ) -> None:
+        self.wanted.append((message.reason, message.target_id))
+
+
+def _rows(first: int, last: int, kind: str = "character") -> tuple[LibraryRow, ...]:
+    return tuple(
+        LibraryRow(item_id=str(n), kind=kind, name=f"Row {n:04d}")
+        for n in range(first, last + 1)
+    )
+
+
+async def _host(pilot, rows: tuple[LibraryRow, ...], *, total: int | None = None):
+    pane = pilot.app.query_one(PersonasLibraryPane)
+    await pane.update_rows(
+        rows, total=len(rows) if total is None else total, noun="characters"
+    )
+    await pilot.pause()
+    return pane, pane.item_list
+
+
+async def test_options_are_kind_and_id_and_prompts_stay_literal():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(
+            pilot, (LibraryRow(item_id="7", kind="character", name="[b]x[/b]"),)
+        )
+        assert visible_item_ids(pilot.app.screen) == ("character:7",)
+        assert item_at(pilot.app.screen, 0).lines == ("[b]x[/b]",)
+        assert item_list.get_option_at_index(0).prompt.plain == "   [b]x[/b]"
+
+
+async def test_duplicate_ids_are_dropped_and_never_raised():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 3) + _rows(2, 2))
+        assert visible_item_ids(pilot.app.screen) == (
+            "character:1",
+            "character:2",
+            "character:3",
+        )
+        dropped = item_list.append_rows(_rows(3, 5))
+        await pilot.pause()
+        assert dropped == ("character:3",)
+        assert visible_item_ids(pilot.app.screen)[-3:] == (
+            "character:3",
+            "character:4",
+            "character:5",
+        )
+
+
+async def test_a_click_on_row_two_of_an_unfocused_list_loads_row_two():
+    """Review Focus 5 / census F1: focus must not move the rows under the click."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 3))
+        pilot.app.query_one("#host-input", Input).focus()
+        await pilot.pause()
+        assert not item_list.has_focus
+        await select_roleplay_item(pilot, pilot.app.screen, "character:2", via="click")
+        assert pilot.app.selected == ["2"]
+        assert item_list.has_focus
+
+
+async def test_focus_never_moves_the_first_row():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 3))
+        before = first_list_item(pilot.app.screen).region
+        item_list.focus()
+        await pilot.pause()
+        assert first_list_item(pilot.app.screen).region == before
+
+
+async def test_a_click_on_the_mark_column_marks_and_never_loads():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        await _host(pilot, _rows(1, 3))
+        await click_mark_column(pilot, pilot.app.screen, "character:2")
+        assert item_at(pilot.app.screen, "character:2").marked
+        assert item_at(pilot.app.screen, "character:2").painted_mark
+        assert not item_at(pilot.app.screen, "character:1").painted_mark
+        assert pilot.app.selected == []
+        assert pilot.app.marks[-1] == (("character", "2", "Row 0002"),)
+
+
+async def test_a_click_on_the_mark_column_marks_in_ascii_mode_too(ascii_mode):
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        await _host(pilot, _rows(1, 3))
+        assert item_at(pilot.app.screen, 0).option_id == "character:1"
+        await click_mark_column(pilot, pilot.app.screen, "character:3")
+        assert item_at(pilot.app.screen, "character:3").marked
+        assert item_at(pilot.app.screen, "character:3").painted_mark
+        assert not item_at(pilot.app.screen, "character:2").painted_mark
+        assert pilot.app.selected == []
+
+
+async def test_m_and_space_act_only_on_the_focused_list():
+    """RP-033: a letter on a toolbar button is inert; on the list it marks."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 3))
+        pilot.app.query_one("#personas-library-new").focus()
+        await pilot.press("m")
+        await pilot.pause()
+        assert not item_list.marked_ids()
+        assert not item_at(pilot.app.screen, 0).painted_mark
+        item_list.focus()
+        await select_roleplay_item(pilot, pilot.app.screen, index=0, load=False)
+        await pilot.press("m")
+        await pilot.pause()
+        assert item_list.marked_ids() == frozenset({"character:1"})
+        assert item_at(pilot.app.screen, 0).painted_mark
+
+
+async def test_the_cursor_comes_back_by_id_after_set_options():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 50))
+        await select_roleplay_item(pilot, pilot.app.screen, "character:30", load=False)
+        await pane.update_rows(_rows(10, 60), total=51, noun="characters")
+        await pilot.pause()
+        assert highlighted_item_id(pilot.app.screen) == "character:30"
+
+
+async def test_a_cut_name_shows_whole_in_the_hover_tooltip():
+    name = "Captain Isolde Varga of the Deep-Survey Frigate Meridian's Wake"
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(
+            pilot, (LibraryRow(item_id="1", kind="character", name=name),)
+        )
+        assert item_list.prompt_for("character:1").name_cut
+        await pilot.hover(item_list, offset=(6, 0))
+        await pilot.pause()
+        assert str(item_list.tooltip) == name
+        await pilot.hover(item_list, offset=(2, 0))
+        await pilot.pause()
+        assert str(item_list.tooltip) == "Click to mark"
+
+
+async def test_end_past_the_loaded_rows_asks_for_the_rest_of_the_list():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 200), total=348)
+        item_list.set_more_available(True)
+        item_list.focus()
+        await pilot.press("end")
+        await pilot.pause()
+        assert ("end", None) in pilot.app.wanted
+        assert highlighted_item_id(pilot.app.screen) != "character:200"
+
+
+async def test_near_the_loaded_end_the_list_asks_for_one_window_once():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 200), total=348)
+        item_list.set_more_available(True)
+        await select_roleplay_item(pilot, pilot.app.screen, "character:195", load=False)
+        await select_roleplay_item(pilot, pilot.app.screen, "character:196", load=False)
+        assert pilot.app.wanted == [("near_end", None)]
+
+
+async def test_a_row_past_the_loaded_end_loads_through_then_shows_as_loaded():
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 200), total=348)
+        item_list.set_more_available(True)
+        assert pane.mark_active_row("character", "300") is False
+        await pilot.pause()
+        assert pilot.app.wanted == [("id", "character:300")]
+        item_list.append_rows(_rows(201, 348))
+        item_list.set_more_available(False)
+        await pilot.pause()
+        assert item_list.active_id == "character:300"
+        assert highlighted_item_id(pilot.app.screen) == "character:300"
+        assert item_at(pilot.app.screen, "character:300").active
+
+
+async def test_prompts_are_rebuilt_once_per_settled_width_and_only_where_changed(
+    monkeypatch,
+):
+    """RC-6: a resize rebuilds only the prompts it changes, once; height alone, none."""
+    long_name = "A character whose name is far too long for a twenty-cell list"
+    rows = _rows(1, 30) + (LibraryRow(item_id="99", kind="character", name=long_name),)
+    built: list[str] = []
+    original = frame_state.build_item_prompt
+
+    def counting(**kwargs):
+        built.append(kwargs["name"])
+        return original(**kwargs)
+
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, rows)
+        assert item_list.prompt_for("character:99").cut
+        monkeypatch.setattr(frame_state, "build_item_prompt", counting)
+        await pilot.resize_terminal(120, 40)
+        await pilot.pause()
+        assert built == []  # a height-only resize rebuilds nothing
+        await pilot.resize_terminal(160, 40)
+        await pilot.pause()
+        await pilot.pause()
+        assert built == [long_name]  # the one cut row, once

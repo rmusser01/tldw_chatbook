@@ -29,6 +29,12 @@ from Tests.UI.background_signals import wait_for_background_signal, wait_for_sig
 # Roleplay frame B1: the delegating harness apps moved to
 # Tests/UI/roleplay_frame_harness.py (spec 5.7.1); these names stay importable
 # from here for the modules that import them.
+from Tests.UI.roleplay_frame_harness import (
+    item_at,
+    list_state,
+    select_roleplay_item,
+    visible_item_ids,
+)
 from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
@@ -259,7 +265,7 @@ _SHARED_MODE_OWNER_CASES = (
         "dictionaries",
         "dictionary",
         "New Dictionary Owner",
-        "2 entries · on",
+        "2 rules",
         "",
         id="dictionaries",
     ),
@@ -267,7 +273,7 @@ _SHARED_MODE_OWNER_CASES = (
         "lore",
         "lore",
         "New Lore Owner",
-        "3 entries · on",
+        "3 entries",
         "",
         id="lore",
     ),
@@ -298,15 +304,16 @@ def _configure_shared_mode_sources(mock_app_instance, monkeypatch) -> None:
     )
 
 
+def _book_scent(kind: str, count: int) -> str:
+    """A book row's line 2 (spec 1.5.2): ``N rules`` or ``N entries`` (count > 1 here)."""
+    return f"{count} rules" if kind == "dictionary" else f"{count} entries"
+
+
 def _shared_pane_publication(screen) -> dict[str, object]:
     """Snapshot the shared row/count/label fields that establish pane ownership."""
-    library = screen.query_one("#personas-library-pane")
     rendered_rows = tuple(
-        (
-            str(row.id),
-            tuple(str(static.renderable) for static in row.query(Static).results()),
-        )
-        for row in library.query(".personas-library-row").results()
+        (item.option_id, (item.name, item.state, item.meta))
+        for item in list_state(screen).items
     )
     return {
         "mode": screen.state.active_mode,
@@ -645,8 +652,8 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Detective Sam", "Lab Assistant"]
 
     async def test_footer_shortcut_context_set_and_cleared(
         self, mock_app_instance, stub_characters
@@ -873,7 +880,9 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             assert screen.state.selected_entity_id == "1"
             assert screen._edit_mode == "view"
@@ -894,7 +903,9 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert screen.query_one("#ccp-character-card-view").display is True
@@ -914,7 +925,9 @@ class TestCharacterSelectionAndEdit:
             await pilot.pause()
             # Select a character first: entering create mode must not leave
             # the previous selection's identity in the inspector.
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.click("#personas-library-new")
@@ -1051,7 +1064,9 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -1082,7 +1097,9 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -1146,7 +1163,9 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             screen.post_message(EditCharacterRequested(2))
             await pilot.pause()
@@ -1215,8 +1234,8 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Archivist"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Archivist"]
 
     async def test_personas_mode_copy_avoids_human_identity_actions(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1281,9 +1300,7 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            assert [_row_text(r) for r in screen.query(".personas-library-row")] == [
-                "Archivist"
-            ]
+            assert [r.name for r in list_state(screen).items] == ["Archivist"]
 
             stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
                 "scope offline"
@@ -1294,7 +1311,7 @@ class TestPersonasMode:
             await pilot.pause()
 
             assert screen.query_one("#personas-service-error", Static)
-            assert not list(screen.query(".personas-library-row"))
+            assert not visible_item_ids(screen)
 
     async def test_personas_mode_empty_state_copy_unchanged(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1318,7 +1335,9 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             assert screen.state.selected_entity_kind == "persona"
             assert screen.query_one("#ccp-persona-card-view").display is True
@@ -1369,7 +1388,7 @@ class TestPersonasMode:
             await pilot.pause()
 
             assert screen.query_one("#personas-service-error", Static)
-            assert not list(screen.query(".personas-library-row"))
+            assert not visible_item_ids(screen)
             assert "· 0" in str(
                 screen.query_one("#personas-purpose", Static).renderable
             )
@@ -1380,7 +1399,9 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
@@ -1410,7 +1431,9 @@ class TestPersonasMode:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._enter_personas_mode(pilot)
             screen._console_readiness_poll_timer.stop()
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
@@ -1444,7 +1467,9 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
@@ -1566,7 +1591,9 @@ class TestPersonasMode:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
@@ -1627,8 +1654,8 @@ class TestPersonasMode:
             await app.workers.wait_for_complete()
             await pilot.pause()
             assert screen.state.active_mode == "characters"
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Detective Sam", "Lab Assistant"]
 
 
 PROFILES_FOR_SEARCH = [
@@ -1694,8 +1721,8 @@ class TestSearch:
 
             await self._wait_for_search_render(pilot)
             assert rendered_queries == ["sam"]
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Detective Sam"]
 
     async def test_stale_fts_search_result_does_not_update_library_rows(
         self,
@@ -1750,8 +1777,8 @@ class TestSearch:
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "sam"
             await self._wait_for_search_render(pilot)
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Detective Sam"]
             # F-033: the match count now lives in the merged header purpose
             # line; the pane's duplicate count line stays empty.
             count = str(screen.query_one("#personas-library-count", Static).renderable)
@@ -1774,8 +1801,8 @@ class TestSearch:
             # Then clear
             search_input.value = ""
             await self._wait_for_search_render(pilot)
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Detective Sam", "Lab Assistant"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             # F-033: unfiltered count renders once, in the header purpose line.
             assert count == ""
@@ -1791,8 +1818,8 @@ class TestSearch:
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "LAB"
             await self._wait_for_search_render(pilot)
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Lab Assistant"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Lab Assistant"]
 
     async def test_search_filters_profiles_in_personas_mode(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1814,8 +1841,8 @@ class TestSearch:
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "nav"
             await self._wait_for_search_render(pilot)
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Navigator"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Navigator"]
             # F-033: the pane's duplicate count line stays empty; the merged
             # header line carries the personas library total.
             count = str(screen.query_one("#personas-library-count", Static).renderable)
@@ -1835,7 +1862,7 @@ class TestSearch:
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "sam"
             await self._wait_for_search_render(pilot)
-            assert len(screen.query(".personas-library-row")) == 1
+            assert len(visible_item_ids(screen)) == 1
             # Switch to personas mode and back
             await pilot.click("#personas-mode-personas")
             await pilot.pause()
@@ -1846,8 +1873,8 @@ class TestSearch:
             await app.workers.wait_for_complete()
             await pilot.pause()
             # All rows visible after round-trip
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Detective Sam", "Lab Assistant"]
             # Search input is cleared
             assert screen.query_one("#personas-library-search").value == ""
 
@@ -1875,8 +1902,8 @@ class TestSearch:
                 screen._render_library_rows(), screen._render_library_rows()
             )
             await pilot.pause()
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Detective Sam", "Lab Assistant"]
 
 
 class TestImportExport:
@@ -1978,8 +2005,8 @@ class TestImportExport:
             assert imported_sources == [card_bytes]
             assert screen.state.selected_entity_id == "3"
             assert screen.query_one("#personas-library-search").value == ""
-            rows = screen.query(".personas-library-row")
-            assert "Imported Hero" in [_row_text(r) for r in rows]
+            rows = list_state(screen).items
+            assert "Imported Hero" in [r.name for r in rows]
 
     async def test_import_success_notification_lingers_past_the_app_default(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
@@ -2119,7 +2146,9 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await screen._import_character_from_path(str(bad_path))
             await pilot.pause()
@@ -2380,7 +2409,9 @@ class TestImportExport:
             # Duplicate now applies to characters (task-443) - the library
             # rail button must be visible in the default characters mode.
             assert screen.query_one("#personas-library-duplicate", Button).display
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await pilot.click("#personas-library-duplicate")
             await pilot.pause()
@@ -2396,8 +2427,8 @@ class TestImportExport:
                 "A third opener.",
             ]
             assert screen.state.selected_entity_id == "99"
-            rows = screen.query(".personas-library-row")
-            assert "Detective Sam (copy)" in [_row_text(r) for r in rows]
+            rows = list_state(screen).items
+            assert "Detective Sam (copy)" in [r.name for r in rows]
 
     async def test_duplicate_name_conflict_notifies_error(
         self, mock_app_instance, stub_characters, monkeypatch
@@ -2416,7 +2447,9 @@ class TestImportExport:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await pilot.click("#personas-library-duplicate")
             await pilot.pause()
@@ -2564,7 +2597,9 @@ class TestImportExport:
             await pilot.click("#personas-library-new")
             await pilot.pause()
         else:
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
@@ -2668,7 +2703,9 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             target = tmp_path / "detective_sam.json"
             await screen._export_selected_character(str(target), fmt="json")
@@ -2702,7 +2739,9 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             target = tmp_path / "detective_sam.png"
             await screen._export_selected_character(str(target), fmt="png")
@@ -2759,7 +2798,9 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             inspector = screen.query_one(PersonasInspectorPane)
             checkbox = inspector.query_one("#personas-export-include-tts", Checkbox)
@@ -3540,7 +3581,9 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             hidden_dir = tmp_path / ".sneaky"
             hidden_dir.mkdir()
@@ -3567,7 +3610,9 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             target = tmp_path / "missing" / "out.json"
             await screen._export_selected_character(str(target), fmt="json")
@@ -3590,7 +3635,9 @@ class TestImportExport:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             target = tmp_path / "archivist.json"
             await screen._export_selected_character(str(target), fmt="json")
@@ -4845,7 +4892,7 @@ async def test_mounted_aggregate_save_waits_real_persona_owner(
         screen = await _mounted(pilot)
         await pilot.click("#personas-mode-personas")
         await app.workers.wait_for_complete()
-        await pilot.click("#personas-library-row-persona-p-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
         screen.post_message(EditPersonaProfileRequested("p-1"))
         await pilot.pause()
         screen.state.has_unsaved_changes = True
@@ -4889,7 +4936,11 @@ class TestConversationsPanel:
     async def _select_first_character(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-row-character-1")
+        # D14 census: at 52x20 the rail is not painted. On dev, pilot.click on
+        # the zero-region ListItem hit screen (0,0) and silently did nothing
+        # (first-paint auto-select had already loaded character 1); the strict
+        # click helper refuses an unpainted row, so this uses the Enter path.
+        await select_roleplay_item(pilot, pilot.app.screen, "character:1", via="enter")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -5115,7 +5166,9 @@ class TestConversationsPanel:
                 inspector, "show_conversations_loading", one_shot_loading_failure
             )
 
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
 
             assert stub_conversations.calls == calls_before
@@ -5770,11 +5823,15 @@ class TestConversationsPanel:
                 await wait_for_signal(started, what="the stale older-page read")
 
                 if stale_action == "other-character":
-                    await pilot.click("#personas-library-row-character-2")
+                    await select_roleplay_item(
+                        pilot, pilot.app.screen, "character:2", via="click"
+                    )
                 elif stale_action == "mode-switch":
                     await pilot.click("#personas-mode-personas")
                 else:
-                    await pilot.click("#personas-library-row-character-1")
+                    await select_roleplay_item(
+                        pilot, pilot.app.screen, "character:1", via="click"
+                    )
                 release.set()
                 await pilot.app.workers.wait_for_complete()
                 await pilot.pause()
@@ -5837,7 +5894,9 @@ class TestConversationsPanel:
                 inspector, "invalidate_conversation_render", observed_invalidate
             )
 
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await wait_for_signal(
                 initial_mount_started, what="the stale initial-row DOM mount"
             )
@@ -6862,7 +6921,7 @@ class TestConversationsPanel:
             if size[0] <= 60:
                 card_action = screen.query_one("#personas-card-conversations", Button)
                 assert str(card_action.label) == "Conversations (1)"
-                screen.query_one("#personas-library-rows", ListView).focus()
+                screen.query_one("#personas-library-rows").focus()
                 for _ in range(40):
                     if pilot.app.focused is card_action:
                         break
@@ -7651,7 +7710,9 @@ class TestConversationsPanel:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -7681,7 +7742,7 @@ class TestConsoleActions:
     async def _select_first_character(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-row-character-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "character:1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -7694,7 +7755,7 @@ class TestConsoleActions:
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        await pilot.click("#personas-library-row-persona-p-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -7975,7 +8036,9 @@ class TestConsoleActions:
                 assert_gate_synced_before_loading,
             )
 
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -8196,14 +8259,16 @@ class TestConsoleActions:
             # selection path they were written for.
             scope_service.get_character.reset_mock()
             detail_dto.model_dump.reset_mock()
-            row = screen.query_one("#personas-library-row-character-1")
-            assert "Remote Elara" in _row_text(row)
-            assert "Local collision" not in _row_text(row)
+            row = item_at(screen, "character:1")
+            assert "Remote Elara" in row.name
+            assert "Local collision" not in row.name
 
             screen.state.search_query = "remote"
             await screen._reload_character_page(reset_offset=True)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -8545,7 +8610,7 @@ class TestServerCharacterSourceIsolation:
 
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            assert screen.query_one("#personas-library-row-character-1")
+            assert "character:1" in visible_item_ids(screen)
 
             switch = asyncio.create_task(
                 screen.handle_runtime_backend_changed("server")
@@ -8557,12 +8622,14 @@ class TestServerCharacterSourceIsolation:
 
             assert screen._characters == []
             assert screen._character_total == 0
-            assert not list(screen.query("#personas-library-row-character-1"))
+            assert "character:1" not in visible_item_ids(screen)
 
             release.set()
             await switch
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-7")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:7", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -8696,7 +8763,9 @@ class TestServerCharacterSourceIsolation:
 
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-library-row-character-7")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:7", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -8799,7 +8868,9 @@ class TestServerCharacterSourceIsolation:
 
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-library-row-character-7")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:7", via="click"
+            )
             await pilot.pause()
             screen.run_worker = Mock()
             monkeypatch.setattr(
@@ -9102,7 +9173,7 @@ class TestServerCharacterSourceIsolation:
 
             assert screen._characters == []
             assert screen._character_total == 0
-            assert not list(screen.query(".personas-library-row"))
+            assert not visible_item_ids(screen)
             # F-033: the pane count line is empty for unfiltered lists; the
             # (zero) total shows in the merged header purpose line instead.
             assert (
@@ -9142,14 +9213,14 @@ class TestServerCharacterSourceIsolation:
                 "dictionaries",
                 "dictionary",
                 "New Dictionary Owner",
-                "2 entries · on",
+                "2 rules",
                 "",
             ),
             (
                 "lore",
                 "lore",
                 "New Lore Owner",
-                "3 entries · on",
+                "3 entries",
                 "",
             ),
         ),
@@ -9242,8 +9313,8 @@ class TestServerCharacterSourceIsolation:
                 "mode": new_mode,
                 "rows": (
                     (
-                        f"personas-library-row-{new_kind}-91",
-                        (new_name, new_meta),
+                        f"{new_kind}:91",
+                        (new_name, "on", new_meta),
                     ),
                 ),
                 "count": new_count,
@@ -9346,8 +9417,8 @@ class TestServerCharacterSourceIsolation:
                 "mode": new_mode,
                 "rows": (
                     (
-                        f"personas-library-row-{new_kind}-91",
-                        (new_name, new_meta),
+                        f"{new_kind}:91",
+                        (new_name, "on", new_meta),
                     ),
                 ),
                 "count": new_count,
@@ -9472,8 +9543,8 @@ class TestServerCharacterSourceIsolation:
                 "mode": new_mode,
                 "rows": (
                     (
-                        f"personas-library-row-{new_kind}-91",
-                        (new_name, new_meta),
+                        f"{new_kind}:91",
+                        (new_name, "on", new_meta),
                     ),
                 ),
                 "count": new_count,
@@ -9582,8 +9653,8 @@ class TestServerCharacterSourceIsolation:
                     await screen._render_dictionary_rows(query="new")
                     expected_rows = (
                         (
-                            "personas-library-row-dictionary-91",
-                            ("new Dictionary Owner", "2 entries · on"),
+                            "dictionary:91",
+                            ("new Dictionary Owner", "on", "2 rules"),
                         ),
                     )
                     expected_count = "1 of 1 dictionary"
@@ -9591,8 +9662,8 @@ class TestServerCharacterSourceIsolation:
                     await screen._render_lore_rows(query="new")
                     expected_rows = (
                         (
-                            "personas-library-row-lore-91",
-                            ("new Lore Owner", "3 entries · on"),
+                            "lore:91",
+                            ("new Lore Owner", "on", "3 entries"),
                         ),
                     )
                     expected_count = "1 of 1 lore book"
@@ -9724,8 +9795,8 @@ class TestServerCharacterSourceIsolation:
             newer_cache = deepcopy(getattr(screen, cache_name))
             assert newer_publication["rows"] == (
                 (
-                    f"personas-library-row-{kind}-73",
-                    ("X newer winner", f"{entry_count} entries · on"),
+                    f"{kind}:73",
+                    ("X newer winner", "on", _book_scent(kind, entry_count)),
                 ),
             )
             assert newer_cache == [newer_x]
@@ -9827,8 +9898,12 @@ class TestServerCharacterSourceIsolation:
             newer_cache = deepcopy(getattr(screen, cache_name))
             assert newer_publication["rows"] == (
                 (
-                    f"personas-library-row-{kind}-82",
-                    ("Newer after mode return", f"{entry_count} entries · on"),
+                    f"{kind}:82",
+                    (
+                        "Newer after mode return",
+                        "on",
+                        _book_scent(kind, entry_count),
+                    ),
                 ),
             )
             assert newer_cache == [newer_result]
@@ -9951,21 +10026,16 @@ class TestServerCharacterSourceIsolation:
             await pilot.pause()
 
             publication = _shared_pane_publication(screen)
-            recovery_rows = list(
-                screen.query(".personas-library-recovery-row").results()
-            )
-            recovery_copy = (
-                str(recovery_rows[0].query_one(Static).renderable)
-                if recovery_rows
-                else None
-            )
+            state = list_state(screen)
+            recovery_copy = state.text if state.state == "recovery" else None
             if valid_outcome == "success":
                 expected_rows = (
                     (
-                        f"personas-library-row-{kind}-93",
+                        f"{kind}:93",
                         (
                             f"Owner {kind.title()} Result",
-                            f"{entry_count} entries · on",
+                            "on",
+                            _book_scent(kind, entry_count),
                         ),
                     ),
                 )
@@ -10339,7 +10409,7 @@ class TestPreviewIntegration:
     async def _select_first_character(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-row-character-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "character:1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -10442,7 +10512,7 @@ class TestPreviewIntegration:
         )
 
         async def _select(pilot, row_id):
-            await pilot.click(row_id)
+            await select_roleplay_item(pilot, pilot.app.screen, row_id, via="click")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -10452,8 +10522,8 @@ class TestPreviewIntegration:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             await pilot.pause()
-            await _select(pilot, "#personas-library-row-character-2")
-            await _select(pilot, "#personas-library-row-character-1")
+            await _select(pilot, "character:2")
+            await _select(pilot, "character:1")
             pane = screen.query_one(PersonasPreviewPane)
             greeting_line = "Detective Sam: The name's Detective Sam. Who's asking?"
             lines = [line for line in pane.transcript_text().splitlines() if line]
@@ -10618,7 +10688,9 @@ class TestPreviewIntegration:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -10989,7 +11061,9 @@ class TestPreviewIntegration:
                     break
                 await pilot.pause()
             assert "Detective Sam: Hello, " in pane.transcript_text()
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
             mid_gate.set()
             await app.workers.wait_for_complete()
@@ -11406,7 +11480,9 @@ class TestPreviewIntegration:
             # Selection changes while the stream is in flight. The gated
             # preview worker is still running, so release the gate BEFORE
             # waiting for workers (waiting first deadlocks the test).
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
             gate.set()
             await app.workers.wait_for_complete()
@@ -11717,7 +11793,7 @@ class TestDelete:
     async def _select_first_character(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-row-character-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "character:1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -11730,7 +11806,7 @@ class TestDelete:
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        await pilot.click("#personas-library-row-persona-p-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -11784,8 +11860,8 @@ class TestDelete:
             # Conversations panel emptied.
             assert not screen.query_one("#personas-conversations-list").children
             # Library refreshed without the deleted record.
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Lab Assistant"]
+            rows = list_state(screen).items
+            assert [r.name for r in rows] == ["Lab Assistant"]
         assert ("Deleted.", "information") in notifications
 
     async def test_delete_conflict_shows_recovery_copy(
@@ -11980,11 +12056,10 @@ class TestBulkLibraryActions:
         screen = await _mounted(pilot)
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        list_view = screen.query_one("#personas-library-rows", ListView)
-        list_view.focus()
+        screen.query_one("#personas-library-rows").focus()
         await pilot.pause()
         for index in row_indexes:
-            list_view.index = index
+            await select_roleplay_item(pilot, screen, index=index, load=False)
             await pilot.press("m")
             await pilot.pause()
         return screen
@@ -12049,7 +12124,7 @@ class TestBulkLibraryActions:
             # One confirm for the whole batch; each item deleted once.
             assert confirm_calls == ["2 characters"]
             assert sorted(deleted) == [("1", 1), ("2", 1)]
-            assert not list(screen.query(".personas-library-row"))
+            assert not visible_item_ids(screen)
             assert screen.state.selected_entity_id is None
             assert screen._marked_rows == ()
         assert ("Deleted 2 characters.", "information") in notifications
@@ -12168,7 +12243,7 @@ class TestPersonaHumanIdentityRemoval:
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        await pilot.click("#personas-library-row-persona-p-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -12216,13 +12291,13 @@ class TestPersonaHumanIdentityRemoval:
 
         async with app.run_test() as pilot:
             screen = await self._select_profile(pilot)
-            row = screen.query_one("#personas-library-row-persona-p-1")
+            row = item_at(screen, "persona:p-1")
             exposed = {
                 "active summary": bool(
                     list(screen.query("#personas-active-profile-summary"))
                 ),
                 "set/clear button": bool(list(screen.query("#personas-set-my-name"))),
-                "active marker": "●" in _row_text(row),
+                "active marker": "●" in row.name,
                 "pointer toggle handler": hasattr(
                     PersonasScreen, "_handle_set_my_name"
                 ),
@@ -12485,7 +12560,7 @@ class TestCharactersEmptyStateGuidance:
     async def _select_first_character(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-row-character-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "character:1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -12528,7 +12603,9 @@ class TestCharactersEmptyStateGuidance:
             assert screen.state.selected_entity_id == "1"
             assert screen.state.has_unsaved_changes is False
             # A second selection runs the clean fast path (no confirm).
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -12620,7 +12697,9 @@ class TestCharactersEmptyStateGuidance:
                 screen.query_one("#personas-characters-empty", Static).display is False
             )
             # ...and stays hidden when the selection moves to another row.
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -12757,7 +12836,9 @@ class TestKeyboardInteraction:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:1", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -12992,7 +13073,7 @@ class TestDirtyTracking:
 
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-row-character-1")
+        await select_roleplay_item(pilot, pilot.app.screen, "character:1", via="click")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -13019,7 +13100,9 @@ class TestDirtyTracking:
             screen = await self._edit_first_character(pilot)
             assert screen.state.has_unsaved_changes is False
             confirms = self._bypass_confirm(screen, True)
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -13036,7 +13119,9 @@ class TestDirtyTracking:
             await self._type_in_description(pilot, screen)
             assert screen.state.has_unsaved_changes is True
             confirms = self._bypass_confirm(screen, True)
-            await pilot.click("#personas-library-row-character-2")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "character:2", via="click"
+            )
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -13059,7 +13144,9 @@ class TestDirtyTracking:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-row-persona-p-1")
+            await select_roleplay_item(
+                pilot, pilot.app.screen, "persona:p-1", via="click"
+            )
             await pilot.pause()
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
@@ -13132,45 +13219,6 @@ class TestDirtyTracking:
             title = screen.query_one("#personas-header #workbench-header-title", Static)
             # F-034: the screen's one public name matches the nav label.
             assert str(title.renderable) == "Roleplay"
-
-    async def test_active_row_gets_unsaved_badge(
-        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
-    ):
-        monkeypatch.setattr(
-            character_handler_module, "update_character", lambda cid, data: True
-        )
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test(size=(160, 50)) as pilot:
-            screen = await self._edit_first_character(pilot)
-            row = screen.query_one("#personas-library-row-character-1")
-            assert "is-unsaved" not in row.classes
-            await self._type_in_description(pilot, screen)
-            assert "is-unsaved" in row.classes
-            await pilot.press("ctrl+s")
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            # The save refresh rebuilds the rows; the badge must be gone.
-            row = screen.query_one("#personas-library-row-character-1")
-            assert "is-unsaved" not in row.classes
-
-    async def test_unsaved_badge_cleared_on_discarded_switch(
-        self, mock_app_instance, stub_characters, stub_conversations
-    ):
-        """Discarding edits while switching rows must drop the stale badge."""
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test(size=(160, 50)) as pilot:
-            screen = await self._edit_first_character(pilot)
-            await self._type_in_description(pilot, screen)
-            row = screen.query_one("#personas-library-row-character-1")
-            assert "is-unsaved" in row.classes
-            self._bypass_confirm(screen, True)
-            await pilot.click("#personas-library-row-character-2")
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            assert screen.state.selected_entity_id == "2"
-            assert not screen.query(".personas-library-row.is-unsaved")
 
     async def test_import_refreshes_attach_action(
         self,
@@ -13538,7 +13586,10 @@ async def test_character_import_filters_helper_accepts_webp_not_md():
 
 
 async def test_character_row_meta_prefers_a_description_snippet_over_the_date() -> None:
-    """A character row should say who the character is, not when it was touched."""
+    """A character row should say who the character is, not when it was touched.
+
+    B2a: line 2 is the v1 scent, ``<age> · <first tag> · <snippet>`` (spec 1.5.2).
+    """
     rows = personas_screen_module.PersonasScreen._build_library_rows(
         [
             {
@@ -13553,22 +13604,24 @@ async def test_character_row_meta_prefers_a_description_snippet_over_the_date() 
             }
         ],
         "character",
+        now=datetime(2026, 7, 29, 10, 0, tzinfo=UTC),
     )
 
     assert len(rows) == 1
-    assert "archivist of a drowned library" in rows[0].meta
+    assert rows[0].meta.startswith("3d · Seraphina is the last archivist")
 
 
 async def test_character_row_meta_falls_back_to_the_date_without_a_description() -> (
     None
 ):
-    """Characters with no description keep their previous date meta line."""
+    """Characters with no description keep an age as their line 2 (RP-070: not raw UTC)."""
     rows = personas_screen_module.PersonasScreen._build_library_rows(
         [{"id": 3, "name": "Blank", "last_modified": "2026-07-26T10:00:00"}],
         "character",
+        now=datetime(2026, 7, 29, 10, 0, tzinfo=UTC),
     )
 
-    assert rows[0].meta == "2026-07-26"
+    assert rows[0].meta == "3d"
 
 
 async def test_character_row_meta_is_a_single_bounded_line() -> None:

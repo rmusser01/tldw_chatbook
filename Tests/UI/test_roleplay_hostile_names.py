@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.widgets import ListView, Static
+from textual.widgets import Static
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (bootstrap profile)
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -32,7 +32,9 @@ from Tests.UI.roleplay_frame_harness import (
     open_styled_roleplay,
     painted_rows,
     seed_mock_characters,
+    select_roleplay_item,
     settle,
+    visible_item_ids,
     wait_until,
 )
 from Tests.UI.test_personas_dictionaries import (
@@ -109,9 +111,7 @@ async def _assert_literal_and_inert(pilot, name: str, *, at_least: int) -> None:
 
 
 async def _select_first_row(pilot) -> None:
-    rows = pilot.app.screen.query_one("#personas-library-rows", ListView)
-    rows.index = 0
-    rows.action_select_cursor()
+    await select_roleplay_item(pilot, pilot.app.screen, index=0)
     await settle(pilot)
 
 
@@ -143,12 +143,12 @@ async def test_the_real_app_keeps_running_with_a_character_named_like_markup(
                 pilot,
                 lambda: (
                     type(app.screen).__name__ == "PersonasScreen"
-                    and bool(app.screen.query("#personas-library-row-character-1"))
+                    and "character:1" in visible_item_ids(app.screen)
                 ),
                 what="Roleplay's character row",
             )
             await settle(pilot)
-            await pilot.click("#personas-library-row-character-1")
+            await select_roleplay_item(pilot, app.screen, "character:1", via="click")
             await settle(pilot)
             assert app.is_running
             assert app.screen.state.selected_entity_id == "1"

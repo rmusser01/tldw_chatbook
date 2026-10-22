@@ -30,6 +30,7 @@ from Tests.UI.roleplay_frame_harness import (
     seed_mock_characters,
     settle,
     styled_tiers,
+    visible_item_ids,
     volume_db_path,
     wait_until,
 )
@@ -69,7 +70,7 @@ async def test_the_full_app_tier_reaches_roleplay_by_both_real_routes(
 ):
     async with roleplay_full_app(size=(120, 36), entry=entry) as pilot:
         assert type(pilot.app.screen).__name__ == "PersonasScreen"
-        assert pilot.app.screen.query("#personas-library-rows > ListItem")
+        assert visible_item_ids(pilot.app.screen)
 
 
 def test_app_stylesheets_carry_the_roleplay_sheet():

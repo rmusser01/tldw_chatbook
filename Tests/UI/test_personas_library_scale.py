@@ -59,7 +59,7 @@ def _seed(db, count, *, tags_for=None):
 
 def _pane_visible_rows(pane: PersonasLibraryPane) -> int:
     """Number of selectable library rows currently rendered."""
-    return len(pane._row_lookup)
+    return len(pane.item_list.loaded_ids())
 
 
 @asynccontextmanager
@@ -95,7 +95,7 @@ async def test_first_page_and_next(mock_app_instance, scaled_db, monkeypatch):
         assert f"1-{PERSONAS_LIBRARY_PAGE_SIZE} of {total}" in str(info)
         assert screen.query_one("#personas-library-pagebar").display is True
 
-        first_ids = set(pane._row_lookup and _row_ids(pane))
+        first_ids = set(_row_ids(pane))
         await screen._on_page_changed_delta(1)
         await pilot.pause()
         assert screen.state.page_offset == PERSONAS_LIBRARY_PAGE_SIZE
@@ -105,7 +105,7 @@ async def test_first_page_and_next(mock_app_instance, scaled_db, monkeypatch):
 
 
 def _row_ids(pane: PersonasLibraryPane) -> list[str]:
-    return [row.item_id for row in pane._row_lookup.values()]
+    return [pane.item_list.row(oid).item_id for oid in pane.item_list.loaded_ids()]
 
 
 async def test_tag_filter_narrows_count_and_resets_offset(
@@ -272,7 +272,9 @@ async def test_import_offpage_name_conflict_message(
         # The conflict character is not on page 0 (name_asc), proving the fix
         # cannot lean on the page cache.
         pane = screen.query_one(PersonasLibraryPane)
-        assert conflict_name not in {row.name for row in pane._row_lookup.values()}
+        assert conflict_name not in {
+            pane.item_list.row(oid).name for oid in pane.item_list.loaded_ids()
+        }
 
         notes: list[tuple[str, str]] = []
         monkeypatch.setattr(

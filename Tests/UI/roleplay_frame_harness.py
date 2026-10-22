@@ -41,11 +41,13 @@ import shutil
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from textual.content import Content
 from textual.css.stylesheet import CssSource
 from textual.geometry import Region
 from textual.pilot import Pilot
@@ -54,6 +56,7 @@ from textual.widget import Widget
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 import tldw_chatbook.config as config_module
+import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, CSS_DIR, ConsolidatedCSSApp
@@ -61,7 +64,8 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
-from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import RoleplayItemList
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph, set_ascii_glyph_mode
 
 #: The lazily loaded Roleplay sheet (build_css.SCREEN_OWNED_SPLITS).
 ROLEPLAY_SHEET = CSS_DIR / "screen_feature_roleplay.tcss"
@@ -311,10 +315,192 @@ async def wait_until(
 
 
 def _first_list_item_present(app) -> bool:
+    """Roleplay is up once its list shows a row, or its empty or recovery line."""
     screen = app.screen
-    return isinstance(screen, PersonasScreen) and bool(
-        screen.query("#personas-library-rows > ListItem")
+    return isinstance(screen, PersonasScreen) and (
+        bool(visible_item_ids(screen)) or list_state(screen).state != "rows"
     )
+
+
+@dataclass(frozen=True)
+class RoleplayItemView:
+    """One loaded row of the items list, read back the way a test needs it.
+
+    ``name``, ``state`` and ``meta`` are the row's data (``meta`` is line 2's
+    scent, whether or not the density paints it); ``lines`` is what the prompt
+    paints, gutter stripped, trailing blank lines dropped. ``marked`` is the
+    list's mark state; ``painted_mark`` is what the row paints: the option's
+    own prompt shows the resolved ``✓`` (``[x]`` in ASCII mode) in the
+    gutter's mark column.
+    """
+
+    option_id: str
+    kind: str
+    item_id: str
+    name: str
+    state: str | None
+    meta: str | None
+    lines: tuple[str, ...]
+    active: bool
+    marked: bool
+    painted_mark: bool
+    disabled: bool
+
+
+@dataclass(frozen=True)
+class RoleplayListState:
+    """``rows``, ``empty`` or ``recovery``, with the rows, the cursor and the status copy."""
+
+    state: str
+    items: tuple[RoleplayItemView, ...]
+    highlighted: str | None
+    text: str | None
+
+
+def _item_list(node) -> RoleplayItemList:
+    return node.query_one("#personas-library-rows", RoleplayItemList)
+
+
+def item_at(node, index: int | str) -> RoleplayItemView:
+    """The loaded row at ``index`` (0-based, list order), or by option id ``"<kind>:<id>"``.
+
+    Args:
+        node: The app, a screen or the pane (anything with ``query_one``).
+        index: A row index or an option id.
+    """
+    item_list = _item_list(node)
+    if isinstance(index, str):
+        index = item_list.get_option_index(index)
+    option = item_list.get_option_at_index(index)
+    option_id = str(option.id)
+    row = item_list.row(option_id)
+    prompt = item_list.prompt_for(option_id)
+    assert row is not None and prompt is not None, option_id
+    gutter = len(prompt.lines[0][0][0])
+    painted = ["".join(text for text, _style in line)[gutter:] for line in prompt.lines]
+    while painted and not painted[-1].strip():
+        painted.pop()
+    # The prompt OptionList paints, not the list's state or its cached spans.
+    shown = option.prompt
+    shown_text = shown.plain if isinstance(shown, Content) else str(shown)
+    mark_columns = frame_state.gutter_mark_columns()
+    mark_cell = shown_text[mark_columns.start : mark_columns.stop]
+    painted_mark = mark_cell == resolve_glyph("✓")
+    kind, _, item_id = option_id.partition(":")
+    return RoleplayItemView(
+        option_id=option_id,
+        kind=kind,
+        item_id=item_id,
+        name=row.name,
+        state=row.state,
+        meta=row.meta,
+        lines=tuple(painted),
+        active=item_list.active_id == option_id,
+        marked=option_id in item_list.marked_ids(kind),
+        painted_mark=painted_mark,
+        disabled=option.disabled,
+    )
+
+
+def visible_item_ids(node) -> tuple[str, ...]:
+    """Option ids of every loaded row, in list order (not only the viewport)."""
+    return _item_list(node).loaded_ids()
+
+
+def highlighted_item_id(node) -> str | None:
+    """The cursor row's option id, or None."""
+    return _item_list(node).highlighted_id()
+
+
+def list_state(node) -> RoleplayListState:
+    """The list's rows and cursor, and the empty or recovery copy shown beside it."""
+    item_list = _item_list(node)
+    items = tuple(item_at(node, index) for index in range(item_list.option_count))
+    status = node.query_one("#personas-library-status")
+    state, text = "rows", None
+    if status.display and status.children:
+        static = status.children[0]
+        text = str(static.render())
+        state = "empty" if static.id == "personas-library-empty" else "recovery"
+    return RoleplayListState(state, items, highlighted_item_id(node), text)
+
+
+def painted_option_rows(item_list: RoleplayItemList) -> dict[int, list[int]]:
+    """The screen rows each option index is painted on (from the ``option`` style meta)."""
+    region = item_list.content_region
+    rows: dict[int, list[int]] = {}
+    for y in range(region.y, region.bottom):
+        style = item_list.screen.get_style_at(region.x, y)
+        option = style.meta.get("option") if style is not None else None
+        if option is not None:
+            rows.setdefault(option, []).append(y)
+    return rows
+
+
+async def select_roleplay_item(
+    pilot: Pilot,
+    node,
+    item_id: str | None = None,
+    *,
+    index: int | None = None,
+    via: str = "enter",
+    load: bool = True,
+) -> None:
+    """Move the cursor to a row and, by default, load it like a user (I6).
+
+    Args:
+        pilot: The running pilot.
+        node: The app, screen or pane holding the list.
+        item_id: Option id ``"<kind>:<id>"`` (or give ``index``).
+        index: Row index when no id is given.
+        via: ``"enter"`` (cursor + Enter's action) or ``"click"`` (a real mouse
+            click on the row's name, which must be painted: an unpainted row
+            fails loudly instead of clicking nothing, census finding F2).
+        load: False only moves the cursor.
+    """
+    item_list = _item_list(node)
+    if item_id is not None:
+        index = item_list.get_option_index(item_id)
+    if index is None:
+        raise ValueError("select_roleplay_item needs item_id or index")
+    item_list.highlighted = index
+    await pilot.pause()
+    if not load:
+        return
+    if via == "click":
+        painted = painted_option_rows(item_list).get(index)
+        assert painted, f"option {index} is not painted in {item_list.content_region}"
+        name_column = len(frame_state.item_gutter(loaded=False, marked=False))
+        content = item_list.content_region
+        await pilot.click(
+            item_list,
+            offset=(
+                content.x - item_list.region.x + name_column,
+                painted[0] - item_list.region.y,
+            ),
+        )
+    elif via == "enter":
+        item_list.action_select()
+    else:
+        raise ValueError(f"unknown via {via!r}")
+    await pilot.pause()
+
+
+async def click_mark_column(pilot: Pilot, node, item_id: str) -> None:
+    """A real mouse click on a painted row's mark column (gutter col 2, spec 4.10)."""
+    item_list = _item_list(node)
+    index = item_list.get_option_index(item_id)
+    painted = painted_option_rows(item_list).get(index)
+    assert painted, f"option {index} is not painted"
+    column = frame_state.gutter_mark_columns().start
+    await pilot.click(
+        item_list,
+        offset=(
+            item_list.content_region.x - item_list.region.x + column,
+            painted[0] - item_list.region.y,
+        ),
+    )
+    await pilot.pause()
 
 
 @asynccontextmanager
@@ -462,9 +648,20 @@ def chrome_bottoms(screen) -> tuple[int, int]:
     return nav.bottom, header.bottom
 
 
-def first_list_item(screen) -> Widget:
-    """The first row of the items list (B2a keeps the id, replaces the type)."""
-    return screen.query("#personas-library-rows > ListItem").first()
+@dataclass(frozen=True)
+class PaintedItem:
+    """Where one option is painted (rows are option lines, not widgets)."""
+
+    region: Region
+
+
+def first_list_item(screen) -> PaintedItem:
+    """The painted region of the first row of the items list."""
+    item_list = _item_list(screen)
+    rows = painted_option_rows(item_list).get(0)
+    assert rows, "the first option is not painted"
+    region = item_list.content_region
+    return PaintedItem(Region(region.x, rows[0], region.width, len(rows)))
 
 
 def painted_rows(screen: Screen) -> list[str]:

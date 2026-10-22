@@ -560,6 +560,13 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
                 "workbench-header-subtitle",
                 "workbench-header-status",
                 "-active",
+                # Roleplay frame B2a (TASK-33910.3): OptionList's highlighted-row
+                # component class, claimed exactly so the items list's
+                # focus-only cursor rules (`.roleplay-items-list > ...`) leave
+                # boot. A unit moves only when every token is Roleplay's, and
+                # Tests/UI/test_roleplay_stylesheet.py keeps each selector
+                # anchored by a Roleplay token (SHARED_CLAIMS).
+                "option-list--option-highlighted",
             )
         },
         pinned=frozenset({"personas-library-rows"}),
