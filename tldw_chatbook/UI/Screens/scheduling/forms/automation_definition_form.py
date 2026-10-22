@@ -26,6 +26,7 @@ create form, `mode="create"`.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -254,6 +255,7 @@ class AutomationDefinitionForm(ModalScreen):
         self._dirty = False
         self._ready = False
         self._save_pending = False
+        self._last_save_outcome: SaveDefinitionOutcome | None = None
 
     # -- discard guard (mirrors ReminderForm) --------------------------------
 
@@ -262,12 +264,12 @@ class AutomationDefinitionForm(ModalScreen):
 
     def _maybe_discard(self) -> None:
         if not self._dirty:
-            self.dismiss(None)
+            self.dismiss(self._last_save_outcome)
             return
         from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
         async def _discard() -> None:
-            self.dismiss(None)
+            self.dismiss(self._last_save_outcome)
 
         self.app.push_screen(
             ConfirmationDialog(
@@ -323,6 +325,7 @@ class AutomationDefinitionForm(ModalScreen):
                 else "Create it locally, or on the connected server if one is "
                 "available.",
                 classes="form-helper",
+                id="automation-owner-help",
             )
 
             yield Label("Name:", classes="form-label")
@@ -939,6 +942,14 @@ class AutomationDefinitionForm(ModalScreen):
 
     # -- save ------------------------------------------------------------------------
 
+    def _raw_draft(self) -> dict[str, Any]:
+        """Read raw controls, including hidden, invalid and whitespace values."""
+        return {
+            widget.id: widget.text if isinstance(widget, TextArea) else widget.value
+            for widget in self.query("Input, TextArea, Select, Checkbox")
+            if widget.id is not None
+        }
+
     def _run_save(self) -> None:
         if self._save_pending:
             return
@@ -950,6 +961,7 @@ class AutomationDefinitionForm(ModalScreen):
             return
         payload = self._build_payload()
         owner = self._selected_owner()
+        submitted_draft = self._raw_draft()
 
         # Admit before the worker starts: cancelling its asyncio waiter cannot
         # stop a physical SQLite write already running in a thread.
@@ -957,14 +969,17 @@ class AutomationDefinitionForm(ModalScreen):
         save = self.query_one("#automation-save", Button)
         save.disabled = True
         save.label = "Saving…"
+        owner_select = self.query_one("#automation-runs-on", Select)
+        owner_select.disabled = True
 
         async def _do() -> None:
             try:
-                await self._save_async(payload, owner)
+                await self._save_async(payload, owner, submitted_draft)
             finally:
                 self._save_pending = False
                 save.disabled = False
                 save.label = "Save"
+                owner_select.disabled = self._definition_row is not None
 
         try:
             self.run_worker(_do, exclusive=True, group="automation-form-save")
@@ -972,9 +987,12 @@ class AutomationDefinitionForm(ModalScreen):
             self._save_pending = False
             save.disabled = False
             save.label = "Save"
+            owner_select.disabled = self._definition_row is not None
             raise
 
-    async def _save_async(self, payload: dict[str, Any], owner: str) -> None:
+    async def _save_async(
+        self, payload: dict[str, Any], owner: str, submitted_draft: dict[str, Any]
+    ) -> None:
         try:
             outcome: "SaveDefinitionOutcome" = await self._service.save_definition(
                 payload, owner, definition_id=self._definition_id
@@ -991,7 +1009,47 @@ class AutomationDefinitionForm(ModalScreen):
             self._set_form_error("Save failed — check the log and try again.")
             return
         if outcome.status in ("saved", "queued"):
+            # This identity/result is durable even if the metadata read below
+            # fails. A later retry must update, and discard must refresh the
+            # workbench for the earlier successful write.
+            self._last_save_outcome = outcome
+            self._definition_id = outcome.definition_id
+            if not self.is_attached:
+                return
             self._set_validation_errors([])
-            self.dismiss(outcome)
+            if self._raw_draft() == submitted_draft:
+                self.dismiss(outcome)
+                return
+            self._dirty = True
+            self._definition_row = self._definition_row or {}
+            self.query_one(".form-title", Label).update("Edit Recurring Question")
+            self.query_one("#automation-owner-help", Static).update(
+                "Existing automations keep the owner they were created with."
+            )
+            try:
+                row = await asyncio.to_thread(
+                    self._service.db.get_automation_definition, self._definition_id
+                )
+            except Exception:  # noqa: BLE001 - the write already succeeded
+                logger.exception(
+                    "Saved automation metadata refresh failed for owner {owner} "
+                    "(definition_id={definition_id})",
+                    owner=owner,
+                    definition_id=self._definition_id,
+                )
+                if self.is_attached:
+                    self._set_form_error(
+                        "Saved, but details could not be refreshed. "
+                        "Your newer edits are still here."
+                    )
+                return
+            if not self.is_attached:
+                return
+            if row is not None:
+                self._definition_row = row
+            # Read again after the final await: metadata refresh can overlap
+            # more typing, and must never prefill over the live raw draft.
+            if self._raw_draft() == submitted_draft:
+                self.dismiss(outcome)
             return
         self._set_validation_errors(outcome.errors or [])
