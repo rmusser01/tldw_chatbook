@@ -8424,16 +8424,49 @@ def _replace_cli_config_serialized(
         return loaded, backup_path, saved_snapshot
 
 
+def _upgrade_legacy_ciphertext(
+    table: Mapping[str, Any], password: str
+) -> tuple[Dict[str, Any], bool]:
+    """Re-encrypt every v1 ``enc:`` value in place under ``password``.
+
+    Walks tables as decryption does (it never reads arrays). A value stays
+    encrypted whatever its key, so nothing is written back in plaintext.
+
+    Returns:
+        The upgraded copy, and whether any value changed.
+    """
+
+    enc_module = get_encryption_module()
+    upgraded = False
+    result: Dict[str, Any] = {}
+    for key, value in table.items():
+        if isinstance(value, Mapping):
+            result[key], nested = _upgrade_legacy_ciphertext(value, password)
+            upgraded = upgraded or nested
+        elif enc_module.is_legacy(value):
+            plaintext = enc_module.decrypt_value(value, password)
+            result[key] = enc_module.encrypt_value(plaintext, password)
+            upgraded = True
+        else:
+            result[key] = value
+    return result, upgraded
+
+
 def persist_cli_config_for_shutdown() -> bool:
-    """Encrypt plaintext secrets left in an unlocked encrypted config at quit.
+    """Finish encryption at rest for an unlocked encrypted config at quit.
 
     Every save has already written the file, and every load merges the
-    shipped template under it, so a quit has nothing else to carry to disk.
-    Writing that merge back re-inserted template keys a save had deleted,
-    reordered the file and stripped its comments (TASK-35835). The file can
-    still lack encryption at rest for a secret added in plaintext (a hand
-    edit) while encryption is enabled; only then is it rewritten, from its
-    own contents.
+    shipped template under it. Writing that merge back re-inserted template
+    keys a save had deleted, reordered the file and stripped its comments
+    (TASK-35835). What a quit still carries is encryption work that only an
+    unlocked session can do, on the file's own contents:
+
+    * a secret added in plaintext (a hand edit) is encrypted;
+    * values and the password check still in the v1 format are re-encrypted
+      as v2. A v1 value costs a 2^20 scrypt derivation (about 1 GiB, 3 s) at
+      every launch, and short of a password change nothing else upgrades it.
+
+    With neither, or with the session locked, nothing is written.
 
     Returns:
         False when the file cannot be loaded safely or the write fails.
@@ -8458,14 +8491,21 @@ def persist_cli_config_for_shutdown() -> bool:
             serialized = _try_read_cli_config_serialized_unlocked(config_path)
             current = tomllib.loads(serialized) if serialized is not None else {}
             encryption = current.get("encryption", {})
+            password = get_encryption_password()
             if not (
                 isinstance(encryption, Mapping)
                 and encryption.get("enabled", False)
-                and get_encryption_password()
-                and _contains_unencrypted_sensitive_value(current)
+                and password
             ):
                 return True
-            persisted = _config_data_for_persistence(current)
+            persisted, upgraded = _upgrade_legacy_ciphertext(current, password)
+            if _contains_unencrypted_sensitive_value(persisted):
+                persisted = _config_data_for_persistence(persisted)
+            elif not upgraded:
+                return True
+            # The file may have changed since the load above; check the exact
+            # document, so a value under another password is never stranded.
+            _validate_encrypted_document(persisted, password)
             raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             _publish_runtime_config_unlocked(
                 raw_config=raw_written, config_path=config_path

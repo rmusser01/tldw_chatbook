@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import inspect
 import os
 import stat
@@ -113,6 +114,146 @@ def test_shutdown_persistence_uses_only_effective_path(tmp_path, monkeypatch):
     assert "api_settings" not in toml.load(target)  # its own contents, no template
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert not ignored_default.exists()
+    # Encrypted, unlocked and nothing left in plaintext: the next quit writes
+    # nothing (AC#2 for an encrypted profile). The comment shows a rewrite.
+    after = _HAND_COMMENT + target.read_bytes()
+    target.write_bytes(after)
+    assert config.persist_cli_config_for_shutdown() is True
+    assert target.read_bytes() == after
+
+
+_LEGACY_PASSWORD = "legacy-password"
+# A rewrite drops comments, so a file that keeps one was not written.
+_HAND_COMMENT = b"# hand-written\n"
+
+
+def _ciphertext_version(value: str) -> int:
+    return base64.b64decode(value[len("enc:") :])[0]
+
+
+def _shape(table):
+    """The document with every ``enc:`` value replaced by a marker."""
+    return {
+        key: _shape(value)
+        if isinstance(value, dict)
+        else ("<enc>" if config_encryption.is_encrypted(value) else value)
+        for key, value in table.items()
+    }
+
+
+@pytest.fixture(scope="module")
+def legacy_encrypted_toml() -> str:
+    """A pre-v2 file: one v1 key and a v1 password check (scrypt 2^20 each)."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            type(config_encryption), "VERSION", config_encryption.LEGACY_VERSION
+        )
+        document = config.encrypt_api_keys_in_config(
+            {
+                "encryption": {"enabled": True},
+                "API": {"openai_api_key": "legacy-SENTINEL"},
+            },
+            _LEGACY_PASSWORD,
+        )
+    return toml.dumps(document)
+
+
+def _install_legacy_file(tmp_path, monkeypatch, serialized: str) -> Path:
+    target = tmp_path / "override" / "config.toml"
+    target.parent.mkdir(mode=0o700)
+    target.write_bytes(_HAND_COMMENT + serialized.encode("utf-8"))
+    target.chmod(0o600)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
+    return target
+
+
+def test_unlocked_quit_upgrades_legacy_ciphertext_in_place(
+    tmp_path, monkeypatch, legacy_encrypted_toml
+):
+    """TASK-35835 review: the quit is the one pass that moves v1 values to v2.
+
+    A v1 value costs a 2^20 scrypt derivation (about 1 GiB, 3 s) at every
+    launch. Dev's quit re-encrypted everything as v2; the fixed quit
+    re-encrypts only the v1 values, keeps every other byte of the document's
+    shape, and leaves a v2 file alone on the next quit.
+    """
+    target = _install_legacy_file(tmp_path, monkeypatch, legacy_encrypted_toml)
+    before = toml.loads(legacy_encrypted_toml)
+    assert _ciphertext_version(before["API"]["openai_api_key"]) == 1
+    assert _ciphertext_version(before["encryption"]["password_verifier"]) == 1
+    config.set_encryption_password(_LEGACY_PASSWORD)
+
+    assert config.persist_cli_config_for_shutdown() is True
+
+    after = toml.load(target)
+    assert _shape(after) == _shape(before)  # no template keys, nothing decrypted
+    key, verifier = after["API"]["openai_api_key"], after["encryption"]["password_verifier"]
+    assert (_ciphertext_version(key), _ciphertext_version(verifier)) == (2, 2)
+    assert config_encryption.decrypt_value(key, _LEGACY_PASSWORD) == "legacy-SENTINEL"
+    assert config_encryption.verify_password(_LEGACY_PASSWORD, verifier)
+    upgraded = _HAND_COMMENT + target.read_bytes()
+    target.write_bytes(upgraded)
+    assert config.persist_cli_config_for_shutdown() is True
+    assert target.read_bytes() == upgraded  # a v2-only file is left alone
+
+
+def test_locked_quit_leaves_legacy_ciphertext_byte_identical(
+    tmp_path, monkeypatch, legacy_encrypted_toml
+):
+    """Without the session password nothing can be re-encrypted, so nothing is written."""
+    target = _install_legacy_file(tmp_path, monkeypatch, legacy_encrypted_toml)
+    before = target.read_bytes()
+
+    assert config.persist_cli_config_for_shutdown() is True
+
+    assert target.read_bytes() == before
+
+
+def test_quit_refuses_a_value_another_password_wrote_between_its_reads(
+    tmp_path, monkeypatch
+):
+    """The document the quit writes is validated, not just the file it loaded.
+
+    A hand edit after the load adds a plaintext key (so the quit writes) and a
+    value under another password. Writing it would give the file a new check
+    value that this other value cannot pass: the stranded state
+    ``rekey_encryption_verifier`` repairs.
+    """
+    password = "session-password"
+    target = tmp_path / "override" / "config.toml"
+    target.parent.mkdir(mode=0o700)
+    loaded = config.encrypt_api_keys_in_config(
+        {"encryption": {"enabled": True}, "API": {"openai_api_key": "kept-SENTINEL"}},
+        password,
+    )
+    target.write_text(toml.dumps(loaded), encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
+    edited = toml.loads(toml.dumps(loaded))
+    edited["API"]["anthropic_api_key"] = "hand-added-SENTINEL"
+    edited["API"]["groq_api_key"] = config_encryption.encrypt_value(
+        "foreign-SENTINEL", "another-password"
+    )
+    edited_text = toml.dumps(edited)
+    real_decrypt = config._decrypt_config_section_with_status
+    edits: list[str] = []
+
+    def decrypt_then_hand_edit(*args, **kwargs):
+        # The first call is inside the quit's load, after it read the file.
+        result = real_decrypt(*args, **kwargs)
+        if not edits:
+            edits.append(edited_text)
+            target.write_text(edited_text, encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(config, "_decrypt_config_section_with_status", decrypt_then_hand_edit)
+    config.set_encryption_password(password)
+
+    assert config.persist_cli_config_for_shutdown() is False
+
+    assert edits
+    assert target.read_text(encoding="utf-8") == edited_text
 
 
 def test_shutdown_persistence_leaves_a_fresh_template_byte_identical(
