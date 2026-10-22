@@ -993,7 +993,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-20, rebased onto dev 2d071d6d71 (same owner decision): dev's own
     #: file is 36929 there (+7 since the last base); this branch's net
     #: +215 is unchanged: 37137 -> 37144.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37144, 1344),
+    #: 2026-10-22, rebased onto dev 7700c63a68 (same owner decision): dev's own
+    #: file is 37062 there (+133 since the last base); this branch's net
+    #: +215 is unchanged: 37144 -> 37277.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37277, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

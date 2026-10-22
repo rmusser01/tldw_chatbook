@@ -134,10 +134,6 @@ Tests/UI/test_library_note_delete_prompt_visible.py
 Tests/UI/test_library_note_header_fits_pane.py
 Tests/UI/test_library_notes_sync_attention.py
 Tests/UI/test_library_notes_sync_delete_restore.py
-Tests/UI/test_library_media_use_in_console_links.py
-Tests/UI/test_nav_veto_keeps_highlight.py
-Tests/UI/test_library_reports_demo_consent.py
-Tests/UI/test_library_rag_answer_names_model.py
 Tests/UI/test_library_notes_tree_scrolls_wide.py
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_library_prompt_history_controller.py
@@ -955,3 +951,7 @@ Tests/UI/test_audiobook_chapter_source_freshness.py::test_current_source_owns_pe
 Tests/UI/test_study_quiz_create_drafts.py::test_create_preserves_later_raw_fields_and_editing_context[create_question]
 Tests/UI/test_audiobook_chapter_source_freshness.py::test_current_source_owns_pending_chapter_results[unchanged]
 Tests/UI/test_settings_media_pending_save_drafts.py::test_equal_global_stage_keeps_explicit_media_field_history
+Tests/UI/test_library_rag_answer_names_model.py
+Tests/UI/test_library_reports_demo_consent.py
+Tests/UI/test_nav_veto_keeps_highlight.py
+Tests/UI/test_library_media_use_in_console_links.py
