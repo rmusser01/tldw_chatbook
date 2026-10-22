@@ -20877,6 +20877,25 @@ Assert that click succeeded. Data-ready or a pause alone is not a mouse-target
 fence; do not retry clicks, press the Button directly, manually open a modal or
 replace the real composition-readiness check to obtain a passing route test.
 
+**PR3203/TASK-36067, 2026-10-22.** Queue-rebased UI7 observed the response-rule
+drafting label while Stop was still hidden. The label publishes directly, while
+checked control presentation may legitimately defer to a coalesced replay.
+Holding the real maintenance gate reproduced that split. Releasing it passed the
+bounded visibility wait but the first real click still returned False; waiting
+for mounted/visible/enabled geometry and the compositor hit at Pilot's click
+origin passed the same staged control. A persistently held gate still failed
+the five-second readiness deadline. These staged diagnostics relaxed only their
+helper-entry preparation allowance; they do not qualify that earlier setup wait.
+
+The original failure was also masked by a blanket worker wait raising
+WorkerCancelled. Coalesced replay can legitimately replace a Console sync
+worker; settle only that exact node/group cancellation, preserving unrelated
+cancellations and WorkerFailed.
+Textual Worker.wait can translate cancellation of its awaiting parent task into
+WorkerCancelled too: check current_task().cancelling() before suppressing the
+expected worker outcome. A real-Worker cancellation probe swallowed parent
+cancellation without this guard and propagated it with the guard.
+
 
 ## A shared cache timestamp does not identify its publisher (PR3023, 2026-10-16)
 
