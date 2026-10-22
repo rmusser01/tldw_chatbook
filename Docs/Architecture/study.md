@@ -47,7 +47,7 @@ SRS fields on `flashcards`: `interval` (days), `repetitions`, `ease_factor` (def
 - Every mutation passes a runtime-policy action id (`study.deck.create.local|server`, review actions, …).
 - Dashboard snapshots fall back from the scope service to direct ChaChaNotes reads, run off the event loop for file-backed DBs.
 
-Quiz/question creation in `UI/Study_Modules/quizzes_handler.py` captures raw authoring fields before normalizing the service payload. Successful completion clears each field only when its current raw value still matches that submission; later typing and its editing context survive. Failed creates retain drafts and existing retry semantics (TASK-36099).
+Quiz/question creation in `UI/Study_Modules/quizzes_handler.py` captures raw authoring fields before normalizing the service payload. Successful completion clears each field only when its current raw value still matches that submission; later typing and its editing context survive. Failed creates retain drafts and existing retry semantics (TASK-36099). Deck/card creation in `UI/Study_Modules/flashcards_handler.py` follows the same submitted-only clearing rule independently for deck name, front, back and tags: raw whitespace edits, caret/selection and current focus survive successful completion; definite pre-write failure preserves the current draft for retry (TASK-36132).
 
 ## Config
 

@@ -32,7 +32,7 @@ Surviving data seams named after CCP: conversation `discovery_owner` values `{ge
 
 The live handlers must never re-reference the retired `CCPWindow`/`Conv_Char_Window` and must reference `PersonasScreen` — pinned by `Tests/UI/test_legacy_entrypoints_retired.py`, which also asserts the retired handler classes are not package exports and enumerates `RETIRED_FILES`.
 
-Character/Persona Save messages carry detached raw form snapshots from the widget action. Save completion adopts persisted identity/version while baselining only that snapshot; later text and greetings remain dirty for the existing New/leave/quit guards and next Save. Persona completion presentation lives in `UI/Persona_Modules/persona_save_completion.py`, delegated by `PersonasScreen`; its acknowledgement precedes awaited row refresh (TASK-36097).
+Character/Persona Save messages carry detached raw form snapshots from the widget action. Save completion adopts persisted identity/version while baselining only that snapshot; later text and greetings remain dirty for the existing New/leave/quit guards and next Save. Ordinary Character Save also captures its submitted image/avatar pair: completion baselines the persisted attachment while retaining a later upload in the editor, thumbnail, and aggregate draft guards. The next Save uses that same persisted character identity/version to store the retained bytes (TASK-36131). Persona completion presentation lives in `UI/Persona_Modules/persona_save_completion.py`, delegated by `PersonasScreen`; its acknowledgement precedes awaited row refresh (TASK-36097).
 
 ## Governing decisions
 

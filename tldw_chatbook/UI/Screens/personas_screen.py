@@ -15581,6 +15581,10 @@ class PersonasScreen(BaseAppScreen):
                         str(data.get("name") or ""),
                         authority=authority,
                         submitted_snapshot=submitted_snapshot,
+                        submitted_attachment_snapshot=(
+                            data.get("image"),
+                            data.get("avatar"),
+                        ),
                     ),
                     task_name="personas-character-save-reconcile",
                 )
@@ -15632,6 +15636,7 @@ class PersonasScreen(BaseAppScreen):
         *,
         authority: _CharacterSaveAuthority | None = None,
         submitted_snapshot: tuple | None = None,
+        submitted_attachment_snapshot: tuple | None = None,
     ) -> None:
         reconciliation_authority = authority
 
@@ -15742,7 +15747,9 @@ class PersonasScreen(BaseAppScreen):
         else:
             self._edit_mode = "edit"  # create -> edit stays in the editor
             self.state.has_unsaved_changes = editor.mark_saved(
-                saved_record, submitted_snapshot=submitted_snapshot
+                saved_record,
+                submitted_snapshot=submitted_snapshot,
+                submitted_attachment_snapshot=submitted_attachment_snapshot,
             )
             self._set_active_row_unsaved(self.state.has_unsaved_changes)
             inspector.set_unsaved(self.state.has_unsaved_changes)
@@ -15754,14 +15761,7 @@ class PersonasScreen(BaseAppScreen):
                     edit_mode="edit",
                     editor_session_token=editor.visual_identity_session_token,
                 )
-            # This method already bumped _character_editor_generation above,
-            # which invalidates (drops) any render still in flight from
-            # before the save - so re-render now with the new token or the
-            # thumbnail can be left blank/stale until the next unrelated
-            # avatar action. A create-session's first save is also the
-            # moment a brand-new character gains its id, so this is where
-            # its (still-empty) expression slots flip from disabled to
-            # enabled (mark_saved already re-synced that above).
+            # Redraw with the new token; mark_saved enabled first-Save expressions.
             await self._render_all_character_editor_thumbnails(
                 editor.expression_character_id()
             )
