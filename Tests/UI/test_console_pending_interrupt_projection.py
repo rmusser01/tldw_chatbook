@@ -523,7 +523,7 @@ async def _verify_late_chat_create_projection_spares_the_active_sibling(
 
 
 async def _verify_late_chat_create_projection_transition(
-    request, tmp_path, *, closing: bool
+    request, tmp_path, *, closing: bool, on_held_gate=None
 ):
     """A delayed source marshal cannot replace a live sibling's confirmation.
 
@@ -531,6 +531,7 @@ async def _verify_late_chat_create_projection_transition(
         request: Pytest request selecting the isolated private-profile child.
         tmp_path: Separate app and database directory for each source transition.
         closing: Complete source Close or retain it across navigation and a clear.
+        on_held_gate: Optional test callback observing a held gate and its workers.
     """
     case_path = tmp_path / ("close" if closing else "navigate")
     case_path.mkdir()
@@ -606,6 +607,8 @@ async def _verify_late_chat_create_projection_transition(
         source_worker.start()
         try:
             await _wait(pilot, entered.is_set)
+            if on_held_gate is not None:
+                on_held_gate("source", release, workers)
             source_round = controller.pending_chat_create_ids()[0]
             sibling = controller.new_session(title="Live sibling")
             sibling_worker = threading.Thread(
@@ -664,6 +667,8 @@ async def _verify_late_chat_create_projection_transition(
                     False, False, request_id=source_round
                 )
                 await _wait(pilot, clear_entered.is_set)
+                if on_held_gate is not None:
+                    on_held_gate("clear", clear_release, workers)
                 controller.switch_session(sibling.id)
                 await _wait(
                     pilot,
@@ -836,3 +841,31 @@ async def test_session_owned_pending_projection_journeys(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ResourceWarning)
                 gc.collect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held_gate", ["source", "clear"])
+@private_profile_test
+async def test_held_projection_failure_retires_workers(
+    request: pytest.FixtureRequest, tmp_path: Path, held_gate: str
+) -> None:
+    """A fixture failure releases the actual held gate and joins its workers."""
+    class HeldGateFailure(RuntimeError):
+        """Stop the journey only after witnessing the requested worker hold."""
+
+    held_workers = []
+
+    def fail_while_held(stage, gate, workers):
+        if stage != held_gate:
+            return
+        assert not gate.is_set()
+        assert workers and all(worker.is_alive() for worker in workers)
+        held_workers.extend(workers)
+        raise HeldGateFailure
+
+    with pytest.raises(HeldGateFailure):
+        await _verify_late_chat_create_projection_transition(
+            request, tmp_path, closing=False, on_held_gate=fail_while_held
+        )
+    assert len(held_workers) == (1 if held_gate == "source" else 2)
+    assert all(not worker.is_alive() for worker in held_workers)

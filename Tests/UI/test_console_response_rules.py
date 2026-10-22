@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from textual.errors import NoWidget
 from textual.widgets import Button
 
 from Tests.UI.response_rules_fixtures import mounted_rules_console, seed_answer
@@ -314,6 +315,27 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
             assert _run_visible(case.console)
             assert "Drafting rule" in _run_text(case.console)
             stop = case.console.query_one("#console-stop-generation", Button)
+            # Rule copy publishes immediately; checked controls may replay later.
+            # Pilot caches the click origin before its own layout pause.
+            async with asyncio.timeout(5):
+                while True:
+                    region = stop.region
+                    if (
+                        stop.is_mounted
+                        and stop.display
+                        and stop.visible
+                        and not stop.disabled
+                        and region.width > 0
+                        and region.height > 0
+                    ):
+                        try:
+                            hit, _ = case.host.screen.get_widget_at(region.x, region.y)
+                        except NoWidget:
+                            pass
+                        else:
+                            if hit is stop:
+                                break
+                    await asyncio.sleep(0.01)
             assert stop.display and not stop.disabled
             assert await case.pilot.click("#console-stop-generation")
             await case.pilot.pause()
@@ -325,7 +347,20 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
             case.helper_release.set()
             async with asyncio.timeout(5):
                 await case.rules.helpers.wait_for_cleanup()
-            await case.console.workers.wait_for_complete()
+            from textual.worker import WorkerCancelled
+
+            for worker in tuple(case.console.workers):
+                try:
+                    await worker.wait()
+                except WorkerCancelled:
+                    if asyncio.current_task().cancelling():
+                        raise asyncio.CancelledError from None
+                    if (
+                        worker.node is not case.console
+                        or worker.group != "console-sync"
+                    ):
+                        raise
+                    # A coalesced replay replaces only this Console's sync worker.
         assert case.rules.helpers.unsettled_count == 0
         assert case.composer.draft_text() == complaint
         assert case.learning_results and case.learning_results[-1][0] != "active"
