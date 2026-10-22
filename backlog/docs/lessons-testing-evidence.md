@@ -21632,3 +21632,26 @@ import of each module-level name your branch adds or calls
 (`grep -n 'import <name>'`). If dev added a function-local import of the
 same name in a function where your code reads it earlier, drop dev's local
 import.
+
+
+## A skip-when-unchanged gate's inputs are what its readers read, fallback branches included
+
+**TASK-33620.15.1, 2026-10-22.** The config-sync cadence skips the poll's
+projection unless one of its inputs moved. Two review rounds built the input
+list from the controller's counters: every chat's pending rounds of every
+kind. Re-checking the list while rebasing (after CI ran the legacy-approval
+journey) found one more read: `ChatScreen._console_pending_approval_count`
+falls back to the resume state's approval for a legacy unscoped tool round,
+which mounts its card with no kind-registry entry. No counter moved, so that
+round's arrival, finishing phase and clearing waited for the 1 s backstop
+instead of the next 0.2 s tick. The CI failure itself was dev's setup race,
+and the mounted journeys call the projection directly, so no existing test
+could see the gap. A mounted test arming a real legacy round on a held poll
+went red ("a legacy approval waited") until the resume state was an input.
+
+**What to do.** For a skip gate, list the inputs by reading every function
+the skipped work calls, down to each fallback branch, and grep for the
+attributes they touch. Do not list them from the domain model. Read mutable
+inputs by value at read time, because a held reference compares equal to
+itself after an in-place write. Give each input a test that changes it alone
+and ticks through the real gate.
