@@ -255,6 +255,12 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
             ("nFileIndexLow", wintypes.DWORD),
         ]
 
+    class FileIdInformation(ctypes.Structure):
+        _fields_ = [
+            ("VolumeSerialNumber", ctypes.c_ulonglong),
+            ("FileId", wintypes.BYTE * 16),
+        ]
+
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.argtypes = [
         wintypes.LPCWSTR,
@@ -271,6 +277,13 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
         ctypes.POINTER(ByHandleFileInformation),
     ]
     kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+    kernel32.GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
 
     file_read_attributes = 0x0080
     share_all = 0x00000001 | 0x00000002 | 0x00000004
@@ -291,15 +304,25 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
     if not handle or handle == invalid_handle:
         raise WorkspaceRootPinError("workspace root open failed")
     information = ByHandleFileInformation()
-    if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
+    identity_information = FileIdInformation()
+    file_id_info = 18
+    if not kernel32.GetFileInformationByHandle(
+        handle, ctypes.byref(information)
+    ) or not kernel32.GetFileInformationByHandleEx(
+        handle,
+        file_id_info,
+        ctypes.byref(identity_information),
+        ctypes.sizeof(identity_information),
+    ):
         _windows_close_handle(handle)
         raise WorkspaceRootPinError("workspace root metadata unavailable")
-    inode = (int(information.nFileIndexHigh) << 32) | int(information.nFileIndexLow)
+    # FILE_ID_INFO preserves Python's full 64-bit device and 128-bit inode.
+    inode = int.from_bytes(bytes(identity_information.FileId), "little")
     reparse = bool(int(information.dwFileAttributes) & 0x00000400)
     return (
         handle,
         DirectoryIdentity(
-            device=int(information.dwVolumeSerialNumber),
+            device=int(identity_information.VolumeSerialNumber),
             inode=inode,
             mode=0,
             reparse=reparse,

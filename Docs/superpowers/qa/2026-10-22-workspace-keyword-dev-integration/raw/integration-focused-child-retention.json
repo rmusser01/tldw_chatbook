@@ -1,0 +1,52 @@
+[
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_completed_refresh_history0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_completed_refresh_history0\\pytest.log",
+    "sha256": "99e746536a413a9a4393a4f4780785e54cc010d7e5592bc9da035d1f9573ddbe"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_completed_refresh_history0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_completed_refresh_history0\\pytest.xml",
+    "sha256": "613ed4d71216aa47b6cf5980d687ac4d3713df57f324f14c713d7acb6497b400"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_failed_supervisor_dispatc0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_failed_supervisor_dispatc0\\pytest.log",
+    "sha256": "6c26d5233fbf87ec63b54a4192df4841922cf0807c61c451bc4ba968c7fa759e"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_failed_supervisor_dispatc0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_failed_supervisor_dispatc0\\pytest.xml",
+    "sha256": "21661b20d428869f453e8d971c8b63beef21f4d3eaaca06afe1634409f17ec58"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_history_keeps_live_retire0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_history_keeps_live_retire0\\pytest.log",
+    "sha256": "a0f0cc3bddabf560b22dce71554ce687859deed7ab93d76c5fafad9de5be0334"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_history_keeps_live_retire0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_history_keeps_live_retire0\\pytest.xml",
+    "sha256": "b1b93c5e35a03fca9d9dba1478d7cae343fb0809cc31f617699226a118d650c8"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_incremental_refresh_retir0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_incremental_refresh_retir0\\pytest.log",
+    "sha256": "8dd54413c216684c413dd3546c765ee912ee05c9ac95691ef1ed4cadecc19a2f"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_incremental_refresh_retir0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_incremental_refresh_retir0\\pytest.xml",
+    "sha256": "125d8e0c9f52c700841cfafba17b241acb6069ca3bd834f440d4cf96ace44c8a"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_shutdown_retains_lifetime0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_shutdown_retains_lifetime0\\pytest.log",
+    "sha256": "5f107df806752e061d23cdb324f6f41961c76c7fcfe518390343aa4dcc8e9982"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-4\\test_shutdown_retains_lifetime0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-focused-children\\test_shutdown_retains_lifetime0\\pytest.xml",
+    "sha256": "2854b46eee69063ce593be404deb446deb6523d95f8f1a1139b30cceb25c5cd6"
+  }
+]

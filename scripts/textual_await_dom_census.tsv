@@ -167,6 +167,7 @@ tldw_chatbook/Widgets/Persona_Widgets/petdex_import_review.py::_load	5
 tldw_chatbook/Widgets/Persona_Widgets/petdex_import_review.py::_prepare	2
 tldw_chatbook/Widgets/Persona_Widgets/petdex_import_review.py::_show_preview	1
 tldw_chatbook/Widgets/Prompts/prompt_block_editor.py::_reconcile_lane	2
+tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py::run	4	REVIEWED TASK-36006 integration: immediately after sole await, mounted plus visit/request/workspace/binding token are rechecked; remaining lookups and helpers run synchronously without suspension or recompose. Existing mounted stale-action/themed journeys cover projection. Recheck if another await or subtree replacement is added.
 tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py::handle_configure_provider_changed	1
 tldw_chatbook/Widgets/audio_troubleshooting_dialog.py::_initialize_audio	1
 tldw_chatbook/Widgets/llamacpp_snapshot_manager.py::_save_preferences	5

@@ -407,6 +407,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "Prompts owns private file and in-memory primary databases.",
     ),
+    "db.workspace_project_index": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Workspace_Project_Index_DB",
+        _PRIVATE_FILE,
+        "Rebuildable per-binding keyword cache; excluded from backup and sync.",
+    ),
     "db.rag_indexing": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/RAG_Indexing_DB",
         _PRIVATE_OR_MEMORY,

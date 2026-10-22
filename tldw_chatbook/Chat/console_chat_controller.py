@@ -113,7 +113,10 @@ from tldw_chatbook.Chat.citation_trace_builder import (
 )
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
-from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
+from tldw_chatbook.Chat.answer_citations import (
+    CONSOLE_CITATION_INSTRUCTIONS,
+    format_console_evidence_for_cited_answer,
+)
 from tldw_chatbook.Chat.console_chat_store import (
     CapturePurgeStaleError,
     CapturePolicyStaleError,
@@ -10624,7 +10627,7 @@ class ConsoleChatController:
                 preparation_outcome is not None
                 and preparation_outcome.evidence_bundle is not None
             ):
-                citation_context = format_evidence_for_cited_answer(
+                citation_context = format_console_evidence_for_cited_answer(
                     preparation_outcome.evidence_bundle
                 )
             elif origin not in (
@@ -10715,6 +10718,12 @@ class ConsoleChatController:
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
                     citation_context,
+                    instructions=(
+                        CONSOLE_CITATION_INSTRUCTIONS
+                        if citation_repair_contract is not None
+                        and not citation_repair_contract.require_markers
+                        else ()
+                    ),
                 )
             if citation_context and echoed_user is not None and not repeated_pass:
                 trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
@@ -13121,7 +13130,7 @@ class ConsoleChatController:
                 )
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
-                    format_evidence_for_cited_answer(bundle),
+                    format_console_evidence_for_cited_answer(bundle),
                 )
         return _DispatchRetryContext(
             resolution=resolution,
@@ -15480,6 +15489,17 @@ class ConsoleChatController:
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
             )
+        index_service, index_scopes = await asyncio.to_thread(
+            self._prepare_project_index_scopes, tuple(admitted_roots)
+        )
+        index_kwargs = (
+            {
+                "project_index_service": index_service,
+                "project_index_scopes": index_scopes,
+            }
+            if index_scopes
+            else {}
+        )
         local_provider, local_review_hook = self._compose_local_provider(
             session_id=session_id,
             turn_context=turn_context,
@@ -15491,8 +15511,15 @@ class ConsoleChatController:
             project_root_guard=project_authority_guard,
             admitted_roots=admitted_roots,
             local_kill_switch=local_kill_switch,
+            **index_kwargs,
         )
         return mcp_provider, builtin_gate, local_provider, local_review_hook
+
+    def _prepare_project_index_scopes(self, admitted_roots):
+        """Retire registry handles opened by scope preparation, including guards."""
+        from .console_project_index_preparation import prepare_project_index_scopes
+
+        return prepare_project_index_scopes(self, admitted_roots)
 
     def _compose_local_provider(
         self,
@@ -15505,6 +15532,8 @@ class ConsoleChatController:
         project_root_guard: Callable[[], bool] | None = None,
         admitted_roots: Sequence[Any] | None = None,
         local_kill_switch: "LocalKillSwitchRead | None" = None,
+        project_index_service: Any = None,
+        project_index_scopes: Mapping[str, Any] | None = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -15763,6 +15792,8 @@ class ConsoleChatController:
             watchlists_service=watchlists_service,
             watchlists_command_service=watchlists_command_service,
             admitted_roots=admitted_roots,
+            project_index_service=project_index_service,
+            project_index_scopes=project_index_scopes,
             **self._todo_wiring(session_id),
             **self._ask_user_wiring(session_id),
             **self._character_wiring(session_id),
@@ -22473,53 +22504,15 @@ class ConsoleChatController:
     def _prepend_evidence_context(
         provider_messages: list[dict[str, Any]],
         context: str,
+        *,
+        instructions: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
-        """Prefix exact evidence to the final provider-only user message."""
+        """Prefix optional guidance and exact evidence to the provider-only message."""
+        from .answer_citations import prepend_console_evidence_context
 
-        final_index = next(
-            (
-                index
-                for index in range(len(provider_messages) - 1, -1, -1)
-                if provider_messages[index].get("role") == ConsoleMessageRole.USER.value
-            ),
-            None,
+        return prepend_console_evidence_context(
+            provider_messages, context, instructions=instructions
         )
-        if final_index is None:
-            return provider_messages
-        prefix = f"Evidence: {context}\n\n---\n\n"
-        message = provider_messages[final_index]
-        content = message.get("content")
-        if isinstance(content, str):
-            new_content: Any = ConsoleChatController._preserve_plugin_text_transform(
-                content, prefix + content
-            )
-        elif isinstance(content, list):
-            new_content = list(content)
-            text_index = next(
-                (
-                    index
-                    for index, part in enumerate(new_content)
-                    if isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and isinstance(part.get("text"), str)
-                ),
-                None,
-            )
-            if text_index is None:
-                new_content.insert(0, {"type": "text", "text": prefix})
-            else:
-                text_part = new_content[text_index]
-                new_content[text_index] = {
-                    **text_part,
-                    "text": ConsoleChatController._preserve_plugin_text_transform(
-                        text_part["text"], prefix + text_part["text"]
-                    ),
-                }
-        else:
-            return provider_messages
-        updated = list(provider_messages)
-        updated[final_index] = {**message, "content": new_content}
-        return updated
 
     def _notify_submission_accepted(
         self,

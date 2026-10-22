@@ -1,0 +1,2 @@
+Would reformat: Tests\Workspaces\test_project_index_service.py
+1 file would be reformatted, 1 file already formatted

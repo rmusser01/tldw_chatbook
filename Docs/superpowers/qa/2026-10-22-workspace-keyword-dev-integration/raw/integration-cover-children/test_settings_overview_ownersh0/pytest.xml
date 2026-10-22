@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="13.244" timestamp="2026-10-21T22:58:48.026028-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_settings_configuration_hub" name="test_settings_overview_ownership_rows_are_sourced_from_record" time="8.447" /></testsuite></testsuites>

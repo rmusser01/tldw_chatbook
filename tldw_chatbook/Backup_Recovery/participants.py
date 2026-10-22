@@ -70,6 +70,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             "db.library_collections": "close",
             "db.subscriptions": "close",
             "db.workspaces": "close",
+            "db.workspace_project_index": "close",
             "db.guardian": "close",
             "db.dreams": "close",
             "db.evals": "close",
@@ -128,6 +129,7 @@ def _retire_current_thread_caches(pause) -> None:
         "db.library_collections": "close",
         "db.library_ingest_jobs": "close",
         "db.workspaces": "close",
+        "db.workspace_project_index": "close",
         "db.agent_runs": "close",
         "db.guardian": "close",
         "db.dreams": "close",
@@ -316,6 +318,7 @@ def _repository_types():
     optional = {}
     for module_name, class_name, owner_id in (
         ("tldw_chatbook.Backup_Recovery.recovered_media", "RecoveredMedia", "recovered.media"),
+        ("tldw_chatbook.DB.Workspace_Project_Index_DB", "WorkspaceProjectIndexDB", "db.workspace_project_index"),
         ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
         ("tldw_chatbook.DB.RAG_Indexing_DB", "RAGIndexingDB", "db.rag_indexing"),
         ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),

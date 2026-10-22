@@ -1,0 +1,117 @@
+{
+  "dev_ref": "2a5afa03b31f60e00bdcd10a161e3e351fad023b",
+  "head_ref": "007521567a9e961d2cd854432b357b545d8605d4",
+  "failed_unrelated_count": 10,
+  "rows": [
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "dev_lines": 29050,
+      "head_lines": 29135,
+      "worktree_lines": 29135,
+      "dev_budget": 29050,
+      "head_budget": 29050,
+      "feature_changed_from_dev": true,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "11653573def25cc06f7a97239270e79793f08aaae146fd121dbfe2733d0d8b9f"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+      "dev_lines": 6453,
+      "head_lines": 6463,
+      "worktree_lines": 6463,
+      "dev_budget": 6453,
+      "head_budget": 6453,
+      "feature_changed_from_dev": true,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "45db897ca921441d2258f75b2577e82f110d38c9ef155e4e79739c03871d1944"
+    },
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+      "dev_lines": 6954,
+      "head_lines": 6954,
+      "worktree_lines": 6954,
+      "dev_budget": 6760,
+      "head_budget": 6760,
+      "feature_changed_from_dev": false,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "60cb1048910c571122f9eb259d070ba8ea850bbd20eb88f78d4bb1b95b28ba69"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/change_review_screen.py",
+      "dev_lines": 4978,
+      "head_lines": 4978,
+      "worktree_lines": 4978,
+      "dev_budget": 4967,
+      "head_budget": 4967,
+      "feature_changed_from_dev": false,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "101c5568a72acb37757ee7b25d235c3fc3abe0ec7dc7f0921c21ba34db88c250"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/llm_screen.py",
+      "dev_lines": 5185,
+      "head_lines": 5185,
+      "worktree_lines": 5185,
+      "dev_budget": 5180,
+      "head_budget": 5180,
+      "feature_changed_from_dev": false,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "829e05025531b896fb00230cb665b48f274257c8b7fc970147258a54e48e7063"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "dev_lines": 16617,
+      "head_lines": 16617,
+      "worktree_lines": 16617,
+      "dev_budget": 16564,
+      "head_budget": 16564,
+      "feature_changed_from_dev": false,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "2a8d484f29ec170e7bf0c923744170f0cd16cb9955abc58d30323c3338b8becc"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "dev_lines": 8652,
+      "head_lines": 8652,
+      "worktree_lines": 8652,
+      "dev_budget": 8353,
+      "head_budget": 8353,
+      "feature_changed_from_dev": false,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "87c702e09f2587aa023f3152545253c241f595c9854d83aa8911055e9196f832"
+    },
+    {
+      "path": "tldw_chatbook/app_command_providers.py",
+      "dev_lines": 1133,
+      "head_lines": 1133,
+      "worktree_lines": 1133,
+      "dev_budget": 1123,
+      "head_budget": 1123,
+      "feature_changed_from_dev": false,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "60325baa6e130230244e3c00fae5d3172c7533e6b610376c658479938717df14"
+    },
+    {
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "dev_lines": 2347,
+      "head_lines": 2350,
+      "worktree_lines": 2350,
+      "dev_budget": 2134,
+      "head_budget": 2134,
+      "feature_changed_from_dev": true,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "dfc0adbde111373a00b941b4618ea1aa4ab30be0f7b583deec81d4a4437bdab7"
+    },
+    {
+      "path": "tldw_chatbook/tldw_api/client.py",
+      "dev_lines": 16795,
+      "head_lines": 16795,
+      "worktree_lines": 16795,
+      "dev_budget": 16687,
+      "head_budget": 16687,
+      "feature_changed_from_dev": false,
+      "unchanged_by_ci_fix": true,
+      "head_sha256": "6baed5e1a167771d65fc559148421693c96c7666b95dc23652bfec01f2b4f54d"
+    }
+  ]
+}

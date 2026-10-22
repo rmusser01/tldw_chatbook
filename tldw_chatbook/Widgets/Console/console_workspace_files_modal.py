@@ -281,6 +281,8 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         attention: WorkspaceFilesAttention | None = None,
         on_back_to_console: Callable[[], None] | None = None,
         on_visit_closed: Callable[[], None] | None = None,
+        index_status_reader: Callable[[WorkspaceFilesBinding], str] | None = None,
+        on_index_settings: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._inspector = inspector
@@ -292,6 +294,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._attention = attention or WorkspaceFilesAttention()
         self._on_back_to_console = on_back_to_console
         self._on_visit_closed = on_visit_closed
+        self._index_status_reader = index_status_reader
+        self._on_index_settings = on_index_settings
+        self._index_settings_requested = False
         self._visit_closed_notified = False
         self._attention_generation = 0
         first_available = next((item for item in self._workspace_bindings if item.available), None)
@@ -324,6 +329,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._list_lane = _OperationLane(self, "list")
         self._read_lane = _OperationLane(self, "read")
         self._filter_lane = _OperationLane(self, "filter")
+        self._index_lane = _OperationLane(self, "index-status")
 
     @property
     def state(self) -> WorkspaceFilesViewState:
@@ -335,7 +341,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         """Return the number of active or queued modal operation lanes."""
         return sum(
             lane.active or lane.has_latest
-            for lane in (self._list_lane, self._read_lane, self._filter_lane)
+            for lane in (self._list_lane, self._read_lane, self._filter_lane, self._index_lane)
         )
 
     def compose(self) -> ComposeResult:
@@ -360,6 +366,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                         classes="console-workspace-files-binding",
                         compact=True,
                     )
+            yield Static("Keyword index: checking…", id="console-workspace-files-index-status", classes="h-auto", markup=False)
+            yield Button("Index settings", id="console-workspace-files-index-settings", compact=True,
+                         disabled=self._on_index_settings is None)
             with Horizontal(id="console-workspace-files-filter-row"):
                 yield Input(placeholder="Filter paths…", id="console-workspace-files-filter")
                 yield Button("Clear", id="console-workspace-files-filter-clear", compact=True)
@@ -433,6 +442,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         if self._workspace_files_closing or not self.is_mounted:
             return
         self._sync_binding_buttons()
+        self._request_index_status()
         self._sync_status()
         if self._state.selected_binding_id is not None:
             if len([binding for binding in self._workspace_bindings if binding.available]) > 1:
@@ -1076,6 +1086,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             short=self._state.short,
         )
         self._sync_binding_buttons()
+        self._request_index_status()
         if binding.available:
             self._request_directory()
         else:
@@ -1191,9 +1202,45 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             if offset is not None:
                 self._request_file(self._state.selected_file, offset=offset)
 
+    def _request_index_status(self) -> None:
+        """Capture selected identity on the event loop, perform all reads in a lane."""
+        binding = self._selected_binding()
+        label = self.query_one("#console-workspace-files-index-status", Static)
+        if binding is None or binding.scope is None or not binding.available:
+            label.update("Keyword index unavailable: select an available local folder. SSH indexing is unsupported.")
+            return
+        if self._index_status_reader is None:
+            label.update("Keyword index unavailable. Open Settings to check folder access.")
+            return
+        generation = self._binding_generation
+        label.update("Keyword index: checking…")
+
+        def read():
+            try:
+                return self._index_status_reader(binding)
+            except Exception:
+                return "Keyword index unavailable. Check folder access and storage in Settings."
+
+        async def publish(text):
+            label.update(text)
+
+        self._index_lane.submit(_LaneRequest(
+            generation, read, publish,
+            can_publish=lambda: self.is_mounted and not self._workspace_files_closing
+            and self._binding_generation == generation
+            and self._state.selected_binding_id == binding.binding_id,
+        ))
+
+    @on(Button.Pressed, "#console-workspace-files-index-settings")
+    async def _index_settings_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._index_settings_requested = True
+        await self.request_safe_cancel(source="index-settings")
+
     @on(Button.Pressed, "#console-workspace-files-refresh")
     def _refresh_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        self._request_index_status()
         if self._state.selected_file is not None:
             self._request_file(self._state.selected_file)
         else:
@@ -1246,6 +1293,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         await self._list_lane.close()
         await self._read_lane.close()
         await self._filter_lane.close()
+        await self._index_lane.close()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
@@ -1265,6 +1313,8 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             self._visit_closed_notified = True
             if self._on_visit_closed is not None:
                 self._on_visit_closed()
+            if self._index_settings_requested and self._on_index_settings is not None:
+                self._on_index_settings()
 
 
 __all__ = [

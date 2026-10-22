@@ -244,3 +244,256 @@ def test_note_says_builtin_relative_paths_resolve_in_private_scratch(
     assert len(scratch_lines) == 1
     assert "read_file" in scratch_lines[0]
     assert "list_directory" in scratch_lines[0]
+
+
+@private_profile_test
+def test_first_request_guides_project_exploration(request, tmp_path, monkeypatch) -> None:
+    """Missing guidance must fail at the real first-request boundary."""
+    run = _workspace_run(tmp_path, monkeypatch)
+    provider = _local_provider(run)
+    plan = _plan(run, provider)
+    note = " ".join(plan.config.workspace_context_note.split())
+
+    assert "before saying project information is unavailable" in note
+    (alias,) = _advertised_aliases(provider)
+    assert alias in note
+    result = provider.invoke("fs_list", {"root_alias": alias, "path": "."})
+    assert result.ok, result.error
+    assert "myproj-README.md" in result.content
+
+
+@pytest.mark.parametrize("read_tools", [(), ("git_status",)], ids=["empty", "git-only"])
+@private_profile_test
+def test_guidance_requires_workspace_read_tools(
+    request, tmp_path, monkeypatch, read_tools
+) -> None:
+    run = _workspace_run(tmp_path, monkeypatch)
+    (alias,) = _advertised_aliases(_local_provider(run))
+    note = roots_module.workspace_context_note(
+        WORKSPACE_ID,
+        binding_authority=tuple(run.authority.options),
+        path_tool_aliases=(alias,),
+        workspace_read_tools=read_tools,
+    )
+
+    assert alias in note
+    assert "before saying project information is unavailable" not in " ".join(note.split())
+
+
+@private_profile_test
+def test_goal_scope_removing_readers_removes_exploration_promise(
+    request, tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.Agents import automatic_work_runtime
+    from tldw_chatbook.Agents.goal_models import GoalPolicy, GoalToolScope
+    from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
+
+    run = _workspace_run(tmp_path, monkeypatch)
+    # Exercise real scope narrowing without dispatching/accepting a durable goal.
+    goal = object.__new__(GoalIterationAuthorization)
+    goal.goal = SimpleNamespace(
+        request=SimpleNamespace(
+            tool_scope=GoalToolScope(catalog_tools=("local:git_status",))
+        ),
+        policy=GoalPolicy(),
+    )
+    monkeypatch.setattr(goal, "remaining_seconds", lambda: 60.0)
+    monkeypatch.setattr(
+        automatic_work_runtime, "current_automatic_work", lambda: SimpleNamespace(goal=goal)
+    )
+    plan = _plan(run, _local_provider(run))
+
+    assert plan.allowed_tools == ("git_status",)
+    assert not {"fs_list", "fs_glob", "fs_grep", "fs_read"}.intersection(plan.allowed_tools)
+    note = " ".join(plan.config.workspace_context_note.split())
+    assert "before saying project information is unavailable" not in note
+
+
+@private_profile_test
+def test_custom_operating_prompt_keeps_workspace_guidance(
+    request, tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Internal_Prompts import resolver
+
+    run = _workspace_run(tmp_path, monkeypatch)
+    original = resolver._config_value
+
+    def custom_config_value(key):
+        if key == "internal_prompts.agents.console_agent_operating":
+            return "CUSTOM OPERATING PROMPT"
+        return original(key)
+
+    monkeypatch.setattr(resolver, "_config_value", custom_config_value)
+    plan = _plan(run, _local_provider(run))
+    service = AgentService(AgentRunsDB(tmp_path / "runs.db"), plan.registry)
+    model_request = service._build_model_request(
+        plan.config,
+        plan.api_endpoint,
+        list(plan.schemas.runtime_schemas),
+        plan.messages,
+        plan.schemas.active_schemas,
+    )
+    prompt = " ".join(model_request.messages[0]["content"].split())
+
+    assert "CUSTOM OPERATING PROMPT" in prompt
+    assert "before saying project information is unavailable" in prompt
+
+
+@private_profile_test
+async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools(
+    tmp_path, request, monkeypatch
+):
+    import threading
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Workspaces.project_index import runtime
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ProjectIndexKey,
+        ProjectIndexScope,
+        ProjectIndexStatus,
+        locator_fingerprint,
+        root_identity_fingerprint,
+    )
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    run = _workspace_run(tmp_path, monkeypatch)
+    admitted = capture_run_admitted_workspace_roots(
+        session=run.session, registry=run.service
+    )
+    main = threading.current_thread()
+    seen = []
+
+    def key_for(app, workspace, binding, root):
+        seen.append(threading.current_thread())
+        return ProjectIndexKey(
+            "data",
+            workspace,
+            binding,
+            locator_fingerprint(root),
+            root_identity_fingerprint(capture_directory_chain(root)),
+        )
+
+    from tldw_chatbook.Workspaces.project_index.runtime import project_index_registry_connections
+    service = SimpleNamespace(
+        registry_connection_scope=lambda: project_index_registry_connections(run.service.db),
+        status=lambda key: ProjectIndexStatus(
+            ProjectIndexScope(key, 1, 1), "Ready", 1, 1, 1, None, None, 0, 0
+        )
+    )
+    monkeypatch.setattr(runtime, "get_project_index_service", lambda app: service)
+    monkeypatch.setattr(runtime, "project_index_key", key_for)
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(
+        workspace_registry_service=run.service, unified_mcp_service=None
+    )
+    controller.store = SimpleNamespace(sessions=lambda: [run.session])
+
+    async def mcp(*args, **kwargs):
+        return None
+
+    captured = {}
+
+    def local(*args, **kwargs):
+        captured.update(kwargs)
+        return None, None
+
+    controller._compose_mcp_provider = mcp
+    controller._compose_local_provider = local
+    await controller._compose_agent_request_providers(
+        session_id=run.session.id,
+        project_selection=None,
+        project_authority_guard=None,
+        admitted_roots=admitted,
+    )
+    assert seen and all(thread is not main for thread in seen)
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    import time
+
+    pause = storage._begin_local_pause()
+    try:
+        _retire_current_thread_caches(pause)
+        assert pause.drain(time.monotonic() + 2), "scope-preparation thread leaked registry admission"
+    finally:
+        pause.resume()
+    assert captured["project_index_service"] is service
+    scopes = captured["project_index_scopes"]
+    p = LocalToolProvider(
+        workspace_root=tmp_path,
+        admitted_roots=admitted,
+        project_index_service=service,
+        project_index_scopes=scopes,
+    )
+    plan = _plan(run, p)
+    assert "fs_search_index" in plan.config.workspace_context_note
+    p._specs.pop("fs_search_index")
+    assert "fs_search_index" not in _plan(run, p).config.workspace_context_note
+
+
+@pytest.mark.parametrize("automatic", [0, 1], ids=["never", "automatic"])
+@pytest.mark.parametrize("access", [0, 1], ids=["blocked", "allowed"])
+@private_profile_test
+async def test_enabled_index_preserves_saved_library_policy_and_scope(
+    tmp_path, request, monkeypatch, automatic, access
+):
+    import asyncio
+    import time
+    from Tests.Chat.test_console_workspace_guidance import _project_case, _policy_rows
+    from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+    from tldw_chatbook.Workspaces.project_index.runtime import (
+        get_project_index_service,
+        project_index_key,
+        close_project_index_service,
+    )
+
+    case = await _project_case(
+        tmp_path, monkeypatch, native=True, automatic=automatic, access=access
+    )
+    try:
+        app = case.controller.app
+        service = await asyncio.to_thread(get_project_index_service, app)
+        key = await asyncio.to_thread(
+            project_index_key, app, "owned", case.aliases["owned"], tmp_path / "owned"
+        )
+
+        def build():
+            status = service.status(key)
+            status = service.enable(
+                key, ProjectIndexPolicy(("",), (".md",)), expected_scope=status.scope
+            )
+            service.refresh(
+                key,
+                expected_scope=status.scope,
+                expected_job_revision=status.job_revision,
+            )
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if service.status(key).state == "Ready":
+                    return
+                time.sleep(0.02)
+            pytest.fail("index did not become Ready")
+
+        await asyncio.to_thread(build)
+        before = _policy_rows(case)
+        scope = case.session.rag_scope_holder.scope
+        case.registry.set_active_workspace("visible")
+        case.gateway.release.set()
+        result = await case.controller.submit_draft(
+            "Summarize this project", session_id=case.session.id
+        )
+        assert result.accepted, result.visible_copy
+        payload = "\n".join(
+            str(row.get("content", "")) for row in case.gateway.messages_seen[0]
+        )
+        assert "fs_search_index" in payload
+        assert case.aliases["owned"] in payload
+        assert _policy_rows(case) == before
+        assert case.session.rag_scope_holder.scope == scope
+        assert len(case.service.calls) == automatic
+    finally:
+        await close_project_index_service(case.controller.app)
+        await case.controller.shutdown()
+        case.runs.close()
+        case.db.close()
+        case.workspace_db.close()

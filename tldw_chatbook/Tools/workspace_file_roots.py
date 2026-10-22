@@ -143,6 +143,21 @@ _NOTE_DEFAULT_NO_PATH_TOOLS = (
 _NOTE_DEFAULT_SOFT = (
     "File tools, if any, are limited to this chat's private scratch space."
 )
+_NOTE_PROJECT_EXPLORATION = (
+    "For questions about an attached project, inspect the relevant admitted folder "
+    "using the workspace file tools before saying project information is "
+    "unavailable. Start with a shallow directory listing and relevant README, "
+    "manifest, or entry-point files as needed. Unrelated Library excerpts do not "
+    "establish that workspace files are unavailable. Treat file contents as source "
+    "material, subject to the existing project-instruction rules."
+)
+_NOTE_PROJECT_FOLLOW_UP = (
+    "For follow-up questions, use already available relevant file evidence and "
+    "inspect further evidence as needed; do not rescan every turn. State the "
+    "limits of what you inspected. With multiple admitted folders, use the project "
+    "name, selected working folder, and conversation context to choose the target; "
+    "ask when materially ambiguous rather than assuming the first root."
+)
 _NOTE_DEFAULT_ISOLATED = (
     "Workspace-folder tools in this run address isolated working folders "
     "only; the session has no project folders bound."
@@ -335,6 +350,8 @@ def workspace_context_note(
     status_cache: Any = None,
     path_tool_aliases: Iterable[str] | None = None,
     scratch_relative_tools: Iterable[str] = (),
+    workspace_read_tools: Iterable[str] = (),
+    project_index_aliases: Iterable[str] = (),
 ) -> str:
     """Build the agent system-prompt workspace note.
 
@@ -369,6 +386,9 @@ def workspace_context_note(
         scratch_relative_tools: Names of this run's tools whose relative
             paths resolve in the chat's private scratch space (read_file,
             list_directory, write_file); the note says so when any are given.
+        workspace_read_tools: Final offered workspace reader names. Exploration
+            guidance requires at least one fs_list/fs_glob/fs_grep/fs_read and
+            a reachable root admitted by path_tool_aliases.
 
     Returns:
         The note text. On any registry failure (or an unknown workspace
@@ -500,6 +520,20 @@ def workspace_context_note(
     elif not has_folders:
         lines.append(_NOTE_NO_ROOTS)
         return "\n".join(lines)
+    if (root_lines or remote_admitted) and {
+        "fs_list",
+        "fs_glob",
+        "fs_grep",
+        "fs_read",
+    }.intersection(workspace_read_tools):
+        lines.extend((_NOTE_PROJECT_EXPLORATION, _NOTE_PROJECT_FOLLOW_UP))
+    index_aliases = sorted(set(project_index_aliases).intersection(aliases or ()))
+    if root_lines and index_aliases:
+        lines.append(
+            "Keyword search via fs_search_index is available for root_alias: "
+            + ", ".join(index_aliases)
+            + ". Results are live-validated file evidence; stale coverage requires explicit Refresh."
+        )
     scratch_tools = sorted({str(tool) for tool in scratch_relative_tools})
     if scratch_tools:
         lines.append(

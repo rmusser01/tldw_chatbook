@@ -1,0 +1,27 @@
+{
+  "body_executable_ast_equal": true,
+  "settings_lines": 35671,
+  "ratchet_has_exact_count": true,
+  "compile_passed": true,
+  "sha256": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "67245ca33e0fa7f50a06443d2a18202b5e372fc21c1895930027305a34886d3a",
+    "tldw_chatbook/UI/Settings_Modules/workspace_folder_bindings.py": "fb51ae75c57f9d791ecf3d341d3bcad56e7a17a66aaa4a94b0cbb095671a2d76",
+    "Tests/Architecture/test_module_size_ratchet.py": "06f0d1d4d7f15105c004eb873e8012e267e732ca4c64965e98c8a5f8d397e347"
+  },
+  "lint_new": [],
+  "lint_inherited": [
+    {
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 12
+    },
+    {
+      "code": "F401",
+      "message": "`tldw_chatbook.Tools.remote_workspace_executor.RemoteWorkspaceExecutionError` imported but unused",
+      "count": 1
+    }
+  ],
+  "format_helper_output": "1 file already formatted",
+  "format_settings_output": "Would reformat: tldw_chatbook\\UI\\Screens\\settings_screen.py\n1 file would be reformatted",
+  "format_head_settings_output": ""
+}

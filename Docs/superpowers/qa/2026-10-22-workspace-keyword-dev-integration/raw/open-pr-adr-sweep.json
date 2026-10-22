@@ -1,0 +1,115 @@
+{
+  "open_pr_count": 25,
+  "max_adr_in_open_pr_files": 237,
+  "prs_with_adrs": [
+    {
+      "number": 3187,
+      "head": "5e83c06ef8680457c8d434cee3ac5555dbc806cb",
+      "paths": [
+        "backlog/decisions/126-complete-local-backup-and-recovery.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3166,
+      "head": "34f88d6322ee2819d3e189e97eda5bc0e3f419f1",
+      "paths": [
+        "backlog/decisions/126-complete-local-backup-and-recovery.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3162,
+      "head": "366bd3dbfa620b466c6fecb38c363e3093130841",
+      "paths": [
+        "backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md",
+        "backlog/decisions/166-agent-assisted-archive-recovery.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3157,
+      "head": "ebba583bd1ae2ceea1e87e78f3d07597cc76a7e6",
+      "paths": [
+        "backlog/decisions/237-kanban-board-port-and-data-ownership.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3148,
+      "head": "97ac608aba159bd8696ea50d279261867d97e16a",
+      "paths": [
+        "backlog/decisions/162-managed-agent-plugins.md",
+        "backlog/decisions/163-expanded-console-hook-runtime.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3096,
+      "head": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+      "paths": [
+        "backlog/decisions/194-structured-note-language-and-local-editor-validation.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3050,
+      "head": "2557f186f6e635567c370824fa43e2aadec6b82d",
+      "paths": [
+        "backlog/decisions/002-openai-compatible-model-discovery.md",
+        "backlog/decisions/020-automatic-model-catalog-refresh.md",
+        "backlog/decisions/076-library-lifecycle-progressive-disclosure.md",
+        "backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md",
+        "backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md",
+        "backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md",
+        "backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md",
+        "backlog/decisions/107-portable-tool-use-packs.md",
+        "backlog/decisions/125-lock-safe-private-sqlite-validation.md",
+        "backlog/decisions/126-complete-local-backup-and-recovery.md",
+        "backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md",
+        "backlog/decisions/197-console-hook-configuration-review.md",
+        "backlog/decisions/222-provider-http-session-reuse.md",
+        "backlog/decisions/225-console-send-preparation-and-io-ownership.md",
+        "backlog/decisions/226-console-polling-and-full-state-reconciliation.md",
+        "backlog/decisions/README.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3049,
+      "head": "bdff2a2d957c9b3ee4cf532589562b901c193df3",
+      "paths": [
+        "backlog/decisions/002-openai-compatible-model-discovery.md",
+        "backlog/decisions/020-automatic-model-catalog-refresh.md",
+        "backlog/decisions/076-library-lifecycle-progressive-disclosure.md",
+        "backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md",
+        "backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md",
+        "backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md",
+        "backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md",
+        "backlog/decisions/107-portable-tool-use-packs.md",
+        "backlog/decisions/126-complete-local-backup-and-recovery.md",
+        "backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md",
+        "backlog/decisions/197-console-hook-configuration-review.md",
+        "backlog/decisions/222-console-send-preparation-and-io-ownership.md",
+        "backlog/decisions/223-console-polling-and-full-state-reconciliation.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 3036,
+      "head": "0b9ae198219290eea25b41561d0eeba0e260fa29",
+      "paths": [
+        "backlog/decisions/235-console-approval-interaction-and-feedback.md"
+      ],
+      "error": null
+    },
+    {
+      "number": 1655,
+      "head": "a1e4c2920a9d566496a7be8c4d76023972089c05",
+      "paths": [
+        "backlog/decisions/029-local-private-data-boundary.md"
+      ],
+      "error": null
+    }
+  ]
+}

@@ -17,8 +17,12 @@ import sqlite3
 import sys
 import threading
 from types import ModuleType
-from typing import Any, ContextManager, Protocol
+from typing import TYPE_CHECKING, Any, ContextManager, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
+
+if TYPE_CHECKING:
+    from .project_index.models import IndexAuthorityReader, IndexAuthorityFence
+
 
 from loguru import logger
 
@@ -651,6 +655,7 @@ class LocalWorkspaceRegistryService:
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or registry_now_iso
         self._mutation_generation = 0
+        self._project_index_listeners: set[Callable[[str], None]] = set()
         self._change_review_binding_owner: _ChangeReviewBindingOwner | None = None
         self._receipt_token_factory = receipt_token_factory or (
             lambda: token_urlsafe(32)
@@ -1028,6 +1033,10 @@ class LocalWorkspaceRegistryService:
         now = self._now_factory()
         try:
             with self.db.transaction() as conn:
+                index_bindings = tuple(row[0] for row in conn.execute(
+                    "SELECT binding_id FROM workspace_runtime_bindings WHERE workspace_id=?",
+                    (safe_workspace_id,),
+                ))
                 conn.execute(
                     """
                     UPDATE workspace_records
@@ -1039,6 +1048,8 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
+        for binding_id in index_bindings:
+            self._notify_project_index_change(binding_id)
         if was_active:
             self.ensure_default_workspace()
             self.set_active_workspace(DEFAULT_WORKSPACE_ID)
@@ -2646,6 +2657,120 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
 
+    def subscribe_project_index_changes(
+        self, listener: Callable[[str], None]
+    ) -> Callable[[], None]:
+        """Subscribe to post-commit hints; durable fences remain authoritative."""
+        self._project_index_listeners.add(listener)
+        return lambda: self._project_index_listeners.discard(listener)
+
+    def _notify_project_index_change(self, binding_id: str) -> None:
+        for listener in tuple(self._project_index_listeners):
+            try:
+                listener(binding_id)
+            except Exception:  # noqa: BLE001 - observers cannot roll back a committed mutation.
+                logger.debug("Project index invalidation observer failed")
+
+    def project_index_authority_adapters(
+        self, current_data_authority: Callable[[], str]
+    ) -> tuple[IndexAuthorityReader, IndexAuthorityFence]:
+        """Bind code-owned profile authority to exact-key readers and short fences.
+
+        Composition supplies a live admitted data/restore generation reader.
+        User input and the process-global selected workspace are never consulted.
+        """
+        from tldw_chatbook.Tools.remote_root_types import LocalRoot
+        from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+        from tldw_chatbook.Utils.sensitive_paths import (
+            SensitiveExclusion,
+            sensitive_exclusions_under,
+        )
+        from .project_index.models import ProjectIndexAuthority, ProjectIndexKey
+
+        @contextmanager
+        def fence(key: ProjectIndexKey):
+            if type(key) is not ProjectIndexKey:
+                raise TypeError("index_key_required")
+            with self.binding_authority_fence(key.binding_id) as row:
+                authority = None
+                try:
+                    if (
+                        row is not None
+                        and row["workspace_id"] == key.workspace_id
+                        and row["binding_kind"] == RuntimeBindingKind.LOCAL_FILESYSTEM.value
+                        and current_data_authority() == key.data_authority_id
+                    ):
+                        binding = _runtime_binding_from_row(row)
+                        root = Path(binding.locator)
+                        chain = capture_directory_chain(root)
+                        if root.absolute() == chain.canonical_root:
+                            exclusions = sensitive_exclusions_under(root) + tuple(
+                                SensitiveExclusion(
+                                    "subtree" if e.kind == "directory" else "file", e.path
+                                )
+                                for e in binding_exclusion_entries(binding)
+                            )
+                            authority = ProjectIndexAuthority(
+                                key,
+                                LocalRoot(root),
+                                chain,
+                                exclusions,
+                                int(row["revision"]),
+                            )
+                except (OSError, ValueError, RuntimeError):
+                    authority = None
+                yield authority
+
+        def reader(key: ProjectIndexKey):
+            with fence(key) as authority:
+                return authority
+
+        return reader, fence
+
+    @contextmanager
+    def project_index_detached_fence(self, workspace_id: str, binding_id: str, revision: int):
+        """Accept cleanup-only ownership after a later detach/archive witness.
+
+        No locator is read and this does not grant source or query authority.
+        Caller already holds every native generation capability for the group.
+        """
+        with self.db.transaction(immediate=True) as conn:
+            witness = conn.execute(
+                "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            row = conn.execute(
+                "SELECT b.workspace_id,w.archived FROM workspace_runtime_bindings b "
+                "JOIN workspace_records w USING(workspace_id) WHERE b.binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            yield bool(witness and witness[0] > revision and (
+                row is None or (row[0] == workspace_id and row[1])
+            ))
+
+    def binding_authority_revision(self, binding_id: str) -> int:
+        """Read the durable witness, including a detached binding's tombstone."""
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
+
+    @contextmanager
+    def binding_authority_fence(self, binding_id: str):
+        """Serialize bounded index acceptance against other processes' mutations.
+
+        Acquire this registry lock before an index-store transaction. Never hold
+        it for chunking, scanning, worker joins, network calls or cleanup.
+        """
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT b.*,a.revision FROM workspace_runtime_bindings b JOIN workspace_binding_authority a USING(binding_id) JOIN workspace_records w ON w.workspace_id=b.workspace_id WHERE b.binding_id=? AND w.archived=0",
+                (binding_id,),
+            ).fetchone()
+            yield row
+
     def save_runtime_binding(
         self,
         binding: WorkspaceRuntimeBinding,
@@ -2710,6 +2835,7 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
+        self._notify_project_index_change(safe_binding.binding_id)
         stored = self.get_runtime_binding(safe_binding.binding_id)
         if stored is None:
             raise WorkspaceRegistryServiceError("Runtime binding save failed.")
@@ -3077,6 +3203,7 @@ class LocalWorkspaceRegistryService:
         if cursor.rowcount == 0:
             raise BindingNotFound(safe_binding_id)
         self._bump_mutation_generation()
+        self._notify_project_index_change(safe_binding_id)
 
     def set_folder_binding_access(
         self, binding_id: str, *, allow_write: bool

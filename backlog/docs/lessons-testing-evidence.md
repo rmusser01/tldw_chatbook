@@ -21104,6 +21104,8 @@ screen keybindings to accommodate a test.
 
 During the Textual follow-up gate on 2026-10-20, the Evals report referenced original-code child receipts under pytest-74/75. By final review the normal numbered-temp rotation retained pytest-82/83/84, so the controller could independently inspect named final logs and reproduce baseline lint, but could not reinspect those early raw RED logs. Contemporaneous reports remain evidence, with this qualification disclosed. Copy the needed RED/GREEN receipt to a named artifact outside the rotating pytest directory before later targeted runs; do not disable retention, bypass private-temp permissions, or replay product tests only to recreate an aged-out log.
 
+The same retention gap recurred during PR #3204 / TASK-36006 on 2026-10-22: later targeted runs removed all eight earlier Settings child log/XML files before QA copying. The outer five-pass output and a captured hash/result/XML-line manifest survived; the final record explicitly qualifies them as snapshots, not original raw files. Copy original child files when their run retires, before starting later pytest processes. No missing receipt was reconstructed and no passed test was replayed to replace it.
+
 ## Recovery failure tests must reach the real mutation boundary
 
 **PR #3189 / TASK-35992, 2026-10-20.** A test that made the cancellation entry
@@ -21129,3 +21131,31 @@ holds now wait for explicit release; their existing `finally` releases both
 before worker retirement, and the test/process deadline remains the bound.
 Preserve the original navigation, Close and sibling-decision assertions.
 An early app-startup failure is not evidence that held-worker cleanup passed.
+
+## Inspect native ACLs when a private Windows test ancestor becomes shared-writable (TASK-35932, 2026-10-21)
+
+**Incident.** Workspace-guidance qualification first passed a native payload guard in 41.31s. After a scratch live launcher was created with `apply_patch` outside the sandbox's writable roots, subsequent guard/live starts refused the plan's `.superpowers/sdd/<plan>` ancestor as `shared_writable_parent` (normalized mode 0o766). Native `Get-Acl` inspection found two explicit inheritable sandbox Modify grants on that directory; its ancestors still gave the sandbox only inherited ReadAndExecute. Plain Windows `os.stat` showed 0o777 for all these directories and did not reveal the DACL difference. No live scenario ran during the refusal, and the original config/user-data integrity comparison remained unchanged.
+
+**What worked.** The controller verified the exact task-owned path, backed up its DACL, removed only those two identified explicit grants, and verified that the parent and native-temp child again inherited read-only sandbox access plus owner/System/Admin access. The next real retry authority/payload guard passed in 40.20s without a product or admission-guard change. Further task-private scratch writes used normal-user/escalated shell commands.
+
+**Rule.** When an established private Windows test ancestor suddenly fails admission, compare its native ACL with its parents before changing fixtures or code. Restore only evidenced task-owned setup grants; do not apply a broad permission reset to user profiles or the worktree, and do not weaken the private-path guard. Treat a refused launch as zero executed live scenarios.
+
+
+### Compare Unicode QA text with retained raw observations (TASK-35931, 2026-10-21)
+
+During workspace-guidance qualification, compact final-answer fields and some tool-result strings contained UTF-8 decoded as Windows cp1252 even though the retained raw observations were correct. The final review found five nonempty answers differed only by that transformation; restoring their raw Unicode and comparing exact strings caught the artifact error without changing model prose or rerunning the provider. A later packaging diagnostic print also raised UnicodeEncodeError after valid UTF-8 writes had already completed. Keep raw snapshots, read/write JSON with an explicit UTF-8 encoding, and verify claimed exact text directly against raw values and call IDs. A parseable JSON file or matching message-array digest alone does not prove its separately copied answer/result strings are exact. Treat diagnostic console encoding separately from artifact writes and model outcomes.
+
+During optional keyword scanner qualification (TASK-36003, 2026-10-21), retaining an appended Markdown report as UTF-8 failed on a single Windows cp1252 em-dash byte (0x97) in its heading. The command evidence was intact; normalizing that one heading byte and decoding the entire report strictly as UTF-8 completed retention without a test rerun. An explicit UTF-8 file open does not repair text already recoded while passing through a shell pipe: prefer ASCII shell script text or Unicode escapes for such writes, and validate the final artifact with a strict UTF-8 read.
+
+## Pytest retention can delete a completed benchmark before its next phase
+
+**Incident (TASK-36005, 2026-10-21).** A real20,000-file project-index benchmark reached its test-only600s observer deadline at19,400files, then explicitly resumed and completed in the same generated cache. When the resume probe exited, pytest numbered-temp retention removed the older corpus/cache before the planned idle lookup rerun. The concurrent-load timing remained valid, but an idle comparison required a separately disclosed derived-cache reconstruction.
+
+**What to do.** Put multi-phase benchmark corpora and caches in an explicitly owned private artifact location outside pytest numbered-temp retention. Verify their native owners have retired before reuse or cleanup. Retain setup, timeout/resume, load, source and reconstruction differences; do not replace the original measurement or call a cache-only reconstruction another end-to-end scan.
+
+
+## Adding real admission work changes a performance budget's boundary
+
+**Incident (TASK-36006, 2026-10-22).** Keyword qualification initially compared a canonical lexical method plus an in-memory test fence with a later real registry fence, sensitive-path acquisition and management-status read. The broader final clock failed all six500ms p95 cells; source audit confirmed the extra work was production work, not fixture overhead. The nested/common canonical component also failed577.305ms, so changing the reporting boundary alone could not satisfy the original target.
+
+**What to do.** Name and retain canonical lookup, admitted candidates, live validation and whole invocation separately, including their exact guards/owners and setup exclusions. A stronger admitted budget is a new requirement; accepting its miss requires an explicit recorded deviation, not relabeling the failure as invalid measurement. Profile the failing component before a local remedy, and retain adverse/source/load receipts. Never subtract independently computed percentile values or sum overlapping cumulative profiles to claim an exclusive phase cost.

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ctypes
 import multiprocessing
 import os
+from dataclasses import replace
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -273,3 +276,158 @@ def test_relative_path_rejects_windows_drive_root_and_anchor_on_every_platform(
     with pin_workspace_root(root, chain) as pinned:
         with pytest.raises(WorkspaceRootPinError, match="relative path"):
             pinned.relative_path(value)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows handle identity")
+def test_windows_handle_identity_matches_full_python_identity(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    expected = os.lstat(root)
+
+    handle, actual, reparse = workspace_root_pin._windows_open_directory(root)
+    try:
+        assert actual.device == expected.st_dev
+        assert actual.inode == expected.st_ino
+        assert not reparse
+    finally:
+        workspace_root_pin._windows_close_handle(handle)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows current-directory pin")
+def test_windows_unchanged_root_pins_and_reads_relative_file(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "sentinel.txt").write_text("ADMITTED", encoding="utf-8")
+    chain = capture_directory_chain(root)
+    previous = Path.cwd()
+
+    with pin_workspace_root(root, chain) as pinned:
+        assert pinned.identity == chain.identities[0]
+        assert (
+            pinned.relative_path("sentinel.txt").read_text(encoding="utf-8")
+            == "ADMITTED"
+        )
+    assert Path.cwd() == previous
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows handle identity")
+def test_windows_pin_rejects_device_with_same_low_bits(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    chain = capture_directory_chain(root)
+    expected = chain.identities[0]
+    changed = replace(expected, device=expected.device ^ (1 << 32))
+    assert changed.device & 0xFFFFFFFF == expected.device & 0xFFFFFFFF
+    altered_chain = replace(chain, identities=(changed, *chain.identities[1:]))
+    previous = Path.cwd()
+
+    with pytest.raises(WorkspaceRootPinError, match="identity mismatch"):
+        with pin_workspace_root(root, altered_chain):
+            pytest.fail("different high device bits were admitted")
+    assert Path.cwd() == previous
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows metadata failure")
+def test_windows_identity_metadata_failure_closes_open_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ctypes import wintypes
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    native = ctypes.WinDLL("kernel32", use_last_error=True)
+    native.GetHandleInformation.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    native.GetHandleInformation.restype = wintypes.BOOL
+    opened: list[int] = []
+
+    def unavailable(handle, _kind, _information, _size):
+        opened.append(handle)
+        return False
+
+    kernel32 = SimpleNamespace(
+        CreateFileW=native.CreateFileW,
+        GetFileInformationByHandle=native.GetFileInformationByHandle,
+        GetFileInformationByHandleEx=unavailable,
+        CloseHandle=native.CloseHandle,
+    )
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_args, **_kwargs: kernel32)
+
+    with pytest.raises(WorkspaceRootPinError, match="metadata unavailable"):
+        handle, _identity, _reparse = workspace_root_pin._windows_open_directory(root)
+        workspace_root_pin._windows_close_handle(handle)
+    assert len(opened) == 1
+    flags = wintypes.DWORD()
+    assert not native.GetHandleInformation(opened[0], ctypes.byref(flags))
+    assert ctypes.get_last_error() == 6  # ERROR_INVALID_HANDLE
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows identity layout")
+def test_windows_handle_identity_preserves_all_file_id_bits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    native = ctypes.WinDLL("kernel32", use_last_error=True)
+    # FILE_ID_INFO: ULONGLONG followed by BYTE Identifier[16].
+    payload = bytes.fromhex("efcdab8967452301ffeeddccbbaa99887766554433221100")
+
+    def full_identity(_handle, kind, information, size):
+        assert kind == 18  # FileIdInfo
+        assert size == 24
+        ctypes.memmove(information, payload, len(payload))
+        return True
+
+    kernel32 = SimpleNamespace(
+        CreateFileW=native.CreateFileW,
+        GetFileInformationByHandle=native.GetFileInformationByHandle,
+        GetFileInformationByHandleEx=full_identity,
+        CloseHandle=native.CloseHandle,
+    )
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_args, **_kwargs: kernel32)
+
+    handle, actual, reparse = workspace_root_pin._windows_open_directory(root)
+    try:
+        assert actual.device == 0x0123456789ABCDEF
+        assert actual.inode == 0x00112233445566778899AABBCCDDEEFF
+        assert not reparse
+    finally:
+        workspace_root_pin._windows_close_handle(handle)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows reparse refusal")
+def test_windows_pin_refuses_junction_root(tmp_path: Path) -> None:
+    import _winapi
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    expected = capture_directory_chain(root).identities[0]
+    retained = tmp_path / "retained"
+    root.rename(retained)
+    _winapi.CreateJunction(str(retained), str(root))
+
+    handle, _identity, reparse = workspace_root_pin._windows_open_directory(root)
+    try:
+        assert reparse
+    finally:
+        workspace_root_pin._windows_close_handle(handle)
+    with pytest.raises(WorkspaceRootPinError, match="unsafe workspace root metadata"):
+        workspace_root_pin._pin_windows(root, expected)
+
+
+def test_executor_local_chain_snapshot_is_immutable_and_performs_no_recapture(
+    tmp_path, monkeypatch
+):
+    from dataclasses import FrozenInstanceError
+    from tldw_chatbook.Tools import workspace_tool_executor as module
+
+    executor = module.WorkspaceToolExecutor(tmp_path)
+    expected = capture_directory_chain(tmp_path)
+    monkeypatch.setattr(
+        module, "capture_directory_chain", lambda _: pytest.fail("snapshot recaptured")
+    )
+    assert executor.local_authority_chain == expected
+    with pytest.raises(FrozenInstanceError):
+        executor.local_authority_chain.canonical_root = tmp_path / "other"

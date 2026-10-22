@@ -1,0 +1,22 @@
+{
+  "base": "007521567a9e961d2cd854432b357b545d8605d4",
+  "head": "00a1e1495236203517570ac8cae2ee39b84da110",
+  "package": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\ci-ratchet-review-package-00a1e149.txt",
+  "bytes": 71120,
+  "sha256": "a5b8f3b739474d12670d72a0ed1b3ffdef15e6a2c281902559be3f02891f9dc8",
+  "paths": [
+    "Docs/security/production-diagnostic-inventory.json",
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md",
+    "tldw_chatbook/Chat/answer_citations.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "tldw_chatbook/Chat/console_local_review_hook.py",
+    "tldw_chatbook/Chat/console_project_index_preparation.py",
+    "tldw_chatbook/Chat/console_settings_durability.py",
+    "tldw_chatbook/UI/Screens/settings_screen.py",
+    "tldw_chatbook/UI/Settings_Modules/workspace_folder_bindings.py",
+    "tldw_chatbook/app_lifecycle.py"
+  ],
+  "status": "clean"
+}

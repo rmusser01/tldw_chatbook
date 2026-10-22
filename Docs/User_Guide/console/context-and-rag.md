@@ -71,6 +71,27 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Questions about an attached project
+
+Bind the project folder in a named Workspace, then ask a normal question such
+as "Summarize this project". When file-reading tools are available, Console
+guides the model to inspect relevant README files, manifests and source. With
+multiple folders, name the project you mean. Folder bindings provide file access;
+they do not automatically read, ingest or index the folder, and need no embeddings.
+Tool permissions, read-only bindings and excluded paths still apply. A model may
+need a more specific question if it does not choose the relevant files.
+
+Your saved **Never/Automatic** retrieval and **Blocked/Allowed** assistant Library
+access choices stay as you set them. Automatic or manually staged Library
+excerpts can accompany file results; unrelated excerpts do not mean project files
+are unavailable. Answers should identify file evidence by path and use `[S#]`
+only for the supplied Library references. An answer based entirely on project
+files can have no Library citation. Switching to another chat while a send is
+preparing does not transfer that chat's folders or Library scope into the send.
+
+Optional folder indexing is a separate planned capability, with explicit opt-in;
+this guidance change does not enable it or retain project files as Library items.
+
 ### Model context capacity
 
 The model controls use the selected server's reported context size when it is

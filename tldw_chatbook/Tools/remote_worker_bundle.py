@@ -1139,6 +1139,7 @@ def resolve_sensitive_context() -> SensitivePathContext:
     user_data_dir = _resolved(str(raw_user_dir)) if raw_user_dir is not None else None
     dynamic_dirs = (skill_trust_dir,) if skill_trust_dir is not None else ()
     return SensitivePathContext(files=tuple((p for p in (_resolved(str(raw)) for raw in single_files) if p is not None)), dirs=tuple((p for p in (_resolved(str(entry)) for entry in _SENSITIVE_DIRS + dynamic_dirs) if p is not None)), db_paths=tuple((p for p in (_resolved(str(raw)) for raw in db_paths) if p is not None)), user_data_dir=user_data_dir, direct_child_denied_dirs=tuple((p for p in (_resolved(str(raw)) for raw in containers) if p is not None)))
+_RESOLVE_SENSITIVE_CONTEXT_ORIGINAL = (resolve_sensitive_context, resolve_sensitive_context.__code__, resolve_sensitive_context.__defaults__)
 
 def merge_sensitive_context(base: SensitivePathContext, *, extra_files: Iterable[Path]=(), extra_dirs: Iterable[Path]=()) -> SensitivePathContext:
     """Fold per-workspace user exclusions into a per-call context snapshot.
@@ -1312,6 +1313,7 @@ def is_sensitive_path(candidate: Path, context: SensitivePathContext | None=None
         if _same_path(resolved.parent, denied_parent) and (not resolved.is_dir()):
             return True
     return False
+_IS_SENSITIVE_PATH_ORIGINAL = (is_sensitive_path, is_sensitive_path.__code__, is_sensitive_path.__defaults__)
 
 class SensitiveExclusion(NamedTuple):
     """One denial of :func:`is_sensitive_path`, expressed relative to a root.
@@ -3447,11 +3449,16 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
 
     class ByHandleFileInformation(ctypes.Structure):
         _fields_ = [('dwFileAttributes', wintypes.DWORD), ('ftCreationTime', wintypes.FILETIME), ('ftLastAccessTime', wintypes.FILETIME), ('ftLastWriteTime', wintypes.FILETIME), ('dwVolumeSerialNumber', wintypes.DWORD), ('nFileSizeHigh', wintypes.DWORD), ('nFileSizeLow', wintypes.DWORD), ('nNumberOfLinks', wintypes.DWORD), ('nFileIndexHigh', wintypes.DWORD), ('nFileIndexLow', wintypes.DWORD)]
+
+    class FileIdInformation(ctypes.Structure):
+        _fields_ = [('VolumeSerialNumber', ctypes.c_ulonglong), ('FileId', wintypes.BYTE * 16)]
     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     kernel32.CreateFileW.restype = wintypes.HANDLE
     kernel32.GetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.POINTER(ByHandleFileInformation)]
     kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+    kernel32.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
     file_read_attributes = 128
     share_all = 1 | 2 | 4
     open_existing = 3
@@ -3463,12 +3470,14 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
     if not handle or handle == invalid_handle:
         raise WorkspaceRootPinError('workspace root open failed')
     information = ByHandleFileInformation()
-    if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
+    identity_information = FileIdInformation()
+    file_id_info = 18
+    if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)) or not kernel32.GetFileInformationByHandleEx(handle, file_id_info, ctypes.byref(identity_information), ctypes.sizeof(identity_information)):
         _windows_close_handle(handle)
         raise WorkspaceRootPinError('workspace root metadata unavailable')
-    inode = int(information.nFileIndexHigh) << 32 | int(information.nFileIndexLow)
+    inode = int.from_bytes(bytes(identity_information.FileId), 'little')
     reparse = bool(int(information.dwFileAttributes) & 1024)
-    return (handle, DirectoryIdentity(device=int(information.dwVolumeSerialNumber), inode=inode, mode=0, reparse=reparse), reparse)
+    return (handle, DirectoryIdentity(device=int(identity_information.VolumeSerialNumber), inode=inode, mode=0, reparse=reparse), reparse)
 
 def _windows_set_current_directory(path: str) -> None:
     if os.name != 'nt':
@@ -5694,4 +5703,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("9a21d1919a1d84cbd90441422fa795fa9b9046c654dd45509c546026a1e95aa1")
+BUNDLE_SHA256 = _enter_worker_exchange("7c8b5f6a35c66d0d810e9eb1e773663e7966cbe78999c12dce41a3850cbae439")

@@ -1,0 +1,29 @@
+e8c841d48b Order citation helper imports by repository convention
+
+ tldw_chatbook/Chat/answer_citations.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tldw_chatbook/Chat/answer_citations.py b/tldw_chatbook/Chat/answer_citations.py
+index c4832f528d..735db86d18 100644
+--- a/tldw_chatbook/Chat/answer_citations.py
++++ b/tldw_chatbook/Chat/answer_citations.py
+@@ -1,18 +1,18 @@
+ """Answer-level citation prompt and validation helpers."""
+ 
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+ from typing import Any, Mapping
+ 
++from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+ from tldw_chatbook.Chat.citation_evidence_models import (
+     CitationRef,
+     EvidenceBundle,
+     EvidenceReference,
+ )
+ from tldw_chatbook.Chat.citation_trace_models import (
+     EvidenceLabelMarkerSpan,
+     eligible_evidence_label_marker_spans,
+ )
+ 

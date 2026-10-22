@@ -1,0 +1,63 @@
+{
+  "base_command": [
+    "git",
+    "-c",
+    "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui",
+    "show",
+    "HEAD:tldw_chatbook/Chat/answer_citations.py"
+  ],
+  "base_sha256": "a43d99470d74fb6905db2b66867ae3b43889d7c705555e053436265f2273d3f7",
+  "current_sha256": "43ec2694b0d1766931e5309ef74e31499de9c5309f94d33cd2830daef0bfbe5b",
+  "exact_text_only_reviewed_import_move": true,
+  "top_level_import_multiset_equal": true,
+  "non_import_module_ast_equal": true,
+  "compile": "passed",
+  "checks": [
+    {
+      "command": [
+        "C:\\Python312\\Scripts\\ruff.exe",
+        "check",
+        "tldw_chatbook/Chat/answer_citations.py"
+      ],
+      "exit_code": 0,
+      "stdout": "All checks passed!\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "C:\\Python312\\Scripts\\ruff.exe",
+        "format",
+        "--check",
+        "tldw_chatbook/Chat/answer_citations.py"
+      ],
+      "exit_code": 0,
+      "stdout": "1 file already formatted\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "-c",
+        "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "warning: in the working copy of 'tldw_chatbook/Chat/answer_citations.py', LF will be replaced by CRLF the next time Git touches it\n"
+    },
+    {
+      "command": [
+        "git",
+        "-c",
+        "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui",
+        "diff",
+        "--",
+        "tldw_chatbook/Chat/answer_citations.py"
+      ],
+      "exit_code": 0,
+      "stdout": "diff --git a/tldw_chatbook/Chat/answer_citations.py b/tldw_chatbook/Chat/answer_citations.py\nindex c4832f528d..735db86d18 100644\n--- a/tldw_chatbook/Chat/answer_citations.py\n+++ b/tldw_chatbook/Chat/answer_citations.py\n@@ -3,9 +3,9 @@\n from __future__ import annotations\n \n from dataclasses import dataclass\n-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole\n from typing import Any, Mapping\n \n+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole\n from tldw_chatbook.Chat.citation_evidence_models import (\n     CitationRef,\n     EvidenceBundle,\n",
+      "stderr": "warning: in the working copy of 'tldw_chatbook/Chat/answer_citations.py', LF will be replaced by CRLF the next time Git touches it\n"
+    }
+  ]
+}

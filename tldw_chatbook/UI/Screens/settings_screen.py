@@ -177,12 +177,11 @@ from ...Terminal.contracts import TERMINAL_DISCLOSURE_LINES
 # lazily at its render/use sites (settings interaction only) so it stays out
 # of the UI-ready module census.
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
-from ...Workspaces.models import RuntimeBindingStatus, WorkspaceAssistantDefaults
+from ...Workspaces.models import WorkspaceAssistantDefaults
 from ...Workspaces.registry_service import (
     DEFAULT_WORKSPACE_ID,
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
-    binding_exclusion_entries,
 )
 from ...Widgets.confirmation_dialog import (
     QUIT_CANCELLED_NOTICE,
@@ -2485,7 +2484,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "lifecycle and folder bindings apply immediately; there is no draft state here",
+            "lifecycle and folder bindings apply immediately; index processing choices require Apply",
         ),
     ),
     SettingsCategoryId.TOOL_PROFILES: (
@@ -6943,7 +6942,7 @@ class SettingsScreen(BaseAppScreen):
                 writes_allowed=True,
                 runtime_owner="Workspace registry (immediate actions)",
                 boundary_copy=(
-                    "Lifecycle and folder bindings apply immediately; no draft state."
+                    "Lifecycle and folder bindings apply immediately; index processing choices require Apply."
                 ),
                 recovery_copy=(
                     "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
@@ -21730,6 +21729,8 @@ class SettingsScreen(BaseAppScreen):
         active = registry.get_active_workspace()
         active_id = active.workspace_id if active is not None else None
         yield Button("Create workspace…", id="settings-workspace-create", compact=True)
+        yield Button("Retry removed-folder cache cleanup", id="settings-project-index-cleanup", compact=True)
+        yield Static("", id="settings-project-index-cleanup-result", classes="settings-status-row", markup=False)
         yield StateCheckbox(
             "Show archived", show_archived, id="settings-workspaces-show-archived"
         )
@@ -21765,6 +21766,29 @@ class SettingsScreen(BaseAppScreen):
                     "View archived", id="settings-workspace-archive-view", compact=True
                 )
         yield from self._render_workspace_card(registry, active_id)
+
+    @on(Button.Pressed, "#settings-project-index-cleanup")
+    def _retry_removed_folder_index_cleanup(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_static_text("#settings-project-index-cleanup-result", "Checking removed-folder caches…")
+        app = self.app_instance
+
+        async def retry():
+            from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
+
+            def owned():
+                return get_project_index_service(app).retry_detached_cleanup()
+
+            try:
+                result = await asyncio.to_thread(owned)
+                text = (f"Cache cleanup: {result['completed']} completed; {result['pending']} pending; "
+                        f"{result['refused']} could not be verified. Retry pending cleanup after current work finishes.")
+            except Exception:
+                text = "Cache cleanup unavailable. Restart Chatbook and retry; cached content may remain."
+            if self.is_attached:
+                self._set_static_text("#settings-project-index-cleanup-result", text)
+
+        self.run_worker(retry(), group="project-index-cleanup", exclusive=True, exit_on_error=False)
 
     def _render_workspace_card(
         self,
@@ -22115,98 +22139,12 @@ class SettingsScreen(BaseAppScreen):
         registry: LocalWorkspaceRegistryService,
         workspace_id: str,
     ) -> ComposeResult:
-        """Render the folder-bindings editor for the selected workspace (task 10).
+        """Compose folder controls through the workspace folder helper."""
+        from ..Settings_Modules.workspace_folder_bindings import (
+            render_workspace_folder_bindings,
+        )
 
-        One row per bound folder with its access level and freshness
-        (recomputed from disk by `list_folder_bindings`), a per-row
-        ro/rw toggle and remove button, then an add row. Below each
-        binding sit its exclusion rows (paths the agent cannot see) with
-        an Unexclude button each, plus a per-binding "Exclude" input row.
-        Toggle/remove buttons stash `binding_id` as a plain attribute at
-        compose time (mirrors the conversation browser's `conversation_id`
-        stash) so the handler never has to parse a uuid out of the button
-        id; exclusion buttons stash `exclusion_*` attributes instead (the
-        Unexclude button shares the folder-remove CSS class, and the
-        class-selected folder handler must stay a no-op on it).
-        """
-        yield Static("Folders (agent file-tool access)", classes="destination-section")
-        for binding in registry.list_folder_bindings(workspace_id):
-            access = binding.metadata.get("access", "ro")
-            freshness = (
-                "ready" if binding.status == RuntimeBindingStatus.READY else "missing"
-            )
-            yield Static(
-                f"{binding.locator} [{access}] {freshness}",
-                id=f"settings-workspace-folder-{binding.binding_id}",
-                classes="settings-detail-row",
-                markup=False,
-            )
-            with Horizontal(classes="settings-input-row"):
-                toggle_button = Button(
-                    "Allow write" if access != "rw" else "Read-only",
-                    id=f"settings-workspace-folder-toggle-{binding.binding_id}",
-                    classes="settings-workspace-folder-toggle",
-                    compact=True,
-                )
-                toggle_button.binding_id = binding.binding_id
-                yield toggle_button
-                remove_button = Button(
-                    "Remove",
-                    id=f"settings-workspace-folder-remove-{binding.binding_id}",
-                    classes="settings-workspace-folder-remove",
-                    compact=True,
-                )
-                remove_button.binding_id = binding.binding_id
-                yield remove_button
-            yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
-            # Defensive reader (never the raw metadata list): malformed
-            # persisted exclusions must render as "Excluded (0)" rather than
-            # crash pane composition.
-            exclusions = binding_exclusion_entries(binding)
-            yield Static(
-                f"  Excluded ({len(exclusions)}): agent cannot see these",
-                classes="settings-detail-row",
-            )
-            for index, entry in enumerate(exclusions):
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        f"  {entry.path} ({entry.kind})",
-                        id=f"settings-workspace-excl-label-{binding.binding_id}-{index}",
-                        classes="settings-detail-row",
-                    )
-                    unexclude_button = Button(
-                        "Unexclude",
-                        id=f"settings-workspace-excl-remove-{binding.binding_id}-{index}",
-                        classes="settings-workspace-folder-remove",
-                        compact=True,
-                    )
-                    # ``exclusion_*`` rather than ``binding_id``: the legacy
-                    # folder-remove class handler also matches this class and
-                    # reads ``binding_id`` -- these attrs keep it a no-op here.
-                    unexclude_button.exclusion_binding_id = binding.binding_id
-                    unexclude_button.exclusion_path = str(entry.path)
-                    yield unexclude_button
-            with Horizontal(classes="settings-input-row"):
-                yield Input(
-                    placeholder="path/to/exclude (relative to folder)",
-                    id=f"settings-workspace-excl-path-{binding.binding_id}",
-                    classes="settings-compact-input",
-                )
-                add_exclusion_button = Button(
-                    "Exclude",
-                    id=f"settings-workspace-excl-add-{binding.binding_id}",
-                    compact=True,
-                )
-                add_exclusion_button.exclusion_binding_id = binding.binding_id
-                yield add_exclusion_button
-        with Horizontal(classes="settings-input-row"):
-            yield Input(
-                placeholder="~/path/to/folder",
-                id="settings-workspace-folder-path",
-                classes="settings-compact-input",
-            )
-            yield Button("Add folder", id="settings-workspace-folder-add", compact=True)
-        yield self._workspace_folder_result_widget(workspace_id)
+        yield from render_workspace_folder_bindings(self, registry, workspace_id)
 
     def _workspace_folder_result_widget(
         self, workspace_id: str, binding_id: str | None = None
@@ -22288,6 +22226,7 @@ class SettingsScreen(BaseAppScreen):
         yield Static(
             "SSH folders (remote agent file-tool access)", classes="destination-section"
         )
+        yield Static("Keyword indexing is unavailable for SSH folders.", classes="settings-detail-row")
         for binding in registry.list_ssh_bindings(workspace_id):
             access = binding.metadata.get("access", "ro")
             status_word = cached_status_display(str(binding.binding_id))

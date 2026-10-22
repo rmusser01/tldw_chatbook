@@ -24,7 +24,14 @@ class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 8
+    _CURRENT_SCHEMA_VERSION = 9
+    _MIGRATE_V8_TO_V9_STATEMENTS = (
+        "CREATE TABLE workspace_binding_authority (binding_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0))",
+        'CREATE TRIGGER workspace_binding_authority_insert AFTER INSERT ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(NEW.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
+        'CREATE TRIGGER workspace_binding_authority_update AFTER UPDATE ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(NEW.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
+        'CREATE TRIGGER workspace_binding_authority_delete AFTER DELETE ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(OLD.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
+        'CREATE TRIGGER workspace_binding_authority_workspace AFTER UPDATE OF archived,authority ON workspace_records BEGIN UPDATE workspace_binding_authority SET revision=revision+1 WHERE binding_id IN (SELECT binding_id FROM workspace_runtime_bindings WHERE workspace_id=NEW.workspace_id); END',
+    )
     _MIGRATE_V2_TO_V3_SQL = """BEGIN IMMEDIATE;
 
 CREATE TABLE research_source_operations (
@@ -518,6 +525,7 @@ COMMIT;
                         "PRAGMA table_info(research_quick_note_receipts)"
                     ).fetchall()
                 }
+            needs_v9 = version < 9
             needs_v2 = version < 2 or not v2_index_exists
             needs_v3 = version < 3 or not v3_table_exists
             needs_v4 = version < 4 or not v4_table_exists
@@ -563,6 +571,8 @@ COMMIT;
                 self._migrate_v6_to_v7()
             if needs_v8:
                 self._migrate_v7_to_v8()
+            if needs_v9:
+                self._migrate_v8_to_v9()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -624,6 +634,8 @@ COMMIT;
             self._migrate_v6_to_v7()
         if needs_v8:
             self._migrate_v7_to_v8()
+        if needs_v9:
+            self._migrate_v8_to_v9()
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -707,6 +719,16 @@ COMMIT;
                     "CHECK (assistant_defaults_explicit_none IN (0, 1))"
                 )
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (8)")
+
+    def _migrate_v8_to_v9(self) -> None:
+        """Install non-cascading binding authority witnesses atomically (ADR-241)."""
+        with self.transaction(immediate=True) as conn:
+            for statement in self._MIGRATE_V8_TO_V9_STATEMENTS:
+                conn.execute(statement)
+            conn.execute(
+                "INSERT INTO workspace_binding_authority SELECT binding_id,1 FROM workspace_runtime_bindings"
+            )
+            conn.execute("INSERT INTO schema_version(version) VALUES(9)")
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""

@@ -203,6 +203,11 @@ class WorkspaceToolExecutor:
         )
         self._user_exclusion_paths = user_exclusion_paths
 
+    @property
+    def local_authority_chain(self) -> DirectoryChain | None:
+        """Return the immutable captured local pin; SSH has no local chain."""
+        return self._authority_chain
+
     def _call_context(self) -> SensitivePathContext:
         """Per-call deny context: base denylist merged with user exclusions.
 

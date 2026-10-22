@@ -76,3 +76,7 @@ ADR-005 (invest in local RAG mirroring tldw server), ADR-013 (plain-text vs FTS 
 4. Hybrid cache keys must include the **resolved** fusion params.
 5. `SeamState` enum members are all truthy — compare with `is`, never truthiness.
 6. Cross-encoder runs a local model; LLM strategies use the configured provider, which may also be local. Request counts depend on the strategy and candidate pool.
+
+## Workspace folder keyword indexes
+
+[Optional folder-bound indexes](./project-indexing.md) serve `fs_search_index` evidence inside explicitly admitted Console runs. They do not enter the Library's four search seams, create Media/Notes records, alter saved Library controls/scopes, or require embeddings. Settings manages them per local folder binding; semantic indexing remains a separate delivery.

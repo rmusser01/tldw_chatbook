@@ -1,0 +1,64 @@
+{
+  "source_commit": "3b616994e6ff3d3237a08f2802f25c5b5633e693",
+  "renderer": "Existing Playwright + installed Edge; HTTP(S) aborted; local SVG only",
+  "mounted_evidence": "Final affected12-case run, including actual mounted dark80/light170; original mixed covering remains source-qualified. See final-fix-report.md and bundled source/command/retirement receipts.",
+  "root_visual_inspection": "Inspected cleanup dark80/light170 PNGs; focused retry and wrapped result visibly fit. Wide light shows settled Off state. Clear action exports alone prove focus/recomposition, not settled controls.",
+  "images": [
+    {
+      "source_qualification": "Final-fix-affected.txt supersedes original mixed mounted assertion; exact final source hashes retained.",
+      "svg": "visuals/final-fix-cleanup-textual-dark-80.svg",
+      "svg_sha256": "588980dd0485b5a0d73ad31f6e65adb548081eb99e37f7ebcb067d1471411a9d",
+      "png": "visuals/final-fix-cleanup-textual-dark-80.png",
+      "png_sha256": "bb43e95cc7a2590d85c38bbd1ea135978aa16611ec312088e9dfcce8e4ad1f8c"
+    },
+    {
+      "source_qualification": "Final-fix-affected.txt supersedes original mixed mounted assertion; exact final source hashes retained.",
+      "svg": "visuals/final-fix-cleanup-textual-light-170.svg",
+      "svg_sha256": "8874616e99c8a1933310dbf87f78ff26206929c9efc148ffdb737904166c8766",
+      "png": "visuals/final-fix-cleanup-textual-light-170.png",
+      "png_sha256": "d23217030e2dc1099d7a5e449e4e036e02a011b08de9f7e2ffbd412ef1b57e63"
+    },
+    {
+      "source_qualification": "Final-fix-affected.txt supersedes original mixed mounted assertion; exact final source hashes retained.",
+      "svg": "visuals/final-fix-settings-clear-textual-dark-80.svg",
+      "svg_sha256": "38e5c48c917b5fba6cb62a170e4f993f97e61aa1c33eba9cf053eddbb5cba278",
+      "png": "visuals/final-fix-settings-clear-textual-dark-80.png",
+      "png_sha256": "01a431af336fa425bcb1aef5b64663e54aaaf82d427129d7bbdbebbe95309fa0"
+    },
+    {
+      "source_qualification": "Final-fix-affected.txt supersedes original mixed mounted assertion; exact final source hashes retained.",
+      "svg": "visuals/final-fix-settings-clear-textual-light-170.svg",
+      "svg_sha256": "5a2d1fb467420e097e8ef39e5b9f4a1610e53f0a3a300cffa2cc6b573f7716a4",
+      "png": "visuals/final-fix-settings-clear-textual-light-170.png",
+      "png_sha256": "cea79d85d2c2fcb2f785a2f72376d98d7153f71e409e4ee90727e5da65a1c467"
+    },
+    {
+      "source_qualification": "Final-fix-affected.txt supersedes original mixed mounted assertion; exact final source hashes retained.",
+      "svg": "visuals/final-fix-settings-textual-dark-80.svg",
+      "svg_sha256": "8644c5c4fec9eff14bea7fb1ab8b671d43b2dddf31ff80dd8f451fb9cd9fcbcd",
+      "png": "visuals/final-fix-settings-textual-dark-80.png",
+      "png_sha256": "881a588ac029054a072daf5bcd3e873bd76674c86ea5c734e4e7ff849f493e0b"
+    },
+    {
+      "source_qualification": "Final-fix-affected.txt supersedes original mixed mounted assertion; exact final source hashes retained.",
+      "svg": "visuals/final-fix-settings-textual-light-170.svg",
+      "svg_sha256": "ee7135489a9839b9caf4241926dd237f9a450fc5d07ad777048c4ebd57d007e2",
+      "png": "visuals/final-fix-settings-textual-light-170.png",
+      "png_sha256": "8d968a48c195ba14b34b6ded8378b67d9fd902c11b2d22432f5c60fc35188586"
+    }
+  ],
+  "files": [
+    {
+      "file": "visuals/final-fix-covering-adverse-settings-clear-textual-dark-80.svg",
+      "bytes": 77787,
+      "sha256": "bade85ea8352c6f4e64c636347f01f2e2c20f9d86eebc83956ad146b4dc977cb",
+      "source_qualification": "Adverse original dark80 focus before Textual scroll settled; not a passing visual assertion."
+    },
+    {
+      "file": "visuals/final-fix-covering-adverse-settings-textual-dark-80.svg",
+      "bytes": 77905,
+      "sha256": "e44153b3c815aa35a7068b1b61b6eddf1882189c4abd1ec305e6e08f00294b87",
+      "source_qualification": "Adverse original dark80 focus before Textual scroll settled; not a passing visual assertion."
+    }
+  ]
+}

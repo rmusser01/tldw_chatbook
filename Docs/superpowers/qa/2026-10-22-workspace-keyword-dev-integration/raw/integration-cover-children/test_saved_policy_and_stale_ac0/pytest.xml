@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="12.744" timestamp="2026-10-21T22:57:09.893335-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_workspace_project_index_settings" name="test_saved_policy_and_stale_actions" time="12.004" /></testsuite></testsuites>
