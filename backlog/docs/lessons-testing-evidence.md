@@ -15,6 +15,34 @@
 - Grep dev's tests for the private names in the conflict (`monkeypatch.setattr(runtime, "_...")`). Keep those names as seams and keep the ordering their tests assert.
 - Run dev's new tests for that area on the rebased head, and reset the diagnostic inventory to dev's copy before rebuilding it.
 
+## Before diagnosing a merge-queue eviction, read dev's history of the failing test (TASK-33620.15.6, 2026-10-22)
+
+**Incident.** PR #3187 was evicted from the merge queue when the Console P0
+gate's held-wait assertion failed
+(`test_preparing_changed_source_after_original_tab_await_replays_full`,
+`assert await _until(lambda: bool(held), 5)`, run 39584905309, base
+e639b720ca). A read-only diagnosis then listed ways the branch's merged
+Character check could have changed the timer pass. After that base, dev had
+already changed the test twice: f21a4a379d (TASK-35713, a reused frame
+address) and 99dc8f574c (PR #3202, which reproduced this exact held-wait
+signature by queuing an unchanged FULL right after the sampled idle state).
+TASK-35713 had also recorded this failure mode on plain dev in CI, in 1 of
+10 repeats. Locally, the repaired test passed 16 of 16 on the rebased head
+(8 runs of 2 variants), and so did dev. The CI-era copy passed 8 of 8 on each
+arm. Under `taskpolicy -c background`, with 6 runs at once, the CI-era copy
+failed at that same assertion on dev in 3 of 9 runs and on the branch in 2
+of 9. A timeline probe of the 4 s Preparing hold found the same 23 FULL
+starts, 20 timer polls and 19-20 Character checks on both arms.
+
+**What to do.** Start an eviction diagnosis with
+`git log <run base>..origin/dev -- <failing test> <its helper modules>`, and
+search `backlog/tasks/` for the test name. If dev has already changed or
+filed it, rebase first. Then reproduce on the rebased head and on dev. A
+hosted-only timing failure often needs a slow local runner to show up:
+clamping the runs to background QoS reproduced it on dev when plain runs
+could not. To call the failure branch-caused, show a difference between the
+arms in what the test observes.
+
 ## New regression files need an explicit PR lane (TASK-32755.3, PR #3202)
 
 **Incident.** The full review of transcription readiness found that its new
