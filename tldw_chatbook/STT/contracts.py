@@ -170,7 +170,8 @@ class TranscriptionFailureCode(str, Enum):
 TRANSCRIPTION_FAILURE_CONTRACT = MappingProxyType(
     {
         TranscriptionFailureCode.MODEL_NOT_INSTALLED: (
-            "The selected speech-to-text model is not installed.",
+            "The selected speech-to-text model files are not installed. "
+            "Install or select the matching model and precision, then retry.",
             False,
         ),
         TranscriptionFailureCode.ARTIFACT_CORRUPT: (
@@ -182,7 +183,9 @@ TRANSCRIPTION_FAILURE_CONTRACT = MappingProxyType(
             False,
         ),
         TranscriptionFailureCode.PROVIDER_UNAVAILABLE: (
-            "The selected speech-to-text provider is unavailable.",
+            "The selected speech-to-text provider is unavailable. "
+            "Check its runtime package in Chatbook's Python environment, "
+            "restart Chatbook, then retry.",
             True,
         ),
         TranscriptionFailureCode.PROVIDER_REMOVED: (

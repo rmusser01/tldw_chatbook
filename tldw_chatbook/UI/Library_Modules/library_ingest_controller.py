@@ -1719,8 +1719,10 @@ class LibraryIngestController:
     def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
         """Track the ingest title text as the user types it (state only)."""
         event.stop()
-        self._invalidate_library_external_submission()
         changed = event.value != self._library_ingest_form.title
+        if not changed:
+            return
+        self._invalidate_library_external_submission()
         self._library_ingest_form.title = event.value
         if changed and self._library_ingest_start_consent is not None:
             self._disarm_library_ingest_start_confirm()
@@ -1730,8 +1732,10 @@ class LibraryIngestController:
     def handle_library_ingest_author_changed(self, event: Input.Changed) -> None:
         """Track the ingest author text as the user types it (state only)."""
         event.stop()
-        self._invalidate_library_external_submission()
         changed = event.value != self._library_ingest_form.author
+        if not changed:
+            return
+        self._invalidate_library_external_submission()
         self._library_ingest_form.author = event.value
         if changed and self._library_ingest_start_consent is not None:
             self._disarm_library_ingest_start_confirm()
@@ -1741,8 +1745,10 @@ class LibraryIngestController:
     def handle_library_ingest_keywords_changed(self, event: Input.Changed) -> None:
         """Track the ingest keywords text as the user types it (state only)."""
         event.stop()
-        self._invalidate_library_external_submission()
         changed = event.value != self._library_ingest_form.keywords
+        if not changed:
+            return
+        self._invalidate_library_external_submission()
         self._library_ingest_form.keywords = event.value
         if changed and self._library_ingest_start_consent is not None:
             self._disarm_library_ingest_start_confirm()
@@ -2368,7 +2374,7 @@ class LibraryIngestController:
         # backends and the reason it quotes is the gate's own, whichever
         # of the two it is.
         gate_state = self._build_library_ingest_state()
-        if gate_state.selection_has_nothing_importable is True:
+        if gate_state.selection_has_nothing_importable is True or not gate_state.start_enabled:
             reason = gate_state.start_quiet_line
             if reason:
                 self._notify_library_ingest_warning(reason)

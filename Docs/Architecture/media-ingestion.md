@@ -14,6 +14,7 @@ This document describes how source material becomes indexed media: source classi
 | `Chunking/` (`Chunk_Lib.py`, `engine/`, `token_chunker.py`, `language_chunkers.py`, `auto_selection.py`, `template_runtime.py`) | Chunking methods and template runtime |
 | `RAG_Search/ingestion_indexing.py` | Post-commit semantic indexing hook (see [rag.md](./rag.md)) |
 | `Library/` (`library_ingest_state.py`, `ingest_capabilities.py`) + `DB/Library_Ingest_Jobs_DB.py` | The real queue and job ownership |
+| `Library/transcription_readiness.py` | Selected local STT package/model checks before Library form submission; path-private package, model and VAD remedies |
 | `Widgets/NewIngest/` | The unified ingest UI (`UnifiedProcessor`, smart drop zone, processing dashboard) |
 
 ## The two-phase design
@@ -23,6 +24,7 @@ This document describes how source material becomes indexed media: source classi
 ## Ingest flow
 
 1. **Admission**: the source is classified — `article`, `audio`, or `video` (video hosts: youtube/youtu.be/vimeo/dailymotion); URLs are canonicalized and egress-guarded (`Utils/egress.guarded_fetch_httpx`); local files are typed by extension.
+   Local Library form submissions check the selected transcription runtime and exact model off-thread before queue creation. Missing selected packages block Start; a fresh import check catches incomplete Whisper caches and missing managed Parakeet models/VAD. Directory checks use the admission scan limit, and generation/snapshot fences discard stale results. Checks never download or load model weights. Explicit external Parakeet folders retain their verified-source and VAD-install consent flow; server imports do not consult local STT readiness. Worker admission remains authoritative if files change afterwards.
 2. **Extraction** per type: web articles (trafilatura, streamed with a size cap; permanent vs retryable errors distinctly typed), video (yt-dlp download → audio extraction → STT; transcripts keyed by whisper model), audio (STT), PDF, ebooks, images (OCR), plaintext. Empty extraction hard-fails (`_reject_empty_extraction`).
 3. **Optional LLM analysis** runs in-band during parse; a literal `"Error: …"` analysis body is forbidden — failures degrade to a recorded `analysis_failed_reason`.
 4. **Persist** (single writer thread): `add_media_with_keywords` — Media row (unique url/content-hash dedup, `overwrite` flag, Library-only `restore_trashed`), keyword links, Python-side FTS sync, chunks into `UnvectorizedMediaChunks` with `chunk_engine_version` and `chunking_template`/`chunking_params` stamped on every chunk, optional `DocumentVersions`.

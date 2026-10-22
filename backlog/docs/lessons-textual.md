@@ -10,6 +10,18 @@ decays into folklore, and folklore gets ignored. If you add one, bring the incid
 
 ---
 
+## Metadata mount echoes can cancel the worker that requested a recompose
+
+**TASK-32755.1, 2026-10-21.** Adding an off-thread transcription readiness
+check reused Library's busy-status recompose. Nonempty Title, Author and
+Keywords Inputs re-emitted their initial Changed events; their handlers
+invalidated the pending submission even when the stored draft value matched.
+A mounted canvas regression recorded six cancellations across mount and
+recompose; three direct handler checks reproduced the same cancellation.
+Returning on unchanged metadata before invalidation made all four checks pass,
+while actual edits still cancel the captured submission. Guard mount echoes
+before changing worker generations, including for metadata outside option panels.
+
 ## Covered screens retain old geometry, and a fixed number of Pilot pauses does not prove quiescence
 
 **TASK-32562 backup UAT, 2026-09-14–15.** Recomposition below stacked backup

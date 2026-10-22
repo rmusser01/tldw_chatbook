@@ -2130,7 +2130,8 @@ def test_external_override_defers_submit_until_preparation_finishes() -> None:
     pending_worker = MagicMock()
     screen._prepare_library_external_submission = MagicMock(return_value=pending_worker)
 
-    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
+    # Exercise external-folder admission after the selected-runtime check.
+    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav", _readiness_checked=True)
 
     submit.assert_not_called()
     source_service.records.assert_not_called()
@@ -2502,7 +2503,8 @@ def test_external_override_is_not_prepared_for_server_backend() -> None:
     screen._prepare_library_external_submission = MagicMock()
     screen._enqueue_library_ingest_snapshot = MagicMock()
 
-    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
+    # Exercise external-folder admission after the selected-runtime check.
+    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav", _readiness_checked=True)
 
     screen._prepare_library_external_submission.assert_not_called()
     screen._enqueue_library_ingest_snapshot.assert_called_once()
@@ -2552,7 +2554,8 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     # worker -- decoupled from how the backend choice eventually reaches
     # disk, which has its own coverage.
     screen._save_library_ingest_backend = save_backend
-    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
+    # Exercise external-folder admission after the selected-runtime check.
+    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav", _readiness_checked=True)
     generation, scope_id, *_rest = (
         screen._prepare_library_external_submission.call_args.args
     )
@@ -2616,7 +2619,8 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
     # reach disk, which has its own coverage.
     screen._save_library_ingest_options = MagicMock()
 
-    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
+    # Exercise external-folder admission after the selected-runtime check.
+    LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav", _readiness_checked=True)
     generation, scope_id, *_rest = (
         screen._prepare_library_external_submission.call_args.args
     )

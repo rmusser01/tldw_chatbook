@@ -29592,6 +29592,7 @@ class LibraryScreen(BaseAppScreen):
         *,
         active_duplicate_consent: ActiveIngestConsentScope | None = None,
         confirmed_consent: _LibraryIngestStartConsent | None = None,
+        _readiness_checked: bool = False,
     ) -> None:
         """Perform the actual Library ingest job submission."""
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
@@ -29615,6 +29616,23 @@ class LibraryScreen(BaseAppScreen):
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
         resolved_backend = resolve_backend() if callable(resolve_backend) else "local"
         captured_backend = "server" if resolved_backend == "server" else "local"
+        if captured_backend == "local" and not _readiness_checked:
+            if getattr(self, "_library_external_submit_scope_id", None):
+                self._invalidate_library_external_submission()
+            generation = getattr(self, "_library_external_submit_generation", 0) + 1
+            scope_id = f"library-readiness-{uuid.uuid4().hex}"
+            self._library_external_submit_generation = generation
+            self._library_external_submit_scope_id = scope_id
+            self._library_external_submit_backend = captured_backend
+            self._library_external_submit_consent = confirmed_consent
+            self._set_library_external_status(
+                "Checking import requirements…", busy=True
+            )
+            self._library_external_submit_worker = self._check_library_transcription_submission(
+                generation, scope_id, submitted_source, snapshot, form.path,
+                active_duplicate_consent, confirmed_consent,
+            )
+            return
         external_directory = str(
             audio_options.get("transcription_model_dir") or ""
         ).strip()
@@ -29657,6 +29675,121 @@ class LibraryScreen(BaseAppScreen):
         if getattr(self, "_library_external_submit_scope_id", None):
             self._invalidate_library_external_submission()
         self._enqueue_library_ingest_snapshot(submit_kwargs)
+
+    @work(
+        thread=True,
+        group="library_transcription_readiness",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    def _check_library_transcription_submission(
+        self,
+        generation: int,
+        scope_id: str,
+        source: str,
+        snapshot: dict[str, dict[str, Any]],
+        form_path: str,
+        active_consent: ActiveIngestConsentScope | None,
+        confirmed_consent: _LibraryIngestStartConsent | None,
+    ) -> None:
+        """Check only local audio/video readiness before creating queue rows."""
+        from tldw_chatbook.Library.transcription_readiness import (
+            TranscriptionReadinessError,
+            check_transcription_readiness,
+        )
+        from tldw_chatbook.Local_Ingestion.stt_batch_routing import BatchSTTRoutingError
+
+        worker = get_current_worker()
+        error = None
+        service = None
+        try:
+            try:
+                scan_limit = int(
+                    get_cli_setting("library.ingest_directory_scan_limit", 1000)
+                )
+            except (TypeError, ValueError):
+                scan_limit = 1000
+            report = analyze_path(source, scan_limit=scan_limit, probe_url=False)
+            if "audio_video" in report.type_groups:
+                options = snapshot.get("audio_video", {})
+                if options.get("transcription_provider") == "parakeet-onnx":
+                    service = self.app_instance._ensure_parakeet_source_service()
+                check_transcription_readiness(
+                    options,
+                    default_model=get_cli_setting("transcription.default_model", "base")
+                    or "base",
+                    transcribe_cpp_model_path=get_cli_setting(
+                        "transcription.transcribe_cpp.model_path"
+                    ),
+                    parakeet_source_service=service,
+                    scope_id=scope_id,
+                )
+        except TranscriptionReadinessError as exc:
+            error = str(exc)
+        except BatchSTTRoutingError as exc:
+            # Routing errors contain only code-owned provider/language guidance.
+            error = str(exc)
+        except Exception as exc:
+            logger.warning(
+                "Import readiness check failed (error_type={}).", type(exc).__name__
+            )
+            error = "Transcription readiness could not be verified. Check the selected runtime and model setup, then retry."
+        finally:
+            if service is not None:
+                service.release_scope(scope_id)
+        if not worker.is_cancelled:
+            self.app.call_from_thread(
+                self._apply_library_transcription_readiness,
+                generation,
+                scope_id,
+                source,
+                snapshot,
+                form_path,
+                active_consent,
+                confirmed_consent,
+                error,
+            )
+
+    def _apply_library_transcription_readiness(
+        self,
+        generation: int,
+        scope_id: str,
+        source: str,
+        snapshot: dict[str, dict[str, Any]],
+        form_path: str,
+        active_consent: ActiveIngestConsentScope | None,
+        confirmed_consent: _LibraryIngestStartConsent | None,
+        error: str | None,
+    ) -> None:
+        """Publish a current readiness result; keep blocked import drafts intact."""
+        if (
+            generation != self._library_external_submit_generation
+            or scope_id != self._library_external_submit_scope_id
+            or not self._library_external_backend_is_current()
+        ):
+            return
+        self._library_external_submit_worker = None
+        self._library_external_submit_scope_id = None
+        self._library_external_submit_backend = None
+        self._library_external_submit_consent = None
+        if (
+            form_path != self._ingest_state.form.path
+            or snapshot != self._build_ingest_options_snapshot()
+        ):
+            self._set_library_external_status(
+                "Import options changed; press Start import again.", busy=False
+            )
+            return
+        self._set_library_external_status(error or "", busy=False)
+        if error:
+            self.app_instance.notify(error, severity="error")
+            return
+        self._do_submit_ingest(
+            source,
+            active_duplicate_consent=active_consent,
+            confirmed_consent=confirmed_consent,
+            _readiness_checked=True,
+        )
 
     @work(
         thread=True,

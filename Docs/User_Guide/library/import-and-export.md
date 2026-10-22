@@ -284,6 +284,21 @@ the model installed through Chatbook; that field is an optional override for
 model files you already have. The install button downloads v2 INT8 specifically,
 so use English and INT8 with that bundle.
 
+Before a local audio/video import starts, Chatbook checks the selected runtime
+and model files. A missing selected runtime blocks Start and provides an install
+command for Chatbook's Python environment. Selecting a different installed
+provider does not require installing the alternatives. Restart after installing
+packages so the running app can detect them.
+
+Model files are separate from Python packages. Missing or incomplete Faster
+Whisper caches report a model-download remedy; standard model IDs include an
+explicit download command. These checks do not download anything automatically.
+Missing Parakeet models point to **Lab > Models** or the matching local folder;
+a missing **Silero VAD** is identified separately with its install remedy.
+External Parakeet folders still offer the existing VAD install-consent dialog.
+An unsuccessful check keeps your import draft and queues no jobs. Server-targeted
+imports use the server's environment and are not blocked by missing local STT tools.
+
 For native clipboard copying on Fedora Wayland, install
 [`wl-clipboard`](https://packages.fedoraproject.org/pkgs/wl-clipboard/wl-clipboard/)
 (`sudo dnf install wl-clipboard`). X11 sessions can use `xclip` or `xsel`.

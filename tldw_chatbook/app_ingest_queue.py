@@ -2814,6 +2814,13 @@ class LibraryIngestQueueMixin:
         except Exception as exc:
             provider = str(options.get("transcription_provider") or "")
             code, actions = self._classify_local_stt_dispatch_error(provider, exc)
+            message = None
+            if provider == "parakeet-onnx" and not isinstance(
+                exc, (ExecutorBusyError, ExecutorUnavailableError)
+            ):
+                from tldw_chatbook.Library.transcription_readiness import parakeet_readiness_error
+
+                message = str(parakeet_readiness_error(exc))
             self._marshal_local_stt_call(
                 self._on_ingest_local_stt_dispatch_failure,
                 job.job_id,
@@ -2821,6 +2828,7 @@ class LibraryIngestQueueMixin:
                 code,
                 actions,
                 type(exc).__name__,
+                message,
             )
             return
         self._marshal_local_stt_call(
@@ -2840,10 +2848,15 @@ class LibraryIngestQueueMixin:
             ParakeetSourceErrorCode,
         )
 
-        missing_model = isinstance(error, ParakeetSourceError) and error.code in {
-            ParakeetSourceErrorCode.VAD_UNAVAILABLE,
-            ParakeetSourceErrorCode.MANAGED_UNAVAILABLE,
-        }
+        missing_model = (
+            provider == "parakeet-onnx" and isinstance(error, FileNotFoundError)
+        ) or (
+            isinstance(error, ParakeetSourceError)
+            and error.code in {
+                ParakeetSourceErrorCode.VAD_UNAVAILABLE,
+                ParakeetSourceErrorCode.MANAGED_UNAVAILABLE,
+            }
+        )
         unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
         if missing_model:
             code = TranscriptionFailureCode.MODEL_NOT_INSTALLED
@@ -2994,6 +3007,7 @@ class LibraryIngestQueueMixin:
         code: TranscriptionFailureCode,
         actions: tuple[str, ...],
         error_type: str,
+        message: str | None = None,
     ) -> None:
         if self._ingest_shutdown or self._ingest_local_stt_jobs.get(job_id) != (
             0,
@@ -3001,7 +3015,7 @@ class LibraryIngestQueueMixin:
         ):
             return
         self._ingest_local_stt_jobs.pop(job_id, None)
-        message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+        message = message or TRANSCRIPTION_FAILURE_CONTRACT[code][0]
         logger.error(
             "Library local STT dispatch failed "
             f"(job_id={job_id}, error_type={error_type})."

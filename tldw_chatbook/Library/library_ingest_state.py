@@ -974,7 +974,10 @@ def build_ingest_forecast(
             required_missing, optional_missing = classify_missing_features(
                 group, warned
             )
-            if required_missing:
+            if required_missing or (
+                group == "audio_video"
+                and set(optional_missing) & {"faster_whisper", "parakeet_onnx", "transcribe_cpp"}
+            ):
                 fail_tooling += count
                 tooling_groups.append(group)
                 continue
@@ -3104,6 +3107,14 @@ def build_library_ingest_state(
     option_errors = collect_ingest_option_errors(
         form.type_options, groups=("generic", *type_groups)
     )
+    missing_transcription_runtime = next(
+        (
+            warning for warning in (active_preflight.warnings if active_preflight else ())
+            if not targets_server and "audio_video" in type_groups
+            and warning.get("feature") in {"faster_whisper", "parakeet_onnx", "transcribe_cpp"}
+        ),
+        None,
+    )
     # (task-2230) An unresolvable source gates like every other
     # known-doomed selection: a nonexistent path used to leave Start
     # styled exactly like a valid one, and pressing it produced a
@@ -3116,6 +3127,7 @@ def build_library_ingest_state(
         and not nothing_importable
         and not nothing_sendable
         and not option_errors
+        and missing_transcription_runtime is None
         and not errors_are_path_problem
     )
     # (L3b AB wave, A4) At most one gate line ever renders at once: the
@@ -3173,6 +3185,12 @@ def build_library_ingest_state(
     elif option_errors:
         start_quiet_line = (
             f"Fix the highlighted options to start: {option_errors[0][2]}"
+        )
+    elif missing_transcription_runtime is not None:
+        start_quiet_line = (
+            f"Install the selected {missing_transcription_runtime['label']} runtime "
+            "in Chatbook's Python environment, then restart and retry. "
+            f"{missing_transcription_runtime['command']}"
         )
     elif not form.path.strip():
         start_quiet_line = START_QUIET_LINE_COPY
