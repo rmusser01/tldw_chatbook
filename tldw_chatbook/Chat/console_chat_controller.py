@@ -15516,6 +15516,15 @@ class ConsoleChatController:
         return mcp_provider, builtin_gate, local_provider, local_review_hook
 
     def _prepare_project_index_scopes(self, admitted_roots):
+        """Retire registry handles opened by scope preparation, including guards."""
+        from tldw_chatbook.Workspaces.project_index.runtime import project_index_registry_connections
+
+        registry = getattr(self.app, "workspace_registry_service", None)
+        database = getattr(registry, "db", None)
+        with project_index_registry_connections(database) if database is not None else nullcontext():
+            return self._prepare_project_index_scopes_owned(admitted_roots)
+
+    def _prepare_project_index_scopes_owned(self, admitted_roots):
         """Read compatible immutable scopes off-loop after exact run capture."""
         from types import MappingProxyType
         from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path

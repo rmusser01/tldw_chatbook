@@ -238,3 +238,187 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def measure_pipeline(
+    app,
+    artifact_root,
+    shape,
+    *,
+    count=20000,
+    poll_status=True,
+    timing_load="Unspecified observer load; qualify with the run source manifest",
+):
+    """Qualify generated corpora through runtime, scanner, store and bounded tool.
+
+    Unlike the historical scanner-only receipts above, this retains one stable
+    corpus and the application's admitted cache until explicitly cleared.
+    """
+    from types import SimpleNamespace
+    from Tests.Agents.test_project_index_tool import provider, invoke
+    from tldw_chatbook.Workspaces.project_index.runtime import (
+        get_project_index_service,
+        project_index_key,
+    )
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import index_store_path
+
+    artifact_root = Path(artifact_root)
+    root = artifact_root / shape
+    root.mkdir(parents=True, exist_ok=True)
+    for number in range(count):
+        directory = (
+            root if shape == "wide" else root / f"g{number // 100:03}" / f"d{number:05}"
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"f{number:05}.txt"
+        if not target.exists():
+            target.write_text(
+                f"generated file {number}\n"
+                + (
+                    "qualificationdeepmarker\n"
+                    if number == count - 1
+                    else "ordinary text\n"
+                ),
+                encoding="utf-8",
+            )
+    registry = app.workspace_registry_service
+    workspace = f"qualification-{shape}"
+    registry.create_workspace(workspace_id=workspace, name=f"Generated {shape}")
+    binding = registry.add_folder_binding(workspace, root)
+    service = get_project_index_service(app)
+    key = project_index_key(app, workspace, binding.binding_id, root)
+    initial = service.status(key)
+    enabled = service.enable(
+        key, ProjectIndexPolicy(("",), (".txt",)), expected_scope=initial.scope
+    )
+    process = psutil.Process()
+    baseline = process.memory_info().rss
+    peaks = {"parent_rss": baseline, "combined_rss": baseline, "whole_binding_bytes": 0}
+    observed = set()
+    stop = threading.Event()
+    cache = index_store_path(service._factory.data_root, key).parent.parent
+    progress_path = artifact_root / f"{shape}-progress.json"
+
+    def sample():
+        while not stop.wait(1):
+            parent = process.memory_info().rss
+            child_bytes = 0
+            for child in process.children(recursive=True):
+                try:
+                    observed.add(child.pid)
+                    child_bytes += child.memory_info().rss
+                except psutil.Error:
+                    pass
+            peaks["parent_rss"] = max(peaks["parent_rss"], parent)
+            peaks["combined_rss"] = max(peaks["combined_rss"], parent + child_bytes)
+            from tldw_chatbook.Workspaces.project_index.service import binding_bytes
+
+            peaks["whole_binding_bytes"] = max(
+                peaks["whole_binding_bytes"], binding_bytes(cache)
+            )
+            progress_path.write_text(
+                json.dumps(
+                    {
+                        "elapsed": time.monotonic() - start,
+                        "observer": "passive RSS/disk sampler; no registry status polling",
+                        "peaks_sampled_1s": peaks,
+                        "child_pids": sorted(observed),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+    sampler = threading.Thread(target=sample)
+    start = time.monotonic()
+    sampler.start()
+    (artifact_root / f"{shape}-launch.json").write_text(
+        json.dumps(
+            {
+                "key": asdict(key),
+                "enabled": asdict(enabled),
+                "cache": str(cache),
+                "corpus": str(root),
+                "pid": os.getpid(),
+                "timing_load": timing_load,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    job = service.refresh(
+        key, expected_scope=enabled.scope, expected_job_revision=enabled.job_revision
+    )
+    try:
+        if not poll_status:
+            service._runs[job].supervisor.join()
+        while True:
+            status = service.status(key)
+            progress_path.write_text(
+                json.dumps(
+                    {
+                        "elapsed": time.monotonic() - start,
+                        "status": asdict(status),
+                        "peaks_sampled_1s": peaks,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            if status.state != "Building":
+                break
+            time.sleep(2)
+        elapsed = time.monotonic() - start
+    finally:
+        stop.set()
+        sampler.join()
+    run = service._runs[job]
+    run.supervisor.join()
+    assert status.state == "Ready" and status.indexed == count, status
+    assert run.native_retired and run.db_closed and run.pin.closed
+    rig = SimpleNamespace(service=service, root=root, key=key)
+    tool = provider(rig)
+    result = invoke(tool, {"query": "qualificationdeepmarker"})
+    payload = json.loads(result.content)
+    assert (
+        result.ok
+        and len(payload["hits"]) == 1
+        and "qualificationdeepmarker" in result.content
+    ), result
+    files = sum(1 for path in root.rglob("*.txt"))
+    directories = sum(1 for path in root.rglob("*") if path.is_dir())
+    assert files >= count and (shape == "wide" or directories >= count)
+    report = {
+        "pipeline": "production runtime/service/scanner/store/LocalToolProvider/Capture",
+        "platform": platform.platform(),
+        "cpu_count": os.cpu_count(),
+        "shape": shape,
+        "text_files": files,
+        "folders": directories,
+        "seconds": elapsed,
+        "files_per_second": files / elapsed,
+        "baseline_parent_rss": baseline,
+        "peaks_sampled_1s": peaks,
+        "peak_extra_combined_rss_sampled": peaks["combined_rss"] - baseline,
+        "final_status": asdict(status),
+        "tool_payload": payload,
+        "worker_retired": run.native_retired,
+        "writer_db_closed": run.db_closed,
+        "storage_pin_closed": run.pin.closed,
+        "scanner_pipes_closed": service._scanner.pipes_closed,
+        "observed_child_pids": sorted(observed),
+        "observed_children_gone": all(not psutil.pid_exists(pid) for pid in observed),
+        "whole_binding_files": {
+            str(p.relative_to(cache)): p.stat().st_size
+            for p in cache.rglob("*")
+            if p.is_file()
+        },
+        "timing_load": timing_load,
+        "tool_authority_fixture": "LocalToolProvider roots/guard are test-seeded; runtime admission, registry fences and native Capture are real",
+        "scanner_max_frame_bytes": service._scanner.max_frame_bytes,
+        "scanner_max_queued_text_bytes": service._scanner.max_queued_text_bytes,
+        "scanner_max_active_reads": service._scanner.max_active_reads,
+        "writer_registry_closed": run.registry_closed,
+    }
+    (artifact_root / f"{shape}-pipeline.json").write_text(
+        json.dumps(report, indent=2), encoding="utf-8"
+    )
+    return rig, report

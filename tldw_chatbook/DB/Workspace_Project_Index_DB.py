@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import asdict
 from functools import wraps
 from datetime import datetime, timezone
@@ -21,7 +22,10 @@ from tldw_chatbook.Workspaces.project_index.models import (
     IndexRetirementVerifier,
     PreparedChunk,
     PreparedScanPage,
+    PreparedScanUnit,
+    ScanUnit,
     ProjectIndexJobClaim,
+    ProjectIndexRetirementUnproven,
     ProjectIndexKey,
     ProjectIndexPolicy,
     ProjectIndexScope,
@@ -30,7 +34,7 @@ from tldw_chatbook.Workspaces.project_index.models import (
     ScanPage,
 )
 
-_SCHEMA = (
+_SCHEMA_V2 = (
     "CREATE TABLE schema_version(version INTEGER PRIMARY KEY CHECK(version=2))",
     "CREATE TABLE control(singleton INTEGER PRIMARY KEY CHECK(singleton=1), namespace TEXT NOT NULL, epoch INTEGER NOT NULL, processing_revision INTEGER NOT NULL, policy TEXT NOT NULL, enabled INTEGER NOT NULL, state TEXT NOT NULL, job_revision INTEGER NOT NULL, manifest_revision INTEGER NOT NULL, last_scan_at TEXT)",
     "CREATE TABLE active_job(singleton INTEGER PRIMARY KEY CHECK(singleton=1), job_id TEXT UNIQUE NOT NULL, owner_token TEXT NOT NULL, job_revision INTEGER NOT NULL, authority_revision INTEGER NOT NULL)",
@@ -45,6 +49,37 @@ _SCHEMA = (
     "CREATE TABLE legacy_retirement(singleton INTEGER PRIMARY KEY CHECK(singleton=1))",
     "CREATE TABLE cleanup_receipts(epoch INTEGER PRIMARY KEY, cleared_at TEXT NOT NULL)",
 )
+
+
+_SCHEMA = tuple(
+    statement.replace("CHECK(version=2)", "CHECK(version=3)")
+    .replace(
+        "complete INTEGER NOT NULL)",
+        "complete INTEGER NOT NULL, attempt_revision INTEGER NOT NULL DEFAULT 0)",
+    )
+    .replace("chunk_fts USING fts5(text)", "chunk_fts USING fts5(path,text)")
+    for statement in _SCHEMA_V2
+) + (
+    "CREATE INDEX directories_eligible ON directories(complete,attempt_revision,path)",
+)
+
+
+def _validate_catalog(conn, schema, version):
+    catalog = dict(
+        conn.execute("SELECT name,sql FROM sqlite_schema WHERE sql IS NOT NULL")
+    )
+    for statement in schema:
+        name = (
+            statement.split("TABLE ", 1)[1].split("(", 1)[0].split(" ", 1)[0]
+            if "TABLE " in statement
+            else statement.split("INDEX ", 1)[1].split(" ", 1)[0]
+        )
+        if catalog.get(name) != statement:
+            raise ValueError("project_index_schema_mismatch")
+    if [row[0] for row in conn.execute("SELECT version FROM schema_version")] != [
+        version
+    ]:
+        raise ValueError("project_index_schema_version")
 
 
 def index_store_path(data_root: Path, key: ProjectIndexKey) -> Path:
@@ -62,11 +97,31 @@ def prepare_scan_page(page: ScanPage) -> PreparedScanPage:
     """Chunk bounded captures before acquiring registry or cache publication locks."""
     if type(page) is not ScanPage:
         raise TypeError("scan_page_required")
+    chunks = _prepare_chunks(page.captures)
+    digest = hashlib.sha256(
+        json.dumps(asdict(page), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return PreparedScanPage(page, chunks, digest)
+
+
+def prepare_scan_unit(unit: ScanUnit) -> PreparedScanUnit:
+    """Prepare all chunks and the complete replay digest outside publication locks."""
+    if type(unit) is not ScanUnit:
+        raise TypeError("scan_unit_required")
+    chunks = _prepare_chunks(unit.captures)
+    digest = hashlib.sha256(
+        json.dumps(asdict(unit), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return PreparedScanUnit(unit, chunks, digest)
+
+
+def _prepare_chunks(captures):
     from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
 
     chunker = ChunkingService()
     chunks = []
-    for capture in page.captures:
+    for capture in captures:
+        before = len(chunks)
         for chunk in chunker.chunk_text(
             capture.text, chunk_size=400, chunk_overlap=100, method="words"
         ):
@@ -86,10 +141,9 @@ def prepare_scan_page(page: ScanPage) -> PreparedScanPage:
                     capture.text.count("\n", 0, max(start, end - 1)) + 1,
                 )
             )
-    digest = hashlib.sha256(
-        json.dumps(asdict(page), sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    return PreparedScanPage(page, tuple(chunks), digest)
+        if len(chunks) == before:
+            chunks.append(PreparedChunk(capture.relative_path, 0, 0, 1, 1))
+    return tuple(chunks)
 
 
 def _path_allowed(path: str, exclusions) -> bool:
@@ -139,75 +193,114 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
     """
 
     _kernel_sqlite_owner = OWNER_ID
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
 
-    def __init__(self, path: Path, *, cleanup_only: bool = False) -> None:
+    def __init__(
+        self, path: Path, *, cleanup_only: bool = False, migration_context=None
+    ) -> None:
         self.db_path = Path(path).absolute()
         self.db_path_str = str(self.db_path)
         self.is_memory_db = False
         self._claims: dict[str, str] = {}
         self.publication_cache_bytes: int | None = None
         self.status_cache_bytes: int | None = None
+        self.schema_version = 0
         self._init_store_kernel()
         try:
-            with self.transaction() as conn:
-                existing = conn.execute(
-                    "SELECT name FROM sqlite_schema WHERE type='table'"
-                ).fetchall()
-                if not existing:
-                    if cleanup_only:
-                        raise ValueError("index_cleanup_namespace_unknown")
-                    for statement in _SCHEMA:
-                        conn.execute(statement)
-                    conn.execute("INSERT INTO schema_version VALUES(2)")
-                else:
-                    versions = [
-                        r[0] for r in conn.execute("SELECT version FROM schema_version")
-                    ]
-                    if versions == [1]:
-                        if cleanup_only:
-                            raise ValueError("index_cleanup_rebuild_required")
-                        migration = (
-                            Path(__file__).with_name("migrations")
-                            / "workspace_project_index_002.sql"
-                        )
-                        for statement in migration.read_text(encoding="utf-8").split(
-                            ";"
-                        ):
-                            if statement.strip():
+            # Native ownership acquisition and disk accounting never happen in a
+            # SQL transaction. Recheck the version after the migration capability.
+            with self.connection() as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE type='table'"
+                ).fetchone()
+                versions = (
+                    [r[0] for r in conn.execute("SELECT version FROM schema_version")]
+                    if exists
+                    else []
+                )
+            needs_migration = (
+                bool(exists) and versions in ([1], [2]) and not cleanup_only
+            )
+            if needs_migration and migration_context is None:
+                with self.connection() as conn:
+                    page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+                    pages = (MAX_CACHE_BYTES - 1024**2) // (2 * page_size)
+                    if conn.execute("PRAGMA page_count").fetchone()[0] > pages:
+                        raise ValueError("index_cache_limit")
+            context = (
+                migration_context(self)
+                if needs_migration and migration_context is not None
+                else nullcontext()
+            )
+            with context:
+                try:
+                    with self.transaction() as conn:
+                        exists = conn.execute(
+                            "SELECT 1 FROM sqlite_schema WHERE type='table'"
+                        ).fetchone()
+                        if not exists:
+                            if cleanup_only:
+                                raise ValueError("index_cleanup_namespace_unknown")
+                            for statement in _SCHEMA:
                                 conn.execute(statement)
-                    catalog = {
-                        row[0]: row[1]
-                        for row in conn.execute(
-                            "SELECT name,sql FROM sqlite_schema WHERE sql IS NOT NULL"
-                        )
-                    }
-                    for statement in _SCHEMA:
-                        name = (
-                            statement.split("TABLE ", 1)[1]
-                            .split("(", 1)[0]
-                            .split(" ", 1)[0]
-                        )
-                        if catalog.get(name) != statement:
-                            raise ValueError("project_index_schema_mismatch")
-                    if [
-                        r[0] for r in conn.execute("SELECT version FROM schema_version")
-                    ] != [2]:
-                        raise ValueError("project_index_schema_version")
+                            conn.execute("INSERT INTO schema_version VALUES(3)")
+                            self.schema_version = 3
+                        else:
+                            versions = [
+                                r[0]
+                                for r in conn.execute(
+                                    "SELECT version FROM schema_version"
+                                )
+                            ]
+                            if versions == [1]:
+                                if cleanup_only:
+                                    raise ValueError("index_cleanup_rebuild_required")
+                                self._migrate(conn, "002")
+                                versions = [2]
+                            if versions == [2]:
+                                _validate_catalog(conn, _SCHEMA_V2, 2)
+                                if cleanup_only:
+                                    self.schema_version = 2
+                                    return
+                                self._migrate(conn, "003")
+                            _validate_catalog(conn, _SCHEMA, 3)
+                            self.schema_version = 3
+                except BaseException:
+                    # The migration capability remains held until this positive
+                    # close finishes; a strict callback retains it on failure.
+                    self.close_native()
+                    raise
+        except ProjectIndexRetirementUnproven:
+            raise
         except BaseException:
-            self.close()
+            self.close_native()
             raise
 
+    @staticmethod
+    def _migrate(conn, suffix):
+        path = (
+            Path(__file__).with_name("migrations")
+            / f"workspace_project_index_{suffix}.sql"
+        )
+        for statement in path.read_text(encoding="utf-8").split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
     def close_native(self) -> None:
-        """Confirm native closure on the calling owner thread, including failures."""
-        connection = getattr(self._thread_local, "conn", None)
+        """Confirm exact native/core retirement on the owning thread."""
+        from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+
+        connection = _core_cached_connection(
+            self, getattr(self._thread_local, "conn", None)
+        )
         self.close()
         if connection is not None:
             try:
                 sqlite3.Connection.in_transaction.__get__(connection)
             except sqlite3.ProgrammingError:
-                return
-            raise RuntimeError("project_index_connection_not_retired")
+                if _core_cached_connection(self, connection) is None:
+                    return
+            raise ProjectIndexRetirementUnproven("project_index_connection_not_retired")
 
     @_activated
     def _open_connection(self):
@@ -426,7 +519,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 (job_id, owner_token, revision, authority_revision),
             )
             conn.execute(
-                "INSERT INTO directories VALUES('',?,0) ON CONFLICT(path) DO UPDATE SET complete=0",
+                "INSERT INTO directories(path,identity,complete) VALUES('',?,0) ON CONFLICT(path) DO UPDATE SET complete=0",
                 (scope.key.root_identity_fingerprint,),
             )
             conn.execute(
@@ -451,6 +544,20 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 for row in conn.execute(
                     "SELECT path FROM directories WHERE complete=0 AND (? IS NULL OR path>?) ORDER BY path LIMIT ?",
                     (after, after, limit),
+                )
+            )
+
+    def eligible_directories(self, claim: ProjectIndexJobClaim) -> tuple[str, ...]:
+        """Read one indexed bounded page; terminal failures retry on a later run."""
+        with self.transaction() as conn:
+            row = self._current(conn, claim.scope)
+            if row is None or row["job_revision"] != claim.job_revision:
+                return ()
+            return tuple(
+                row[0]
+                for row in conn.execute(
+                    "SELECT path FROM directories WHERE complete=0 AND attempt_revision<? ORDER BY attempt_revision,path LIMIT 256",
+                    (claim.job_revision,),
                 )
             )
 
@@ -544,7 +651,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 conn.execute("DELETE FROM scan_pages")
                 conn.execute("DELETE FROM directories")
                 conn.execute(
-                    "INSERT INTO directories VALUES('',?,0)",
+                    "INSERT INTO directories(path,identity,complete) VALUES('',?,0)",
                     (expected_claim.scope.key.root_identity_fingerprint,),
                 )
             revision = row["job_revision"] + 1
@@ -595,7 +702,6 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         self._claims.pop(job_id, None)
         return True
 
-    @_activated
     def commit_scan_page(
         self,
         scope: ProjectIndexScope,
@@ -605,9 +711,41 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         expected_job_revision: int,
         authority_revision: int,
     ) -> bool:
-        """Publish a pre-chunked bounded page under the caller's registry fence."""
+        """Singleton compatibility adapter retaining the original replay digest."""
         if type(page) is not PreparedScanPage:
             raise TypeError("prepared_scan_page_required")
+        return self._commit_prepared(
+            scope,
+            job_id,
+            page,
+            expected_job_revision=expected_job_revision,
+            authority_revision=authority_revision,
+        )
+
+    def commit_scan_unit(
+        self,
+        scope: ProjectIndexScope,
+        job_id: str,
+        page: PreparedScanUnit,
+        *,
+        expected_job_revision: int,
+        authority_revision: int,
+    ) -> bool:
+        """Atomically publish a prepared bounded unit under the registry fence."""
+        if type(page) is not PreparedScanUnit:
+            raise TypeError("prepared_scan_unit_required")
+        return self._commit_prepared(
+            scope,
+            job_id,
+            page,
+            expected_job_revision=expected_job_revision,
+            authority_revision=authority_revision,
+        )
+
+    @_activated
+    def _commit_prepared(
+        self, scope, job_id, page, *, expected_job_revision, authority_revision
+    ):
         try:
             return self._publish_page(
                 scope, job_id, page, expected_job_revision, authority_revision
@@ -628,7 +766,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
     def _publish_page(
         self, scope, job_id, page, expected_job_revision, authority_revision
     ):
-        scanned = page.page
+        scanned = page.page if type(page) is PreparedScanPage else page.unit
+        receipts = (scanned,) if type(page) is PreparedScanPage else scanned.directories
         owner = self._claims.get(job_id)
         if owner is None or scanned.authority_revision != authority_revision:
             return False
@@ -682,7 +821,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 )
                 if entry.kind == "directory":
                     conn.execute(
-                        "INSERT INTO directories VALUES(?,?,0) ON CONFLICT(path) DO UPDATE SET identity=excluded.identity,complete=0",
+                        "INSERT INTO directories(path,identity,complete) VALUES(?,?,0) ON CONFLICT(path) DO UPDATE SET identity=excluded.identity,complete=CASE WHEN directories.identity=excluded.identity THEN directories.complete ELSE 0 END,attempt_revision=CASE WHEN directories.identity=excluded.identity THEN directories.attempt_revision ELSE 0 END",
                         (entry.relative_path, entry.identity),
                     )
             unchanged = set()
@@ -738,40 +877,50 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                     ),
                 ).lastrowid
                 conn.execute(
-                    "INSERT INTO chunk_fts(rowid,text) VALUES(?,?)", (rowid, text)
+                    "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+                    (rowid, chunk.relative_path, text),
                 )
-            conn.execute(
-                "INSERT INTO directories VALUES(?,?,?) ON CONFLICT(path) DO UPDATE SET identity=excluded.identity,complete=excluded.complete",
-                (
-                    scanned.directory,
-                    scanned.directory_identity,
-                    scanned.directory_complete,
-                ),
-            )
-            if scanned.directory_complete:
-                # A finished parent may retire missing children and their entire
-                # subtrees. Unfinished/unreadable directories retain old members.
-                parent = scanned.directory + "/" if scanned.directory else ""
-                while True:
-                    stale = conn.execute(
-                        "SELECT path FROM entries WHERE substr(path,1,?)=? AND instr(substr(path,?),'/')=0 AND path NOT IN (SELECT path FROM scan_seen) LIMIT 256",
-                        (len(parent), parent, len(parent) + 1),
-                    ).fetchall()
-                    if not stale:
-                        break
-                    for item in stale:
-                        path = item[0]
-                        prefix = path + "/"
-                        bounds = (path, prefix, prefix + chr(0x10FFFF))
-                        conn.execute(
-                            "DELETE FROM chunk_fts WHERE rowid IN (SELECT id FROM chunks WHERE path=? OR (path>=? AND path<?))",
-                            bounds,
-                        )
-                        for table in ("files", "entries", "directories", "scan_seen"):
+            # Entries first, receipts second: publishing a parent cannot reset
+            # the completed child receipt produced in this same atomic unit.
+            for receipt in receipts:
+                conn.execute(
+                    "INSERT INTO directories VALUES(?,?,?,?) ON CONFLICT(path) DO UPDATE SET identity=excluded.identity,complete=excluded.complete,attempt_revision=excluded.attempt_revision",
+                    (
+                        receipt.directory,
+                        receipt.directory_identity,
+                        receipt.directory_complete,
+                        0 if getattr(receipt, "more", False) else expected_job_revision,
+                    ),
+                )
+                if receipt.directory_complete:
+                    # A finished parent may retire missing children and their entire
+                    # subtrees. Unfinished/unreadable directories retain old members.
+                    parent = receipt.directory + "/" if receipt.directory else ""
+                    while True:
+                        stale = conn.execute(
+                            "SELECT path FROM entries WHERE substr(path,1,?)=? AND instr(substr(path,?),'/')=0 AND path NOT IN (SELECT path FROM scan_seen) LIMIT 256",
+                            (len(parent), parent, len(parent) + 1),
+                        ).fetchall()
+                        if not stale:
+                            break
+                        for item in stale:
+                            path = item[0]
+                            prefix = path + "/"
+                            bounds = (path, prefix, prefix + chr(0x10FFFF))
                             conn.execute(
-                                f"DELETE FROM {table} WHERE path=? OR (path>=? AND path<?)",
+                                "DELETE FROM chunk_fts WHERE rowid IN (SELECT id FROM chunks WHERE path=? OR (path>=? AND path<?))",
                                 bounds,
                             )
+                            for table in (
+                                "files",
+                                "entries",
+                                "directories",
+                                "scan_seen",
+                            ):
+                                conn.execute(
+                                    f"DELETE FROM {table} WHERE path=? OR (path>=? AND path<?)",
+                                    bounds,
+                                )
             conn.execute("INSERT INTO scan_pages VALUES(?,?)", (job_id, page.digest))
             conn.execute(
                 "UPDATE control SET manifest_revision=manifest_revision+1,last_scan_at=?",

@@ -756,3 +756,110 @@ raise SystemExit(worker.run_project_scan_worker(sys.stdin.buffer, sys.stdout.buf
     )
     assert actual_maximum <= 4194304, observations
     assert actual_maximum <= scanner.max_queued_text_bytes <= 4194304
+
+
+@pytest.mark.parametrize("shape,count", [("nested", 12), ("empty", 300), ("wide", 600)])
+def test_multi_directory_units_have_aggregate_budgets_and_dynamic_frontier(
+    tmp_path, shape, count
+):
+    from tldw_chatbook.Workspaces.project_index.models import ScanUnit
+
+    tmp_path = tmp_path / "corpus"
+    tmp_path.mkdir()
+    if shape == "nested":
+        for index in range(count):
+            leaf = tmp_path / f"d{index:03}"
+            leaf.mkdir()
+            (leaf / "marker.txt").write_text("unitmarker")
+    elif shape == "empty":
+        for index in range(count):
+            (tmp_path / f"d{index:03}").mkdir()
+    else:
+        for index in range(count):
+            (tmp_path / f"{index:03}.txt").write_text("unitmarker")
+    auth = authority(tmp_path)
+    scanner = scanner_class()()
+    pending = {""}
+    units, admissions = [], []
+
+    def frontier():
+        return tuple(sorted(pending)[:256])
+
+    def publish(unit):
+        assert isinstance(unit, ScanUnit)
+        assert len(unit.entries) <= 256
+        assert len(unit.directories) <= 256
+        assert unit.inspections <= 256
+        for entry in unit.entries:
+            if entry.kind == "directory":
+                pending.add(entry.relative_path)
+        for receipt in unit.directories:
+            if not receipt.more:
+                pending.discard(receipt.directory)
+        units.append(unit)
+        return True
+
+    def admit(seed):
+        admissions.append(seed)
+        return auth
+
+    result = scanner.scan(
+        auth,
+        ProjectIndexScope(auth.key, 1, 1),
+        "unit-job",
+        frontier,
+        publish,
+        threading.Event(),
+        admit_unit=admit,
+        policy=ProjectIndexPolicy(("",), (".txt",)),
+    )
+    assert result.status == "complete" and not pending
+    assert len(admissions) == len(units)
+    if shape == "nested":
+        assert len(units) == 1
+        assert len(units[0].directories) == count + 1
+    assert sum(len(unit.captures) for unit in units) == (
+        0 if shape == "empty" else count
+    )
+    assert scanner.max_queued_text_bytes <= 4 * 1024**2
+    assert scanner.retired and scanner.pipes_closed
+
+
+@pytest.mark.parametrize(
+    "policy,expected",
+    [
+        (
+            ProjectIndexPolicy((), ()),
+            {"README", "config.toml", "src/code.py", "src/package.json"},
+        ),
+        (ProjectIndexPolicy(("src",), ()), {"src/code.py", "src/package.json"}),
+        (ProjectIndexPolicy((), (".py",)), {"src/code.py"}),
+    ],
+)
+def test_empty_processing_choices_keep_mandatory_exclusions(tmp_path, policy, expected):
+    root = tmp_path / "project"
+    root.mkdir()
+    for name in (
+        "README",
+        "config.toml",
+        "src/code.py",
+        "src/package.json",
+        "node_modules/hidden.py",
+        ".git/hidden.py",
+        "secret/hidden.py",
+    ):
+        target = root / name
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("marker", encoding="utf-8")
+    (root / "binary.py").write_bytes(b"a\x00b")
+    (root / "invalid.py").write_bytes(b"\xff")
+    (root / "large.py").write_bytes(b"a" * (1024**2 + 1))
+    auth = replace(
+        authority(root), exclusions=(SensitiveExclusion("subtree", "secret"),)
+    )
+    scanner, result, pages = scan(
+        root, frontier=["", "src"], admit=lambda _: auth, policy=policy
+    )
+    assert result.status == "complete"
+    assert {c.relative_path for page in pages for c in page.captures} == expected
+    assert scanner.retired and scanner.pipes_closed

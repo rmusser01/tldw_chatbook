@@ -251,6 +251,63 @@ class ScanPage:
 
 
 @dataclass(frozen=True, slots=True)
+class DirectoryReceipt:
+    directory: str
+    directory_identity: str
+    entries: tuple[ScanEntry, ...]
+    directory_complete: bool
+    more: bool
+    issues: tuple[str, ...]
+
+    def __post_init__(self):
+        object.__setattr__(self, "directory", relative_path(self.directory, root=True))
+        if self.directory_complete and (self.more or self.issues):
+            raise ValueError("invalid_directory_receipt")
+        if len(self.entries) > MAX_PAGE_ENTRIES or len(self.issues) > 16:
+            raise ValueError("directory_receipt_limit")
+        for entry in self.entries:
+            parent = str(PurePosixPath(entry.relative_path).parent)
+            if ("" if parent == "." else parent) != self.directory:
+                raise ValueError("directory_entry_mismatch")
+
+
+@dataclass(frozen=True, slots=True)
+class ScanUnit:
+    directories: tuple[DirectoryReceipt, ...]
+    captures: tuple[FileCapture, ...]
+    authority_revision: int
+    inspections: int
+
+    @property
+    def entries(self) -> tuple[ScanEntry, ...]:
+        return tuple(entry for receipt in self.directories for entry in receipt.entries)
+
+    def __post_init__(self):
+        if (
+            not 1 <= len(self.directories) <= MAX_PAGE_ENTRIES
+            or not 0 <= self.inspections <= MAX_PAGE_ENTRIES
+        ):
+            raise ValueError("scan_unit_limit")
+        paths = [receipt.directory for receipt in self.directories]
+        if (
+            len(set(paths)) != len(paths)
+            or sum(receipt.more for receipt in self.directories) > 1
+        ):
+            raise ValueError("duplicate_directory_receipt")
+        if any(receipt.more for receipt in self.directories[:-1]):
+            raise ValueError("invalid_unit_continuation")
+        # Reuse the bounded entry/capture identity contract of the singleton API.
+        ScanPage("", "", self.entries, self.captures, False, self.authority_revision)
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedScanUnit:
+    unit: ScanUnit
+    chunks: tuple[PreparedChunk, ...] = field(repr=False)
+    digest: str
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedChunk:
     relative_path: str
     start_char: int

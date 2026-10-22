@@ -22129,6 +22129,8 @@ class SettingsScreen(BaseAppScreen):
         Unexclude button shares the folder-remove CSS class, and the
         class-selected folder handler must stay a no-op on it).
         """
+        from tldw_chatbook.Widgets.Settings_Widgets.project_index_binding_card import ProjectIndexBindingCard
+
         yield Static("Folders (agent file-tool access)", classes="destination-section")
         for binding in registry.list_folder_bindings(workspace_id):
             access = binding.metadata.get("access", "ro")
@@ -22159,6 +22161,10 @@ class SettingsScreen(BaseAppScreen):
                 remove_button.binding_id = binding.binding_id
                 yield remove_button
             yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
+            yield ProjectIndexBindingCard(
+                binding.binding_id, workspace_id=workspace_id, root=binding.locator,
+                available=binding.status == RuntimeBindingStatus.READY,
+            )
             # Defensive reader (never the raw metadata list): malformed
             # persisted exclusions must render as "Excluded (0)" rather than
             # crash pane composition.
@@ -22288,6 +22294,7 @@ class SettingsScreen(BaseAppScreen):
         yield Static(
             "SSH folders (remote agent file-tool access)", classes="destination-section"
         )
+        yield Static("Keyword indexing is unavailable for SSH folders.", classes="settings-detail-row")
         for binding in registry.list_ssh_bindings(workspace_id):
             access = binding.metadata.get("access", "ro")
             status_word = cached_status_display(str(binding.binding_id))

@@ -1,4 +1,4 @@
-"""Closed, length-prefixed v1 protocol used only by the project index worker.
+"""Closed, length-prefixed v2 protocol used only by the project index worker.
 
 Locators and bodies are pipe data. No dependency on the ordinary tool protocol.
 """
@@ -19,7 +19,7 @@ from tldw_chatbook.Workspaces.project_index.models import (
     relative_path,
 )
 
-VERSION = 1
+VERSION = 2
 MAX_FRAME_BYTES = 2 * 1024**2
 FRAME_HEADER_BYTES = struct.calcsize("!I")
 MAX_PAYLOAD_BYTES = MAX_FRAME_BYTES - FRAME_HEADER_BYTES
@@ -32,6 +32,8 @@ PAGE_TEXT_BYTES = MAX_QUEUED_BYTES - SOURCE_BUFFER_HEADROOM
 _FIELDS = {
     "Init": {"root", "identities", "policy"},
     "Directory": {"directory", "continuation", "revision", "exclusions", "ack"},
+    "Unit": {"directories", "continuation", "revision", "exclusions", "ack"},
+    "UnitDone": {"inspections", "attempts", "entries"},
     "Capture": {"path", "revision", "exclusions", "ack"},
     "Close": set(),
     "Started": {"revision", "ack"},
@@ -139,15 +141,28 @@ def validate_frame(value: dict) -> dict:
             ProjectIndexPolicy(
                 tuple(policy["include_prefixes"]), tuple(policy["text_suffixes"])
             )
-        if kind in {"Directory", "Capture", "Started"}:
+        if kind in {"Directory", "Unit", "Capture", "Started"}:
             _integer(value["revision"], -1 if kind == "Started" else 0)
             _integer(value["ack"])
-        if kind in {"Directory", "Capture"}:
-            _path(
-                value["directory"] if kind == "Directory" else value["path"],
-                root=kind == "Directory",
-            )
-            if kind == "Directory" and not isinstance(value["continuation"], bool):
+        if kind in {"Directory", "Unit", "Capture"}:
+            if kind == "Unit":
+                seeds = value["directories"]
+                if (
+                    not isinstance(seeds, list)
+                    or not 1 <= len(seeds) <= 256
+                    or len(set(seeds)) != len(seeds)
+                ):
+                    raise ScanProtocolError("invalid_unit_seeds")
+                for seed in seeds:
+                    _path(seed, root=True)
+            else:
+                _path(
+                    value["directory"] if kind == "Directory" else value["path"],
+                    root=kind == "Directory",
+                )
+            if kind in {"Directory", "Unit"} and not isinstance(
+                value["continuation"], bool
+            ):
                 raise ScanProtocolError("invalid_continuation")
             if not isinstance(value["exclusions"], list):
                 raise ScanProtocolError("invalid_exclusions")
@@ -204,6 +219,13 @@ def validate_frame(value: dict) -> dict:
                 _integer(value[name])
             if value["reads"] > 2 or value["queued"] > 4 * 1024**2:
                 raise ScanProtocolError("resource_limit")
+        if kind == "UnitDone":
+            for name in ("inspections", "attempts", "entries"):
+                _integer(value[name])
+                if value[name] > 256:
+                    raise ScanProtocolError("unit_limit")
+            if value["attempts"] == 0:
+                raise ScanProtocolError("empty_unit")
         if kind == "Error":
             _string(value["code"], 64)
         return value

@@ -845,3 +845,189 @@ async def test_valid_then_stale_exact_serialized_boundary(
         assert result.refresh_required and result.status == "partial"
     finally:
         await rig.close()
+
+
+@pytest.mark.parametrize("close_failure", [False, True])
+@private_profile_test
+async def test_real_provider_registry_owner_spans_outer_close(
+    tmp_path, request, monkeypatch, close_failure
+):
+    import asyncio
+    import threading
+    import time
+    from types import SimpleNamespace
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces.project_index.runtime import (
+        get_project_index_service,
+        project_index_key,
+    )
+    from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.txt").write_text("outerclosemarker")
+    registry = LocalWorkspaceRegistryService(WorkspaceDB(tmp_path / "registry.db"))
+    registry.create_workspace(workspace_id="owner-proof", name="Owner proof")
+    binding = registry.add_folder_binding("owner-proof", root)
+    app = SimpleNamespace(workspace_registry_service=registry)
+    service = get_project_index_service(app)
+    key = project_index_key(app, "owner-proof", binding.binding_id, root)
+    off = service.status(key)
+    enabled = service.enable(
+        key, ProjectIndexPolicy(("",), (".txt",)), expected_scope=off.scope
+    )
+    job = service.refresh(
+        key, expected_scope=enabled.scope, expected_job_revision=enabled.job_revision
+    )
+    await asyncio.to_thread(service._runs[job].supervisor.join, 60)
+    ready = service.status(key)
+    assert ready.state == "Ready"
+    roots = capture_run_admitted_workspace_roots(
+        session=SimpleNamespace(workspace_id="owner-proof"), registry=registry
+    )
+    assert len(roots) == 1
+    tool = LocalToolProvider(
+        workspace_root=root,
+        admitted_roots=roots,
+        project_index_service=service,
+        project_index_scopes={roots[0].alias: ready.scope},
+        resolve_state=lambda _: EffectiveToolState(
+            state="allow", origin="tool_override"
+        ),
+    )
+    entered, release, returned, repair = (threading.Event() for _ in range(4))
+    pins, results, errors = [], [], []
+    retain = service._retain
+    native_close = None
+    registry_close = registry.db.close
+    failed = False
+    query_thread = None
+
+    def tracked_retain(key):
+        pin = retain(key)
+        if threading.current_thread() is query_thread:
+            pins.append(pin)
+        return pin
+
+    def held_native_close(connection):
+        nonlocal failed
+        if (
+            threading.current_thread() is query_thread
+            and connection is getattr(registry.db._thread_local, "conn", None)
+            and not failed
+        ):
+            entered.set()
+            assert release.wait(30)
+            if close_failure:
+                failed = True
+                raise OSError("actual native registry close failed")
+        return native_close(connection)
+
+    monkeypatch.setattr(service, "_retain", tracked_retain)
+
+    def tracked_close():
+        nonlocal native_close
+        connection = getattr(registry.db._thread_local, "conn", None)
+        if (
+            threading.current_thread() is query_thread
+            and connection is not None
+            and native_close is None
+        ):
+            native_close = type(connection).close
+            monkeypatch.setattr(type(connection), "close", held_native_close)
+        return registry_close()
+
+    monkeypatch.setattr(registry.db, "close", tracked_close)
+
+    def query():
+        try:
+            results.append(invoke(tool, {"query": "outerclosemarker"}))
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            returned.set()
+            assert repair.wait(30)
+            # The same native owner retries only after the failure assertion.
+            registry.db.close()
+
+    query_thread = threading.Thread(target=query, name="query-close-proof")
+    pause = None
+    try:
+        query_thread.start()
+        assert await asyncio.to_thread(entered.wait, 30), (results, errors)
+        assert pins and all(pin.closed for pin in pins)
+        assert not service._searches and not results and not returned.is_set()
+        pause = storage._begin_local_pause()
+        _retire_current_thread_caches(pause)
+        assert not pause.drain(
+            time.monotonic()
+        ), "outer registry handle lost native admission"
+        release.set()
+        assert await asyncio.to_thread(returned.wait, 10)
+        if close_failure:
+            assert (
+                errors and not results
+            ), "swallowed native close returned successful tool evidence"
+            assert not pause.drain(time.monotonic())
+        else:
+            assert not errors and len(results) == 1 and results[0].ok
+        repair.set()
+        await asyncio.to_thread(query_thread.join, 10)
+        assert not query_thread.is_alive()
+        assert pause.drain(time.monotonic() + 2)
+    finally:
+        release.set()
+        repair.set()
+        await asyncio.to_thread(query_thread.join, 10)
+        if pause is not None:
+            pause.resume()
+        await service.aclose()
+        registry.db.close()
+
+
+@private_profile_test
+async def test_filename_only_empty_and_whitespace_use_live_capture(tmp_path, request):
+    rig = Rig(tmp_path)
+    try:
+        for name, text in (
+            ("uniquenamebody.txt", "unrelated body"),
+            ("uniquenameempty.txt", ""),
+            ("uniquenamespace.txt", " \n\t "),
+        ):
+            (rig.root / name).write_text(text, encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle()
+        tool = provider(rig)
+        for term, excerpt in (
+            ("uniquenamebody", "unrelated body"),
+            ("uniquenameempty", ""),
+            ("uniquenamespace", " "),
+        ):
+            result = invoke(tool, {"query": term}, call_id=term)
+            assert result.ok, result.error
+            hits = json.loads(result.content)["hits"]
+            assert len(hits) == 1 and hits[0]["relative_path"] == term + ".txt"
+            assert hits[0]["line_start"] == 1 and hits[0]["excerpt"] == excerpt
+        excluded = provider(rig, exclusions=lambda: (rig.root / "uniquenameempty.txt",))
+        assert (
+            json.loads(
+                invoke(
+                    excluded, {"query": "uniquenameempty"}, call_id="excluded"
+                ).content
+            )["hits"]
+            == []
+        )
+        (rig.root / "uniquenamebody.txt").write_text("changed source", encoding="utf-8")
+        (rig.root / "uniquenameempty.txt").unlink()
+        for term in ("uniquenamebody", "uniquenameempty"):
+            result = invoke(tool, {"query": term}, call_id=term + "-stale")
+            assert json.loads(result.content)["hits"] == []
+    finally:
+        await rig.close()

@@ -405,6 +405,16 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
         admitted_roots=admitted,
     )
     assert seen and all(thread is not main for thread in seen)
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    import time
+
+    pause = storage._begin_local_pause()
+    try:
+        _retire_current_thread_caches(pause)
+        assert pause.drain(time.monotonic() + 2), "scope-preparation thread leaked registry admission"
+    finally:
+        pause.resume()
     assert captured["project_index_service"] is service
     scopes = captured["project_index_scopes"]
     p = LocalToolProvider(

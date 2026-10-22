@@ -559,3 +559,315 @@ def test_lexical_policy_filter_matches_path_suffix_runtime_oracle(tmp_path):
                 )
     finally:
         store.close_native()
+
+
+def test_scan_unit_atomic_receipts_replay_and_indexed_attempt_frontier(tmp_path):
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ScanEntry,
+        DirectoryReceipt,
+        ScanUnit,
+    )
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import prepare_scan_unit
+
+    store, key, scope, claim = enabled_store(tmp_path)
+    try:
+        unit = prepare_scan_unit(
+            ScanUnit(
+                (
+                    DirectoryReceipt(
+                        "",
+                        "root",
+                        (
+                            ScanEntry("a", "directory", "a", 0, 0),
+                            ScanEntry("z", "directory", "z", 0, 0),
+                        ),
+                        True,
+                        False,
+                        (),
+                    ),
+                    DirectoryReceipt("a", "a", (), True, False, ()),
+                    DirectoryReceipt("z", "z", (), False, False, ("directory_io",)),
+                ),
+                (),
+                1,
+                4,
+            )
+        )
+        assert store.commit_scan_unit(
+            scope,
+            claim.job_id,
+            unit,
+            expected_job_revision=claim.job_revision,
+            authority_revision=1,
+        )
+        status = store.load_status(key)
+        assert store.pending_directories(scope) == ("z",)
+        assert store.eligible_directories(claim) == ()
+        assert store.commit_scan_unit(
+            scope,
+            claim.job_id,
+            unit,
+            expected_job_revision=claim.job_revision,
+            authority_revision=1,
+        )
+        assert store.load_status(key).manifest_revision == status.manifest_revision
+        with store.connection() as connection:
+            plan = " ".join(
+                str(row[3])
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN SELECT path FROM directories WHERE complete=0 AND attempt_revision<? ORDER BY attempt_revision,path LIMIT 256",
+                    (claim.job_revision,),
+                )
+            )
+            assert "directories_eligible" in plan and "TEMP B-TREE" not in plan
+            connection.execute(
+                "INSERT INTO directories(path,identity,complete,attempt_revision) VALUES('0-new','new',0,0)"
+            )
+        assert store.eligible_directories(claim) == ("0-new",)
+        store.suspend_job(claim, state="Paused")
+        resumed = store.replace_retired_job(
+            store.read_claim(scope),
+            owner_token="owner-2",
+            authority_revision=1,
+            retirement_verifier=lambda _: True,
+        )
+        assert store.eligible_directories(resumed) == ("0-new", "z")
+    finally:
+        store.close_native()
+
+
+@pytest.mark.parametrize("text", ["bodyonly", "", " \n\t "])
+def test_filename_only_keyword_without_body_chunks(tmp_path, text):
+    store, key, scope, claim = enabled_store(tmp_path)
+    try:
+        assert store.commit_scan_page(
+            scope,
+            claim.job_id,
+            page(text, "src/uniquefilename.py"),
+            expected_job_revision=claim.job_revision,
+            authority_revision=1,
+        )
+        hits = store.lexical_candidates(
+            search_authority(tmp_path, scope), "uniquefilename", limit=10
+        )
+        assert len(hits) == 1
+        assert hits[0].relative_path == "src/uniquefilename.py"
+        assert hits[0].line_start == 1
+    finally:
+        store.close_native()
+
+
+def _legacy_v2_cache(tmp_path):
+    store, key, scope, claim = enabled_store(tmp_path)
+    assert store.commit_scan_page(
+        scope,
+        claim.job_id,
+        page("", "src/legacyfilename.py"),
+        expected_job_revision=claim.job_revision,
+        authority_revision=1,
+    )
+    with store.transaction() as conn:
+        conn.execute("DROP TABLE chunk_fts")
+        conn.execute("DELETE FROM chunks")
+        conn.execute("CREATE VIRTUAL TABLE chunk_fts USING fts5(text)")
+        conn.execute("DROP INDEX directories_eligible")
+        conn.execute("ALTER TABLE directories DROP COLUMN attempt_revision")
+        conn.execute("DROP TABLE schema_version")
+        conn.execute(
+            "CREATE TABLE schema_version(version INTEGER PRIMARY KEY CHECK(version=2))"
+        )
+        conn.execute("INSERT INTO schema_version VALUES(2)")
+    path = store.db_path
+    store.close_native()
+    return path, key, scope, claim
+
+
+def test_v3_migration_preserves_state_backfills_paths_and_cleanup_skips_allocation(
+    tmp_path,
+):
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+
+    path, key, scope, claim = _legacy_v2_cache(tmp_path)
+    before = path.stat().st_size
+    cleanup = WorkspaceProjectIndexDB(
+        path,
+        cleanup_only=True,
+        migration_context=lambda _: pytest.fail("cleanup must not migrate"),
+    )
+    with cleanup.connection() as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 2
+        assert not conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='directories_eligible'"
+        ).fetchone()
+    cleanup.close_native()
+    assert path.stat().st_size == before
+    migrated = WorkspaceProjectIndexDB(path)
+    try:
+        assert migrated.load_status(key).scope == scope
+        assert migrated.read_claim(scope) == claim
+        assert migrated.pending_directories(scope) == ("",)
+        assert migrated.lexical_candidates(
+            search_authority(tmp_path, scope), "legacyfilename", limit=10
+        )
+        with migrated.connection() as conn:
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+    finally:
+        migrated.close_native()
+
+
+def test_migration_binding_capacity_and_native_serialization(tmp_path, monkeypatch):
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+    from tldw_chatbook.Workspaces.project_index import runtime
+    from tldw_chatbook.Workspaces.project_index.lifetime import (
+        BindingLifetime,
+        LifetimeBusy,
+    )
+
+    namespace = tmp_path / "binding" / "namespace"
+    namespace.mkdir(parents=True)
+    path, key, scope, claim = _legacy_v2_cache(namespace)
+    factory = object.__new__(runtime._AdmittedStoreFactory)
+    factory._unretired = {}
+    other = namespace.parent / "old-namespace"
+    other.mkdir()
+    (other / "retained.bin").write_bytes(b"x" * 65536)
+    size = path.stat().st_size
+    monkeypatch.setattr(runtime, "MAX_CACHE_BYTES", 1024**2 + 2 * size + 32768)
+
+    def context(store):
+        return factory._migration_context(key, store)
+
+    with pytest.raises(ValueError, match="index_cache_limit"):
+        WorkspaceProjectIndexDB(path, migration_context=context)
+    cleanup = WorkspaceProjectIndexDB(path, cleanup_only=True)
+    with cleanup.connection() as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 2
+    cleanup.close_native()
+    monkeypatch.setattr(runtime, "MAX_CACHE_BYTES", 8 * 1024**2)
+    lease = BindingLifetime.acquire(namespace.parent / key.lifetime_name)
+    try:
+        with pytest.raises(LifetimeBusy):
+            WorkspaceProjectIndexDB(path, migration_context=context)
+    finally:
+        lease.close()
+    migrated = WorkspaceProjectIndexDB(path, migration_context=context)
+    migrated.close_native()
+    lease = BindingLifetime.acquire(namespace.parent / key.lifetime_name)
+    try:
+        current = WorkspaceProjectIndexDB(path, migration_context=context)
+        assert current.load_status(key).scope == scope
+        current.close_native()
+    finally:
+        lease.close()
+
+
+def test_v3_native_full_rolls_back_all_ddl_and_keeps_v2_clearable(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+    from tldw_chatbook.Workspaces.project_index import runtime
+
+    namespace = tmp_path / "binding" / "namespace"
+    namespace.mkdir(parents=True)
+    path, key, scope, claim = _legacy_v2_cache(namespace)
+    legacy = WorkspaceProjectIndexDB(path, cleanup_only=True)
+    with legacy.transaction() as conn:
+        conn.executemany(
+            "INSERT INTO directories VALUES(?,?,0)",
+            ((f"long-directory-{i:06}-" + "x" * 80, "id") for i in range(5000)),
+        )
+    legacy.close_native()
+    factory = object.__new__(runtime._AdmittedStoreFactory)
+    factory._unretired = {}
+    monkeypatch.setattr(runtime, "MAX_CACHE_BYTES", 1024**2 + 2 * path.stat().st_size)
+    with pytest.raises(sqlite3.OperationalError) as error:
+        WorkspaceProjectIndexDB(
+            path, migration_context=lambda store: factory._migration_context(key, store)
+        )
+    assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+    legacy = WorkspaceProjectIndexDB(path, cleanup_only=True)
+    try:
+        with legacy.connection() as conn:
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 2
+            assert not conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='directories_eligible'"
+            ).fetchone()
+            assert (
+                conn.execute("SELECT COUNT(*) FROM directories").fetchone()[0] >= 5000
+            )
+            assert (
+                conn.execute(
+                    "SELECT sql FROM sqlite_schema WHERE name='chunk_fts'"
+                ).fetchone()[0]
+                == "CREATE VIRTUAL TABLE chunk_fts USING fts5(text)"
+            )
+        assert legacy.read_claim(scope) == claim
+    finally:
+        legacy.close_native()
+
+
+def test_failed_migration_native_close_retains_count_and_binding_capability(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+    from tldw_chatbook.Workspaces.project_index import runtime
+    from tldw_chatbook.Workspaces.project_index.lifetime import (
+        BindingLifetime,
+        LifetimeBusy,
+    )
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ProjectIndexRetirementUnproven,
+    )
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+
+    namespace = tmp_path / "binding" / "namespace"
+    namespace.mkdir(parents=True)
+    path, key, _, _ = _legacy_v2_cache(namespace)
+    factory = object.__new__(runtime._AdmittedStoreFactory)
+    factory._unretired = {}
+    factory.current_data_authority = lambda: key.data_authority_id
+    held = []
+
+    def fail_migration(conn, suffix):
+        held.append(conn)
+        original = type(conn).close
+
+        def failed_close(connection):
+            if connection is conn:
+                raise OSError("injected native migration close failure")
+            return original(connection)
+
+        monkeypatch.setattr(type(conn), "close", failed_close)
+        raise ValueError("injected DDL failure")
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                WorkspaceProjectIndexDB, "_migrate", staticmethod(fail_migration)
+            )
+            with pytest.raises(ProjectIndexRetirementUnproven):
+                WorkspaceProjectIndexDB(
+                    path,
+                    migration_context=lambda store: factory._migration_context(
+                        key, store
+                    ),
+                )
+        retained_store, lease = factory._unretired[key.binding_namespace]
+        assert not lease.closed
+        assert _core_cached_connection(retained_store, held[0]) is held[0]
+        assert any(item.resource_path == path for item in storage._live_leases)
+        with pytest.raises(LifetimeBusy):
+            BindingLifetime.acquire(namespace.parent / key.lifetime_name)
+        with pytest.raises(ProjectIndexRetirementUnproven):
+            factory(key)
+        assert len(factory._unretired) == 1
+        with pytest.raises(ProjectIndexRetirementUnproven):
+            factory.assert_retired()
+    finally:
+        monkeypatch.undo()
+        if factory._unretired:
+            retained_store, lease = factory._unretired[key.binding_namespace]
+            # Same test owner, after evidence: no product retry or foreign close.
+            retained_store.close_native()
+            lease.close()

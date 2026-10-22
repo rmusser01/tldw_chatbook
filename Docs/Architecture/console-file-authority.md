@@ -115,3 +115,7 @@ The fixed narrowing order: config gates → ephemeral restrictions → ADR-069 b
 3. `workspace_context_note` renders each admitted folder's tool `root_alias` and JSON-escapes workspace names against prompt injection. It does not render paths relative to the launch directory or disclose absolute host paths.
 4. The ledger's owner mapping must be the registry's cached mapping — a parallel lookup could disagree with dispatch about who owns a tool.
 5. Persona `require_confirmation` floors can only narrow; a persona can never lift a permission-store ask or deny.
+
+## Optional folder keyword indexes
+
+Workspace folder indexing is a separate, explicit binding capability. Its derived cache does not extend Console filesystem authority: each `fs_search_index` call still obeys the requesting run's effective read permission, retained exclusions, exact binding/root identity and live registry state. Candidate locations are ranked only after the exclusion floor, and evidence is reread through the native Capture worker before disclosure. See [project-indexing.md](./project-indexing.md) for management, CAS, admission/retirement, storage bounds and the Console status handoff.

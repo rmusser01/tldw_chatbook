@@ -32,6 +32,8 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
     workspace_worker_environment,
 )
 from tldw_chatbook.Workspaces.project_index.models import (
+    DirectoryReceipt,
+    ScanUnit,
     FileCapture,
     MAX_FILE_BYTES,
     ProjectIndexAuthority,
@@ -185,6 +187,7 @@ class ProjectScanner:
         ):
             raise ScanProtocolError("admission_not_acknowledged")
         entries = None
+        receipts = []
         captures = []
         parts = []
         metadata = None
@@ -240,14 +243,46 @@ class ProjectScanner:
                 entries = tuple(ScanEntry(**e) for e in value["entries"])
             elif kind == "DirectoryDone":
                 if metadata is not None or (
-                    request["type"] == "Directory" and entries is None
+                    request["type"] in {"Directory", "Unit"} and entries is None
                 ):
                     raise ScanProtocolError("incomplete_page")
                 self.max_active_reads = max(self.max_active_reads, value["reads"])
                 self.max_queued_text_bytes = max(
                     self.max_queued_text_bytes, value["queued"]
                 )
-                return entries or (), tuple(captures), value
+                if request["type"] == "Unit":
+                    receipts.append(
+                        DirectoryReceipt(
+                            value["directory"],
+                            value["identity"],
+                            entries,
+                            value["complete"],
+                            value["more"],
+                            tuple(value["issues"]),
+                        )
+                    )
+                    if (
+                        len(receipts) > 256
+                        or sum(len(r.entries) for r in receipts) > 256
+                    ):
+                        raise ScanProtocolError("unit_limit")
+                    entries = None
+                else:
+                    return entries or (), tuple(captures), value
+            elif kind == "UnitDone" and request["type"] == "Unit":
+                if (
+                    metadata is not None
+                    or entries is not None
+                    or value["attempts"] != len(receipts)
+                    or value["entries"] != sum(len(r.entries) for r in receipts)
+                ):
+                    raise ScanProtocolError("incomplete_unit")
+                return ScanUnit(
+                    tuple(receipts),
+                    tuple(captures),
+                    request["revision"],
+                    value["inspections"],
+                )
             else:
                 raise ScanProtocolError("unexpected_response")
 
@@ -279,6 +314,8 @@ class ProjectScanner:
         """
         if scope.key != authority.key or not job_id:
             raise ValueError("scope_mismatch")
+        if callable(frontier):
+            return self._scan_units(authority, frontier, emit, stop, admit_unit, policy)
         if stop.is_set():
             return ScanRunResult("interrupted", 0, 0, ())
         directories = discovered = 0
@@ -365,6 +402,85 @@ class ProjectScanner:
                             break
                         continuation = True
                 self._write(process.stdin, frame("Close"))
+        except (OSError, ValueError):
+            status = "interrupted" if stop.is_set() else "error"
+            issues.add("worker_timeout" if self._timed_out else "scan_unavailable")
+        return ScanRunResult(status, directories, discovered, tuple(sorted(issues)))
+
+    def _scan_units(self, authority, frontier, emit, stop, admit_unit, policy):
+        directories = discovered = 0
+        issues = set()
+        status = "complete"
+        floor = set(authority.exclusions)
+        revision = authority.authority_revision
+        continuation = None
+        try:
+            with self._worker(authority, policy, stop) as process:
+                while not stop.is_set():
+                    # The next durable page is fetched only after the previous
+                    # whole-unit publication. Unstarted seeds stay eligible.
+                    seeds = (
+                        (continuation,)
+                        if continuation is not None
+                        else tuple(frontier())
+                    )
+                    if not seeds:
+                        break
+                    admitted = admit_unit(seeds[0])
+                    if (
+                        admitted is None
+                        or admitted.key != authority.key
+                        or admitted.chain != authority.chain
+                        or admitted.authority_revision < revision
+                    ):
+                        return ScanRunResult(
+                            "interrupted",
+                            directories,
+                            discovered,
+                            ("authority_changed",),
+                        )
+                    revision = admitted.authority_revision
+                    floor.update(admitted.exclusions)
+                    admitted = replace(admitted, exclusions=tuple(sorted(floor)))
+                    unit = self._unit(
+                        process,
+                        frame(
+                            "Unit",
+                            directories=list(seeds),
+                            continuation=continuation is not None,
+                            ack=0,
+                            **authority_fields(admitted),
+                        ),
+                    )
+                    if unit.directories[0].directory != seeds[0]:
+                        raise ScanProtocolError("directory_mismatch")
+                    if stop.is_set():
+                        break
+                    if not emit(unit):
+                        return ScanRunResult(
+                            "paused", directories, discovered, tuple(sorted(issues))
+                        )
+                    discovered += len(unit.entries)
+                    directories += sum(r.directory_complete for r in unit.directories)
+                    for receipt in unit.directories:
+                        issues.update(receipt.issues)
+                        if (
+                            receipt.issues
+                            or not receipt.directory_complete
+                            and not receipt.more
+                        ):
+                            status = "partial"
+                    last = unit.directories[-1]
+                    continuation = last.directory if last.more else None
+                    del unit, last
+                    if "entry_limit" in issues:
+                        return ScanRunResult(
+                            "partial", directories, discovered, tuple(sorted(issues))
+                        )
+                if stop.is_set():
+                    status = "interrupted"
+                else:
+                    self._write(process.stdin, frame("Close"))
         except (OSError, ValueError):
             status = "interrupted" if stop.is_set() else "error"
             issues.add("worker_timeout" if self._timed_out else "scan_unavailable")

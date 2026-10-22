@@ -32,6 +32,7 @@ It complements the other doc families:
 ### Providers and retrieval
 
 - [llm-providers.md](./llm-providers.md) — `chat_api_call` dispatch, provider handlers, streaming shapes, error taxonomy, model capabilities, model-catalog auto-refresh, local backends
+- [project-indexing.md](./project-indexing.md) — explicit folder-bound keyword caches, management CAS, native retirement and run-bound search evidence
 - [rag.md](./rag.md) — shared RAG service, hybrid retrieval and reranking, four-seam Library search, grounded answers, incremental indexing
 - [character-chat.md](./character-chat.md) — character card import, card→prompt composer, world books/world info, chat dictionaries, personas vs characters vs buddies, expressions
 

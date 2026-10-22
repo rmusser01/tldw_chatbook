@@ -27,6 +27,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 from types import FunctionType, MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -1108,6 +1109,24 @@ class ConsoleWorkspaceController:
             )
             for binding in bindings
         )
+        def index_status(binding):
+            from ...Workspaces.project_index.runtime import get_project_index_service, project_index_key, project_index_registry_connections
+            from ...Widgets.Settings_Widgets.project_index_binding_card import index_status_copy
+
+            scope = binding.scope
+            if scope is None:
+                return "Keyword index unavailable. Check folder access in Settings."
+            with project_index_registry_connections(self.app_instance.workspace_registry_service.db):
+                key = project_index_key(self.app_instance, inspected_workspace_id,
+                                        binding.binding_id, Path(scope.canonical_root))
+                status, _, requires_upgrade = get_project_index_service(self.app_instance).management_snapshot(key)
+                return index_status_copy(status, requires_upgrade)
+
+        def index_settings():
+            from ...Constants import TAB_SETTINGS
+            from ..Navigation.main_navigation import NavigateToScreen
+            self._screen.post_message(NavigateToScreen(TAB_SETTINGS, screen_context={"category": "workspaces"}))
+
         modal = ConsoleWorkspaceFilesModal(
             inspector=inspector,
             inspected_workspace_id=inspected_workspace_id,
@@ -1115,6 +1134,8 @@ class ConsoleWorkspaceController:
             active_workspace_id=active_workspace_id,
             active_workspace_name=active_workspace_name,
             bindings=safe_bindings,
+            index_status_reader=index_status,
+            on_index_settings=index_settings,
             attention=attention,
             on_back_to_console=on_back_to_console,
             on_visit_closed=on_visit_closed,

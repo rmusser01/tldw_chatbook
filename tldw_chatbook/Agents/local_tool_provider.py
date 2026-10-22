@@ -2344,10 +2344,13 @@ class LocalToolProvider:
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         """Execute one tool call through the compatible result-only seam."""
-        return self._invoke_detailed(tool_id, args).result
+        return self.invoke_detailed(tool_id, args).result
 
     def invoke_detailed(self, tool_id: str, args: dict) -> LocalToolInvocationResult:
-        """Execute one tool call and expose provider-owned terminal facts."""
+        """Execute one call; retire index registry handles after all return gates."""
+        if tool_id.split(":", 1)[-1] == "fs_search_index" and self._project_index_service is not None:
+            with self._project_index_service.registry_connection_scope():
+                return self._invoke_detailed(tool_id, args)
         return self._invoke_detailed(tool_id, args)
 
     def _invoke_detailed(self, tool_id: str, args: dict) -> LocalToolInvocationResult:

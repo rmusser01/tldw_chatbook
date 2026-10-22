@@ -615,8 +615,16 @@ async def test_refresh_preserves_unfinished_subtree_and_can_restart_partial(
             emit = args[4]
 
             def partial(page):
-                if self.incomplete and page.directory == "nested":
-                    page = replace(page, directory_complete=False)
+                if self.incomplete:
+                    page = replace(
+                        page,
+                        directories=tuple(
+                            replace(receipt, directory_complete=False)
+                            if receipt.directory == "nested"
+                            else receipt
+                            for receipt in page.directories
+                        ),
+                    )
                 return emit(page)
 
             return super().scan(*args[:4], partial, *args[5:], **kwargs)
@@ -743,6 +751,13 @@ async def test_production_runtime_pin_drains_idle_and_spans_writer_retirement(
         await close_project_index_service(app)
         assert runs[0].native_retired and runs[0].pin.closed
         assert not runs[0].writer.is_alive() and not runs[0].supervisor.is_alive()
+        pause = storage._begin_local_pause()
+        _retire_current_thread_caches(pause)
+        assert pause.drain(
+            time.monotonic() + 2
+        ), "retired writer leaked registry handles"
+        pause.resume()
+        pause = None
     finally:
         if pause is not None:
             pause.resume()
@@ -1072,7 +1087,7 @@ async def test_failed_writer_dispatch_becomes_explicitly_resumable(
 
 
 class AdmissionBarrierScanner(ProjectScanner):
-    """Hold before the second real Directory admission, after a committed page."""
+    """Hold before the second real bounded unit, after a committed unit."""
 
     def __init__(self):
         super().__init__()
@@ -1096,8 +1111,8 @@ class AdmissionBarrierScanner(ProjectScanner):
         return super().scan(*args, **kwargs)
 
     def _unit(self, process, request):
-        if request["type"] == "Directory":
-            self.directory_requests.append(request["directory"])
+        if request["type"] == "Unit":
+            self.directory_requests.append(request["directories"][0])
         return super()._unit(process, request)
 
 
@@ -1114,6 +1129,8 @@ async def test_remote_management_denies_next_scanner_admission(
     try:
         (rig.root / "nested").mkdir()
         (rig.root / "nested/secret.txt").write_text("must not read after revocation")
+        for index in range(255):
+            (rig.root / f"empty-{index:03}").mkdir()
         rig.enable()
         job = rig.refresh()
         assert await asyncio.to_thread(scanner.before_admit.wait, 30)
@@ -1318,3 +1335,253 @@ async def test_two_held_searches_refuse_refresh_until_readers_retire(
         release.set()
         await asyncio.gather(*tasks, return_exceptions=True)
         await rig.close()
+
+
+@private_profile_test
+async def test_policy_read_requires_current_scope_and_authority(tmp_path, request):
+    rig = Rig(tmp_path)
+    try:
+        initial = rig.service.status(rig.key)
+        assert callable(
+            getattr(rig.service, "policy", None)
+        ), "service needs admitted policy projection"
+        enabled = rig.enable()
+        assert rig.service.policy(enabled.scope) == POLICY
+        with pytest.raises(ValueError, match="stale_scope"):
+            rig.service.policy(initial.scope)
+        rig.live = None
+        with pytest.raises(ValueError, match="authority_unavailable"):
+            rig.service.policy(enabled.scope)
+    finally:
+        await rig.close()
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "scan", "project-index-writer", "project-index-owner"]
+)
+@private_profile_test
+async def test_registry_connection_cleanup_precedes_retirement(
+    tmp_path, request, monkeypatch, failure
+):
+    from contextlib import nullcontext
+
+    rig = Rig(tmp_path)
+    exits = []
+
+    class Pin:
+        closed = False
+
+        def bind(self):
+            return nullcontext()
+
+        def close(self):
+            self.closed = True
+
+    @contextmanager
+    def connections():
+        if threading.current_thread().name not in {
+            "project-index-writer",
+            "project-index-owner",
+        }:
+            yield
+            return
+        try:
+            yield
+        finally:
+            run = next(iter(rig.service._runs.values()))
+            assert not run.native_retired
+            assert not run.pin.closed and not run.lease.closed
+            name = threading.current_thread().name
+            exits.append(name)
+            if failure == name:
+                raise OSError("registry native close failed")
+
+    monkeypatch.setattr(rig.service, "_retain", lambda key: Pin())
+    rig.service._registry_connections = connections
+    if failure == "scan":
+
+        def failed_scan(*args, **kwargs):
+            raise RuntimeError("scan failed")
+
+        monkeypatch.setattr(rig.service._scanner, "scan", failed_scan)
+    (rig.root / "a.txt").write_text("cleanup marker")
+    rig.enable()
+    job = rig.refresh()
+    run = rig.service._runs[job]
+    await asyncio.to_thread(run.supervisor.join, 20)
+    assert not run.supervisor.is_alive()
+    assert exits == ["project-index-writer", "project-index-owner"]
+    if failure in {"project-index-writer", "project-index-owner"}:
+        assert not run.native_retired and not run.pin.closed and not run.lease.closed
+        assert rig.service._read_slots.acquire(blocking=False)
+        assert not rig.service._read_slots.acquire(blocking=False)
+        rig.service._read_slots.release()
+        with pytest.raises(RuntimeError, match="index_retirement_unproven"):
+            await rig.close()
+    else:
+        assert run.native_retired and run.pin.closed and run.lease.closed
+        assert rig.service.status(rig.key).state == ("Error" if failure else "Ready")
+        await rig.close()
+
+
+@private_profile_test
+async def test_strict_registry_scope_preserves_borrowed_and_refuses_denied_close(
+    tmp_path, request, monkeypatch
+):
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.DB import store_kernel
+    from tldw_chatbook.Workspaces.project_index.runtime import (
+        project_index_registry_connections,
+    )
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ProjectIndexRetirementUnproven,
+    )
+    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+    import sqlite3
+
+    database = WorkspaceDB(tmp_path / "registry.db")
+    try:
+        with database.transaction() as borrowed:
+            with project_index_registry_connections(database):
+                assert database._held_connection() is borrowed
+            assert borrowed.in_transaction
+        database.close()
+        with project_index_registry_connections(database):
+            owned = database._held_connection()
+        assert _core_cached_connection(database, owned) is None
+        with pytest.raises(sqlite3.ProgrammingError):
+            sqlite3.Connection.in_transaction.__get__(owned)
+
+        closing = store_kernel._core_closing
+
+        @contextmanager
+        def denied(repository, connection):
+            with closing(repository, connection) as allowed:
+                yield False if repository is database else allowed
+
+        with monkeypatch.context() as patch:
+            patch.setattr(store_kernel, "_core_closing", denied)
+            with pytest.raises(ProjectIndexRetirementUnproven):
+                with project_index_registry_connections(database):
+                    retained = database._held_connection()
+            assert _core_cached_connection(database, retained) is retained
+            assert sqlite3.Connection.in_transaction.__get__(retained) is False
+    finally:
+        database.close()
+
+
+@private_profile_test
+async def test_close_stays_responsive_through_held_constructor_migration(
+    tmp_path, request, monkeypatch
+):
+    rig = Rig(tmp_path)
+    enabled = rig.enable()
+    store = rig.store(rig.key)
+    with store.transaction() as conn:
+        conn.execute("DROP TABLE chunk_fts")
+        conn.execute("CREATE VIRTUAL TABLE chunk_fts USING fts5(text)")
+        conn.execute("DROP INDEX directories_eligible")
+        conn.execute("ALTER TABLE directories DROP COLUMN attempt_revision")
+        conn.execute("DROP TABLE schema_version")
+        conn.execute(
+            "CREATE TABLE schema_version(version INTEGER PRIMARY KEY CHECK(version=2))"
+        )
+        conn.execute("INSERT INTO schema_version VALUES(2)")
+    store.close_native()
+    entered, release = threading.Event(), threading.Event()
+    migrate = WorkspaceProjectIndexDB._migrate
+
+    def held(conn, suffix):
+        entered.set()
+        assert release.wait(10)
+        return migrate(conn, suffix)
+
+    monkeypatch.setattr(WorkspaceProjectIndexDB, "_migrate", staticmethod(held))
+    errors = []
+
+    def start():
+        try:
+            rig.service.refresh(
+                rig.key,
+                expected_scope=enabled.scope,
+                expected_job_revision=enabled.job_revision,
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    starter = threading.Thread(target=start)
+    starter.start()
+    assert await asyncio.to_thread(entered.wait, 10)
+    # Safety release makes the old synchronous lock bug fail instead of hang.
+    timer = threading.Timer(3, release.set)
+    timer.start()
+    closer = asyncio.create_task(rig.close())
+    began = time.monotonic()
+    try:
+        await asyncio.sleep(0.05)
+        assert (
+            time.monotonic() - began < 1
+        ), "shutdown blocked the event loop on migration"
+        closer.cancel()
+        await asyncio.sleep(0.05)
+        closer.cancel()
+        await asyncio.sleep(0.05)
+        assert not closer.done(), "cancelled close orphaned held native work"
+    finally:
+        release.set()
+        timer.cancel()
+        await asyncio.to_thread(starter.join, 15)
+        try:
+            await closer
+        except asyncio.CancelledError:
+            pass
+    assert not starter.is_alive() and not errors
+    assert all(run.native_retired for run in rig.service._runs.values())
+
+
+@private_profile_test
+async def test_runtime_close_shields_composition_snapshot_and_actual_drain(
+    tmp_path, request
+):
+    from types import SimpleNamespace
+    from tldw_chatbook.Workspaces.project_index import runtime
+
+    rig = Rig(tmp_path)
+    app = SimpleNamespace(_project_index_service=rig.service)
+
+    # Rig uses a standalone factory; runtime's production factory has this proof.
+    class Factory:
+        def assert_retired(self):
+            assert rig.service._closed
+            assert all(run.native_retired for run in rig.service._runs.values())
+
+    rig.service._factory = Factory()
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_composition():
+        with runtime._composition_lock:
+            entered.set()
+            assert release.wait(10)
+
+    holder = threading.Thread(target=hold_composition)
+    holder.start()
+    assert await asyncio.to_thread(entered.wait, 5)
+    timer = threading.Timer(3, release.set)
+    timer.start()
+    closer = asyncio.create_task(runtime.close_project_index_service(app))
+    began = time.monotonic()
+    try:
+        await asyncio.sleep(0.05)
+        assert time.monotonic() - began < 1
+        closer.cancel()
+        await asyncio.sleep(0.05)
+        closer.cancel()
+        await asyncio.sleep(0.05)
+        assert not closer.done() and not rig.service._closed
+    finally:
+        release.set()
+        timer.cancel()
+        await asyncio.to_thread(holder.join, 5)
+        with pytest.raises(asyncio.CancelledError):
+            await closer
+    assert app._project_index_closed and rig.service._closed

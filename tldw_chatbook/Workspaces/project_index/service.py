@@ -14,7 +14,7 @@ import threading
 from uuid import uuid4
 
 from tldw_chatbook.DB.Workspace_Project_Index_DB import (
-    prepare_scan_page,
+    prepare_scan_unit,
     WorkspaceProjectIndexDB,
     _path_allowed,
 )
@@ -44,6 +44,7 @@ class _Run:
     error: BaseException | None = None
     state: str = "Interrupted"
     db_closed: bool = False
+    registry_closed: bool = False
     native_retired: bool = False
     pin: object | None = None
     lease: BindingLifetime | None = None
@@ -94,23 +95,37 @@ class ProjectIndexService:
         scanner,
         authority_reader: IndexAuthorityReader,
         authority_fence: IndexAuthorityFence,
+        *,
+        registry_connections=nullcontext,
     ):
         self._factory = store_factory
         self._scanner = scanner
         self._reader = authority_reader
         self._fence = authority_fence
+        self._registry_connections = registry_connections
         self._lock = threading.RLock()
         self._runs: dict[str, _Run] = {}
         self._closed = False
         self._searches: set[_SearchRun] = set()
         self._read_slots = threading.BoundedSemaphore(2)
 
+    def registry_connection_scope(self):
+        """Own only registry handles newly opened by this finite caller operation."""
+        return self._registry_connections()
+
     @contextmanager
-    def _store(self, key):
+    def _store(self, key, *, cleanup_only=False):
+        with self.registry_connection_scope(), self._store_owned(
+            key, cleanup_only=cleanup_only
+        ) as store:
+            yield store
+
+    @contextmanager
+    def _store_owned(self, key, *, cleanup_only=False):
         pin = self._retain(key)
         try:
             with self._bind(pin):
-                with self._opened_store(key) as store:
+                with self._opened_store(key, cleanup_only=cleanup_only) as store:
                     yield store
         finally:
             if pin is not None:
@@ -125,10 +140,15 @@ class ProjectIndexService:
         return pin.bind() if pin is not None else nullcontext()
 
     @contextmanager
-    def _opened_store(self, key):
+    def _opened_store(self, key, *, cleanup_only=False):
         if self._closed:
             raise RuntimeError("project_index_closed")
-        store = self._factory(key)
+        opener = (
+            getattr(self._factory, "open_cleanup", self._factory)
+            if cleanup_only
+            else self._factory
+        )
+        store = opener(key)
         try:
             store.status_cache_bytes = binding_bytes(self._binding_root(store))
             yield store
@@ -164,32 +184,53 @@ class ProjectIndexService:
 
     def status(self, key: ProjectIndexKey) -> ProjectIndexStatus:
         with self._store(key) as store:
-            with self._admitted(store, key):
-                result = store.load_status(key)
-                claim = store.read_claim(result.scope)
-            # Reacquisition establishes that a durable Building claim is inert;
-            # no automatic Resume, even when no local notification ever arrived.
-            run = self._runs.get(result.job_id)
-            if (
-                claim is not None
-                and result.state == "Building"
-                and (run is None or run.native_retired)
-            ):
+            return self._status_from_store(store, key)
+
+    def management_snapshot(
+        self, key: ProjectIndexKey
+    ) -> tuple[ProjectIndexStatus, ProjectIndexPolicy, bool]:
+        """Read exact management state without upgrading a validated legacy cache."""
+        with self._store(key, cleanup_only=True) as store:
+            status = self._status_from_store(store, key)
+            with self._admitted(store, key) as authority:
+                if authority is None:
+                    raise ValueError("authority_unavailable")
+                policy = store.policy(status.scope)
+            return status, policy, store.schema_version < store._CURRENT_SCHEMA_VERSION
+
+    def _status_from_store(self, store, key):
+        with self._admitted(store, key):
+            result = store.load_status(key)
+            claim = store.read_claim(result.scope)
+        # Reacquisition establishes that a durable Building claim is inert;
+        # no automatic Resume, even when no local notification ever arrived.
+        run = self._runs.get(result.job_id)
+        if (
+            claim is not None
+            and result.state == "Building"
+            and (run is None or run.native_retired)
+        ):
+            try:
+                lease = self._lifetime(store, key)
+            except LifetimeBusy:
+                pass
+            else:
                 try:
-                    lease = self._lifetime(store, key)
-                except LifetimeBusy:
-                    pass
-                else:
-                    try:
-                        with self._admitted(store, key):
-                            if store.read_claim(result.scope) == claim:
-                                store.suspend_job(
-                                    claim, state="Interrupted", advance=False
-                                )
-                                result = store.load_status(key)
-                    finally:
-                        lease.close()
-            return replace(result, cache_bytes=binding_bytes(self._binding_root(store)))
+                    with self._admitted(store, key):
+                        if store.read_claim(result.scope) == claim:
+                            store.suspend_job(claim, state="Interrupted", advance=False)
+                            result = store.load_status(key)
+                finally:
+                    lease.close()
+        return replace(result, cache_bytes=binding_bytes(self._binding_root(store)))
+
+    def policy(self, scope: ProjectIndexScope) -> ProjectIndexPolicy:
+        """Read saved processing choices only under the exact admitted scope."""
+        with self._store(scope.key) as store:
+            with self._admitted(store, scope.key) as authority:
+                if authority is None:
+                    raise ValueError("authority_unavailable")
+                return store.policy(scope)
 
     @contextmanager
     def _search_store(self, key):
@@ -245,6 +286,10 @@ class ProjectIndexService:
             Live file evidence, or an unavailable/partial result. Coverage is
             deliberately absent: management counters are not run-scoped.
         """
+        with self.registry_connection_scope():
+            return self._search_owned(authority, query, limit=limit)
+
+    def _search_owned(self, authority, query, *, limit):
         if type(authority) is not ProjectIndexSearchAuthority:
             raise ValueError("invalid_search_authority")
         if not isinstance(query, str) or not query.strip() or len(query) > 2048:
@@ -399,7 +444,7 @@ class ProjectIndexService:
                 raise RuntimeError("index_retirement_unproven") from run.error
 
     def _revoke(self, key, expected_scope, *, clear):
-        with self._store(key) as store:
+        with self._store(key, cleanup_only=clear) as store:
             # Serialize capture with _start's claim/dispatch interval, but never
             # hold either lock while signalling or joining native borrowers.
             with self._lock, self._fence(key) as authority:
@@ -563,6 +608,10 @@ class ProjectIndexService:
         return self._start(expected_scope, expected_job_revision, job_id)
 
     def _start(self, scope, revision, resume_id):
+        with self.registry_connection_scope():
+            return self._start_owned(scope, revision, resume_id)
+
+    def _start_owned(self, scope, revision, resume_id):
         # Nonblocking admission precedes pins, registry fences and service locks.
         # A busy attempt owns no job and cannot later dispatch deferred work.
         if not self._read_slots.acquire(blocking=False):
@@ -691,30 +740,22 @@ class ProjectIndexService:
                 raise
 
     def _write(self, run, store, authority, policy, pin):
-        with self._bind(pin):
-            self._write_bound(run, store, authority, policy)
+        try:
+            with self._bind(pin), self._registry_connections():
+                self._write_bound(run, store, authority, policy)
+            run.registry_closed = True
+        except BaseException as error:
+            run.state = "Error"
+            run.error = error
 
     def _write_bound(self, run, store, authority, policy):
         from tldw_chatbook.Backup_Recovery.activation import execution_scope
         from .models import OWNER_ID
 
         claim = run.claim
-        attempted = set()
 
         def frontier():
-            while not run.stop.is_set():
-                after = None
-                while True:
-                    pending = store.pending_directories(claim.scope, after=after)
-                    fresh = [path for path in pending if path not in attempted]
-                    if fresh or len(pending) < 256:
-                        break
-                    after = pending[-1]
-                if not fresh:
-                    break
-                for path in fresh:
-                    attempted.add(path)
-                    yield path
+            return () if run.stop.is_set() else store.eligible_directories(claim)
 
         def admit(directory):
             if run.stop.is_set():
@@ -731,7 +772,7 @@ class ProjectIndexService:
                 return current
 
         def emit(page):
-            prepared = prepare_scan_page(page)
+            prepared = prepare_scan_unit(page)
             store.publication_cache_bytes = binding_bytes(self._binding_root(store))
             # Reserve rollback headroom for this namespace after all obsolete
             # namespaces and the stable capability have been counted.
@@ -748,7 +789,7 @@ class ProjectIndexService:
                     or live.exclusions != authority.exclusions
                 ):
                     return False
-                return store.commit_scan_page(
+                return store.commit_scan_unit(
                     claim.scope,
                     claim.job_id,
                     prepared,
@@ -764,7 +805,7 @@ class ProjectIndexService:
                     authority,
                     claim.scope,
                     claim.job_id,
-                    frontier(),
+                    frontier,
                     emit,
                     run.stop,
                     admit_unit=admit,
@@ -797,14 +838,31 @@ class ProjectIndexService:
                 run.error = error
 
     def _retire(self, run, store, lease, pin):
-        with self._bind(pin):
-            self._retire_bound(run, store, lease, pin)
+        try:
+            with self._bind(pin):
+                with self._registry_connections():
+                    self._retire_bound(run, store, lease, pin)
+                # Every newly opened registry handle closes on its owning thread
+                # before native lifetime, storage admission or read budget ends.
+                if run.db_closed and run.registry_closed and self._scanner.retired:
+                    self._scanner.lifetime = None
+                    lease.close()
+                    if pin is not None:
+                        pin.close()
+                    run.read_admission.close()
+                    run.native_retired = True
+        except BaseException as error:
+            run.error = error
 
     def _retire_bound(self, run, store, lease, pin):
         run.writer.join()  # actual thread exit, separately from coroutine return
         try:
-            if not run.db_closed or not self._scanner.retired:
-                raise RuntimeError("index_retirement_unproven")
+            if (
+                not run.db_closed
+                or not run.registry_closed
+                or not self._scanner.retired
+            ):
+                raise RuntimeError("index_retirement_unproven") from run.error
             with self._admitted(store, run.claim.scope.key) as authority:
                 current = store.read_claim(run.claim.scope)
                 if authority is not None and current == run.claim:
@@ -821,17 +879,9 @@ class ProjectIndexService:
         except BaseException as error:
             run.error = error
         finally:
-            try:
-                store.close_native()
-                if run.db_closed and self._scanner.retired:
-                    self._scanner.lifetime = None
-                    lease.close()
-                    if pin is not None:
-                        pin.close()
-                    run.native_retired = True
-                    run.read_admission.close()
-            except BaseException as error:
-                run.error = error
+            # A failed close propagates through the registry context and keeps all
+            # remaining ownership. Publication errors alone do not leak handles.
+            store.close_native()
 
     def binding_changed(self, binding_id: str) -> None:
         """Post-commit hint only: stop local work; next admission reads the witness."""
@@ -841,14 +891,18 @@ class ProjectIndexService:
 
     async def aclose(self) -> None:
         """Stop admission and await actual owner threads despite waiter cancellation."""
-        with self._lock:
-            self._closed = True
-            runs = tuple(self._runs.values())
-            searches = tuple(self._searches)
-            for run in runs:
-                run.stop.set()
+
+        def stop_and_snapshot():
+            with self._lock:
+                self._closed = True
+                runs = tuple(self._runs.values())
+                searches = tuple(self._searches)
+                for run in runs:
+                    run.stop.set()
+                return runs, searches
 
         async def drain():
+            runs, searches = await asyncio.to_thread(stop_and_snapshot)
             for search in searches:
                 await asyncio.to_thread(search.done.wait)
             for run in runs:

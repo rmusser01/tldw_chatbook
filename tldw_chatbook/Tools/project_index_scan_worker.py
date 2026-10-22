@@ -89,12 +89,16 @@ def _allowed(path, exclusions, *, directory, policy=None):
         return True
     folded = path.casefold()
     prefixes = tuple(p.casefold() for p in policy.include_prefixes)
-    included = any(not p or folded == p or folded.startswith(p + "/") for p in prefixes)
+    included = not prefixes or any(
+        not p or folded == p or folded.startswith(p + "/") for p in prefixes
+    )
     if directory:
         return included or not path or any(p.startswith(folded + "/") for p in prefixes)
     suffix = Path(path).suffix.casefold()
     return (
-        included and suffix not in ARCHIVE_SUFFIXES and suffix in policy.text_suffixes
+        included
+        and suffix not in ARCHIVE_SUFFIXES
+        and (not policy.text_suffixes or suffix in policy.text_suffixes)
     )
 
 
@@ -338,7 +342,7 @@ def run_project_scan_worker(stdin: BinaryIO, stdout: BinaryIO) -> int:
                 if kind == "Close":
                     return 0
                 if (
-                    kind not in {"Directory", "Capture"}
+                    kind not in {"Directory", "Unit", "Capture"}
                     or request["ack"] != ack
                     or request["revision"] < revision
                 ):
@@ -391,136 +395,181 @@ def run_project_scan_worker(stdin: BinaryIO, stdout: BinaryIO) -> int:
                             ),
                         )
                     continue
-                directory = request["directory"]
-                entries = []
-                issues = set()
-                complete = more = False
-                sent_bytes = active_reads = 0
-                metadata_bytes = 0
-                identity = ""
-                try:
-                    if not _allowed(
-                        directory, exclusions, directory=True, policy=policy
-                    ):
-                        raise UnsafeCapture("excluded_directory")
-                    if request["continuation"]:
-                        if iterator is None or current != directory:
-                            raise ScanProtocolError("invalid_continuation")
-                        with _directory(directory, exclusions) as (_, verified_fd):
-                            if _identity(os.fstat(verified_fd)) != _identity(
-                                directory_before
-                            ):
-                                raise UnsafeCapture("directory_changed")
-                    else:
-                        if iterator is not None:
-                            raise ScanProtocolError("unacknowledged_directory")
-                        directory_context = _directory(directory, exclusions)
-                        base, directory_fd = directory_context.__enter__()
-                        directory_before = os.fstat(directory_fd)
-                        iterator = os.scandir(base)
-                        current = directory
-                    identity = _identity(directory_before)
-                    if _state(os.fstat(directory_fd)) != _state(directory_before):
-                        raise UnsafeCapture("directory_changed")
-                    for _ in range(MAX_PAGE_ENTRIES):
-                        if (
-                            sent_bytes > PAGE_TEXT_BYTES - MAX_FILE_BYTES
-                            or metadata_bytes > 512 * 1024
-                        ):
-                            more = True
-                            break
-                        try:
-                            item = next(iterator)
-                        except StopIteration:
-                            complete = True
-                            break
-                        path = f"{directory}/{item.name}" if directory else item.name
-                        # Filter lexical exclusions before metadata/read, including ancestors.
-                        if not _allowed(
-                            path, exclusions, directory=True, policy=policy
-                        ) and not _allowed(
-                            path, exclusions, directory=False, policy=policy
-                        ):
-                            continue
-                        info = item.stat(follow_symlinks=False)
-                        is_dir = stat.S_ISDIR(info.st_mode)
-                        try:
-                            _safe_stat(info, directory=is_dir)
-                        except UnsafeCapture:
-                            continue
-                        if not _allowed(
-                            path, exclusions, directory=is_dir, policy=policy
-                        ):
-                            continue
-                        if discovered >= MAX_ENTRIES:
-                            issues.add("entry_limit")
-                            break
-                        if is_dir:
-                            entry = ScanEntry(
-                                path, "directory", _identity(info), info.st_mtime_ns, 0
-                            )
-                        else:
-                            if info.st_size > MAX_FILE_BYTES:
-                                continue
-                            active_reads = 1
-                            capture = capture_candidate(path, exclusions)
-                            if capture is None:
-                                continue
-                            entry = ScanEntry(
-                                path,
-                                "file",
-                                capture.identity,
-                                capture.mtime_ns,
-                                capture.size_bytes,
-                            )
-                            _send_capture(stdout, capture)
-                            sent_bytes += capture.size_bytes
-                            del capture
-                        entries.append(asdict(entry))
-                        metadata_bytes += len(
-                            json.dumps(entries[-1], ensure_ascii=True)
-                        )
-                        discovered += 1
-                    else:
-                        more = True
-                    if _state(os.fstat(directory_fd)) != _state(directory_before):
-                        raise UnsafeCapture("directory_changed")
-                except (OSError, UnsafeCapture) as error:
-                    issues.add(
-                        str(error)
-                        if isinstance(error, UnsafeCapture)
-                        else "directory_io"
-                    )
-                    complete = more = False
-                if issues:
-                    complete = more = False
-                if not more:
-                    if iterator is not None:
-                        iterator.close()
-                        iterator = None
-                    if directory_context is not None:
-                        try:
-                            directory_context.__exit__(None, None, None)
-                        except (OSError, UnsafeCapture):
-                            issues.add("directory_changed")
-                            complete = False
-                        finally:
-                            directory_context = None
-                write_frame(stdout, frame("Entries", entries=entries))
-                write_frame(
-                    stdout,
-                    frame(
-                        "DirectoryDone",
-                        directory=directory,
-                        identity=identity,
-                        complete=complete,
-                        more=more,
-                        issues=sorted(issues),
-                        reads=active_reads,
-                        queued=sent_bytes
-                        + (SOURCE_BUFFER_HEADROOM if active_reads else 0),
-                    ),
+                pending = (
+                    list(request["directories"])
+                    if kind == "Unit"
+                    else [request["directory"]]
                 )
+                continuation = request["continuation"]
+                inspections = unit_entries = sent_bytes = metadata_bytes = 0
+                attempted = set()  # At most one bounded unit, never the whole tree.
+                while pending and len(attempted) < MAX_PAGE_ENTRIES:
+                    directory = pending.pop(0)
+                    attempted.add(directory)
+                    entries = []
+                    issues = set()
+                    complete = more = False
+                    active_reads = 0
+                    identity = ""
+                    try:
+                        if not _allowed(
+                            directory, exclusions, directory=True, policy=policy
+                        ):
+                            raise UnsafeCapture("excluded_directory")
+                        if continuation:
+                            if iterator is None or current != directory:
+                                raise ScanProtocolError("invalid_continuation")
+                            with _directory(directory, exclusions) as (_, verified_fd):
+                                if _identity(os.fstat(verified_fd)) != _identity(
+                                    directory_before
+                                ):
+                                    raise UnsafeCapture("directory_changed")
+                        else:
+                            if iterator is not None:
+                                raise ScanProtocolError("unacknowledged_directory")
+                            directory_context = _directory(directory, exclusions)
+                            base, directory_fd = directory_context.__enter__()
+                            directory_before = os.fstat(directory_fd)
+                            iterator = os.scandir(base)
+                            current = directory
+                        identity = _identity(directory_before)
+                        if _state(os.fstat(directory_fd)) != _state(directory_before):
+                            raise UnsafeCapture("directory_changed")
+                        for _ in range(MAX_PAGE_ENTRIES - inspections):
+                            if (
+                                sent_bytes > PAGE_TEXT_BYTES - MAX_FILE_BYTES
+                                or metadata_bytes > 512 * 1024
+                            ):
+                                more = True
+                                break
+                            try:
+                                inspections += 1
+                                item = next(iterator)
+                            except StopIteration:
+                                complete = True
+                                break
+                            path = (
+                                f"{directory}/{item.name}" if directory else item.name
+                            )
+                            # Filter lexical exclusions before metadata/read, including ancestors.
+                            if not _allowed(
+                                path, exclusions, directory=True, policy=policy
+                            ) and not _allowed(
+                                path, exclusions, directory=False, policy=policy
+                            ):
+                                continue
+                            info = item.stat(follow_symlinks=False)
+                            is_dir = stat.S_ISDIR(info.st_mode)
+                            try:
+                                _safe_stat(info, directory=is_dir)
+                            except UnsafeCapture:
+                                continue
+                            if not _allowed(
+                                path, exclusions, directory=is_dir, policy=policy
+                            ):
+                                continue
+                            if discovered >= MAX_ENTRIES:
+                                issues.add("entry_limit")
+                                break
+                            if is_dir:
+                                entry = ScanEntry(
+                                    path,
+                                    "directory",
+                                    _identity(info),
+                                    info.st_mtime_ns,
+                                    0,
+                                )
+                            else:
+                                if info.st_size > MAX_FILE_BYTES:
+                                    continue
+                                active_reads = 1
+                                capture = capture_candidate(path, exclusions)
+                                if capture is None:
+                                    continue
+                                entry = ScanEntry(
+                                    path,
+                                    "file",
+                                    capture.identity,
+                                    capture.mtime_ns,
+                                    capture.size_bytes,
+                                )
+                                _send_capture(stdout, capture)
+                                sent_bytes += capture.size_bytes
+                                del capture
+                            entries.append(asdict(entry))
+                            metadata_bytes += len(
+                                json.dumps(entries[-1], ensure_ascii=True)
+                            )
+                            discovered += 1
+                            unit_entries += 1
+                            if (
+                                is_dir
+                                and kind == "Unit"
+                                and path not in pending
+                                and path not in attempted
+                            ):
+                                if len(pending) < MAX_PAGE_ENTRIES:
+                                    pending.append(path)
+                        else:
+                            more = True
+                        if _state(os.fstat(directory_fd)) != _state(directory_before):
+                            raise UnsafeCapture("directory_changed")
+                    except (OSError, UnsafeCapture) as error:
+                        issues.add(
+                            str(error)
+                            if isinstance(error, UnsafeCapture)
+                            else "directory_io"
+                        )
+                        complete = more = False
+                    if issues:
+                        complete = more = False
+                    if not more:
+                        if iterator is not None:
+                            iterator.close()
+                            iterator = None
+                        if directory_context is not None:
+                            try:
+                                directory_context.__exit__(None, None, None)
+                            except (OSError, UnsafeCapture):
+                                issues.add("directory_changed")
+                                complete = False
+                            finally:
+                                directory_context = None
+                    write_frame(stdout, frame("Entries", entries=entries))
+                    write_frame(
+                        stdout,
+                        frame(
+                            "DirectoryDone",
+                            directory=directory,
+                            identity=identity,
+                            complete=complete,
+                            more=more,
+                            issues=sorted(issues),
+                            reads=active_reads,
+                            queued=sent_bytes
+                            + (SOURCE_BUFFER_HEADROOM if active_reads else 0),
+                        ),
+                    )
+                    if (
+                        more
+                        or inspections >= MAX_PAGE_ENTRIES
+                        or unit_entries >= MAX_PAGE_ENTRIES
+                        or sent_bytes > PAGE_TEXT_BYTES - MAX_FILE_BYTES
+                        or metadata_bytes > 512 * 1024
+                        or "entry_limit" in issues
+                    ):
+                        break
+                    continuation = False
+                if kind == "Unit":
+                    write_frame(
+                        stdout,
+                        frame(
+                            "UnitDone",
+                            inspections=inspections,
+                            attempts=len(attempted),
+                            entries=unit_entries,
+                        ),
+                    )
     except (OSError, ValueError, WorkspaceRootPinError):
         try:
             write_frame(stdout, frame("Error", code="scan_unavailable"))

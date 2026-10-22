@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, ExitStack
+import asyncio
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 import threading
 
@@ -12,6 +14,7 @@ from tldw_chatbook.Backup_Recovery.activation import execution_scope
 from tldw_chatbook.Backup_Recovery.isolated_restore import verified_data_identity
 from tldw_chatbook.Backup_Recovery.profile_paths import effective_config_path
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     WorkspaceProjectIndexDB,
     index_store_path,
@@ -23,6 +26,7 @@ from .models import (
     MAX_CACHE_BYTES,
     OWNER_ID,
     ProjectIndexKey,
+    ProjectIndexRetirementUnproven,
     locator_fingerprint,
     root_identity_fingerprint,
 )
@@ -31,6 +35,49 @@ from .service import ProjectIndexService, binding_bytes
 
 
 _composition_lock = threading.Lock()
+
+
+@contextmanager
+def project_index_registry_connections(database):
+    """Retire newly owned registry handles with positive native/core proof.
+
+    This finite context grants no authority. Borrowed caller handles keep their
+    own lifetime; a failed newly owned close remains counted by storage admission.
+    """
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+
+    if type(database) is not WorkspaceDB or database.is_memory_db:
+        with operation_owned_connection(database):
+            yield
+        return
+    previous = _core_cached_connection(
+        database, getattr(database._thread_local, "conn", None)
+    )
+    owned = None
+    try:
+        with operation_owned_connection(database):
+            try:
+                yield
+            finally:
+                current = getattr(database._thread_local, "conn", None)
+                if current is not None and current is not previous:
+                    owned = current
+    finally:
+        if owned is not None:
+            retired = _core_cached_connection(database, owned) is None
+            try:
+                sqlite3.Connection.in_transaction.__get__(owned)
+            except sqlite3.ProgrammingError:
+                native_closed = True
+            except Exception:
+                native_closed = False
+            else:
+                native_closed = False
+            if not retired or not native_closed:
+                raise ProjectIndexRetirementUnproven(
+                    "index_registry_retirement_unproven"
+                )
 
 
 class _DataAuthorityPin:
@@ -69,6 +116,7 @@ class _DataAuthorityPin:
 class _AdmittedStoreFactory:
     def __init__(self):
         self._local = threading.local()
+        self._unretired = {}
         self.identity = None
         self.data_root = None
         with self.retain() as pin:
@@ -118,9 +166,53 @@ class _AdmittedStoreFactory:
         pin = getattr(self._local, "pin", None)
         return pin.identity if pin is not None and not pin.closed else ""
 
-    def __call__(self, key):
+    @contextmanager
+    def _migration_context(self, key, store):
+        """Serialize only legacy migration and reserve the entire binding's disk."""
+        group = store.db_path.parent.parent
+        if key.binding_namespace in self._unretired:
+            raise ProjectIndexRetirementUnproven("index_migration_retirement_unproven")
+        lease = BindingLifetime.acquire(group / key.lifetime_name)
+        retained = False
+        try:
+            total = binding_bytes(group)
+            other = max(0, total - store._cache_bytes())
+            with store.connection() as conn:
+                page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+                pages = (MAX_CACHE_BYTES - other - 1024**2) // (2 * page_size)
+                if pages < 1 or conn.execute("PRAGMA page_count").fetchone()[0] > pages:
+                    raise ValueError("index_cache_limit")
+                conn.execute(f"PRAGMA max_page_count={pages}")
+            yield
+        except BaseException as cause:
+            try:
+                if isinstance(cause, ProjectIndexRetirementUnproven):
+                    raise cause
+                store.close_native()
+            except BaseException as error:
+                self._unretired[key.binding_namespace] = (store, lease)
+                retained = True
+                raise ProjectIndexRetirementUnproven(
+                    "index_migration_retirement_unproven"
+                ) from error
+            raise
+        finally:
+            if not retained:
+                lease.close()
+
+    def assert_retired(self):
+        if self._unretired:
+            raise ProjectIndexRetirementUnproven("index_migration_retirement_unproven")
+
+    def open_cleanup(self, key):
+        """Open a validated management namespace without upgrading existing data."""
+        return self(key, cleanup_only=True)
+
+    def __call__(self, key, *, cleanup_only=False):
         if self.current_data_authority() != key.data_authority_id:
             raise ValueError("index_data_authority_unavailable")
+        if key.binding_namespace in self._unretired:
+            raise ProjectIndexRetirementUnproven("index_migration_retirement_unproven")
         path = index_store_path(self.data_root, key)
         group = path.parent.parent
         if not path.exists():
@@ -140,10 +232,17 @@ class _AdmittedStoreFactory:
                 )
                 if not result.verified_private:
                     raise PrivatePathError(result)
-                return WorkspaceProjectIndexDB(path)
+                return WorkspaceProjectIndexDB(
+                    path,
+                    migration_context=lambda store: self._migration_context(key, store),
+                )
             finally:
                 lease.close()
-        return WorkspaceProjectIndexDB(path)
+        return WorkspaceProjectIndexDB(
+            path,
+            cleanup_only=cleanup_only,
+            migration_context=lambda store: self._migration_context(key, store),
+        )
 
 
 def get_project_index_service(app) -> ProjectIndexService:
@@ -160,7 +259,15 @@ def get_project_index_service(app) -> ProjectIndexService:
         reader, fence = registry.project_index_authority_adapters(
             factory.current_data_authority
         )
-        service = ProjectIndexService(factory, ProjectScanner(), reader, fence)
+        service = ProjectIndexService(
+            factory,
+            ProjectScanner(),
+            reader,
+            fence,
+            registry_connections=lambda: project_index_registry_connections(
+                registry.db
+            ),
+        )
         service._unsubscribe = registry.subscribe_project_index_changes(
             service.binding_changed
         )
@@ -174,7 +281,7 @@ def project_index_key(
     """Derive one caller-selected binding key off-thread; never select a workspace."""
     service = get_project_index_service(app)
     factory = service._factory
-    with factory.retain() as pin, pin.bind():
+    with service.registry_connection_scope(), factory.retain() as pin, pin.bind():
         chain = capture_directory_chain(root)
         key = ProjectIndexKey(
             pin.identity,
@@ -189,12 +296,29 @@ def project_index_key(
 
 
 async def close_project_index_service(app) -> None:
-    """Close an existing owner without constructing one or requiring a Console."""
-    with _composition_lock:
-        app._project_index_closed = True
-        service = getattr(app, "_project_index_service", None)
-    if service is not None:
-        unsubscribe = getattr(service, "_unsubscribe", None)
-        if unsubscribe is not None:
-            unsubscribe()
-        await service.aclose()
+    """Drain actual owners before surfacing cancellation, including composition."""
+
+    def snapshot():
+        with _composition_lock:
+            app._project_index_closed = True
+            return getattr(app, "_project_index_service", None)
+
+    async def drain():
+        service = await asyncio.to_thread(snapshot)
+        if service is not None:
+            unsubscribe = getattr(service, "_unsubscribe", None)
+            if unsubscribe is not None:
+                unsubscribe()
+            await service.aclose()
+            service._factory.assert_retired()
+
+    task = asyncio.create_task(drain())
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError

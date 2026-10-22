@@ -1620,3 +1620,19 @@ catalog unavailable…" with "Showing 20 of N matching models". Pinned by a
 widget test with 25 models for each warning
 (`Tests/Widgets/test_model_search_picker.py`), not driven live. The rest of
 this page's content unchanged from the prior stamp.)*
+
+## Optional keyword search for a workspace folder
+
+Open **Settings > Workspaces**, select the named workspace, and find its local folder row. Keyword indexing starts **Off**. By default, all eligible UTF-8 text is included, including extensionless files and manifests. To narrow processing, enter folders relative to that binding and text suffixes, separated with semicolons. Blank folders means all folders; blank suffixes means all eligible text. `.` explicitly includes the binding root. **Enable** saves those choices. **Refresh** explicitly scans the folder. SSH folders do not support keyword indexing.
+
+The row shows discovered and indexed counts, approximate cache storage, and **Last scan activity**. During a build, discovered counts are progress rather than a known total. **Ready** means the scan completed under the current choices. **Partial** means some paths or limits prevented full coverage. **Pause** stops a build safely; **Resume** continues a paused/interrupted job explicitly. After restart, indexing stays interrupted until you Resume or Refresh. **Apply choices** updates processing choices; use Refresh to establish coverage for widened choices.
+
+The agent's `fs_search_index` tool can search an enabled, admitted binding. Results include relative file paths and line locations, with at most10 hits and16 KiB of tool output. Files are reread and validated before results appear, so deleted, changed or newly excluded content is not disclosed from an old cache. Refresh after edits to restore current coverage. Read permissions and approvals still apply.
+
+An older cache may show **upgrade required**. Refresh explicitly to upgrade and scan; if storage is insufficient, free space or use Clear. Opening Settings does not upgrade the cache.
+
+**Disable** revokes index use; **Clear** revokes it and removes proven owned cached content. If cleanup reports a problem, check folder access/storage and retry rather than assuming removal succeeded. A busy message can mean active reads or maintenance; retry after that work settles. Changing binding access or detaching it immediately invalidates old index authority.
+
+In Console **Workspace Files**, keyword status follows the selected folder. **Index settings** closes the inspector safely and opens the existing Workspaces Settings category; select the desired workspace row there. This does not switch the active Console workspace.
+
+Only UTF-8 files up to1 MiB are eligible. Dependency/generated/VCS directories, sensitive paths, binding exclusions, binaries, archives and filesystem aliases are skipped. Limits are250,000 eligible entries and1 GiB total owned cache per binding; reaching a limit produces Partial coverage. No embeddings or network provider is required. This feature leaves saved Library search choices and sources unchanged.
