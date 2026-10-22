@@ -66,7 +66,8 @@ module count as its own row, ``MAX_FIRST_SEND_WARMUP_ADDED_MODULES``
 (snapshot ``boot_budget_snapshots/first_send_warmup.json``). It also fails if
 the warm-up newly imports one of ``test_app_import_weight.HEAVY_MODULES``, so
 a heavy third-party import (invisible to a tldw-only module count) is named
-too. Measured 2026-10-20: 94 modules / 61,281 LOC.
+too. Measured 2026-10-20: 94 modules / 61,281 LOC; re-pinned 2026-10-22:
+94 modules / 61,609 LOC (dev grew ``local_tool_provider``).
 
 Honest blind spots:
 
