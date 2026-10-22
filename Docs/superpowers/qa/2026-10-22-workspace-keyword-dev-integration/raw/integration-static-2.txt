@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\ruff\__main__.py", line 40, in <module>
+    ruff = os.fsdecode(find_ruff_bin())
+                       ^^^^^^^^^^^^^^^
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\ruff\__main__.py", line 36, in find_ruff_bin
+    raise FileNotFoundError(scripts_path)
+FileNotFoundError: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.venv\Scripts\ruff.exe

@@ -1,0 +1,7 @@
+timestamp writers: 0 datetime.utcnow() site(s), 0 naive_now_iso, 101 offset_now_iso, 18 strftime_iso occurrence(s) (117 pinned).
+
+FAIL: 3 new/grown non-canonical timestamp write(s). ADR-173 mandates one stored shape, YYYY-MM-DDTHH:MM:SS.mmmZ: a naive now() stores LOCAL time as UTC, now(tz).isoformat() emits '+00:00' (which sorts BEFORE the same instant's 'Z' and is dropped by a >= cutoff), and a hand-rolled ISO strftime is a shape of its own. Produce the timestamp with Utils.timestamps.utc_now_iso()/to_utc_iso() instead:
+    tldw_chatbook/DB/Workspace_Project_Index_DB	WorkspaceProjectIndexDB._publish_page	(now 1, pinned 0)
+    tldw_chatbook/DB/Workspace_Project_Index_DB	WorkspaceProjectIndexDB.clear_owned_namespace	(now 1, pinned 0)
+    tldw_chatbook/DB/Workspace_Project_Index_DB	WorkspaceProjectIndexDB.clear_revoked	(now 1, pinned 0)
+  If a site is genuinely displaying LOCAL time (not storing a timestamp), that is out of scope — but do not add it to timestamp_writer_census.tsv; refactor it to be unambiguous.

@@ -1,0 +1,11 @@
+{
+  "commit": "19d38fd32ed9009d9fd7c9ffb04e38fd989d370d",
+  "parent": "e16100e2b3aea1e1da3d6d73ecbcbefebb135a80",
+  "source_sha256": {
+    "tldw_chatbook/Workspaces/project_index/service.py": "aa764965e2a0d87737d47e1f9f5411d123af64e06e471eb0c0e27d346c6cd648",
+    "Tests/Workspaces/test_project_index_service.py": "ac0b4dcb0849213a01be69c21a8424990fb2516718512699247691eb8c339653",
+    "Tests/Chat/test_console_chat_controller.py": "e6d89b430e020d7f7af6fd8bdbc6d0fdc21cea0bbe1940d9c5557e76cd2ed078",
+    "backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md": "7a49d483f55f6a07eddc52f0540118aaa74bb89f4d6c9ece35aa516b86568005"
+  },
+  "green": "review-i1-green-command.json"
+}

@@ -1,0 +1,3 @@
+wrote Docs\security\production-diagnostic-inventory.json
+
+STDERR

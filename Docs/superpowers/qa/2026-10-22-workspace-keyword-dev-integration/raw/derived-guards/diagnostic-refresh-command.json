@@ -1,0 +1,10 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "scripts/check_persistent_diagnostic_inventory.py",
+    "--write"
+  ],
+  "exit_code": 0,
+  "seconds": 161.042,
+  "review": "Exact --statements --since fetcheddev shows only three literal debug messages; no content/secret/path/URL interpolation, sink topology unchanged. Refresh authorized only after statement review."
+}

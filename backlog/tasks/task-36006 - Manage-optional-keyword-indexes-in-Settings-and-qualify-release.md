@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-21 14:32'
-updated_date: '2026-10-22 06:00'
+updated_date: '2026-10-22 06:16'
 labels: []
 dependencies:
   - TASK-36005
@@ -20,8 +20,6 @@ documentation:
 Let users explicitly manage folder-bound keyword indexing and understand coverage from Settings and Console.
 <!-- SECTION:DESCRIPTION:END -->
 
-Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Settings exposes truthful Off/Building/Partial/Ready/Paused/Interrupted/Error controls and processing choices using existing UI tokens; Console shows status and a Settings route.
@@ -35,9 +33,9 @@ Current governance: [ADR-241](../decisions/241-workspace-project-context-and-fol
 - [x] #9 Detach immediately revokes index access/publication and leaves a supported durable cleanup-only retry after restart, without reattaching source authority or touching a replacement binding at the same path; failed cleanup remains truthful.
 - [x] #10 Included-folder comparisons agree between actual scanning and public keyword search for case/Unicode variants and preserve exact peer-prefix, containment and exclusion boundaries.
 - [x] #11 Committed compatible Building coverage is discoverable through Console preparation and public search with truthful partial results, preserving scope/manifest/live-source/revocation gates.
-- [ ] #12 Proven-native-retired run/error history stays bounded without evicting unresolved native owners or a still-running supervisor; shutdown retains and joins an interrupted supervisor through physical exit, including repeated observer cancellation. Scanner annotations and dirty-input preservation remain covered. The prior deferred M1 qualification is resolved rather than carried into the PR.
-- [ ] #13 The rebased guidance/keyword composition preserves current dev dispatch/retry, Settings ownership and application shutdown behavior under selected integration checks; all saved Library policy/scope combinations and embedding-independent keyword operation remain intact.
-- [ ] #14 A failed index start preserves its original error and closes an unrecorded retained storage pin exactly once under concurrent run-history mutation; ownership lookup is synchronized, native close remains outside the service lock, and a recorded writer pin remains owned until physical retirement.
+- [x] #12 Proven-native-retired run/error history stays bounded without evicting unresolved native owners or a still-running supervisor; shutdown retains and joins an interrupted supervisor through physical exit, including repeated observer cancellation. Scanner annotations and dirty-input preservation remain covered. The prior deferred M1 qualification is resolved rather than carried into the PR.
+- [x] #13 The rebased guidance/keyword composition preserves current dev dispatch/retry, Settings ownership and application shutdown behavior under selected integration checks; all saved Library policy/scope combinations and embedding-independent keyword operation remain intact.
+- [x] #14 A failed index start preserves its original error and closes an unrecorded retained storage pin exactly once under concurrent run-history mutation; ownership lookup is synchronized, native close remains outside the service lock, and a recorded writer pin remains owned until physical retirement.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -100,6 +98,8 @@ Historical literal20k files across20,200subfolders and separate20k-file single-f
 ADR required:yes, existing backlog/decisions/241-workspace-project-context-and-folder-bound-index.md amended before ownership/schema changes; ADR101/102/126/174/228 apply. Exact reports,50new raw/source artifacts, original184K5 receipts, current/historical visuals and every chronological ruling/cost are retained in Docs/superpowers/qa/2026-10-20-workspace-project-context/keyword/execution-notes.md and final-re-review.md. Original checkout/user data untouched. Branch/worktree/corpora preserved; no push/PR/merge.
 
 Reopened by explicit user instruction for latest-dev PR/review/all-issues/merge. Prior local approval/latency/M1 decisions remain historical evidence; remaining M1 will now be fixed under the new AC12, with source-qualified latest-dev regression/CI proof. No second implementation of guidance or keyword work is requested. Semantic indexing starts after this PR merges.
+
+Current dev-integration source19d38fd32ed9009d9fd7c9ffb04e38fd989d370d resolves the prior M1 physical-supervisor tail and fresh-review failed-start ownership race. The latter synchronizes exact-pin lookup under the existing lock and closes unowned native pins outside it; meaningful RED reproduced actual iterator invalidation/open production pin, then5affected cases passed137.63s including held-writer/failed-dispatch controls and both real retry assertions. Earlier focused10passed363.34s. The e161 broader covering remains2failed20passed617.23s: the2retry setup refusals were separately corrected with established per-node private bootstrap-profile markers, no config/controller bypass or assertion change. Final same-cache query1passed244.90s at19d, unchanged24sourcehashes: all6canonical lexical p95 targets164-273ms meet500ms, while broader admitted measurements still miss in nestedcommon644.722ms,nestedrare549.382ms,widecommon617.648ms. Whole instrumented public p951948.863/2443.248ms includes proof bookkeeping. All42nativeCaptureproofs and40publicregistryretirements positive; final0searches0operations. Preserve historical20k build provenance/adverse timeout/platform/lint/full-suite limits and original corpus locations. Current evidence and exhaustive integration rulings are retained in Docs/superpowers/qa/2026-10-22-workspace-keyword-dev-integration/. ADR required:yes, existing backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; landed MCP ADR240 keeps identity. PR3204 targetsdev; human explicitly waived Qodo for thisPRonly. Task remains InProgress until final review/hostedCI/threads/queue merge gates close; semantic implementation starts after actual merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -109,3 +109,5 @@ Implemented optional folder-bound keyword indexing with preserved Library choice
 
 Reopened for newly requested dev integration and full M1 resolution; previous completion summary describes original local delivery.
 <!-- SECTION:FINAL_SUMMARY:END -->
+
+Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
