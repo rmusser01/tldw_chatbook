@@ -424,6 +424,8 @@ def test_malformed_endpoint_port_is_not_eligible_and_does_not_crash():
             "https://kobold.example.test/proxy/api/v1/generate",
             "https://kobold.example.test/proxy/v1/models",
         ),
+        # The contract decodes an unreserved escape before it matches the route.
+        ("http://127.0.0.1:5001/api/v1/gen%65rate", "http://127.0.0.1:5001/v1/models"),
     ],
 )
 def test_native_kobold_generate_lists_where_the_endpoint_contract_says(
@@ -447,13 +449,40 @@ def test_native_kobold_generate_lists_where_the_endpoint_contract_says(
         "http://127.0.0.1:5001/v1/api/v1/generate",
         "http://127.0.0.1:5001/v1/models/api/v1/generate",
         "http://127.0.0.1:5001/api/v1/generate?key=secret",
-        # Not the route as the contract matches it, so not native either.
-        "http://127.0.0.1:5001/API/V1/GENERATE",
     ],
 )
 def test_kobold_generate_the_endpoint_contract_refuses_is_not_eligible(endpoint):
     """TASK-35832 AC#3: an API suffix before the native route is ambiguous."""
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        resolve_provider_endpoint,
+    )
+
+    assert resolve_provider_endpoint("koboldcpp", endpoint).errors
     assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is False
+
+
+def test_kobold_uppercase_generate_is_a_prefix_root_that_generic_rules_refuse():
+    """TASK-35832: the contract matches the route case and all, so it reads
+    /API/V1/GENERATE as a plain prefix root (Switch model would probe
+    /API/V1/GENERATE/v1/models). It is not the native route, so Discover
+    applies its generic path rules, which list no unknown prefix root for any
+    provider."""
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        resolve_provider_endpoint,
+    )
+
+    endpoint = "http://127.0.0.1:5001/API/V1/GENERATE"
+    resolution = resolve_provider_endpoint("koboldcpp", endpoint)
+    assert resolution.errors == ()
+    assert resolution.models_url == f"{endpoint}/v1/models"
+    assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is False
+    # The same generic rule refuses a lower-case prefix root.
+    assert (
+        supports_openai_compatible_model_discovery(
+            "koboldcpp", "http://127.0.0.1:5001/kobold"
+        )
+        is False
+    )
 
 
 def test_kobold_with_explicit_v1_endpoint_is_eligible():

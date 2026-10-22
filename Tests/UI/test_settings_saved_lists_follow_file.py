@@ -650,6 +650,9 @@ async def test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged
         build_provider_setup_mutation,
     )
     from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        supports_openai_compatible_model_discovery,
+    )
 
     template = DEFAULT_CONFIG_FROM_TOML["api_settings"]
     native = template["koboldcpp"]["api_url"]
@@ -664,6 +667,10 @@ async def test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged
     )
     assert resolve_provider_endpoint("vllm", native).errors
     assert resolve_provider_endpoint("koboldcpp", f"{native}/x").errors
+    # TASK-35832 AC#3: an API suffix before the route is ambiguous to both.
+    ambiguous = "http://localhost:5001/v1/api/v1/generate"
+    assert resolve_provider_endpoint("koboldcpp", ambiguous).errors
+    assert supports_openai_compatible_model_discovery("koboldcpp", ambiguous) is False
     root = resolve_provider_endpoint("koboldcpp", "http://localhost:5001")
     assert (root.chat_url, root.models_url) == (
         "http://localhost:5001/v1/chat/completions",

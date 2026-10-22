@@ -268,7 +268,7 @@ def _resolve_provider_endpoint(
             preset, provider_key, scheme, netloc, canonical_host, segments
         )
 
-    native = provider_key == "koboldcpp" and segments[-3:] == _KOBOLD_NATIVE_GENERATE
+    native = _is_kobold_native_generate(provider_key, segments)
     suffix = _terminal_suffix(
         segments[:-3] if native else segments,
         allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS,
@@ -377,6 +377,30 @@ def _engine_preset_resolution(
 
 #: ponytail: 256 entries bounds it; the strings are endpoints, short and few.
 _memoized_resolution = lru_cache(maxsize=256)(_resolve_provider_endpoint)
+
+
+def is_native_generate_route(resolution: ProviderEndpointResolution) -> bool:
+    """Return whether an endpoint resolved as koboldcpp's native generate route.
+
+    Its send URL is the route itself and it lists at its root's
+    ``/v1/models`` (TASK-35010). Model discovery asks here, so Settings and
+    Switch model read the route one way (TASK-35832).
+
+    Args:
+        resolution: A result of :func:`resolve_provider_endpoint`.
+
+    Returns:
+        True only for a valid resolution of that route.
+    """
+    path = urlsplit(resolution.normalized_input).path
+    return not resolution.errors and _is_kobold_native_generate(
+        resolution.provider_key,
+        tuple(segment for segment in path.split("/") if segment),
+    )
+
+
+def _is_kobold_native_generate(provider_key: str, segments: tuple[str, ...]) -> bool:
+    return provider_key == "koboldcpp" and segments[-3:] == _KOBOLD_NATIVE_GENERATE
 
 
 def canonical_connection_identity(
