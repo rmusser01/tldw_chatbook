@@ -1,7 +1,7 @@
 ---
 id: TASK-36362
 title: Keep newer Recurring Question drafts when an earlier Save completes
-status: To Do
+status: Done
 created_date: 2026-10-22 20:43
 labels:
 - scheduling
@@ -12,8 +12,13 @@ references:
 - backlog/decisions/018-local-server-hybrid-scheduled-tasks.md
 - backlog/decisions/033-application-session-state-ownership.md
 documentation:
-- Docs/superpowers/qa/2026-10-22-textual-book-after-pr3207.md
-updated_date: 2026-10-22 20:51
+- Docs/superpowers/qa/2026-10-22-textual-retry-and-pending-drafts.md
+updated_date: 2026-10-22 23:51
+assignee:
+- '@codex'
+modified_files:
+- tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py
+- Tests/UI/test_automation_definition_pending_save_drafts.py
 ---
 
 ## Description
@@ -43,19 +48,31 @@ Reason: No new ADR is expected for retaining the existing form draft and actual 
 <!-- SECTION:DESCRIPTION:END -->
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 For both local create and edit, newer raw Name, Question or other editable values accepted during pending Save remain visible and dirty after that earlier Save succeeds, including invalid or whitespace-only later text.
-- [ ] #2 If no newer edit was accepted, successful Save still closes the form and reports its established outcome.
-- [ ] #3 After retaining later edits from a successful create, the next explicit Save updates the same persisted definition; existing pending admission still permits one physical operation per Save.
-- [ ] #4 Definite failure/refusal retains the draft and remains retryable; existing local/server owner and queued outcome semantics and explicit close/quit guards stay intact.
-- [ ] #5 Bounded mounted keyboard/real-SQLite create/edit witnesses cover later edits, unchanged success, next Save and definite failure without weakening storage/config admission or fabricating saved results.
+- [x] #1 For both local create and edit, newer raw Name, Question or other editable values accepted during pending Save remain visible and dirty after that earlier Save succeeds, including invalid or whitespace-only later text.
+- [x] #2 If no newer edit was accepted, successful Save still closes the form and reports its established outcome.
+- [x] #3 After retaining later edits from a successful create, the next explicit Save updates the same persisted definition; existing pending admission still permits one physical operation per Save.
+- [x] #4 Definite failure/refusal retains the draft and remains retryable; existing local/server owner and queued outcome semantics and explicit close/quit guards stay intact.
+- [x] #5 Bounded mounted keyboard/real-SQLite create/edit witnesses cover later edits, unchanged success, next Save and definite failure without weakening storage/config admission or fabricating saved results.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR. ADR path: existing ADR paths in this task. Reason: bounded correction within the current owner; no new storage, provider or application boundary.
+
+1. Read the linked task, ADRs, current owner tests and retained audit evidence.
+2. Add and run mounted behavior regressions RED, then implement the smallest owner-local correction: Capture the submitted raw form snapshot, acknowledge successful persisted identity, and dismiss only if the current raw form is unchanged. A retained create form adopts the saved definition ID so another explicit Save updates that same row. Preserve one-write admission and existing local/server/queued outcomes.
+3. Verify targeted new/adjacent tests and static checks; obtain independent Superpowers task review.
+4. Record evidence, update notes/ACs and relevant documentation, then mark Done via CLI.
+
+Implementation plan: Docs/superpowers/plans/2026-10-22-textual-retry-and-pending-drafts.md
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Compare submitted versus current raw form values before retiring a successful draft. Retained creates adopt durable ID/outcome before off-loop metadata I/O, lock only owner identity and update the same row on subsequent Save. Failed creates restore owner selection; failed postcommit reads keep saved identity and newer input. Confirmed discard returns the actual last saved/queued result for workbench refresh. Changed automation_definition_form.py and added mounted real-SchedulingService/SQLite tests. All20newoutcomes covered (18initial passes plus2corrected dialog-readiness checks);30adjacent form/quit checks pass. IDs-only refinement preserves normalized module AST and parameter data;20collected whitespace-free nodes map to passing receipts. Ruff/format/diff clean; inherited dependency warnings remain visible. No new ADR: accepted ADR-018 and ADR-033 session ownership apply; proposed099/116 remain context. Independent Astra Superpowers task review Approved. See Docs/superpowers/qa/2026-10-22-textual-retry-and-pending-drafts.md for evidence and limits. Shared integration found post-await title/help lookups: QueryError guards plus actual chrome-removal RED2/GREEN4 cover metadata/admission/rollback; full worker contract passes with2782stable inputs and scoped rereview finds no new breakage. Reviewed routing-only diagnostic and updated Docs/security/production-diagnostic-inventory.json pin, with no new sink.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

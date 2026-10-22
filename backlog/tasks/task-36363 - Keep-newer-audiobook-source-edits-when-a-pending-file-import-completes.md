@@ -1,7 +1,7 @@
 ---
 id: TASK-36363
 title: Keep newer audiobook source edits when a pending file import completes
-status: To Do
+status: Done
 created_date: 2026-10-22 20:43
 labels:
 - speech
@@ -12,7 +12,13 @@ references:
 - backlog/decisions/033-application-session-state-ownership.md
 - backlog/decisions/011-chatbook-workbench-ui-system.md
 documentation:
-- Docs/superpowers/qa/2026-10-22-textual-book-after-pr3207.md
+- Docs/superpowers/qa/2026-10-22-textual-retry-and-pending-drafts.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 23:52
+modified_files:
+- tldw_chatbook/UI/STTS_Window.py
+- Tests/UI/test_audiobook_import_source_integrity.py
 ---
 
 ## Description
@@ -43,18 +49,30 @@ Reason: No new ADR is expected for stale source-publication prevention within th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 When file-read completion is delayed, actual text edits, replacements or clear accepted by the enabled current source editor remain authoritative after completion; queued Changed delivery must not let the earlier import replace them.
-- [ ] #2 The current TextArea, working source and next Generate request agree on the retained user source, and a discarded stale import does not announce that its text became current.
-- [ ] #3 With no later source edit, a complete file import still replaces the previous source normally and reaches chapter detection and Generate without artificial truncation; source file bytes remain unchanged.
-- [ ] #4 Bounded mounted regressions use the actual Import/picker/read and keyboard-change paths, hold delivery of real file content, verify ordinary/edited/cleared controls, and retain the existing chapter freshness and full-source tests without synthesis or network effects.
+- [x] #1 When file-read completion is delayed, actual text edits, replacements or clear accepted by the enabled current source editor remain authoritative after completion; queued Changed delivery must not let the earlier import replace them.
+- [x] #2 The current TextArea, working source and next Generate request agree on the retained user source, and a discarded stale import does not announce that its text became current.
+- [x] #3 With no later source edit, a complete file import still replaces the previous source normally and reaches chapter detection and Generate without artificial truncation; source file bytes remain unchanged.
+- [x] #4 Bounded mounted regressions use the actual Import/picker/read and keyboard-change paths, hold delivery of real file content, verify ordinary/edited/cleared controls, and retain the existing chapter freshness and full-source tests without synthesis or network effects.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR. ADR path: existing ADR paths in this task. Reason: bounded correction within the current owner; no new storage, provider or application boundary.
+
+1. Read the linked task, ADRs, current owner tests and retained audit evidence.
+2. Add and run mounted behavior regressions RED, then implement the smallest owner-local correction: Compare current live editor text as well as the owning source state across the awaited real file read; an editor Changed message can still be queued behind the parent callback. Discard obsolete file-import completion without its success notification. Preserve full-source import and existing chapter-publication guards.
+3. Verify targeted new/adjacent tests and static checks; obtain independent Superpowers task review.
+4. Record evidence, update notes/ACs and relevant documentation, then mark Done via CLI.
+
+Implementation plan: Docs/superpowers/plans/2026-10-22-textual-retry-and-pending-drafts.md
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Guard delayed file import publication with current owner attachment, editor identity, live editor text and working-source snapshots across the original off-loop UTF-8 read. Accepted edits/replacement/clear remain authoritative despite queued Changed; stale import does not announce success. Changed STTS_Window.py and extended test_audiobook_import_source_integrity.py. RED3intended retention failures/1ordinarypass; final16pass (4new+7full-source+5chapterfreshness), real Import/picker/read and actual Generate without synthesis/network. Clear explicitly uses public production delete-left bound-action dispatch after Pilot selection; edit/replace use actual Pilot printable input. Optional13legacy pre-owner setup errors are excluded, with exactbase/current representative qualification. No new owner lint/format debt; existing5E721/oneformat hunk retained. No new ADR: existing ADR-011 and ADR-033 session ownership apply. All4newnodes enrolled. See Docs/superpowers/qa/2026-10-22-textual-retry-and-pending-drafts.md for source-bound evidence, review and limitations. Independent Superpowers task review Approved.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

@@ -106,4 +106,4 @@ Exact source/receipt hashes, commands, observations and task paths are in [the e
 
 Independent Superpowers requesting-code-review approved the four task scopes and evidence with no Critical or Important findings. Its one optional Minor (ambiguous numeric schedule ADR references) was resolved with the exact record links above. This approves the filing, not implementation of these repairs.
 
-Related verification guidance: [Textual input delivery](../../../backlog/docs/lessons-textual-input-delivery.md). The audit lesson is kept in its own file; the shared testing evidence document retains dev's content.
+Related verification guidance: [Textual UI verification](../../../backlog/docs/lessons-textual-ui-verification.md). The audit and implementation lessons are kept in their own file; the shared testing evidence document retains dev's content.

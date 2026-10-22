@@ -1,7 +1,7 @@
 ---
 id: TASK-36360
 title: Keep quiz final-answer retry from duplicating answers and inflating scores
-status: In Progress
+status: Done
 created_date: 2026-10-22 20:42
 labels:
 - study
@@ -12,10 +12,13 @@ references:
 - backlog/decisions/033-application-session-state-ownership.md
 - backlog/decisions/011-chatbook-workbench-ui-system.md
 documentation:
-- Docs/superpowers/qa/2026-10-22-textual-book-after-pr3207.md
+- Docs/superpowers/qa/2026-10-22-textual-retry-and-pending-drafts.md
 assignee:
 - '@codex'
-updated_date: 2026-10-22 21:52
+updated_date: 2026-10-22 23:51
+modified_files:
+- tldw_chatbook/UI/Study_Modules/quizzes_handler.py
+- Tests/UI/test_study_quiz_attempt_retry.py
 ---
 
 ## Description
@@ -46,10 +49,10 @@ Reason: No new ADR is expected for a controller-local pending-answer correction.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A final-answer definite pre-write failure followed by retry sends and persists exactly one answer for each quiz question, and the resulting score does not exceed the total possible score.
-- [ ] #2 Changing the final answer after that failure uses its current value once; earlier completed-question answers remain intact.
-- [ ] #3 Ordinary successful multi-question attempts preserve grading/history behavior, and definite failure leaves the current question, answer and retry usable.
-- [ ] #4 Bounded mounted regressions exercise actual Start/Submit dispatch and independently verify service payload, real SQLite answers/score and visible result, retaining the ordinary passing control; uncertain-commit or server-wide idempotency is not introduced.
+- [x] #1 A final-answer definite pre-write failure followed by retry sends and persists exactly one answer for each quiz question, and the resulting score does not exceed the total possible score.
+- [x] #2 Changing the final answer after that failure uses its current value once; earlier completed-question answers remain intact.
+- [x] #3 Ordinary successful multi-question attempts preserve grading/history behavior, and definite failure leaves the current question, answer and retry usable.
+- [x] #4 Bounded mounted regressions exercise actual Start/Submit dispatch and independently verify service payload, real SQLite answers/score and visible result, retaining the ordinary passing control; uncertain-commit or server-wide idempotency is not introduced.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -68,9 +71,8 @@ Implementation plan: Docs/superpowers/plans/2026-10-22-textual-retry-and-pending
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Build final-answer submissions from prior completed answers plus the current answer, without appending the last answer to pending state before success. Retry uses the current answer exactly once and preserves prior grading/history. Changed quizzes_handler.py and added mounted test_study_quiz_attempt_retry.py with real scope/local services and SQLite. RED: three intended failures/two controls pass; focused GREEN:36pass. Broader legacy startup failures are exact-base qualified, not claimed passing. No new ADR: existing ADR-011 and ADR-033 application-session-state-ownership apply; no storage/service/idempotency policy change. Independent Superpowers task review Approved. New concrete nodes are in the required census. See Docs/superpowers/qa/2026-10-22-textual-retry-and-pending-drafts.md for source-bound receipts, static checks and integration limits.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
