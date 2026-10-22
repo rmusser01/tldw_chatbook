@@ -1,7 +1,7 @@
 ---
 id: TASK-36097
 title: Keep newer Character and Persona edits dirty when earlier saves finish
-status: To Do
+status: Done
 created_date: 2026-10-22 01:24
 labels:
 - personas
@@ -9,7 +9,10 @@ labels:
 - drafts
 priority: medium
 documentation:
-- Docs/superpowers/qa/2026-10-21-textual-book-after-pr3199.md
+- Docs/superpowers/qa/2026-10-21-textual-save-and-source-freshness.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 05:42
 ---
 
 ## Description
@@ -42,8 +45,26 @@ Reason: No new ADR is required for a bounded correction within the existing edit
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Completing a Character Save retains later form edits as unsaved while adopting the actual persisted record identity and version; the newer text is neither overwritten nor falsely acknowledged.
-- [ ] #2 Completing a Persona Save provides the same guarantee for later edits and its actual persisted identity/version.
-- [ ] #3 After either completion, existing New and leave/quit guards still detect the later edits; choosing Stay retains them, and no transition silently treats them as saved.
-- [ ] #4 A subsequent explicit Save persists the remaining edits to the same record with the correct version; a Save with no later edits becomes clean and failed saves preserve drafts. Mounted real-store regressions distinguish these outcomes.
+- [x] #1 Completing a Character Save retains later form edits as unsaved while adopting the actual persisted record identity and version; the newer text is neither overwritten nor falsely acknowledged.
+- [x] #2 Completing a Persona Save provides the same guarantee for later edits and its actual persisted identity/version.
+- [x] #3 After either completion, existing New and leave/quit guards still detect the later edits; choosing Stay retains them, and no transition silently treats them as saved.
+- [x] #4 A subsequent explicit Save persists the remaining edits to the same record with the correct version; a Save with no later edits becomes clean and failed saves preserve drafts. Mounted real-store regressions distinguish these outcomes.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md; backlog/decisions/033-application-session-state-ownership.md
+Reason: Correct acknowledgement inside existing Character/Persona owners without a new store, service contract or global lifetime.
+1. Read task, relevant ADRs, design/component rules and prior real-store audit witnesses; trace Save captures, actual id/version adoption and aggregate dirty predicates.
+2. Add bounded private-profile mounted regressions in Tests/UI/test_personas_pending_save_drafts.py. Hold real Character/Persona persistence, edit during pending create/update, and verify persisted snapshot, later dirty draft, New/Stay guard and subsequent same-record Save. Add unchanged and failure controls. Run meaningful red cases before product changes.
+3. Acknowledge only the submitted snapshot in existing screen/widget completion methods, preserving newer raw values and actual persisted identity/version. Keep current guard and service boundaries.
+4. Run targeted new/adjacent editor tests and scoped lint/format; review real-store assertions and resources; record evidence/notes. Root integrates census and independent Superpowers review before Done.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Character/Persona Save messages now carry the detached raw widget submission. Completion adopts actual persisted id/version while later text and greetings remain dirty for New/leave/quit Stay guards and a subsequent Save to the same record. Persona acknowledgement precedes awaited row refresh; narrow presentation extraction keeps the screen below its existing ceiling. Meaningful red witnesses cover four create/update races, two queued submissions and the refresh gap. Historical ten-case green plus final-source four Persona create/update/queued/refresh cases pass; 24 adjacent controls pass, four legacy fixture admission failures are qualified. Scoped Ruff retains identical 27 inherited E721 diagnostics (one moved with helper); formatting debt is identical, remaining changed files clean. Independent Superpowers final review approved this task. Existing ADR-046 and ADR-033 application-session-state apply; no new ADR. Modified screen, two editor widgets, existing Save messages, new persona_save_completion helper and eleven-case regression module. Exact evidence and limitations: Docs/superpowers/qa/2026-10-21-textual-save-and-source-freshness.md.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -47,6 +47,8 @@ SRS fields on `flashcards`: `interval` (days), `repetitions`, `ease_factor` (def
 - Every mutation passes a runtime-policy action id (`study.deck.create.local|server`, review actions, …).
 - Dashboard snapshots fall back from the scope service to direct ChaChaNotes reads, run off the event loop for file-backed DBs.
 
+Quiz/question creation in `UI/Study_Modules/quizzes_handler.py` captures raw authoring fields before normalizing the service payload. Successful completion clears each field only when its current raw value still matches that submission; later typing and its editing context survive. Failed creates retain drafts and existing retry semantics (TASK-36099).
+
 ## Config
 
 No study-specific config section: local storage is the ChaChaNotes DB path (`chachanotes_db_path`, profile-overridable); server services build from the runtime API client provider. Services are wired once at app scope.

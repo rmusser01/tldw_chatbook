@@ -125,6 +125,8 @@ confirmation remain live checks with their existing owners. Guidance-only
 shortcuts stay bound; Theme and Personal Context widgets project their own
 focus/selection-dependent hints. These are the existing ADR-031/033 contracts.
 
+Image/Video Settings completion acknowledges the submitted category draft, retaining later raw values through configuration reload. `UI/Settings_Modules/media_gen_save.py` owns the narrow completion/recomposition helpers; the screen retains staging and checked-write ownership. Current focus/selection and expanded backend sections survive replacement, and a deliberate focus move wins (TASK-36098).
+
 ## Splash subsystem
 
 `Widgets/splash_screen.py` (`SplashScreen`) with effects in `Utils/Splash_Screens/` by category (classic/environmental/tech/gaming/psychedelic/custom) plus custom cards from `examples/custom_splash_cards/`. Config under `[splash_screen]`: `enabled`, `duration` (default 7.0 s), `skip_on_keypress`, `show_progress`, `card_selection`. On close the app removes the splash widget, mounts the main UI, pushes the initial screen (first-run → Home; focus-mode request or default → Console/chat), and defers logging setup until then.

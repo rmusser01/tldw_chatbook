@@ -1,7 +1,7 @@
 ---
 id: TASK-36099
 title: Keep newer Study quiz drafts when earlier creates complete
-status: To Do
+status: Done
 created_date: 2026-10-22 01:25
 labels:
 - study
@@ -9,7 +9,10 @@ labels:
 - drafts
 priority: medium
 documentation:
-- Docs/superpowers/qa/2026-10-21-textual-book-after-pr3199.md
+- Docs/superpowers/qa/2026-10-21-textual-save-and-source-freshness.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 05:37
 ---
 
 ## Description
@@ -42,8 +45,26 @@ Reason: No new ADR is needed for retaining screen-local authoring state across a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A quiz create completing after newer name or description edits preserves those exact raw values without implicitly persisting them.
-- [ ] #2 A question create completing after newer edits to the question text or correct answer preserves those values and their active editing context.
-- [ ] #3 Successful unchanged submissions still persist once and clear their submitted form normally; failed creates preserve current drafts and permit retry.
-- [ ] #4 Bounded mounted regressions drive both existing create handlers through controlled awaits and verify live fields separately from actual stored records. TASK-34752 question-list ownership remains independently scoped.
+- [x] #1 A quiz create completing after newer name or description edits preserves those exact raw values without implicitly persisting them.
+- [x] #2 A question create completing after newer edits to the question text or correct answer preserves those values and their active editing context.
+- [x] #3 Successful unchanged submissions still persist once and clear their submitted form normally; failed creates preserve current drafts and permit retry.
+- [x] #4 Bounded mounted regressions drive both existing create handlers through controlled awaits and verify live fields separately from actual stored records. TASK-34752 question-list ownership remains independently scoped.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/011-chatbook-workbench-ui-system.md
+Reason: Retain current local authoring fields across existing service results; TASK34752 continues to own question-list serialization/view teardown.
+1. Read task/ADRs/design rules, current create handlers and retained controlled-await real-SQLite audit witnesses.
+2. Add Tests/UI/test_study_quiz_create_drafts.py using actual create event/worker and current private-profile harness. Hold each existing create await, type newer name/description or question/answer, and assert current raw draft versus real persisted submission; include unchanged clearing, failure/retry and editing-context controls. Run red before product changes.
+3. Clear only fields still matching the submitted form on successful quiz/question create, retaining later authoring text and current context. Leave service, runtime and independent question-list ownership unchanged.
+4. Run targeted new/adjacent Study tests and scoped lint/format; document controlled-await versus live-server limits and notes. Root integrates census and independent Superpowers review before Done.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Preserve exact raw quiz/question submissions and clear each authoring field only if it still matches that submission after successful creation. Existing normalized payloads, actual SQLite/local/scope services, policy boundaries and refresh ownership remain unchanged. Four mounted regression nodes cover independent/both-field/whitespace edits, current focus/selection, unchanged success and failed-create retry. Final targeted verification: 10 passed (final-green-6f0ebe75); scoped Ruff lint/format and whitespace checks pass. Three legacy adjacent admission failures and one teardown error reproduce against original handler bytes; no guards weakened. Independent Superpowers review found no remaining issue in this task. Existing ADR-033 application-session-state and ADR-011 apply; no new ADR. Files: quizzes_handler.py and test_study_quiz_create_drafts.py. Evidence and limits: Docs/superpowers/qa/2026-10-21-textual-save-and-source-freshness.md.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

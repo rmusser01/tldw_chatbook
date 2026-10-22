@@ -124,7 +124,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-09 owner decision (TASK-33910.2, 'Raise it in B1'): dev's #3045
     # grew personas_screen.py from 16,528 to 16,567 lines; B1 brings it to
     # 16,564.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16564,
+    # TASK-36097 extracts Persona completion without raising the ceiling.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16561,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -262,7 +263,8 @@ _BUDGETS: dict[str, int] = {
     # S1's base of 35,770): 35,747.
     # TASK-35677/35678: bounded paste ownership and action support (-13).
     # TASK-35680: parallel-run origin handling removes one more line.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35671,
+    # TASK-36098 retains dev decomposition and moves media completion out.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35662,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

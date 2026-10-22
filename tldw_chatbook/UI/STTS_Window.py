@@ -872,7 +872,12 @@ class AudioBookGenerationWidget(Widget):
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handle text area content changes"""
         if event.text_area.id == "content-preview":
-            self.content_text = event.text_area.text
+            content = event.text_area.text
+            if content != self.content_text:
+                # Editing invalidates the old result before debounce dispatch,
+                # including a clear that never dispatches a replacement.
+                self._chapter_detect_generation += 1
+            self.content_text = content
             self._queue_debounced_chapter_detection()
 
     def _queue_debounced_chapter_detection(self) -> None:
@@ -993,8 +998,8 @@ class AudioBookGenerationWidget(Widget):
         debounce between them, which is exactly what happens across the
         three one-shot import paths). A monotonically-increasing generation
         id is captured here and threaded through; `_apply_detected_chapters`
-        only applies a result whose generation still matches the latest one
-        dispatched.
+        only applies a result whose generation still matches. Source edits
+        also advance that generation immediately, before debounce dispatch.
         """
         if not self.content_text:
             return
@@ -1040,9 +1045,9 @@ class AudioBookGenerationWidget(Widget):
 
         Called via `call_from_thread` from `_detect_chapters_worker`, so it
         must stay main-thread-only (widget queries/mutation, notify). Only
-        applies a result if `generation` still matches the most recently
-        dispatched detection -- a superseded (stale) result is dropped
-        rather than overwriting a newer, already-applied one.
+        applies a result if `generation` still matches the current source
+        and dispatch -- an edit or newer dispatch supersedes the old result,
+        including source clears that schedule no replacement detection.
         """
         if generation != self._chapter_detect_generation:
             logger.debug("Dropping a stale chapter-detection result")

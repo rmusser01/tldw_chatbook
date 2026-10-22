@@ -3347,6 +3347,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "6066bb11c7ae747fb27c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Persona_Modules/persona_save_completion.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 12,
       "diagnostic_digest": "40b503dd3f98653facf4",
       "owner": "TASK-494",
@@ -3494,8 +3501,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 188,
-      "diagnostic_digest": "b1c5ffea518366916671",
+      "call_count": 187,
+      "diagnostic_digest": "9bf67eded4073cd8bfde",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/personas_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"

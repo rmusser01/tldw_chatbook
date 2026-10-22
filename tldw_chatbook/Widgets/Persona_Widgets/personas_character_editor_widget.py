@@ -770,31 +770,34 @@ class PersonasCharacterEditorWidget(Container):
         if self.is_mounted:
             self._sync_actor_pack_mode()
 
-    def mark_saved(self, record: Dict[str, Any]) -> None:
-        """Re-baseline dirty state to a just-persisted record (save-in-place).
-
-        Adopts the saved record as the new base (so the next Save carries the
-        new ``version`` and any DB-normalized keys), rebaselines the greetings
-        list, resets the dirty snapshot from the CURRENT form (which already
-        shows the saved values), and clears validation. Does NOT repopulate
-        the form - the user's saved edits stay on screen.
+    def mark_saved(
+        self, record: Dict[str, Any], *, submitted_snapshot: tuple | None = None
+    ) -> bool:
+        """Adopt the saved record and acknowledge only the submitted raw form.
 
         Args:
-            record: The just-persisted character record (carries the
-                incremented optimistic-lock ``version``).
+            record: Persisted character, including its actual id and version.
+            submitted_snapshot: Raw form at submission. Omit for synchronous
+                callers acknowledging the current form.
+
+        Returns:
+            Whether newer form edits remain unsaved.
         """
         self._character_data = dict(record or {})
-        self._greetings = [
-            str(g) for g in (self._character_data.get("alternate_greetings") or [])
-        ]
-        self._loaded_snapshot = self._form_snapshot()
+        if submitted_snapshot is None:
+            self._greetings = [
+                str(g) for g in (self._character_data.get("alternate_greetings") or [])
+            ]
+            submitted_snapshot = self._form_snapshot()
+        self._loaded_snapshot = submitted_snapshot
         self._loaded_attachment_snapshot = self._attachment_snapshot()
-        self._dirty_posted = False
+        self._dirty_posted = self._form_snapshot() != self._loaded_snapshot
         self.query_one("#personas-char-editor-validation", Static).update("")
         # A create-session's first Save assigns the brand-new character its
         # id here - the expression slots must flip from disabled to enabled
         # in that same moment (see _sync_expression_slots_enabled).
         self._sync_expression_slots_enabled()
+        return self._dirty_posted
 
     def _populate_form(self, data: Dict[str, Any]) -> None:
         self._character_data = dict(data or {})
@@ -1985,7 +1988,11 @@ class PersonasCharacterEditorWidget(Container):
         self._user_touched = True
         if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
-        self.post_message(CharacterSaveRequested(self.get_character_data()))
+        self.post_message(
+            CharacterSaveRequested(
+                self.get_character_data(), submitted_snapshot=self._form_snapshot()
+            )
+        )
 
     @on(Button.Pressed, "#personas-char-editor-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:

@@ -1,7 +1,7 @@
 ---
 id: TASK-36100
 title: Reject audiobook chapter results after their source text changes
-status: To Do
+status: Done
 created_date: 2026-10-22 01:25
 labels:
 - speech
@@ -9,7 +9,10 @@ labels:
 - reliability
 priority: medium
 documentation:
-- Docs/superpowers/qa/2026-10-21-textual-book-after-pr3199.md
+- Docs/superpowers/qa/2026-10-21-textual-save-and-source-freshness.md
+assignee:
+- '@codex'
+updated_date: 2026-10-22 05:38
 ---
 
 ## Description
@@ -42,8 +45,26 @@ Reason: No new ADR is required for correcting source/chapter view-state freshnes
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Clearing the source while detection is active prevents its eventual completion from repopulating the chapter editor or announcing chapter results for the cleared text.
-- [ ] #2 Replacing source text during pending detection cannot publish chapters for the superseded text, including the interval before the replacement debounce dispatch.
-- [ ] #3 Unchanged-source completion and a later valid source still populate the real chapter editor normally, while existing slow-dispatch/newer-dispatch ordering stays protected.
-- [ ] #4 Bounded mounted regressions use actual TextArea change events and controlled detection for clear/replacement and ordinary completion, with no provider, synthesis or network effects.
+- [x] #1 Clearing the source while detection is active prevents its eventual completion from repopulating the chapter editor or announcing chapter results for the cleared text.
+- [x] #2 Replacing source text during pending detection cannot publish chapters for the superseded text, including the interval before the replacement debounce dispatch.
+- [x] #3 Unchanged-source completion and a later valid source still populate the real chapter editor normally, while existing slow-dispatch/newer-dispatch ordering stays protected.
+- [x] #4 Bounded mounted regressions use actual TextArea change events and controlled detection for clear/replacement and ordinary completion, with no provider, synthesis or network effects.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/011-chatbook-workbench-ui-system.md
+Reason: Correct source/chapter freshness in the existing audiobook widget, without provider, persistence or global worker lifetime changes.
+1. Read task, ADRs, design rules, actual text-change/debounce/worker/application path and retained real-detector audit probe.
+2. Add Tests/UI/test_audiobook_chapter_source_freshness.py with mounted controlled real detection: actual source clear, replacement before debounce, unchanged completion, later valid text and slow-A/newer-B controls. Establish meaningful red freshness assertions before implementation.
+3. Invalidate stale detector publication on current-source change immediately, including empty source and debounce interval, retaining the existing dispatch ordering and ordinary chapter editor publication.
+4. Run new and adjacent chapter tests plus scoped lint/format; record evidence/notes and independently review. Root handles shared census, integration checks and final Superpowers review before Done.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Invalidate chapter publication immediately when actual source text changes, including clear and the replacement debounce interval. Preserve the existing dispatch ordering and same-source programmatic import echo. Five mounted regressions exercise real TextArea events, real ChapterDetector behind bounded waits, actual editor/table publication and stale success notifications. Red: two intended failures, two controls pass. Green: four passed (green-1), plus programmatic file-import echo and nine parser controls (10 passed, import-and-parser). New test Ruff lint/format passes; STTS retains identical five pre-existing E721 diagnostics and identical formatter replacement hunks against baseline. Independent Superpowers review found no remaining issue in this task. Existing ADR-033 application-session-state and ADR-011 apply; no new ADR. Files: STTS_Window.py and test_audiobook_chapter_source_freshness.py. Evidence and limits: Docs/superpowers/qa/2026-10-21-textual-save-and-source-freshness.md.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
