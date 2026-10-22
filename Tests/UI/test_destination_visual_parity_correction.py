@@ -1002,7 +1002,7 @@ SOURCE_PREP_WORKBENCHES = {
             "#personas-inspector-pane",
         ),
         "actions": ("#personas-library-new", "#personas-attach-to-console"),
-        "markers": ("#personas-library-empty", "#personas-library-count"),
+        "markers": ("#personas-library-empty", "#personas-library-rows"),
         "marker_container": "#personas-library-pane",
     },
     # Watchlists uses its own responsive horizontal body with permanent grips,

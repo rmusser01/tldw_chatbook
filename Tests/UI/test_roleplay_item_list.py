@@ -752,3 +752,64 @@ async def test_prompts_are_rebuilt_once_per_settled_width_and_only_where_changed
         await pilot.pause()
         await pilot.pause()
         assert built == [long_name]  # the one cut row, once
+
+
+# ==== Moved from test_personas_library_pane_paging.py (deleted with paging, B2a) ====
+# The toolbar's Sort and Tag stay until frame slice B2b; their pager
+# assertions left with the pager.
+
+
+class _ToolbarHost(ConsolidatedCSSApp):
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[tuple[str, None]] = []
+
+    def compose(self) -> ComposeResult:
+        yield PersonasLibraryPane(id="pane")
+
+    def on_persona_sort_cycle_requested(self, message) -> None:
+        self.events.append(("sort", None))
+
+    def on_persona_tag_filter_requested(self, message) -> None:
+        self.events.append(("tag", None))
+
+
+async def test_sort_and_tag_buttons_post_intents():
+    app = _ToolbarHost()
+    async with app.run_test() as pilot:
+        app.query_one(PersonasLibraryPane).set_mode("characters")
+        await pilot.pause()
+        await pilot.click("#personas-library-sort")
+        await pilot.click("#personas-library-tag")
+        await pilot.pause()
+        assert ("sort", None) in app.events and ("tag", None) in app.events
+
+
+async def test_tag_button_hidden_for_personas_visible_for_characters():
+    app = _ToolbarHost()
+    async with app.run_test():
+        pane = app.query_one(PersonasLibraryPane)
+        pane.set_mode("personas")
+        assert app.query_one("#personas-library-tag").display is False
+        assert app.query_one("#personas-library-sort").display is True
+        pane.set_mode("characters")
+        assert app.query_one("#personas-library-tag").display is True
+
+
+async def test_sort_and_tag_hidden_for_lore():
+    app = _ToolbarHost()
+    async with app.run_test():
+        pane = app.query_one(PersonasLibraryPane)
+        pane.set_mode("lore")
+        assert app.query_one("#personas-library-sort").display is False
+        assert app.query_one("#personas-library-tag").display is False
+
+
+async def test_set_sort_label_and_set_tag_label():
+    app = _ToolbarHost()
+    async with app.run_test():
+        pane = app.query_one(PersonasLibraryPane)
+        pane.set_sort_label("Sort: Recent")
+        pane.set_tag_label("Tag: villain")
+        assert str(app.query_one("#personas-library-sort").label) == "Sort: Recent"
+        assert str(app.query_one("#personas-library-tag").label) == "Tag: villain"

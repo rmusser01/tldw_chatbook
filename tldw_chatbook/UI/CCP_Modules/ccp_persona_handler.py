@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="CCPPersonaHandler")
 
+#: Personas are listed this many at a time until a page comes back short
+#: (frame slice B2a, spec 1.5.6; the scope service's own default limit).
+PERSONA_PAGE_SIZE = 100
+#: A hard stop for a backend that ignores ``offset``: 100 pages, 10,000 personas.
+PERSONA_PAGE_LIMIT = 100
+
 
 class CCPPersonaHandler:
     """Handles first-class persona profile operations for the Personas screen."""
@@ -114,6 +120,14 @@ class CCPPersonaHandler:
     ) -> List[Dict[str, Any]]:
         """Refresh the available persona profile list from the shared scope service.
 
+        Pages ``list_persona_profiles`` until a page comes back short (frame
+        slice B2a, spec 1.5.6; precedent ``buddy_management._persona_choices``).
+        The default call returned only the newest 100, so older personas
+        (Default Narrator in a large library) never listed (RP-093, on dev
+        before B2a). A backend that ignores ``offset`` would return the same
+        page forever, so paging also stops on a page with no new id, and after
+        ``PERSONA_PAGE_LIMIT`` pages.
+
         Args:
             raise_on_unavailable: When ``True``, raise instead of collapsing
                 missing persona-profile support or mode unavailability into an
@@ -139,8 +153,27 @@ class CCPPersonaHandler:
             self.persona_list = []
             return self.persona_list
 
+        mode = self._current_mode()
+        records: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        offset = 0
         try:
-            personas = await service.list_persona_profiles(mode=self._current_mode())
+            for _page in range(PERSONA_PAGE_LIMIT):
+                payload = await service.list_persona_profiles(
+                    mode=mode, limit=PERSONA_PAGE_SIZE, offset=offset
+                )
+                raw = payload.get("items", []) if isinstance(payload, dict) else payload
+                raw_count = len(list(raw or []))
+                fresh = [
+                    record
+                    for record in self._normalize_persona_list(payload)
+                    if str(record.get("id")) not in seen
+                ]
+                seen.update(str(record.get("id")) for record in fresh)
+                records.extend(fresh)
+                if raw_count < PERSONA_PAGE_SIZE or not fresh:
+                    break
+                offset += raw_count
         except ValueError:
             logger.opt(exception=True).debug("Persona list unavailable in current mode")
             if raise_on_unavailable:
@@ -148,7 +181,7 @@ class CCPPersonaHandler:
             self.persona_list = []
             return self.persona_list
 
-        self.persona_list = self._normalize_persona_list(personas)
+        self.persona_list = records
 
         sidebar = getattr(self.window, "query_one", None)
         if callable(sidebar):

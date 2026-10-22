@@ -258,15 +258,13 @@ def _row_text(item) -> str:
 
 
 _SHARED_MODE_OWNER_CASES = (
-    # The count slot snapshots the pane's count line, which F-033 emptied for
-    # unfiltered lists (the total now lives in the merged header purpose
-    # line), so both cases expect "".
+    # The count slot snapshots the pane's border title (B2a, spec 1.5.1).
     pytest.param(
         "dictionaries",
         "dictionary",
         "New Dictionary Owner",
         "2 rules",
-        "",
+        "Chat dictionaries 1 · 1 on",
         id="dictionaries",
     ),
     pytest.param(
@@ -274,7 +272,7 @@ _SHARED_MODE_OWNER_CASES = (
         "lore",
         "New Lore Owner",
         "3 entries",
-        "",
+        "Lore books 1 · 1 on",
         id="lore",
     ),
 )
@@ -318,12 +316,7 @@ def _shared_pane_publication(screen) -> dict[str, object]:
     return {
         "mode": screen.state.active_mode,
         "rows": rendered_rows,
-        "count": str(
-            screen.query_one(
-                "#personas-library-count",
-                Static,
-            ).renderable
-        ),
+        "count": str(screen.query_one("#personas-library-pane").border_title),
         "sort": str(
             screen.query_one(
                 "#personas-library-sort",
@@ -521,9 +514,8 @@ class TestWorkbenchShell:
                 screen.query_one("#personas-workbench").region.y
                 == header.region.bottom + 2
             )
-            # The count renders once (header line), not again under the list.
-            count = screen.query_one("#personas-library-count", Static)
-            assert str(count.renderable) == ""
+            # B2a: the list's count is its pane's border title, no line under it.
+            assert not screen.query("#personas-library-count")
 
     async def test_header_purpose_count_updates_per_mode(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1779,10 +1771,9 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             rows = list_state(screen).items
             assert [r.name for r in rows] == ["Detective Sam"]
-            # F-033: the match count now lives in the merged header purpose
-            # line; the pane's duplicate count line stays empty.
-            count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert count == ""
+            # B2a (spec 1.5.1): the match count is the pane's border title.
+            pane = screen.query_one("#personas-library-pane")
+            assert str(pane.border_title) == "Characters 1 of 2"
             assert "· 1" in str(
                 screen.query_one("#personas-purpose", Static).renderable
             )
@@ -1803,9 +1794,8 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             rows = list_state(screen).items
             assert [r.name for r in rows] == ["Detective Sam", "Lab Assistant"]
-            count = str(screen.query_one("#personas-library-count", Static).renderable)
-            # F-033: unfiltered count renders once, in the header purpose line.
-            assert count == ""
+            pane = screen.query_one("#personas-library-pane")
+            assert str(pane.border_title) == "Characters 2"
             assert "· 2" in str(
                 screen.query_one("#personas-purpose", Static).renderable
             )
@@ -1843,10 +1833,8 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             rows = list_state(screen).items
             assert [r.name for r in rows] == ["Navigator"]
-            # F-033: the pane's duplicate count line stays empty; the merged
-            # header line carries the personas library total.
-            count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert count == ""
+            pane = screen.query_one("#personas-library-pane")
+            assert str(pane.border_title) == "Personas 1 of 2"
             assert "· 2" in str(
                 screen.query_one("#personas-purpose", Static).renderable
             )
@@ -8264,7 +8252,7 @@ class TestConsoleActions:
             assert "Local collision" not in row.name
 
             screen.state.search_query = "remote"
-            await screen._reload_character_page(reset_offset=True)
+            await screen._reload_character_page()
             await pilot.pause()
             await select_roleplay_item(
                 pilot, pilot.app.screen, "character:1", via="click"
@@ -8292,16 +8280,16 @@ class TestConsoleActions:
             screen.query_one("#personas-start-chat", Button).press()
             await pilot.pause()
 
-        page_size = personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
+        # B2a (spec 1.5.6 "Server"): windows of 100.
         scope_service.list_characters.assert_awaited_once_with(
             mode="server",
-            limit=page_size + 1,
+            limit=100,
             offset=0,
         )
         scope_service.search_characters.assert_awaited_once_with(
             "remote",
             mode="server",
-            limit=page_size + 1,
+            limit=100,
         )
         scope_service.get_character.assert_awaited_once_with(1, mode="server")
         row_dto.model_dump.assert_called_with(mode="json")
@@ -8962,7 +8950,7 @@ class TestServerCharacterSourceIsolation:
             personas_screen_module.asyncio, "to_thread", blocked_to_thread
         )
         display = AsyncMock()
-        screen._display_character_page = display
+        screen._apply_character_window = display
 
         load = asyncio.create_task(screen._reload_character_page())
         await wait_for_background_signal(
@@ -9013,58 +9001,6 @@ class TestServerCharacterSourceIsolation:
         notify.assert_not_called()
         assert screen._characters == []
         assert screen._character_total == 0
-
-    async def test_stale_local_offset_clamp_cannot_mutate_newer_page(
-        self, mock_app_instance, monkeypatch
-    ):
-        """A stale offset-100 count cannot clamp or render over offset 50."""
-        import asyncio
-
-        screen = PersonasScreen(mock_app_instance)
-        screen.state.runtime_source = "local"
-        screen.state.page_offset = 100
-        screen._character_db = lambda: object()
-        started = asyncio.Event()
-        release = asyncio.Event()
-        count_calls = 0
-
-        async def interleaved_to_thread(function, *args, **kwargs):
-            nonlocal count_calls
-            if function is personas_screen_module.count_character_page:
-                count_calls += 1
-                if count_calls == 1:
-                    started.set()
-                    await release.wait()
-                    return 1
-                return 60
-            if kwargs["offset"] == 50:
-                return [{"id": 50, "name": "Newer offset winner"}]
-            return [{"id": 1, "name": "Stale clamped row"}]
-
-        monkeypatch.setattr(
-            personas_screen_module.asyncio, "to_thread", interleaved_to_thread
-        )
-        notify = Mock()
-        screen._notify = notify
-        display = AsyncMock(wraps=screen._display_character_page)
-        screen._display_character_page = display
-
-        stale = asyncio.create_task(screen._reload_character_page())
-        await wait_for_background_signal(
-            started, stale, what="the stale character page reload"
-        )
-        screen.state.page_offset = 50
-        await screen._reload_character_page()
-        assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
-
-        release.set()
-        await stale
-
-        assert screen.state.page_offset == 50
-        assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
-        assert screen._character_total == 60
-        assert display.await_count == 1
-        notify.assert_not_called()
 
     async def test_local_query_aba_drops_older_success(
         self, mock_app_instance, monkeypatch
@@ -9174,17 +9110,9 @@ class TestServerCharacterSourceIsolation:
             assert screen._characters == []
             assert screen._character_total == 0
             assert not visible_item_ids(screen)
-            # F-033: the pane count line is empty for unfiltered lists; the
-            # (zero) total shows in the merged header purpose line instead.
-            assert (
-                str(
-                    screen.query_one(
-                        "#personas-library-count",
-                        Static,
-                    ).renderable
-                )
-                == ""
-            )
+            # B2a: the newer reload failed, so the title says so (spec 1.4.2).
+            pane = screen.query_one("#personas-library-pane")
+            assert str(pane.border_title) == "Characters (?)"
             assert "· 0" in str(
                 screen.query_one("#personas-purpose", Static).renderable
             )
@@ -9214,14 +9142,14 @@ class TestServerCharacterSourceIsolation:
                 "dictionary",
                 "New Dictionary Owner",
                 "2 rules",
-                "",
+                "Chat dictionaries 1 · 1 on",
             ),
             (
                 "lore",
                 "lore",
                 "New Lore Owner",
                 "3 entries",
-                "",
+                "Lore books 1 · 1 on",
             ),
         ),
     )
@@ -9443,7 +9371,17 @@ class TestServerCharacterSourceIsolation:
         new_meta,
         new_count,
     ):
-        """A mode renderer started inside stale cleanup must publish last."""
+        """A mode renderer started inside a suspended characters cleanup must publish last.
+
+        B2a (spec 1.5.6) re-pin: on dev the newer reload's failure only
+        notified, and the cleanup that emptied the list was the stale reload's
+        own after-paint rollback. Since B2a a failed reload empties the list
+        itself (no rows of an older tag stay on screen), under the render lock,
+        and starting it stops the stale window run (one window worker at a
+        time). So the suspended empty-characters writer is now the failed
+        reload's, and the newer reload runs as a task: awaiting it inline would
+        wait on the very writer this test suspends.
+        """
         import asyncio
 
         _configure_shared_mode_sources(mock_app_instance, monkeypatch)
@@ -9520,13 +9458,14 @@ class TestServerCharacterSourceIsolation:
             )
 
             screen.state.tag_filter = None
-            await screen._reload_character_page()
+            failed_character = asyncio.create_task(screen._reload_character_page())
             release_initial_character.set()
             await wait_for_background_signal(
                 cleanup_writer_entered,
-                stale_character,
-                what="the stale reload's cleanup writer",
+                failed_character,
+                what="the failed reload's empty-list writer",
             )
+            await stale_character
 
             newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
             await wait_for_background_signal(
@@ -9535,7 +9474,7 @@ class TestServerCharacterSourceIsolation:
             await pilot.pause()
 
             release_cleanup_writer.set()
-            await stale_character
+            await failed_character
             await newer_mode
             await pilot.pause()
 
@@ -9657,7 +9596,7 @@ class TestServerCharacterSourceIsolation:
                             ("new Dictionary Owner", "on", "2 rules"),
                         ),
                     )
-                    expected_count = "1 of 1 dictionary"
+                    expected_count = "Chat dictionaries 1 of 1 · 1 on"
                 else:
                     await screen._render_lore_rows(query="new")
                     expected_rows = (
@@ -9666,14 +9605,13 @@ class TestServerCharacterSourceIsolation:
                             ("new Lore Owner", "on", "3 entries"),
                         ),
                     )
-                    expected_count = "1 of 1 lore book"
+                    expected_count = "Lore books 1 of 1 · 1 on"
                 expected_mode = source_mode
             else:
                 await screen._apply_mode("prompts")
                 expected_mode = "prompts"
                 expected_rows = ()
-                # F-033: unfiltered lists leave the pane count line empty;
-                # the total lives in the merged header purpose line.
+                # A mode with no items list leaves the title blank (B2a).
                 expected_count = ""
 
             owner_sort = f"Sort: {expected_mode} current owner"
@@ -10040,18 +9978,18 @@ class TestServerCharacterSourceIsolation:
                     ),
                 )
                 expected_count = (
-                    "1 of 1 dictionary"
+                    "Chat dictionaries 1 of 1 · 1 on"
                     if valid_mode == "dictionaries"
-                    else "1 of 1 lore book"
+                    else "Lore books 1 of 1 · 1 on"
                 )
                 expected_cache = [owner_record]
                 expected_recovery = None
             else:
                 expected_rows = ()
                 expected_count = (
-                    "Dictionaries unavailable"
+                    "Chat dictionaries (?)"
                     if valid_mode == "dictionaries"
-                    else "Lore books unavailable"
+                    else "Lore books (?)"
                 )
                 expected_cache = prior_cache
                 expected_recovery = (
@@ -10132,7 +10070,7 @@ class TestServerCharacterSourceIsolation:
 
     @pytest.mark.parametrize(
         "changed_dimension",
-        ("source", "target", "mode", "query", "sort", "tag", "offset"),
+        ("source", "target", "mode", "query", "sort", "tag", "generation"),
     )
     async def test_server_page_result_is_dropped_after_request_snapshot_changes(
         self, mock_app_instance, changed_dimension
@@ -10175,7 +10113,8 @@ class TestServerCharacterSourceIsolation:
         elif changed_dimension == "tag":
             screen.state.tag_filter = "new-tag"
         else:
-            screen.state.page_offset = personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
+            # A newer reload bumps the list generation (spec 1.5.6 fence).
+            screen._character_page_generation += 1
         release.set()
         await load
 
@@ -10254,15 +10193,18 @@ class TestServerCharacterSourceIsolation:
         assert screen._character_total == 0
         assert screen._count_cache_key is None
 
-    async def test_server_search_pages_at_api_limit_without_third_page(
+    async def test_a_full_server_search_reads_one_window_and_asks_for_no_more(
         self, mock_app_instance
     ):
+        """Spec 1.5.6 "Server": windows of 100; the search call takes no offset
+        (on dev too), so a full search is one window of 100 whose total is not
+        known (the title reads 100+, Task 6) and the list asks for no more."""
         rows = [{"id": index, "name": f"Remote {index:03d}"} for index in range(1, 121)]
 
         async def search_characters(query, *, mode, limit):
             assert query == "remote"
             assert mode == "server"
-            return {"items": rows[:limit], "total": len(rows)}
+            return {"items": rows[:limit]}
 
         service = self._server_service(rows=[])
         service.search_characters.side_effect = search_characters
@@ -10274,20 +10216,21 @@ class TestServerCharacterSourceIsolation:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             screen.state.search_query = "remote"
-            await screen._reload_character_page(reset_offset=True)
-            assert [row["id"] for row in screen._characters] == list(range(1, 51))
-
-            await screen._on_page_changed_delta(1)
-            assert [row["id"] for row in screen._characters] == list(range(51, 101))
+            await screen._reload_character_page()
+            assert [row["id"] for row in screen._characters] == list(range(1, 101))
             assert screen._character_total == 100
-            assert screen.query_one("#personas-library-next", Button).disabled is True
-
-            await screen._on_page_changed_delta(1)
-            assert screen.state.page_offset == 50
+            assert screen._character_total_known is False
+            pane = screen.query_one("#personas-library-pane")
+            assert str(pane.border_title) == "Characters 100+"
+            item_list = screen.query_one("#personas-library-rows")
+            assert item_list.more_available is False
+            item_list.focus()
+            await pilot.press("end")
+            await pilot.pause()
 
         assert [
             call.kwargs["limit"] for call in service.search_characters.await_args_list
-        ] == [51, 100]
+        ] == [100]
 
 
 class _FakePreviewGateway:

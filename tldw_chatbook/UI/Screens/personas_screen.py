@@ -28,7 +28,7 @@ from textual.css.query import QueryError
 from textual.events import Click
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.worker import Worker
+from textual.worker import Worker, WorkerCancelled, WorkerFailed
 from textual.widgets import (
     Button,
     Input,
@@ -254,8 +254,8 @@ from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaBuddyActionRequested,
     PersonaEntitySelected,
     PersonaMarksChanged,
-    PersonaPageChanged,
     PersonaSearchChanged,
+    PersonaSearchSubmitted,
     PersonaSortCycleRequested,
     PersonaTagFilterRequested,
 )
@@ -477,10 +477,14 @@ PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: window as the library search above, so a typing burst runs one Keyword
 #: generation (via the conversations controller) instead of one per keystroke.
 PERSONAS_CONVERSATION_SEARCH_DEBOUNCE_SECONDS = 0.2
-#: Rows per library page. ``page_offset`` is always kept a multiple of this so
-#: the pane's "start-end of N" label math stays exact.
-PERSONAS_LIBRARY_PAGE_SIZE = 50
+#: Rows per local database window (spec 1.5.6). Tests patch this name, and
+#: the window worker reads it through this module's globals.
+PERSONAS_LIBRARY_PAGE_SIZE = 200
+#: Rows per server window. The server search takes no offset (on dev too),
+#: so a search shows at most this many and the title reads "100+".
 _SERVER_CHARACTER_SEARCH_MAX_RESULTS = 100
+#: Every window fetch runs in this exclusive worker group (spec 1.5.6).
+_LIST_WINDOW_GROUP = "roleplay-list-window"
 _MAX_CHARACTER_ID = (1 << 63) - 1
 #: Display labels for the library sort keys (shared by the character sort cycle
 #: and the persona render path).
@@ -1398,6 +1402,22 @@ class PersonasScreen(BaseAppScreen):
         self._characters: list[dict] = []
         self._selected_server_character: tuple[str, dict] | None = None
         self._character_total: int = 0
+        # False while a server total is not known ("100+", spec 1.5.6).
+        self._character_total_known: bool = True
+        # The unfiltered COUNT, the title's "of M" while a search or tag
+        # narrows the list; None until known (spec 1.5.1).
+        self._character_unfiltered_total: int | None = None
+        # The last character reload failed: the title reads "(?)" (spec 1.4.2).
+        self._character_list_failed: bool = False
+        # The fence of the list the loaded rows (``_characters`` and the items
+        # list) belong to, set by every replace: an append extends only that
+        # list (spec 1.5.6 "Window fence").
+        self._character_rows_fence: frame_state.ListFence | None = None
+        # An End or a load-through asked for while a newer list was still
+        # loading, with that list's fence; replayed once that list lands.
+        self._deferred_window_wanted: (
+            tuple[frame_state.ListFence, str, str | None] | None
+        ) = None
         self._count_cache_key: tuple | None = None
         self._character_tags: list[str] = []
         self._profiles: list[dict] = []
@@ -2246,7 +2266,7 @@ class PersonasScreen(BaseAppScreen):
             return
         await self._drain_actor_pack_creation()
         self._advance_persona_buddy_session()
-        self._next_character_page_generation()
+        self._character_page_generation += 1
         active_mode = self.state.active_mode
         self.runtime_backend = normalized
         self._selected_server_character = None
@@ -2257,20 +2277,22 @@ class PersonasScreen(BaseAppScreen):
         self._invalidate_character_tts_controls()
         self._set_persona_editor_runtime_source(normalized)
         self._count_cache_key = None
+        self._character_unfiltered_total = None
         self._characters = []
         self._character_total = 0
         self._update_purpose_line()
         self._sync_local_character_actions()
         if self.is_mounted:
             if active_mode == "characters":
-                await self._display_character_page(
+                # Blank the list at once: no row of the old source stays on
+                # screen while the new source loads.
+                await self._apply_character_window(
+                    frame_state.ListWindowRequest(
+                        fence=self._list_fence(), offset=0, replace=True
+                    ),
                     [],
                     total=0,
-                    offset=0,
-                    sort_label=(
-                        "Sort: Server order" if normalized == "server" else "Sort: Name"
-                    ),
-                    tag_label="Tag: All",
+                    more=False,
                 )
             await self._apply_mode(active_mode)
             self._sync_title_and_console_actions()
@@ -2421,30 +2443,73 @@ class PersonasScreen(BaseAppScreen):
     async def refresh_character_library_list(
         self, characters: list[dict] | None
     ) -> None:
-        """Destination-native hook called by ``CCPCharacterHandler``.
+        """Destination-native hook ``CCPCharacterHandler`` calls after any character write.
 
-        This fires after character mutations (import/create/save/delete), so the
-        cached count may be stale; invalidate it before re-rendering the page so
-        ``_reload_character_page`` recomputes the total. ``_characters`` is set
-        here from the handler's list for compatibility, but the paged reload
-        below immediately replaces it with the current page only.
+        A write, an import or a card saved elsewhere reloads the list from the
+        anchor (spec 1.5.6 "Writes"): the run loads through every row that was
+        loaded, and the cursor and top row come back by id (a deleted cursor
+        row leaves the cursor on its neighbour at the same index). An insert
+        or delete ahead of the loaded end can therefore never shift a later
+        window into a duplicate or a skipped row (RP-080's class). The cached
+        counts are dropped first. ``characters`` is the handler's capped
+        Select list, not the items list, and is not used here.
         """
+        del characters
         self._count_cache_key = None
-        if self.state.runtime_source == "server":
-            if self.state.active_mode == "characters":
-                await self._render_library_rows()
-            return
-        self._characters = [dict(record) for record in (characters or [])]
-        self._update_purpose_line()
+        self._character_unfiltered_total = None
         if self.state.active_mode != "characters":
             return
+        anchor: frame_state.ListAnchor | None = None
         try:
-            await self._render_library_rows()
+            anchor = self.query_one(PersonasLibraryPane).list_anchor()
+        except QueryError:
+            pass
+        try:
+            await self._reload_character_page(anchor=anchor)
         except Exception:
             # Tolerate refreshes that race screen teardown.
             logger.opt(exception=True).warning(
                 "Could not render the character library rows."
             )
+
+    def _list_fence(self) -> frame_state.ListFence:
+        """What a window must still match when it arrives (spec 1.5.6 "Window fence")."""
+        server = self.state.runtime_source == "server"
+        return frame_state.ListFence(
+            mode=self.state.active_mode,
+            query=self.state.search_query,
+            sort_key=self.state.sort_key,
+            tag=self.state.tag_filter,
+            runtime_source=self.state.runtime_source,
+            server_id=self._active_server_target() if server else None,
+            generation=self._character_page_generation,
+        )
+
+    def _list_fence_is_current(self, fence: frame_state.ListFence) -> bool:
+        """Whether a window's fence still matches the live list."""
+        return fence == self._list_fence()
+
+    def _character_title(self) -> str:
+        """The items pane's border title for characters (spec 1.5.1, 1.4.2)."""
+        if self._character_list_failed:
+            return frame_state.items_border_title("character", total=0, failed=True)
+        if self.state.runtime_source == "server":
+            return frame_state.items_border_title(
+                "character",
+                total=self._character_total,
+                total_known=self._character_total_known,
+            )
+        tag = self.state.tag_filter
+        if not (self.state.search_query or tag):
+            return frame_state.items_border_title(
+                "character", total=self._character_total
+            )
+        return frame_state.items_border_title(
+            "character",
+            total=self._character_unfiltered_total,
+            matched=self._character_total,
+            tag=tag,
+        )
 
     @staticmethod
     def _build_library_rows(
@@ -3504,11 +3569,6 @@ class PersonasScreen(BaseAppScreen):
         """Return whether local character editor/DB seams still own this screen."""
         return self.state.runtime_source == "local"
 
-    def _next_character_page_generation(self) -> int:
-        """Invalidate older page work and return this request's generation."""
-        self._character_page_generation += 1
-        return self._character_page_generation
-
     def _sync_local_character_actions(self) -> None:
         """Disable every local-only character action while browsing the server."""
         if not self.is_mounted:
@@ -3561,52 +3621,6 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             return
 
-    def _server_character_request_is_current(
-        self,
-        *,
-        generation: int,
-        expected_server_id: str | None,
-        mode: str,
-        query: str,
-        sort_key: str,
-        tag: str | None,
-        offset: int,
-    ) -> bool:
-        """Return whether one server page request still owns the library."""
-        return (
-            self._character_page_generation == generation
-            and self.state.runtime_source == "server"
-            and self._active_server_target() == expected_server_id
-            and self.state.active_mode == mode
-            and self.state.search_query == query
-            and self.state.sort_key == sort_key
-            and self.state.tag_filter == tag
-            and self.state.page_offset == offset
-        )
-
-    def _local_character_request_is_current(
-        self,
-        *,
-        generation: int,
-        runtime_source: str,
-        mode: str,
-        query: str,
-        sort_key: str,
-        tag: str | None,
-        offset: int,
-    ) -> bool:
-        """Return whether one local page request still owns the library."""
-        return (
-            self._character_page_generation == generation
-            and runtime_source == "local"
-            and self.state.runtime_source == runtime_source
-            and self.state.active_mode == mode
-            and self.state.search_query == query
-            and self.state.sort_key == sort_key
-            and self.state.tag_filter == tag
-            and self.state.page_offset == offset
-        )
-
     @staticmethod
     def _character_record_mapping(value: Any) -> dict | None:
         """Return one detached character DTO mapping, if structurally valid."""
@@ -3656,258 +3670,382 @@ class PersonasScreen(BaseAppScreen):
             rows.append(record)
         return rows, total
 
-    async def _display_character_page(
+    async def _reload_server_character_page(self) -> None:
+        """Reload server-owned characters (windows of 100; the name tests drive)."""
+        await self._reload_character_page()
+
+    async def _run_list_window(self, request: frame_state.ListWindowRequest) -> None:
+        """Run one window request in the exclusive ``roleplay-list-window`` worker and wait.
+
+        A newer request cancels this one (its result is then never applied;
+        the fence drops it too). A screen whose message loop is not running
+        (built but never mounted) cannot host a worker, so it runs the same
+        request inline under the same fence.
+        """
+        if not self.is_running:
+            await self._list_window(request)
+            return
+        worker = self._start_list_window(request)
+        try:
+            await worker.wait()
+        except (WorkerCancelled, WorkerFailed):
+            return
+
+    def _start_list_window(self, request: frame_state.ListWindowRequest) -> Worker:
+        """Start one window request without waiting (scrolling, End, load-through)."""
+        return self.run_worker(
+            self._list_window(request),
+            group=_LIST_WINDOW_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(RoleplayItemList.WindowWanted)
+    def _handle_window_wanted(self, message: RoleplayItemList.WindowWanted) -> None:
+        """The list wants the next window, the rest of the list, or a row past its end."""
+        message.stop()
+        if self.state.active_mode != "characters":
+            return
+        target = message.target_id or ""
+        kind, _, item_id = target.partition(":")
+        if message.reason == "id" and kind != "character":
+            return
+        fence = self._list_fence()
+        if fence != self._character_rows_fence:
+            # A newer list (a sort, search, tag, source or write reload) has
+            # not landed, so the loaded rows are not its rows: an append would
+            # lay its rows onto them, and starting it would cancel that reload
+            # (one exclusive group). End and a load-through are asked again
+            # once the reload lands; a near-end move asks again by itself.
+            if message.reason != "near_end":
+                self._deferred_window_wanted = (
+                    fence,
+                    message.reason,
+                    message.target_id,
+                )
+            return
+        self._start_list_window(
+            frame_state.ListWindowRequest(
+                fence=fence,
+                offset=len(self._characters),
+                replace=False,
+                target_id=item_id or None,
+                to_end=message.reason == "end",
+            )
+        )
+
+    @on(PersonaSearchSubmitted)
+    async def _handle_search_submitted(self, message: PersonaSearchSubmitted) -> None:
+        """Enter in the search box: render a still-pending search now, then the first match.
+
+        On dev, Enter within the 0.2 s debounce of the last keystroke put the
+        cursor on the previous result's first row, so ``ctrl+f isolde ⏎ ⏎``
+        could open the wrong card (spec 1.6's 4-key find); B2a renders first.
+        """
+        message.stop()
+        if self._search_debounce_timer is not None:
+            self._cancel_search_debounce()
+            await self._render_search_query(
+                query=self.state.search_query, mode=self.state.active_mode
+            )
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        library.focus_first_result()
+
+    async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
+        """One window run: fetch until the request is met, fence, apply once."""
+        fence = request.fence
+        if fence.mode != "characters":
+            return
+        if fence.runtime_source == "server":
+            await self._server_list_window(request)
+            return
+        db = self._character_db()
+        if db is None:
+            return
+        term = fence.query.strip()
+        search = quote_fts5_prefix(term) if term else None
+        cache_key = (search, fence.tag)
+        target_index = (
+            request.anchor.loaded - 1
+            if request.anchor is not None and request.anchor.loaded
+            else None
+        )
+        records: list[dict] = []
+        try:
+            if request.replace and self._count_cache_key != cache_key:
+                total = await asyncio.to_thread(
+                    count_character_page, db, search_term=search, tag=fence.tag
+                )
+            else:
+                total = self._character_total
+            if (search or fence.tag) and self._character_unfiltered_total is None:
+                # The title's "of M" (spec 1.5.1); counted once, then cached
+                # until a write or a source change.
+                self._character_unfiltered_total = await asyncio.to_thread(
+                    count_character_page, db
+                )
+            offset = request.offset
+            while True:
+                window = await asyncio.to_thread(
+                    get_character_page_for_ui,
+                    db,
+                    limit=PERSONAS_LIBRARY_PAGE_SIZE,
+                    offset=offset,
+                    order_by=fence.sort_key,
+                    search_term=search,
+                    tag=fence.tag,
+                )
+                if not self._list_fence_is_current(fence):
+                    return
+                records.extend(window)
+                offset += len(window)
+                found = request.target_id is None or any(
+                    str(record.get("id")) == request.target_id
+                    for record in (
+                        *records,
+                        *([] if request.replace else self._characters),
+                    )
+                )
+                if not frame_state.window_wants_more(
+                    loaded=offset,
+                    last_window=len(window),
+                    window_rows=PERSONAS_LIBRARY_PAGE_SIZE,
+                    total=total,
+                    target_index=target_index,
+                    target_found=found,
+                    to_end=request.to_end,
+                ):
+                    break
+        except Exception as exc:
+            if not self._list_fence_is_current(fence):
+                return
+            logger.opt(exception=True).warning("Character window load failed.")
+            if request.replace:
+                # A failed reload shows no rows of an older sort, tag or source.
+                await self._apply_character_window(
+                    request, [], total=0, more=False, failed=True
+                )
+            self._notify(f"Could not load characters: {exc}", "error")
+            return
+        if request.replace and not (search or fence.tag):
+            self._character_unfiltered_total = total
+        loaded = (0 if request.replace else len(self._characters)) + len(records)
+        await self._apply_character_window(
+            request,
+            records,
+            total=total,
+            more=loaded < total,
+            cache_key=cache_key,
+        )
+
+    async def _server_list_window(self, request: frame_state.ListWindowRequest) -> None:
+        """Server-owned characters in windows of 100 (spec 1.5.6 "Server").
+
+        The list call pages by offset; the search call takes no offset (on dev
+        too), so a search reads one window of at most 100 and the title reads
+        ``100+`` when it is full. A reload first blanks the list so no row of
+        the previous source or server stays on screen.
+        """
+        fence = request.fence
+        if request.replace:
+            await self._apply_character_window(request, [], total=0, more=False)
+        if fence.server_id is None:
+            return
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        query = fence.query
+        load = getattr(
+            service, "search_characters" if query else "list_characters", None
+        )
+        if not callable(load):
+            return
+        size = _SERVER_CHARACTER_SEARCH_MAX_RESULTS
+        records: list[dict] = []
+        offset = request.offset
+        exact_total: int | None = None
+        last = 0
+        try:
+            while True:
+                if query:
+                    response = await load(query, mode="server", limit=size)
+                else:
+                    response = await load(mode="server", limit=size, offset=offset)
+                if not self._list_fence_is_current(fence):
+                    return
+                window, server_total = self._server_character_rows(response)
+                if server_total is not None:
+                    exact_total = server_total
+                records.extend(window)
+                offset += len(window)
+                last = len(window)
+                found = request.target_id is None or any(
+                    str(record.get("id")) == request.target_id for record in records
+                )
+                if query or not frame_state.window_wants_more(
+                    loaded=offset,
+                    last_window=last,
+                    window_rows=size,
+                    total=exact_total,
+                    target_found=found,
+                    to_end=request.to_end,
+                ):
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if not self._list_fence_is_current(fence):
+                return
+            logger.warning("Server character page load failed.")
+            if request.replace:
+                await self._apply_character_window(
+                    request, [], total=0, more=False, failed=True
+                )
+            self._notify("Could not load server characters.", "error")
+            return
+        exhausted = last < size
+        if exact_total is not None:
+            total, total_known = exact_total, True
+        else:
+            total, total_known = offset, exhausted
+        more = (
+            not query
+            and not exhausted
+            and (exact_total is None or offset < exact_total)
+        )
+        await self._apply_character_window(
+            request, records, total=total, more=more, total_known=total_known
+        )
+
+    async def _apply_character_window(
         self,
+        request: frame_state.ListWindowRequest,
         records: list[dict],
         *,
         total: int,
-        offset: int,
-        sort_label: str,
-        tag_label: str,
-        request_is_current: Callable[[], bool] | None = None,
-        commit_page_offset: bool = False,
-        commit_count_cache: bool = False,
-        count_cache_key: tuple | None = None,
+        more: bool,
+        total_known: bool = True,
+        cache_key: tuple | None = None,
+        failed: bool = False,
     ) -> None:
-        """Commit and render one already-fenced character page."""
+        """Commit one fenced character window to the screen and the list (spec 1.5.6).
+
+        A replace calls ``set_options`` once (through ``update_rows``) and
+        restores the cursor and top row by id; an append calls ``add_options``
+        once with the ids not yet listed. Screen state is committed before the
+        pane is looked up, so a screen without its pane still records it.
+        """
+        fence = request.fence
         async with self._render_lock:
-            if request_is_current is not None and not request_is_current():
+            if not self._list_fence_is_current(fence):
                 return
-            if commit_page_offset:
-                self.state.page_offset = offset
-            if commit_count_cache:
-                self._count_cache_key = count_cache_key
-            self._characters = records
-            self._character_total = total
+            if request.replace:
+                self._count_cache_key = cache_key
+                self._characters = [dict(record) for record in records]
+                self._character_total = total
+                self._character_total_known = total_known
+                self._character_list_failed = failed
+                self._character_rows_fence = fence
+            else:
+                other_list = fence != self._character_rows_fence
+                if other_list or request.offset != len(self._characters):
+                    # The loaded rows belong to another list, or another
+                    # window landed first: an append never extends them.
+                    return
+                self._characters.extend(dict(record) for record in records)
+                # A server list with no total learns it window by window:
+                # "100+" until a short window arrives (spec 1.5.6 "Server").
+                self._character_total = max(total, len(self._characters))
+                self._character_total_known = total_known
             self._update_purpose_line()
             try:
                 library = self.query_one(PersonasLibraryPane)
             except QueryError:
                 return
-            await library.update_rows(
-                self._build_library_rows(records, "character"),
-                total=total,
-                noun="characters",
-                page_offset=offset,
-                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+            rows = self._build_library_rows(records, "character")
+            filtered = fence.runtime_source != "server" and bool(
+                fence.query or fence.tag
             )
-            if request_is_current is not None and not request_is_current():
-                self._count_cache_key = None
-                self._characters = []
-                self._character_total = 0
-                self._update_purpose_line()
-                if self.state.active_mode != "characters":
-                    return
-                if self.state.runtime_source == "server":
-                    current_sort_label = "Sort: Server order"
-                    current_tag_label = "Tag: All"
-                else:
-                    current_sort_labels = dict(self._character_sort_cycle())
-                    current_sort_label = (
-                        f"Sort: {current_sort_labels.get(self.state.sort_key, 'Name')}"
-                    )
-                    current_tag_label = (
-                        f"Tag: {self.state.tag_filter}"
-                        if self.state.tag_filter
-                        else "Tag: All"
-                    )
-                library.set_sort_label(current_sort_label)
-                library.set_tag_label(current_tag_label)
+            if request.replace:
                 await library.update_rows(
-                    (),
-                    total=0,
+                    rows,
+                    total=(self._character_unfiltered_total or total)
+                    if filtered
+                    else total,
                     noun="characters",
-                    page_offset=self.state.page_offset,
-                    page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+                    filtered=filtered,
+                    matched=total,
+                    title=self._character_title(),
+                    anchor=request.anchor,
                 )
-                return
-            library.set_sort_label(sort_label)
-            library.set_tag_label(tag_label)
+                if not self._list_fence_is_current(fence):
+                    # The fence moved while the rows painted (a mode, query,
+                    # sort, tag or source change): the screen keeps none of
+                    # this window, as on dev. The newer owner paints its own
+                    # rows once it takes the render lock.
+                    self._count_cache_key = None
+                    self._characters = []
+                    self._character_total = 0
+                    self._character_rows_fence = None
+                    self._update_purpose_line()
+                    return
+            else:
+                library.item_list.append_rows(rows)
+                library.set_title(self._character_title(), total=self._character_total)
+            library.item_list.set_more_available(more)
+            if fence.runtime_source == "server":
+                library.set_sort_label("Sort: Server order")
+                library.set_tag_label("Tag: All")
+            else:
+                labels = dict(self._character_sort_cycle())
+                library.set_sort_label(f"Sort: {labels.get(fence.sort_key, 'Name')}")
+                library.set_tag_label(f"Tag: {fence.tag}" if fence.tag else "Tag: All")
+            selected = self.state.selected_entity_id
             if (
-                self.state.selected_entity_kind == "character"
-                and self.state.selected_entity_id
+                request.replace
+                and self.state.selected_entity_kind == "character"
+                and selected
             ):
-                library.mark_active_row("character", self.state.selected_entity_id)
+                # One window per keystroke (AC#8): the open item is marked if
+                # this window holds it, never fetched past it.
+                library.mark_active_row(
+                    "character",
+                    selected,
+                    move_cursor=request.anchor is None,
+                    load_through=False,
+                )
+            if request.to_end:
+                library.item_list.move_to_end()
+            deferred = self._deferred_window_wanted
+            if request.replace and deferred is not None and (records or more):
+                # End or a load-through asked for while this list loaded:
+                # replay it on the landed list (an older list's is dropped).
+                self._deferred_window_wanted = None
+                asked_for, reason, target_id = deferred
+                if asked_for == fence and reason == "end":
+                    library.item_list.action_last()
+                elif asked_for == fence and target_id is not None:
+                    library.item_list.set_active(target_id)
 
-    async def _reload_server_character_page(
-        self, *, reset_offset: bool = False
+    async def _reload_character_page(
+        self, *, anchor: frame_state.ListAnchor | None = None
     ) -> None:
-        """Load one server-owned page through the existing character scope service."""
-        generation = self._next_character_page_generation()
-        if reset_offset:
-            self.state.page_offset = 0
-        mode = self.state.active_mode
-        query = self.state.search_query
-        sort_key = self.state.sort_key
-        tag = self.state.tag_filter
-        offset = self.state.page_offset
-        expected_server_id = self._active_server_target()
+        """Reload the character list from row 0 in one window run (spec 1.5.6).
 
-        def request_is_current() -> bool:
-            return self._server_character_request_is_current(
-                generation=generation,
-                expected_server_id=expected_server_id,
-                mode=mode,
-                query=query,
-                sort_key=sort_key,
-                tag=tag,
-                offset=offset,
-            )
-
-        await self._display_character_page(
-            [],
-            total=0,
-            offset=offset,
-            sort_label="Sort: Server order",
-            tag_label="Tag: All",
-            request_is_current=request_is_current,
-            commit_count_cache=True,
-            count_cache_key=None,
-        )
-        if not request_is_current():
-            return
-        if expected_server_id is None:
-            return
-
-        service = getattr(self.app_instance, "character_persona_scope_service", None)
-        method_name = "search_characters" if query else "list_characters"
-        load_characters = getattr(service, method_name, None)
-        if not callable(load_characters):
-            return
-        try:
-            if query:
-                response = await load_characters(
-                    query,
-                    mode="server",
-                    limit=min(
-                        offset + PERSONAS_LIBRARY_PAGE_SIZE + 1,
-                        _SERVER_CHARACTER_SEARCH_MAX_RESULTS,
-                    ),
-                )
-                page_start = offset
-            else:
-                response = await load_characters(
-                    mode="server",
-                    limit=PERSONAS_LIBRARY_PAGE_SIZE + 1,
-                    offset=offset,
-                )
-                page_start = 0
-            records, exact_total = self._server_character_rows(response)
-            page_end = page_start + PERSONAS_LIBRARY_PAGE_SIZE
-            page_records = records[page_start:page_end]
-            has_more = len(records) > page_end
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            if not request_is_current():
-                return
-            logger.warning("Server character page load failed.")
-            self._notify("Could not load server characters.", "error")
-            return
-
-        if not request_is_current():
-            return
-
-        inferred_total = offset + len(page_records) + (1 if has_more else 0)
-        total = exact_total if exact_total is not None else inferred_total
-        display_total = max(total, inferred_total)
-        if query:
-            display_total = min(display_total, _SERVER_CHARACTER_SEARCH_MAX_RESULTS)
-        await self._display_character_page(
-            page_records,
-            total=display_total,
-            offset=offset,
-            sort_label="Sort: Server order",
-            tag_label="Tag: All",
-            request_is_current=request_is_current,
-        )
-
-    async def _reload_character_page(self, *, reset_offset: bool = False) -> None:
-        """Load and render one page of characters from the selected source.
-
-        Local DB count/list work remains off-thread. Server mode delegates to
-        the existing source-aware scope service and never consults local rows.
+        A keystroke, a sort, a tag, a mode switch or a source change passes no
+        anchor and reads one window. A write passes the list's anchor, so the
+        run loads through every row that was loaded before applying once.
         """
-        if self.state.runtime_source == "server":
-            await self._reload_server_character_page(reset_offset=reset_offset)
-            return
-        generation = self._next_character_page_generation()
-        if reset_offset:
-            self.state.page_offset = 0
-        runtime_source = self.state.runtime_source
-        mode = self.state.active_mode
-        query = self.state.search_query
-        sort_key = self.state.sort_key
-        tag = self.state.tag_filter
-        requested_offset = self.state.page_offset
-        page_offset = requested_offset
-        search = self._fts_match_query()
-        db = self._character_db()
-        if db is None:
-            return
-        cache_key = (search, tag)
-
-        def request_is_current() -> bool:
-            return self._local_character_request_is_current(
-                generation=generation,
-                runtime_source=runtime_source,
-                mode=mode,
-                query=query,
-                sort_key=sort_key,
-                tag=tag,
-                offset=requested_offset,
+        self._character_page_generation += 1
+        await self._run_list_window(
+            frame_state.ListWindowRequest(
+                fence=self._list_fence(), offset=0, replace=True, anchor=anchor
             )
-
-        try:
-            if self._count_cache_key == cache_key:
-                total = self._character_total
-            else:
-                total = await asyncio.to_thread(
-                    count_character_page, db, search_term=search, tag=tag
-                )
-            # Clamp a now-out-of-range offset back onto the last page.
-            if page_offset > 0 and page_offset >= total:
-                page_offset = max(
-                    0,
-                    ((total - 1) // PERSONAS_LIBRARY_PAGE_SIZE)
-                    * PERSONAS_LIBRARY_PAGE_SIZE,
-                )
-            records = await asyncio.to_thread(
-                get_character_page_for_ui,
-                db,
-                limit=PERSONAS_LIBRARY_PAGE_SIZE,
-                offset=page_offset,
-                order_by=sort_key,
-                search_term=search,
-                tag=tag,
-            )
-        except Exception as exc:
-            if not request_is_current():
-                return
-            logger.opt(exception=True).warning("Character page load failed.")
-            self._notify(f"Could not load characters: {exc}", "error")
-            return
-        # Freshness guard: a filter/page/mode change during the off-thread reads
-        # supersedes this render. (is_mounted is deliberately NOT checked: it is
-        # still False while the initial on-mount refresh runs; teardown is
-        # tolerated instead by catching the pane QueryError below.)
-        if not request_is_current():
-            return
-        sort_labels = dict(self._character_sort_cycle())
-        await self._display_character_page(
-            records,
-            total=total,
-            offset=page_offset,
-            sort_label=f"Sort: {sort_labels.get(sort_key, 'Name')}",
-            tag_label=f"Tag: {tag}" if tag else "Tag: All",
-            request_is_current=request_is_current,
-            commit_page_offset=True,
-            commit_count_cache=True,
-            count_cache_key=cache_key,
         )
 
     async def _reload_active_library(self) -> None:
-        """Re-render whichever paginated library (characters/personas) is active."""
+        """Reload whichever list the active mode shows (sort or source change)."""
         if self.state.active_mode == "characters":
             await self._reload_character_page()
         elif self.state.active_mode == "personas":
@@ -3967,6 +4105,11 @@ class PersonasScreen(BaseAppScreen):
         expected_query: str | None = None,
         expected_mode: str | None = None,
     ) -> None:
+        """Render every persona: filtered and sorted in memory, one ``set_options``.
+
+        ``_profiles`` holds every persona (paged until exhausted by the
+        persona handler, spec 1.5.6), so there is no page to keep.
+        """
         if expected_query is None:
             expected_query = self.state.search_query
         if expected_mode is None:
@@ -3976,49 +4119,41 @@ class PersonasScreen(BaseAppScreen):
             expected_mode=expected_mode,
         ):
             return
-
-        # Personas load <=100 rows into ``_profiles`` already, so filter, sort,
-        # and page them in-memory (no FTS, no tags). "relevance" is characters-
-        # only; fall back to name_asc for the persona list.
+        # "relevance" is characters-only; personas fall back to name_asc.
         sort_key = (
             self.state.sort_key if self.state.sort_key != "relevance" else "name_asc"
         )
-        offset = self.state.page_offset
-        page_rows, total = page_persona_profiles(
+        rows_in_order, matched = page_persona_profiles(
             self._profiles,
             search_term=self.state.search_query,
             sort_key=sort_key,
-            offset=offset,
-            page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+            offset=0,
+            page_size=max(1, len(self._profiles)),
         )
-        # A narrowing filter can strand the offset past the filtered set; fall
-        # back to the last valid page so the list is never blank.
-        if not page_rows and total and offset >= total:
-            offset = (
-                (total - 1) // PERSONAS_LIBRARY_PAGE_SIZE
-            ) * PERSONAS_LIBRARY_PAGE_SIZE
-            self.state.page_offset = offset
-            page_rows, total = page_persona_profiles(
-                self._profiles,
-                search_term=self.state.search_query,
-                sort_key=sort_key,
-                offset=offset,
-                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
-            )
         async with self._render_lock:
             if not self._library_render_snapshot_is_current(
                 expected_query=expected_query,
                 expected_mode=expected_mode,
             ):
                 return
-            self._profile_total = total
-            rows = self._build_library_rows(page_rows, "persona")
+            self._profile_total = matched
+            rows = self._build_library_rows(rows_in_order, "persona")
             library = self.query_one(PersonasLibraryPane)
             recovery_state = self._profile_lookup_recovery_state
+            filtered = bool(self.state.search_query)
+            total = len(self._profiles)
             await library.update_rows(
                 rows,
                 total=total,
                 noun="personas",
+                filtered=filtered,
+                matched=matched,
+                title=frame_state.items_border_title(
+                    "persona",
+                    total=total,
+                    matched=matched if filtered else None,
+                    failed=recovery_state is not None,
+                ),
                 recovery_copy=(
                     recovery_state.visible_copy if recovery_state is not None else None
                 ),
@@ -4027,9 +4162,8 @@ class PersonasScreen(BaseAppScreen):
                     if recovery_state is not None
                     else "personas-library-recovery"
                 ),
-                page_offset=offset,
-                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
             )
+            library.item_list.set_more_available(False)
             if recovery_state is None:
                 library.set_sort_label(
                     f"Sort: {_LIBRARY_SORT_LABELS.get(sort_key, 'Name')}"
@@ -4059,9 +4193,7 @@ class PersonasScreen(BaseAppScreen):
         elif not now_searching and self.state.sort_key == "relevance":
             # Search cleared: relevance is search-only, fall back to name.
             self.state.sort_key = "name_asc"
-        # A changed search restarts paging and (for characters) invalidates the
-        # count cache so the new (search, tag) pair is recounted.
-        self.state.page_offset = 0
+        # A changed search reloads from row 0 and (for characters) recounts.
         self._count_cache_key = None
         self._cancel_search_debounce()
         query = self.state.search_query
@@ -4080,11 +4212,10 @@ class PersonasScreen(BaseAppScreen):
         await self._cycle_sort()
 
     async def _cycle_sort(self) -> None:
-        """Move ``sort_key`` to the next option and reload from page 0."""
+        """Move ``sort_key`` to the next option and reload from row 0."""
         cycle = [key for key, _ in self._character_sort_cycle()]
         current = self.state.sort_key if self.state.sort_key in cycle else cycle[0]
         self.state.sort_key = cycle[(cycle.index(current) + 1) % len(cycle)]
-        self.state.page_offset = 0
         await self._reload_active_library()
 
     @on(PersonaTagFilterRequested)
@@ -4125,29 +4256,10 @@ class PersonasScreen(BaseAppScreen):
             self._io_dialog_active = False
 
     async def _apply_tag_filter(self, tag: str | None) -> None:
-        """Set the characters tag filter, reset paging, and recount."""
+        """Set the characters tag filter and reload (and recount) from row 0."""
         self.state.tag_filter = tag
-        self.state.page_offset = 0
         self._count_cache_key = None  # (search, tag) changed → recount
         await self._reload_character_page()
-
-    @on(PersonaPageChanged)
-    async def _handle_page_changed(self, message: PersonaPageChanged) -> None:
-        message.stop()
-        await self._on_page_changed_delta(message.delta)
-
-    async def _on_page_changed_delta(self, delta: int) -> None:
-        """Move the page window by ``delta`` pages, clamped to the total."""
-        new_offset = self.state.page_offset + delta * PERSONAS_LIBRARY_PAGE_SIZE
-        total = (
-            self._character_total
-            if self.state.active_mode == "characters"
-            else self._profile_total
-        )
-        if new_offset < 0 or new_offset >= max(1, total):
-            return
-        self.state.page_offset = new_offset
-        await self._reload_active_library()
 
     def _cancel_search_debounce(self) -> None:
         """Cancel a pending search render when newer state supersedes it."""
@@ -4310,6 +4422,7 @@ class PersonasScreen(BaseAppScreen):
             else records
         )
         rows = tuple(self._dictionary_row(r) for r in visible)
+        enabled = sum(1 for r in records if r.get("enabled", r.get("is_active", True)))
         async with self._render_lock:
             if (
                 request_generation != self._dictionary_lore_request_generation
@@ -4327,6 +4440,14 @@ class PersonasScreen(BaseAppScreen):
                 total=len(records),
                 noun="dictionaries",
                 filtered=bool(needle),
+                matched=len(visible),
+                title=frame_state.items_border_title(
+                    "dictionary",
+                    total=len(records),
+                    matched=len(visible) if needle else None,
+                    enabled=enabled,
+                    failed=recovery_copy is not None,
+                ),
                 recovery_copy=recovery_copy,
             )
 
@@ -4400,6 +4521,7 @@ class PersonasScreen(BaseAppScreen):
             else records
         )
         rows = tuple(self._lore_row(r) for r in visible)
+        enabled = sum(1 for r in records if r.get("enabled", True))
         async with self._render_lock:
             if (
                 request_generation != self._dictionary_lore_request_generation
@@ -4417,6 +4539,14 @@ class PersonasScreen(BaseAppScreen):
                 total=len(records),
                 noun="lore books",
                 filtered=bool(needle),
+                matched=len(visible),
+                title=frame_state.items_border_title(
+                    "lore",
+                    total=len(records),
+                    matched=len(visible) if needle else None,
+                    enabled=enabled,
+                    failed=recovery_copy is not None,
+                ),
                 recovery_copy=recovery_copy,
             )
 
@@ -4468,7 +4598,7 @@ class PersonasScreen(BaseAppScreen):
             self._clear_character_tts_profile_suggestion()
         self._cancel_search_debounce()
         self._selected_server_character = None
-        # switch_mode resets sort_key/tag_filter/page_offset for a fresh window.
+        # switch_mode resets sort_key/tag_filter for a fresh list.
         self.state.switch_mode(mode)
         self._invalidate_character_tts_controls()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
@@ -4529,7 +4659,12 @@ class PersonasScreen(BaseAppScreen):
                     expected_query="",
                     expected_mode=mode,
                 ):
-                    await library.update_rows((), total=0, noun="personas")
+                    await library.update_rows(
+                        (),
+                        total=0,
+                        noun="personas",
+                        title=frame_state.items_border_title("persona", total=None),
+                    )
             self._show_center(None)
             self._refresh_profile_rows_worker()
         elif mode == "dictionaries":
@@ -4548,6 +4683,7 @@ class PersonasScreen(BaseAppScreen):
                         (),
                         total=0,
                         noun=MODE_LABELS.get(mode, mode).lower(),
+                        title="",
                     )
             self.query_one("#personas-mode-placeholder", Static).update(
                 self._mode_placeholder_text(mode)
@@ -14104,13 +14240,13 @@ class PersonasScreen(BaseAppScreen):
         imported_id = str(outcome.character_id)
         if not self._character_import_presentation_is_current():
             return
-        # Clear any active search (state + Input, as _apply_mode does) and reset
-        # paging so the imported character shows on page 0 of the refreshed list.
+        # Clear any active search (state + Input, as _apply_mode does) so the
+        # imported character is in the refreshed list; selecting it loads
+        # through to its row wherever it sorts (spec 1.5.6 "Load-through").
         self._cancel_search_debounce()
         self.state.search_query = ""
         if self.state.sort_key == "relevance":
             self.state.sort_key = "name_asc"
-        self.state.page_offset = 0
         try:
             self.query_one("#personas-library-search", Input).value = ""
         except Exception:

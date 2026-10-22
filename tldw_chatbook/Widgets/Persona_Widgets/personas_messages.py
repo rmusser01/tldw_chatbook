@@ -205,20 +205,16 @@ class PersonaActionRequested(Message):
         self.entity_id = entity_id
 
 
+class PersonaSearchSubmitted(Message):
+    """Enter in the library search box (frame slice B2a, spec 1.6's 4-key find)."""
+
+
 class PersonaSortCycleRequested(Message):
     """The user asked to advance the library sort (screen decides the next key)."""
 
 
 class PersonaTagFilterRequested(Message):
     """The user asked to open the tag filter (characters only)."""
-
-
-class PersonaPageChanged(Message):
-    """The user asked to move the library page window."""
-
-    def __init__(self, delta: int) -> None:
-        super().__init__()
-        self.delta = delta
 
 
 class PersonaMarksChanged(Message):
@@ -245,8 +241,8 @@ __all__ = [
     "PersonaEntitySelected",
     "PersonaMarksChanged",
     "PersonaModeChanged",
-    "PersonaPageChanged",
     "PersonaSearchChanged",
+    "PersonaSearchSubmitted",
     "PersonaSortCycleRequested",
     "PersonaTagFilterRequested",
     "PersonaWorkbenchMode",

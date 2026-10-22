@@ -37,8 +37,8 @@ from .personas_messages import (
     PersonaEntityKind,
     PersonaEntitySelected,
     PersonaMarksChanged,
-    PersonaPageChanged,
     PersonaSearchChanged,
+    PersonaSearchSubmitted,
     PersonaSortCycleRequested,
     PersonaTagFilterRequested,
 )
@@ -266,6 +266,7 @@ class RoleplayItemList(OptionList):
             top_index=anchor.top_index if anchor is not None else 0,
         )
         self._apply_pending_active()
+        self._position_changed()
         return dropped
 
     def append_rows(self, rows: Sequence[LibraryRow]) -> tuple[str, ...]:
@@ -291,6 +292,7 @@ class RoleplayItemList(OptionList):
             )
         self._window_requested = False
         self._apply_pending_active()
+        self._position_changed()
         return dropped
 
     def _restore(
@@ -346,21 +348,39 @@ class RoleplayItemList(OptionList):
 
     # ---- the loaded row and the cursor ----
 
-    def set_active(self, option_id: str | None) -> bool:
-        """Show ``option_id`` as loaded (``▸`` + bold) and move the cursor to it.
+    def set_active(
+        self,
+        option_id: str | None,
+        *,
+        move_cursor: bool = True,
+        load_through: bool = True,
+    ) -> bool:
+        """Show ``option_id`` as loaded (``▸`` + bold) and, by default, move the cursor to it.
+
+        Args:
+            option_id: The loaded row's option id, or ``None`` for none.
+            move_cursor: False after a reload from the anchor, whose cursor
+                was already restored by id.
+            load_through: False for a plain reload (a keystroke, a sort, a
+                tag): it reads one window, so a loaded item past that window
+                is marked when a later window brings it, never fetched.
 
         Returns:
-            False when the row is not loaded yet: it is kept as pending, and a
-            window is requested if rows past the loaded end exist (load-through).
+            False when the row is not loaded yet: with ``load_through`` it is
+            kept as pending, and a window is requested if rows past the loaded
+            end exist.
         """
         previous, self._active_id = self._active_id, option_id
         if previous != option_id:
             self._refresh_rows([x for x in (previous, option_id) if x is not None])
+        self._position_changed()
         if option_id is None or option_id in self._rows:
             self._pending_active = None
-            if option_id is not None:
+            if option_id is not None and move_cursor:
                 self.highlighted = self.get_option_index(option_id)
             return True
+        if not load_through:
+            return False
         self._pending_active = option_id
         if self._more_available:
             self._request_window("id", option_id)
@@ -382,6 +402,11 @@ class RoleplayItemList(OptionList):
     def move_to_end(self) -> None:
         """The cursor to the last loaded row (after End loaded every window)."""
         super().action_last()
+
+    def _position_changed(self) -> None:
+        pane = self._pane()
+        if pane is not None:
+            pane.refresh_position()
 
     # ---- windows ----
 
@@ -639,9 +664,10 @@ class PersonasLibraryPane(Vertical):
         self._import_visible: bool = True
         self._sort_visible: bool = True
         self._status_key: tuple[str, str] | None = None
-        # The count line's filter-state text from the last update_rows; the
-        # "N marked" summary overrides it while marks exist.
-        self._base_count_text: str = ""
+        # The list's COUNT total (the M of "#N of M") and whether a search or
+        # tag narrows the list (spec 1.5.1).
+        self._list_total: int | None = None
+        self._filtered: bool = False
 
     @property
     def item_list(self) -> RoleplayItemList:
@@ -656,7 +682,6 @@ class PersonasLibraryPane(Vertical):
         applies to characters (task-443), so it starts visible here too.
         """
         self.query_one("#personas-library-duplicate", Button).display = True
-        self.query_one("#personas-library-pagebar").display = False
         self._sync_control_layout()
 
     def on_resize(self, event: Resize) -> None:
@@ -709,6 +734,9 @@ class PersonasLibraryPane(Vertical):
 
     def compose(self) -> ComposeResult:
         """Compose the Library pane header, search controls, and rows.
+
+        The counts live in the pane's border titles (spec 1.5.1): the kind and
+        its count on the top border, the loaded row's ``#N of M`` on the bottom.
 
         Returns:
             Textual compose result for the Library pane.
@@ -783,23 +811,6 @@ class PersonasLibraryPane(Vertical):
         status.display = False
         yield status
         yield RoleplayItemList(id="personas-library-rows")
-        with Horizontal(id="personas-library-pagebar", classes="ds-toolbar"):
-            yield Button(
-                "<",
-                id="personas-library-prev",
-                compact=True,
-                classes="console-action-secondary",
-            )
-            yield Static(
-                "", id="personas-library-page-info", classes="destination-purpose"
-            )
-            yield Button(
-                ">",
-                id="personas-library-next",
-                compact=True,
-                classes="console-action-secondary",
-            )
-        yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
         """Gate the library toolbar's buttons for the active workbench mode.
@@ -842,9 +853,6 @@ class PersonasLibraryPane(Vertical):
         self._sort_visible = sort_visible
         self.query_one("#personas-library-sort", Button).display = sort_visible
         self.query_one("#personas-library-tag", Button).display = mode == "characters"
-        if not sort_visible:
-            # dict/lore never paginate - keep the page bar hidden.
-            self.query_one("#personas-library-pagebar").display = False
         # Which buttons render changed, so the single-row fit changed too.
         self._sync_control_layout()
         # Marks are mode-scoped: a mode switch drops them (F-040).
@@ -858,32 +866,29 @@ class PersonasLibraryPane(Vertical):
         total: int,
         noun: str,
         filtered: bool = False,
-        filtered_total_unbounded: bool = False,
+        matched: int | None = None,
+        title: str | None = None,
         recovery_copy: str | None = None,
         recovery_id: str = "personas-library-recovery",
-        page_offset: int | None = None,
-        page_size: int | None = None,
         anchor: frame_state.ListAnchor | None = None,
     ) -> None:
-        """Replace the visible rows and count line.
+        """Replace the visible rows (one ``set_options``) and the border titles.
 
         Args:
             rows: Selectable library rows to render when no recovery state is
-                active.
-            total: Total number of rows known for the current mode.
-            noun: User-facing noun used in empty and count copy.
-            filtered: Whether ``rows`` is a filtered subset of ``total``.
-            filtered_total_unbounded: Whether filtered rows came from a
-                full-library search whose total match denominator is unknown.
+                active (for characters: the loaded windows, spec 1.5.6).
+            total: The kind's total: the title's count when unfiltered, the
+                "of M" when filtered, and the density rule's item count.
+            noun: User-facing noun used in the empty copy.
+            filtered: Whether a search or tag narrows the list.
+            matched: The narrowed list's COUNT (default: ``len(rows)`` when
+                filtered, else ``total``): the M of the bottom border's
+                ``#N of M``.
+            title: The top-border title; built from the kind and the counts
+                when omitted (spec 1.5.1).
             recovery_copy: Optional multi-line recovery copy. When present, the
                 pane shows it instead of list or empty rows.
             recovery_id: Stable DOM id for the recovery copy widget.
-            page_offset: Zero-based offset of ``rows`` within ``total``. When
-                given together with ``page_size``, the pane renders a page bar
-                instead of the plain count line. ``None`` (the default)
-                preserves the pre-paging behavior for callers (dictionaries,
-                lore) that never page.
-            page_size: Page window size paired with ``page_offset``.
             anchor: Where the list stood before a reload from the anchor.
 
         Returns:
@@ -891,6 +896,14 @@ class PersonasLibraryPane(Vertical):
         """
         item_list = self.item_list
         visible_rows = () if recovery_copy else rows
+        self._filtered = filtered
+        self._list_total = (
+            None
+            if recovery_copy
+            else (
+                matched if matched is not None else (len(rows) if filtered else total)
+            )
+        )
         for dropped in item_list.show_rows(
             visible_rows, kind_total=total, anchor=anchor
         ):
@@ -903,48 +916,20 @@ class PersonasLibraryPane(Vertical):
         else:
             status = None
         await self._sync_status(status)
+        if title is None:
+            title = frame_state.items_border_title(
+                item_list.kind,
+                total=total,
+                matched=self._list_total if filtered else None,
+                failed=bool(recovery_copy),
+            )
+        self.set_title(title)
         # F-040: a mark never outlives its row - a refresh that drops a
         # marked row drops the mark with it.
         loaded = set(item_list.loaded_ids())
         pruned = [oid for oid in item_list.marked_ids() if oid not in loaded]
         if pruned:
             item_list.drop_marks(pruned)
-        pagebar = self.query_one("#personas-library-pagebar")
-        paginated = page_offset is not None and page_size is not None
-        if recovery_copy:
-            pagebar.display = False
-            self._base_count_text = f"{noun.capitalize()} unavailable"
-        elif paginated and total > page_size:
-            start = page_offset + 1 if total else 0
-            end = page_offset + len(rows)
-            self.query_one("#personas-library-page-info", Static).update(
-                f"{start}-{end} of {total} {noun}"
-            )
-            self.query_one("#personas-library-prev", Button).disabled = page_offset <= 0
-            self.query_one("#personas-library-next", Button).disabled = (
-                page_offset + page_size >= total
-            )
-            pagebar.display = True
-            self._base_count_text = ""
-        else:
-            pagebar.display = False
-            if filtered and filtered_total_unbounded:
-                match_word = "match" if len(rows) == 1 else "matches"
-                self._base_count_text = (
-                    f"Showing {len(rows)} {_singular_noun(noun)} "
-                    f"{match_word} from full library"
-                )
-            elif filtered:
-                self._base_count_text = (
-                    f"{len(rows)} of {total} {_noun_for_count(total, noun)}"
-                )
-            else:
-                # F-033: the plain total renders once, in the screen's merged
-                # purpose line ("Characters — who the AI plays · N") - the
-                # pane's own count line only speaks for filtered states.
-                self._base_count_text = ""
-        self._sync_marked_count_line()
-        if pruned:
             self._post_marks_changed()
 
     async def _sync_status(self, status: tuple[str, str] | None) -> None:
@@ -965,9 +950,62 @@ class PersonasLibraryPane(Vertical):
         container.display = status is not None
         self._status_key = status
 
-    def mark_active_row(self, kind: str, item_id: str) -> bool:
-        """Show one row as loaded and move the cursor to it (loads through when needed)."""
-        return self.item_list.set_active(option_id_for(kind, item_id))
+    def mark_active_row(
+        self,
+        kind: str,
+        item_id: str,
+        *,
+        move_cursor: bool = True,
+        load_through: bool = True,
+    ) -> bool:
+        """Show one row as loaded and move the cursor to it (``RoleplayItemList.set_active``)."""
+        return self.item_list.set_active(
+            option_id_for(kind, item_id),
+            move_cursor=move_cursor,
+            load_through=load_through,
+        )
+
+    def list_anchor(self) -> frame_state.ListAnchor:
+        """Where the list stands now: the cursor (id and index), the top row and the loaded count."""
+        item_list = self.item_list
+        return frame_state.ListAnchor(
+            cursor_id=item_list.highlighted_id(),
+            cursor_index=item_list.highlighted,
+            top_index=int(item_list.scroll_y) // max(1, item_list.density),
+            loaded=item_list.option_count,
+        )
+
+    def set_title(self, title: str, *, total: int | None = None) -> None:
+        """The top border's kind-and-count title (literal ``Content``: a tag is untrusted).
+
+        Args:
+            title: The text (``items_border_title``).
+            total: A new COUNT total for ``#N of M`` (an append keeps it).
+        """
+        if total is not None:
+            self._list_total = total
+        self.border_title = Content(title)
+        self.refresh_position()
+
+    def refresh_position(self) -> None:
+        """The bottom border's ``#N of M``: blank with nothing loaded or the row not listed (RC-10)."""
+        item_list = self.item_list
+        active = item_list.active_id
+        index = (
+            item_list.get_option_index(active)
+            if active is not None and item_list.row(active) is not None
+            else None
+        )
+        self.border_subtitle = Content(
+            frame_state.loaded_position(index, self._list_total)
+        )
+
+    def focus_first_result(self) -> None:
+        """Into the list with the cursor on the first row (Enter in the search box)."""
+        item_list = self.item_list
+        item_list.focus()
+        if item_list.option_count:
+            item_list.highlighted = 0
 
     def highlight_row(self, kind: str, item_id: str) -> bool:
         """Move only the cursor to one row (no loaded-marker change)."""
@@ -981,12 +1019,6 @@ class PersonasLibraryPane(Vertical):
 
     # ===== F-040: marks (multi-select) =====
 
-    def _sync_marked_count_line(self) -> None:
-        """The count line reports active marks ahead of filter state."""
-        marked = len(self.item_list.marked_ids())
-        text = f"{marked} marked" if marked else self._base_count_text
-        self.query_one("#personas-library-count", Static).update(text)
-
     def _post_marks_changed(self) -> None:
         marks = tuple(
             (row.kind, row.item_id, row.name) for row in self.item_list.marked_rows()
@@ -995,7 +1027,6 @@ class PersonasLibraryPane(Vertical):
 
     def marks_changed(self) -> None:
         """The list's marks changed (``m``, a mark-column click, Clear)."""
-        self._sync_marked_count_line()
         self._post_marks_changed()
 
     def clear_marks(self) -> None:
@@ -1032,12 +1063,14 @@ class PersonasLibraryPane(Vertical):
 
     @on(Input.Submitted, "#personas-library-search")
     def _search_submitted(self, event: Input.Submitted) -> None:
-        """Enter in the search box jumps into the results list."""
+        """Enter in the search box jumps into the results list.
+
+        The screen then renders a still-pending search at once and puts the
+        cursor on its first match (spec 1.6's 4-key find).
+        """
         event.stop()
-        item_list = self.item_list
-        item_list.focus()
-        if item_list.option_count:
-            item_list.highlighted = 0
+        self.focus_first_result()
+        self.post_message(PersonaSearchSubmitted())
 
     @on(OptionList.OptionSelected, "#personas-library-rows")
     def _row_selected(self, event: OptionList.OptionSelected) -> None:
@@ -1092,16 +1125,6 @@ class PersonasLibraryPane(Vertical):
     def _tag_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaTagFilterRequested())
-
-    @on(Button.Pressed, "#personas-library-prev")
-    def _prev_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(PersonaPageChanged(-1))
-
-    @on(Button.Pressed, "#personas-library-next")
-    def _next_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(PersonaPageChanged(1))
 
 
 __all__ = [

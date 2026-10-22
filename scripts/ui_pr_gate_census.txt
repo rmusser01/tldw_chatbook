@@ -152,7 +152,7 @@ Tests/UI/test_personas_avatar_render.py
 Tests/UI/test_personas_character_editor_sync.py
 Tests/UI/test_personas_character_generation_ui.py
 Tests/UI/test_personas_dictionary_validation.py
-Tests/UI/test_personas_library_pane_paging.py
+Tests/UI/test_roleplay_item_list.py
 Tests/UI/test_personas_library_rail_focus_outline.py
 Tests/UI/test_personas_preview_restore.py
 Tests/UI/test_personas_workbench_foundation.py

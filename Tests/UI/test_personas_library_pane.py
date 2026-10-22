@@ -73,10 +73,8 @@ async def test_update_rows_renders_rows_and_count():
         assert len(visible_item_ids(pilot.app.screen)) == 2
         # OBSOLETE (D14-A): spec 1.5.3 (R24) drops the list's unsaved marker;
         # the old ``is-unsaved`` row-class assertion is deleted.
-        # F-033: the plain total moved up into the screen's merged purpose
-        # line; the pane count line only speaks for filtered states now.
-        count = pilot.app.query_one("#personas-library-count", Static)
-        assert str(count.renderable) == ""
+        # B2a (spec 1.5.1): the count is the pane's top-border title.
+        assert str(pane.border_title) == "Characters 2"
 
 
 async def test_unfiltered_count_line_stays_empty():
@@ -92,8 +90,8 @@ async def test_unfiltered_count_line_stays_empty():
             noun="characters",
         )
         await pilot.pause()
-        count = pilot.app.query_one("#personas-library-count", Static)
-        assert str(count.renderable) == ""
+        assert str(pane.border_title) == "Characters 1"
+        assert str(pane.border_subtitle) == ""  # nothing loaded: no #N of M
 
 
 async def test_singular_filtered_count_uses_singular_noun():
@@ -109,8 +107,8 @@ async def test_singular_filtered_count_uses_singular_noun():
             filtered=True,
         )
         await pilot.pause()
-        count = pilot.app.query_one("#personas-library-count", Static)
-        assert str(count.renderable) == "1 of 1 dictionary"
+        # B2a: "1 of 1" in the title; the kind word comes from the list's kind.
+        assert str(pane.border_title) == "Characters 1 of 1"
 
 
 async def test_filtered_count_shows_n_of_m():
@@ -124,8 +122,7 @@ async def test_filtered_count_shows_n_of_m():
             filtered=True,
         )
         await pilot.pause()
-        count = pilot.app.query_one("#personas-library-count", Static)
-        assert "1 of 12 characters" in str(count.renderable)
+        assert str(pane.border_title) == "Characters 1 of 12"
 
 
 async def test_row_press_posts_persona_entity_selected():
@@ -497,14 +494,11 @@ async def test_m_key_marks_rows_and_posts_marks_changed():
         assert item_at(pilot.app.screen, 0).marked
         assert item_at(pilot.app.screen, 0).painted_mark
         assert not item_at(pilot.app.screen, 1).painted_mark
-        count = pilot.app.query_one("#personas-library-count", Static)
-        assert str(count.renderable) == "1 marked"
         await pilot.press("m")  # toggles off
         await pilot.pause()
         assert received[-1] == ()
         assert not item_at(pilot.app.screen, 0).marked
         assert not item_at(pilot.app.screen, 0).painted_mark
-        assert str(count.renderable) == ""
 
 
 async def test_marks_prune_when_rows_vanish_on_refresh():
@@ -533,8 +527,6 @@ async def test_marks_prune_when_rows_vanish_on_refresh():
         )
         await pilot.pause()
         assert received[-1] == ()
-        count = pilot.app.query_one("#personas-library-count", Static)
-        assert str(count.renderable) == ""
 
 
 async def test_marks_clear_on_mode_switch():
