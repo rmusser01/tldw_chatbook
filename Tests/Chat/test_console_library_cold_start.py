@@ -287,7 +287,7 @@ async def test_a_retry_that_pauses_again_says_why_it_paused_this_time(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_a_failed_build_is_not_rejoined_by_the_next_warm_up(monkeypatch):
+async def test_a_failed_build_is_not_rejoined_by_the_next_prewarm(monkeypatch):
     """Re-review MINOR 5: a build that raised is finished, not a build to join.
 
     The first warm-up's build raises; nobody else is waiting on it. The next
@@ -308,13 +308,13 @@ async def test_a_failed_build_is_not_rejoined_by_the_next_warm_up(monkeypatch):
     monkeypatch.setattr(service_module, "get_shared_rag_service", build_shared_runtime)
     service = LibraryLocalRagSearchService(SimpleNamespace())
 
-    assert await asyncio.wait_for(service.warm_up(), timeout=10) is False
-    assert await asyncio.wait_for(service.warm_up(), timeout=10) is True
+    assert await asyncio.wait_for(service.prewarm(), timeout=10) is False
+    assert await asyncio.wait_for(service.prewarm(), timeout=10) is True
     assert len(calls) == 2
 
 
 @pytest.mark.asyncio
-async def test_a_warm_up_after_a_profile_switch_does_not_join_the_old_build(
+async def test_a_prewarm_after_a_profile_switch_does_not_join_the_old_build(
     monkeypatch,
 ):
     """Re-review MINOR 4: a superseded build is not the one to wait for.
@@ -343,15 +343,47 @@ async def test_a_warm_up_after_a_profile_switch_does_not_join_the_old_build(
     try:
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.2):
-                await service.warm_up()
+                await service.prewarm()
         generation[0] = 8  # a profile switch lands while that build runs
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.2):
-                await service.warm_up()
+                await service.prewarm()
         # A third caller under the same new generation joins the second build.
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.2):
-                await service.warm_up()
+                await service.prewarm()
         assert calls == [7, 8]
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_search_logs_only_its_exception_type():
+    """Dev's TASK-35992 warning survives the move into the shared search path.
+
+    Dev logged a failed automatic retrieval from its preparation module; this
+    branch routes that search through `automatic_search_outcome`, and the
+    rebase onto dev 7700c63a68 dropped the warning with the old try block.
+    It names the exception type only -- never the query or the error text.
+    """
+    from loguru import logger
+
+    class _FailingLibrary:
+        async def search(self, *_args, **_kwargs):
+            raise RuntimeError("private query sentinel")
+
+    controller, store = _controller_for_preparation(
+        _preparation(), _FailingLibrary(), timeout=SEARCH_BUDGET
+    )
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        outcome = await controller.prepare_library_for_turn("preparation-1")
+    finally:
+        logger.remove(sink)
+
+    assert outcome.state is ConsoleTurnPreparationState.PAUSED
+    assert outcome.error_code == "library_retrieval_failed"
+    failed = [m for m in messages if "Console Library retrieval failed" in m]
+    assert len(failed) == 1 and "exception_type=RuntimeError" in failed[0]
+    assert not any("private query sentinel" in m for m in messages)

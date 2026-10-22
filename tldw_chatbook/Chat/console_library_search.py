@@ -27,6 +27,8 @@ import asyncio
 import inspect
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Chat.console_turn_preparation import (
     LIBRARY_INITIALIZATION_TIMEOUT_SECONDS,
 )
@@ -147,7 +149,11 @@ async def automatic_search_outcome(
         raise
     except TimeoutError:
         return None, "library_retrieval_timeout"
-    except Exception:  # noqa: BLE001 -- any search fault pauses the send
+    except Exception as exc:  # noqa: BLE001 -- any search fault pauses the send
+        logger.warning(
+            "Console Library retrieval failed | exception_type={}",
+            type(exc).__name__,
+        )
         return None, "library_retrieval_failed"
     finally:
         if searches.get(session_id) is search:
