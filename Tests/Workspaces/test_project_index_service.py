@@ -1633,3 +1633,68 @@ async def test_completed_refresh_history_is_bounded(tmp_path, request):
         assert all(run.error is None for run in rig.service._runs.values())
     finally:
         await rig.close()
+
+
+@private_profile_test
+async def test_history_keeps_live_retired_supervisor_until_cancelled_close_joins(
+    tmp_path, request, monkeypatch
+):
+    rig = Rig(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    bind = rig.service._bind
+    first = closing = None
+
+    @contextmanager
+    def hold_first_supervisor_tail(pin):
+        with bind(pin):
+            yield
+        if (
+            threading.current_thread().name == "project-index-owner"
+            and not entered.is_set()
+        ):
+            entered.set()
+            release.wait()
+
+    monkeypatch.setattr(rig.service, "_bind", hold_first_supervisor_tail)
+    try:
+        rig.enable()
+        first_job = rig.refresh()
+        first = rig.service._runs[first_job]
+        assert await asyncio.to_thread(entered.wait, 15)
+        assert first.native_retired and first.supervisor.is_alive()
+        assert not first.writer.is_alive()
+        for _ in range(20):
+            job = await asyncio.to_thread(rig.refresh)
+            run = rig.service._runs[job]
+            await asyncio.to_thread(run.supervisor.join, 15)
+            assert run.native_retired and not run.supervisor.is_alive()
+
+        assert (
+            rig.service._runs.get(first_job) is first
+        ), "history discarded the still-running supervisor's shutdown join record"
+        closing = asyncio.create_task(rig.close())
+        for _ in range(100):
+            if rig.service._closed:
+                break
+            await asyncio.sleep(0.01)
+        assert rig.service._closed
+        for _ in range(2):
+            closing.cancel()
+            await asyncio.sleep(0.05)
+            assert not closing.done(), "cancelled close abandoned the live supervisor"
+            assert first.supervisor.is_alive()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert not first.supervisor.is_alive()
+    finally:
+        release.set()
+        if first is not None:
+            await asyncio.to_thread(first.supervisor.join, 15)
+            assert not first.supervisor.is_alive()
+        if closing is not None and not closing.done():
+            try:
+                await closing
+            except asyncio.CancelledError:
+                pass
+        await rig.close()

@@ -2,7 +2,7 @@
 
 Date: 2026-10-20
 Status: Approved by user on 2026-10-20
-Related decision: [ADR-240](../../../backlog/decisions/240-workspace-project-context-and-folder-bound-index.md) (Accepted)
+Related decision: [ADR-241](../../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md) (Accepted)
 
 Implementation plans, in delivery order:
 
@@ -391,7 +391,7 @@ the index does not block the guidance improvement.
 
 ADR required: yes
 
-ADR path: `backlog/decisions/240-workspace-project-context-and-folder-bound-index.md`
+ADR path: `backlog/decisions/241-workspace-project-context-and-folder-bound-index.md`
 
 Reason: optional indexing introduces durable derived storage, background-worker
 ownership, a file-tool contract, and source-disclosure/revocation rules. It
@@ -473,7 +473,7 @@ or symbol graph, binary/media extraction, and cross-project search. These can be
 designed separately if a demonstrated use case requires them.
 
 ### Keyword execution clarification: bounded multi-directory units
-The keyword deliverable defines a bounded directory/read unit as potentially spanning multiple directories, subject to TOTAL256 discovered entries,256 attempted directories (including empty),256 raw iterator inspections and256 pending paths across the entire unit. Existing4MiB combined extracted-source/scratch,2MiB wire-frame and at-most-two read limits remain. Fresh parent-issued authority/exclusions and exact active job are checked before each unit; current final registry/cache admission atomically commits all receipts afterward. Changes after read admission affect at most the bounded in-flight unit and never authorize publication without the final fence. Independent directory identity/complete evidence and a durable indexed per-run attempt marker retain truthful partial coverage, explicit Resume and bounded parent memory. ADR240 records the measured reason, internal protocol/cache versioning and alternatives; semantic delivery remains separate.
+The keyword deliverable defines a bounded directory/read unit as potentially spanning multiple directories, subject to TOTAL256 discovered entries,256 attempted directories (including empty),256 raw iterator inspections and256 pending paths across the entire unit. Existing4MiB combined extracted-source/scratch,2MiB wire-frame and at-most-two read limits remain. Fresh parent-issued authority/exclusions and exact active job are checked before each unit; current final registry/cache admission atomically commits all receipts afterward. Changes after read admission affect at most the bounded in-flight unit and never authorize publication without the final fence. Independent directory identity/complete evidence and a durable indexed per-run attempt marker retain truthful partial coverage, explicit Resume and bounded parent memory. ADR241 records the measured reason, internal protocol/cache versioning and alternatives; semantic delivery remains separate.
 
 
 ## K5 query performance qualification and bounded correction
@@ -492,7 +492,7 @@ Index close must reject new finite operations and drain already admitted managem
 
 Processing include-prefix comparison preserves the current scanner casefold behavior in SQL, including Unicode, exact directory and slash-boundary descendants. Mandatory/run/current exclusions and actual filesystem containment are unchanged. Building is query-eligible only for committed compatible rows under the existing exact scope/root/policy/manifest/liveCapture gates; results are partial, never complete Ready coverage. No uncommitted read or silent scope adoption.
 
-ADR required: yes, amend existing ADR240; no duplicateADR. Reason: clarify index-owned lifecycle/cleanup contract and direct correction of existing accepted producer-consumer/search behavior; no global storage/permission interface redesign.
+ADR required: yes, amend existing ADR241; no duplicateADR. Reason: clarify index-owned lifecycle/cleanup contract and direct correction of existing accepted producer-consumer/search behavior; no global storage/permission interface redesign.
 
 
 ## Detached cache cleanup ownership receipt (final I2 correction)
@@ -507,6 +507,6 @@ Detached cleanup retains current data admission, receipt capability and all obse
 
 Attempts/retries run offloop under the complete I1 service operation owner and drain during close; no retained authority, source scan, auto-Refresh, watcher, generic collector or new Library behavior. Durable receipt remains available across process exit so UI retry does not require the old folder row or source reattachment. Disable deliberately retains its cache until live Clear; detach/archival gets revoke-first cleanup/retry. Retained empty control/CAS/receipt metadata is distinct from cached source bodies.
 
-Additional authorized exact product path: tldw_chatbook/Workspaces/project_index/lifetime.py, fixed-purpose bounded receipt capability operations only. New focused regression file: Tests/Workspaces/test_project_index_detached_cleanup.py. No new production file/schema/dependency authorized by this amendment; request exact path if a clean local module is concretely needed. ADR required yes, existing ADR240 amended before code.
+Additional authorized exact product path: tldw_chatbook/Workspaces/project_index/lifetime.py, fixed-purpose bounded receipt capability operations only. New focused regression file: Tests/Workspaces/test_project_index_detached_cleanup.py. No new production file/schema/dependency authorized by this amendment; request exact path if a clean local module is concretely needed. ADR required yes, existing ADR241 amended before code.
 
 Keyword implementation qualification (2026-10-22): source3b616994e6 passes the four blocking final requirements and is independently approved with one nonblocking Minor. Completed native-retired history is bounded, but a suspended natively retired supervisor can be pruned before its final Python bookkeeping tail exits; full physical-thread pruning remains deferred M1. This is an explicit implementation limitation, not a claim that the stricter supervisor condition is satisfied. Canonical decorated lexical p95 is151-312ms on retained20k caches; expanded admitted common667/535ms still exceeds500ms and remains an accepted measured deviation. Exact evidence/source/platform limits and every disposition are retained in Docs/superpowers/qa/2026-10-20-workspace-project-context/keyword/execution-notes.md and final-re-review.md.

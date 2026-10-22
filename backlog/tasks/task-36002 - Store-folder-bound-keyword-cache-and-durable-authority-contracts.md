@@ -10,8 +10,11 @@ labels: []
 dependencies: []
 documentation:
   - Docs/superpowers/plans/2026-10-20-workspace-project-keyword-index.md
-  - backlog/decisions/240-workspace-project-context-and-folder-bound-index.md
+  - backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
 ---
+
+
+Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
 
 ## Description
 
@@ -30,7 +33,7 @@ Provide opt-in derived project discovery with storage and revocation ownership s
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Implement K1 exactly from the keyword plan plus reconciled current-source preflight: frozen key/policy/scope/authority/page/search/live-reader contracts; schema-v1 per-binding kernel store with atomic chunk/FTS/frontier/manifest and durable job/CAS state; Workspace canonical authority witness/tombstone migration plus exact recovery catalog successor; exact excluded-cache ownership/admission/activation/retirement and inert recovery imports. Write intended RED first, then targeted store/migration/owner/fence tests; zero Library-policy or one-shot worker changes. ADR required: yes; ADR path: backlog/decisions/240-workspace-project-context-and-folder-bound-index.md; applies ADR101/102/126/174 and228-sqlite-store-kernel; no new ADR needed. Independent task review before next task.
+Implement K1 exactly from the keyword plan plus reconciled current-source preflight: frozen key/policy/scope/authority/page/search/live-reader contracts; schema-v1 per-binding kernel store with atomic chunk/FTS/frontier/manifest and durable job/CAS state; Workspace canonical authority witness/tombstone migration plus exact recovery catalog successor; exact excluded-cache ownership/admission/activation/retirement and inert recovery imports. Write intended RED first, then targeted store/migration/owner/fence tests; zero Library-policy or one-shot worker changes. ADR required: yes; ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; applies ADR101/102/126/174 and228-sqlite-store-kernel; no new ADR needed. Independent task review before next task.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

@@ -35,7 +35,7 @@ Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session
 
 Project-instruction authority callbacks run directly when already on Textual's owning thread; worker callbacks use `call_from_thread` synchronously. A dispatch confirmation that never becomes answerable is cancelled after its finite notice deadline, preserving the chat's project-instruction preference. Once-mounted decisions retain the existing detached-view pause contract. Unsent-turn Restore/Discard releases only the exact refused turn's retrieval-paused preparation; newer preparations and authored input remain owned by their own flows. Refusal and unexpected settlement diagnostics record status/error categories without draft, instruction, provider-error or endpoint bodies.
 
-Workspace project guidance (ADR-240) uses the owning run's admitted roots and
+Workspace project guidance (ADR-241) uses the owning run's admitted roots and
 final advertised readers. It prompts exploration for natural project questions
 without scanning folders on attachment or changing Library settings. Initial and
 retry dispatch retain their owning session's file aliases and Library scope when
@@ -50,7 +50,7 @@ generic local capture retain their stricter supplied-evidence/marker defaults.
 Saved Never/Automatic and Blocked/Allowed values, manual staging, evidence capture
 identity, and conversation/workspace scope intersection retain ADR-079 semantics.
 This guidance release implements no project index; the optional folder-bound
-cache described by ADR-240 requires separate implementation and qualification.
+cache described by ADR-241 requires separate implementation and qualification.
 The [guidance qualification receipts](../superpowers/qa/2026-10-20-workspace-project-context/guidance/README.md)
 record actual model/tool outcomes, saved policies and full Console snapshots,
 including platform and harness limits.

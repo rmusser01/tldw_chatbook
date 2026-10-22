@@ -44,7 +44,7 @@ At run start, `capture_run_admitted_workspace_roots` freezes the run's authority
 
 `workspace_context_note()` (TASK-33940.1, TASK-35080) tells the model how to address what it can reach: for a named workspace, each bound folder by the `root_alias` its fs_*/git_* tools accept; for the Default/global workspace — which admits no roots and therefore offers no path tools — an explicit no-project-folders note with the remediation (bind folders in a named workspace), so the model says it cannot access project files instead of confabulating.
 
-ADR-240 adds exploration guidance only after the owning run's final tool filters.
+ADR-241 adds exploration guidance only after the owning run's final tool filters.
 When authorized workspace read tools remain, natural project questions should
 inspect the relevant admitted folder, README/manifests and source as needed
 before claiming project information is unavailable. Multiple folders retain

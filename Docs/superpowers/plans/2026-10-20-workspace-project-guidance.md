@@ -1,5 +1,7 @@
 # Workspace Project Guidance Implementation Plan
 
+Current governance: [ADR-241](../../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Answer natural project questions using admitted workspace files while preserving saved Library choices and accurate source attribution.
@@ -13,7 +15,7 @@
 **Reference:** [Pinned Codex CLI source inspection](../specs/2026-10-20-codex-cli-project-context-reference.md).
 
 **ADR required:** yes, existing accepted decision.
-**ADR path:** `backlog/decisions/240-workspace-project-context-and-folder-bound-index.md`.
+**ADR path:** `backlog/decisions/241-workspace-project-context-and-folder-bound-index.md`.
 **Reason:** Implements the approved source-selection/grounding contract; no additional architectural decision is introduced in this delivery.
 
 ## Global Constraints
@@ -104,6 +106,6 @@ Implemented on `codex/workspace-project-guidance` from `bbe609a676` in the manag
 
 The five-file G3 selection has final passing evidence for all 55 node IDs across targeted runs. Actual normal-app Send completed through the real native-tool provider with the synthetic unindexed project; saved Library rows and the original-profile comparisons remained unchanged. Broader inherited failures and non-pristine warning/lint limits remain recorded in the [qualification record](../qa/2026-10-20-workspace-project-context/guidance/README.md) and its execution notes. No full suite, indexing implementation, push or merge is claimed.
 
-ADR required: yes. ADR path: `backlog/decisions/240-workspace-project-context-and-folder-bound-index.md` (guidance/mixed grounding); the Windows representation correction follows existing `backlog/decisions/101-one-shot-pinned-workspace-tool-execution.md`. No new storage or authority decision.
+ADR required: yes. ADR path: `backlog/decisions/241-workspace-project-context-and-folder-bound-index.md` (guidance/mixed grounding); the Windows representation correction follows existing `backlog/decisions/101-one-shot-pinned-workspace-tool-execution.md`. No new storage or authority decision.
 
 The final canonical-path correction has intended RED for eight direct/agent plus one mounted request and GREEN for nine narrow plus 102 covering checks (including 65 strict Library cases). One fresh actual-app mixed journey completed with owning Library labels, separate file references and unchanged saved policy/profile comparisons. [Final approval and execution rulings](../qa/2026-10-20-workspace-project-context/guidance/execution-notes.md) retain the known baseline, model and observation limits. Optional indexing remains a separate deliverable.

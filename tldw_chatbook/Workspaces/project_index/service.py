@@ -1176,7 +1176,11 @@ class ProjectIndexService:
                             if item.native_retired
                         ]
                         for job in retired[:-16]:
-                            self._runs.pop(job, None)
+                            supervisor = self._runs[job].supervisor
+                            # Native retirement precedes the supervisor's exit.
+                            # Keep its shutdown join record while it is alive.
+                            if supervisor is None or not supervisor.is_alive():
+                                self._runs.pop(job, None)
         except BaseException as error:
             run.error = error
 

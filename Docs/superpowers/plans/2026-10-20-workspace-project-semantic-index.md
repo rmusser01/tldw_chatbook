@@ -1,5 +1,7 @@
 # Optional Workspace Semantic Index Implementation Plan
 
+Current governance: [ADR-241](../../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add explicitly enabled semantic project discovery while retaining keyword search and the folder binding's live authority.
@@ -13,7 +15,7 @@
 **Reference:** [Pinned Codex CLI source inspection](../specs/2026-10-20-codex-cli-project-context-reference.md). Codex's inspected path-search session is not a semantic content index; this feature is an optional Chatbook extension.
 
 **ADR required:** yes, existing accepted decision.
-**ADR path:** `backlog/decisions/240-workspace-project-context-and-folder-bound-index.md`.
+**ADR path:** `backlog/decisions/241-workspace-project-context-and-folder-bound-index.md`.
 **Reason:** Implements its isolated semantic projection, destination consent, and atomic-generation contract. The shared-adapter scope extension below is necessary to preserve those existing boundaries rather than impersonating the Library service.
 
 ## Global Constraints

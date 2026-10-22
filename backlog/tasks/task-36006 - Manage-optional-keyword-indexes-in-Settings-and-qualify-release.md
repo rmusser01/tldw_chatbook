@@ -1,18 +1,21 @@
 ---
 id: TASK-36006
 title: Manage optional keyword indexes in Settings and qualify release
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-21 14:32'
-updated_date: '2026-10-22 03:17'
+updated_date: '2026-10-22 04:54'
 labels: []
 dependencies:
   - TASK-36005
 documentation:
   - Docs/superpowers/plans/2026-10-20-workspace-project-keyword-index.md
-  - backlog/decisions/240-workspace-project-context-and-folder-bound-index.md
+  - backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
 ---
+
+
+Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
 
 ## Description
 
@@ -33,7 +36,8 @@ Let users explicitly manage folder-bound keyword indexing and understand coverag
 - [x] #9 Detach immediately revokes index access/publication and leaves a supported durable cleanup-only retry after restart, without reattaching source authority or touching a replacement binding at the same path; failed cleanup remains truthful.
 - [x] #10 Included-folder comparisons agree between actual scanning and public keyword search for case/Unicode variants and preserve exact peer-prefix, containment and exclusion boundaries.
 - [x] #11 Committed compatible Building coverage is discoverable through Console preparation and public search with truthful partial results, preserving scope/manifest/live-source/revocation gates.
-- [x] #12 Proven-native-retired run/error history is bounded without evicting unresolved native owners, public scanner annotations describe compatibility/unit shapes, and status reloads preserve unsaved processing inputs. Qualification: full still-running-supervisor pruning is deferred as accepted nonblocking Minor M1; final-re-review.md records the exact physical-thread tail limitation, not an all-seven closure.
+- [ ] #12 Proven-native-retired run/error history stays bounded without evicting unresolved native owners or a still-running supervisor; shutdown retains and joins an interrupted supervisor through physical exit, including repeated observer cancellation. Scanner annotations and dirty-input preservation remain covered. The prior deferred M1 qualification is resolved rather than carried into the PR.
+- [ ] #13 The rebased guidance/keyword composition preserves current dev dispatch/retry, Settings ownership and application shutdown behavior under selected integration checks; all saved Library policy/scope combinations and embedding-independent keyword operation remain intact.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,7 +49,7 @@ Let users explicitly manage folder-bound keyword indexing and understand coverag
 4. Qualify final service/store/tool path on at least20,000 text files across20,000 nested/sibling folders plus a separate20,000-file single directory. Retain stable private corpora, real marker response, machine/corpus/throughput/baseline+peak-extraRSS/whole-binding disk and sidecars/cancellation retirement/candidate p50p95/live-validation separately; missing embeddings and blocked sockets must not affect keyword operation. No nominal scanner-only substitution.
 5. Update architecture/user docs and retained QA evidence, run targeted new project-index files and relevant UI governance/CSS checks, scoped lint/format/diff and self-review, then independent spec/quality gate.
 ADR required: yes, existing accepted ADR.
-ADR path: backlog/decisions/240-workspace-project-context-and-folder-bound-index.md.
+ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md.
 Reason: direct implementation of accepted folder-bound storage/tool/management/revocation contracts, alongside ADR101/102/126/150/161/174; no new dependency, semantic implementation, Library policy mutation or navigation API; later steps explicitly authorize cachev3 under ADR240.
 6. Retire newly opened registry connections at both writer/supervisor owner boundaries using existing operation_owned_connection injected by runtime. Preserve borrowed ownership and per-call guards; require native-close proof before lifetime/pin/read release, retain failed ownership, and prove actual post-writer/query maintenance drain plus encrypted rollback old-key refusal. This is a concrete K5 recovery gate correction under ADR240/126/228, not authority caching or a global storage change.
 7. Implement the accepted bounded multi-directory unit amendment from the keyword plan/ADR240: closed index-only protocol v2, aggregate unit bounds and atomic prepared publication; cache schema v3 indexed attempt revision replaces visited-directory memory. Preserve current admission per unit and final fence, exact job/epoch, identity/completion/pruning/replay, explicit Resume and all native resource limits. Reproduce boundary regressions before code, verify efficient durable frontier, then compare same12-file passive phase baseline before root-approved full literal corpus run. No global admission cache, ordinary executor change, Library mutation or semantic work.
@@ -76,6 +80,8 @@ Reason: direct implementation of accepted folder-bound storage/tool/management/r
 20. I2 concrete contract: <=4096byte immutable cleanup-owner-v1.lock in exact existing binding group, closed JSONv1 ownership IDs/revision only; actual no-follow/single-link native capability receipt I/O, private parent, quota charge and live-only enrollment/repair before cached contents. No registry fence over native acquisition/flush/bulkcleanup. Detached retry holds current+observed native lifetimes/data pin, validates all catalogs and later tombstone/archived exactowner, serializes same-ID replacement/Enable and refuses unknown legacy ownership. Async detach/archive hints plus Settings Workspaces Retry removed-folder cache cleanup cold-restart entrypoint; complete I1 operation drain. Reuse existing clear_owned_namespace/reclaim/headroom; legacy Clear never requires enrollment allocation/migration. ADR240 existing amended before I2 code; no schema/source authority/global collector.
 
 21. Final scoped review approves with one nonblocking M1 supervisor-tail residual. Explicitly qualify AC12 and retain its source-backed future correction, close the feature with that accepted debt and the measured admitted-latency deviation, retain all reports/raw/visual/ruling evidence and preserve the local branch/worktree. Existing ADR240 applies; no second fix wave, full sweep or integration.
+
+22. Newly user-authorized dev integration: preserve latest-dev2a5afa03b31f60e00bdcd10a161e3e351fad023b dispatch/retry/Settings/lifecycle behavior while replaying guidance and keyword indexing. Rebase completed99857a64e7 with only two documentation unions and all production/test patches retained; structural checks alone are not runtime proof. Resolve the sole introduced ADR240 collision by renumbering the unmerged project ADR to241 after all-ref/open-PR verification (landed MCP240 keeps ownership). Update active governance/real Markdown link targets, preserve historical raw receipts/hashes/rulings and source-qualified old labels. Before M1 code, establish actual interrupted-supervisor RED after native retirement with20later completions and cancellation/close barrier; apply the smallest eviction liveness predicate, run regression plus normal bounded history and affected native shutdown controls. Run selected latest-dev controller/bridge/Settings/lifecycle and Library-preservation checks, source-derived short CI guards, scoped lint/format/diff and fresh exact-dev-range independent requesting-code-review. Address all new review findings, then satisfy current-head Qodo/threads/required CI and merge via enabled queue. ADR required:yes, existing accepted project decision renumbered to backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; no new storage/permission architecture for this correction.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -89,11 +95,15 @@ Final covering4failed75passed1684.90s preserved; four fixture expectations super
 
 Historical literal20k files across20,200subfolders and separate20k-file single-folder builds remain source-qualified for unchanged worker/publication paths; final lifecycle enrollment adds setup, so build durations are not exact-final-source timings. Windows/headless/native qualification only; staged encrypted recovery, simulated optional-dependency absence and blocked sockets retain their limits. No full suite or hosted/live-provider claim. Final scoped core Ruff/format/diff pass; shared comparison91inherited/0introduced findings; earlier governance/source-attributed failures retained.
 
-ADR required:yes, existing backlog/decisions/240-workspace-project-context-and-folder-bound-index.md amended before ownership/schema changes; ADR101/102/126/174/228 apply. Exact reports,50new raw/source artifacts, original184K5 receipts, current/historical visuals and every chronological ruling/cost are retained in Docs/superpowers/qa/2026-10-20-workspace-project-context/keyword/execution-notes.md and final-re-review.md. Original checkout/user data untouched. Branch/worktree/corpora preserved; no push/PR/merge.
+ADR required:yes, existing backlog/decisions/241-workspace-project-context-and-folder-bound-index.md amended before ownership/schema changes; ADR101/102/126/174/228 apply. Exact reports,50new raw/source artifacts, original184K5 receipts, current/historical visuals and every chronological ruling/cost are retained in Docs/superpowers/qa/2026-10-20-workspace-project-context/keyword/execution-notes.md and final-re-review.md. Original checkout/user data untouched. Branch/worktree/corpora preserved; no push/PR/merge.
+
+Reopened by explicit user instruction for latest-dev PR/review/all-issues/merge. Prior local approval/latency/M1 decisions remain historical evidence; remaining M1 will now be fixed under the new AC12, with source-qualified latest-dev regression/CI proof. No second implementation of guidance or keyword work is requested. Semantic indexing starts after this PR merges.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Implemented optional folder-bound keyword indexing with preserved Library choices. Independent final approval:0Critical0Important1acceptedMinor(M1 supervisor bookkeeping tail); canonical query target passes, expanded admitted common667/535ms remains accepted deviation. Exact source3b616994e6, all targeted/source/native/visual evidence and limitations retained in keyword QA execution-notes.md; branch/worktree preserved, no external integration.
+
+Reopened for newly requested dev integration and full M1 resolution; previous completion summary describes original local delivery.
 <!-- SECTION:FINAL_SUMMARY:END -->

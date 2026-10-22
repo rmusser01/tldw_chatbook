@@ -721,7 +721,7 @@ COMMIT;
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (8)")
 
     def _migrate_v8_to_v9(self) -> None:
-        """Install non-cascading binding authority witnesses atomically (ADR-240)."""
+        """Install non-cascading binding authority witnesses atomically (ADR-241)."""
         with self.transaction(immediate=True) as conn:
             for statement in self._MIGRATE_V8_TO_V9_STATEMENTS:
                 conn.execute(statement)

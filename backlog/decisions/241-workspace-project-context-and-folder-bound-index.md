@@ -1,4 +1,6 @@
-# ADR-240: Workspace project context and folder bound indexing
+# ADR-241: Workspace project context and folder bound indexing
+
+Renumbered from ADR-240 during latest-dev integration on 2026-10-22. The landed MCP/Settings decision retains ADR-240; historical project-index receipts and chronological rulings use their original source-era number. The decision and accepted contracts are otherwise unchanged.
 
 Status: Accepted (user approved the design on 2026-10-20)
 Date: 2026-10-20
@@ -310,7 +312,7 @@ Index close must reject new finite operations and drain already admitted managem
 
 Processing include-prefix comparison preserves the current scanner casefold behavior in SQL, including Unicode, exact directory and slash-boundary descendants. Mandatory/run/current exclusions and actual filesystem containment are unchanged. Building is query-eligible only for committed compatible rows under the existing exact scope/root/policy/manifest/liveCapture gates; results are partial, never complete Ready coverage. No uncommitted read or silent scope adoption.
 
-ADR required: yes, amend existing ADR240; no duplicateADR. Reason: clarify index-owned lifecycle/cleanup contract and direct correction of existing accepted producer-consumer/search behavior; no global storage/permission interface redesign.
+ADR required: yes, amend existing ADR241; no duplicateADR. Reason: clarify index-owned lifecycle/cleanup contract and direct correction of existing accepted producer-consumer/search behavior; no global storage/permission interface redesign.
 
 
 ## Detached cache cleanup ownership receipt (final I2 correction)
@@ -325,7 +327,7 @@ Detached cleanup retains current data admission, receipt capability and all obse
 
 Attempts/retries run offloop under the complete I1 service operation owner and drain during close; no retained authority, source scan, auto-Refresh, watcher, generic collector or new Library behavior. Durable receipt remains available across process exit so UI retry does not require the old folder row or source reattachment. Disable deliberately retains its cache until live Clear; detach/archival gets revoke-first cleanup/retry. Retained empty control/CAS/receipt metadata is distinct from cached source bodies.
 
-Additional authorized exact product path: tldw_chatbook/Workspaces/project_index/lifetime.py, fixed-purpose bounded receipt capability operations only. New focused regression file: Tests/Workspaces/test_project_index_detached_cleanup.py. No new production file/schema/dependency authorized by this amendment; request exact path if a clean local module is concretely needed. ADR required yes, existing ADR240 amended before code.
+Additional authorized exact product path: tldw_chatbook/Workspaces/project_index/lifetime.py, fixed-purpose bounded receipt capability operations only. New focused regression file: Tests/Workspaces/test_project_index_detached_cleanup.py. No new production file/schema/dependency authorized by this amendment; request exact path if a clean local module is concretely needed. ADR required yes, existing ADR241 amended before code.
 
 
 ### Building compatible coverage proof

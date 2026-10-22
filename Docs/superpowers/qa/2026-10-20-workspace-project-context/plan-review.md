@@ -159,7 +159,7 @@ then [semantic indexing](../../plans/2026-10-20-workspace-project-semantic-index
 Saved Library choices and folder-bound cache ownership are unchanged. Guidance
 does not wait for either index. The user selected subagents for execution.
 
-[ADR-240](../../../../backlog/decisions/240-workspace-project-context-and-folder-bound-index.md)
+[ADR-240](../../../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md)
 and the [design](../../specs/2026-10-20-workspace-aware-project-context-design.md)
 carry the corrected contracts. The pinned [Codex CLI source reference](../../specs/2026-10-20-codex-cli-project-context-reference.md)
 remains a source-based comparison, not a claim that Codex supplies this durable

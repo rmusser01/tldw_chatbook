@@ -1,5 +1,7 @@
 # Optional Workspace Keyword Index Implementation Plan
 
+Current governance: [ADR-241](../../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Provide opt-in, folder-bound keyword discovery over large project trees with bounded resource use and live file authority.
@@ -13,7 +15,7 @@
 **Reference:** [Codex CLI source findings](../specs/2026-10-20-codex-cli-project-context-reference.md), especially path-search sessions, cancellation, and instruction-cache revocation. This is a durable text index; do not copy Codex's in-memory fuzzy path catalog.
 
 **ADR required:** yes, existing accepted decision.
-**ADR path:** `backlog/decisions/240-workspace-project-context-and-folder-bound-index.md`.
+**ADR path:** `backlog/decisions/241-workspace-project-context-and-folder-bound-index.md`.
 **Reason:** Implements its derived storage, worker, file-tool, disclosure, and revocation boundaries. Link ADR-101/102/126/174 in the implementing Backlog tasks.
 
 ## Global Constraints
@@ -353,7 +355,7 @@ Processing producer alignment: Ruling: Align scanner empty-prefix/empty-suffix p
 
 Ruling: Begin the single independent K5 task review on an exact frozen source commit while the remaining targeted qualification runs, rather than serially wait through the long regression run. Source implementation/formatting is complete and both literal corpora are retired; review is read-only and no second reviewer seat is added. Cost is explicit pending-evidence qualification and a possible scoped rereview if verification later changes source. Reviewer may inspect source now but cannot close the gate until all required final receipts are available and judged; no downstream implementation or task Done is allowed early. Keep the original implementer solely responsible for verification and any later fixes.
 ADR required: no new ADR
-ADR path: backlog/decisions/240-workspace-project-context-and-folder-bound-index.md
+ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
 Reason: workflow scheduling only; existing product/storage/security decisions remain unchanged.
 
 

@@ -1,6 +1,6 @@
 # Folder-bound keyword indexing
 
-Optional keyword indexes belong to an explicit local workspace folder binding. They are off by default, have no filesystem watcher, and never create Library, Media, or Notes records. Semantic indexing is a separate delivery. Governance: [ADR-240](../../backlog/decisions/240-workspace-project-context-and-folder-bound-index.md), ADR-126 (storage admission), ADR-174 (binding exclusions), and ADR-150/161 (UI).
+Optional keyword indexes belong to an explicit local workspace folder binding. They are off by default, have no filesystem watcher, and never create Library, Media, or Notes records. Semantic indexing is a separate delivery. Governance: [ADR-241](../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md), ADR-126 (storage admission), ADR-174 (binding exclusions), and ADR-150/161 (UI).
 
 ## Source map
 
@@ -28,7 +28,7 @@ Enable configures a policy without scanning. Refresh explicitly starts a scan. P
 
 Every management effect carries an expected scope; job actions additionally carry the expected job ID/revision. `policy(scope)` reads saved choices under registry/store admission and refuses stale scopes. Management surfaces use `management_snapshot(key)` to read immutable status, exact-scope policy and a validated upgrade-required flag without allocating an older cache upgrade. A legacy cache never appears query-ready; Clear remains available even when migration headroom is insufficient. Processing prefixes compare casefolded path/prefix text at both scan and SQL boundaries, with exact-or-slash-descendant matching; physical containment and exclusion floors remain independent. Empty include-prefix or suffix tuples mean all eligible folders/text; Settings preserves those and partly empty choices exactly. Settings captures these values before dispatch, so an Enable queued before Clear cannot silently reacquire a newer scope. Each card also fences completion by mounted visit, request and exact workspace/binding. Status refresh preserves dirty local input, including edits made before initial load finishes. Successful Enable/Apply updates input only if it still matches the submitted text. Status polling while Building does not scan. Console status uses its captured selected binding and binding generation; Settings navigation occurs after modal-owned lanes retire and the modal closes.
 
-`last_scan_at` is unit publication activity, displayed as **Last scan activity**. It is not a separate last-success timestamp while a newer build is in progress. Committed compatible Building rows remain discoverable through Console and public search, always reporting partial evidence. A build with no compatible committed rows under the current policy and requesting run exclusion floor is not advertised as useful coverage. The boolean metadata check and ranked query share the same eligibility predicate. Every candidate and final result retains exact scope, authority, manifest and live identity/hash checks. Ready certifies completed enumeration under the current policy; Partial, Paused, Interrupted and Error remain distinct.
+`last_scan_at` is unit publication activity, displayed as **Last scan activity**. New scan-activity and cleanup-receipt timestamps use the shared canonical millisecond UTC `Z` format (ADR-173); existing offset timestamps remain readable. It is not a separate last-success timestamp while a newer build is in progress. Committed compatible Building rows remain discoverable through Console and public search, always reporting partial evidence. A build with no compatible committed rows under the current policy and requesting run exclusion floor is not advertised as useful coverage. The boolean metadata check and ranked query share the same eligibility predicate. Every candidate and final result retains exact scope, authority, manifest and live identity/hash checks. Ready certifies completed enumeration under the current policy; Partial, Paused, Interrupted and Error remain distinct.
 
 ## Bounded units and cache upgrades
 
@@ -81,6 +81,8 @@ CAS and ownership metadata remain. Failed native close retains the actual owners
 and fails service close; an ordinary reclamation failure with all owners retired
 remains explicitly retryable.
 
-Fully retired writer history keeps only sixteen records, without exception
-tracebacks. Unresolved native owners are never pruned. Scanner typing documents
+Fully retired writer history keeps sixteen diagnostic records, without exception
+tracebacks. Unresolved native owners and physically live supervisors retain their
+shutdown join records beyond that tail; close joins them despite repeated observer
+cancellation. Scanner typing documents
 both singleton `ScanPage` compatibility and production callback/`ScanUnit` handoff.

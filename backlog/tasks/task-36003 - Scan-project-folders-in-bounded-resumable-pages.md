@@ -11,8 +11,11 @@ dependencies:
   - TASK-36002
 documentation:
   - Docs/superpowers/plans/2026-10-20-workspace-project-keyword-index.md
-  - backlog/decisions/240-workspace-project-context-and-folder-bound-index.md
+  - backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
 ---
+
+
+Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
 
 ## Description
 

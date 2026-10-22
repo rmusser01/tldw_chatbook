@@ -2,7 +2,7 @@
 
 Status: implemented and independently approved with one nonblocking Minor (0 Critical,0 Important,1 Minor). All four blocking findings plus M2/M3 are addressed; M1 is substantially fixed with the supervisor-tail residual explicitly parked. Final canonical query target passes; expanded admitted common-query500ms remains an independently accepted measured deviation.
 
-Scope: explicit per-local-folder keyword indexing, Off by default; preserve saved Library controls and scopes; no retained Library copies. Semantic indexing is a separate deliverable. [ADR240](../../../../../backlog/decisions/240-workspace-project-context-and-folder-bound-index.md). [Implementation plan](../../../plans/2026-10-20-workspace-project-keyword-index.md).
+Scope: explicit per-local-folder keyword indexing, Off by default; preserve saved Library controls and scopes; no retained Library copies. Semantic indexing is a separate deliverable. [ADR240](../../../../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md). [Implementation plan](../../../plans/2026-10-20-workspace-project-keyword-index.md).
 
 Implementation base43054ffa6f02ef4ffc57c0e49ce5b169a5dd5e23. Branch codex/workspace-project-keyword-index in the managed Windows worktree. Python3.12.10 and existing dependencies, no installs. Original checkout and user data untouched. Synthetic private corpora/profile only.
 

@@ -14,7 +14,7 @@ from Tests.Workspaces.project_index_support import (
 from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 
 
-def enabled_store(tmp_path):
+def enabled_store(tmp_path, *, owner_token="owner-1"):
     store = open_index_store(tmp_path)
     key = make_index_key(tmp_path)
     scope = store.configure(
@@ -25,7 +25,7 @@ def enabled_store(tmp_path):
     )
     claim = store.claim_job(
         scope,
-        owner_token="owner-1",
+        owner_token=owner_token,
         authority_revision=1,
         expected_job_revision=store.load_status(key).job_revision,
     )
@@ -612,6 +612,12 @@ def test_scan_unit_atomic_receipts_replay_and_indexed_attempt_frontier(tmp_path)
         )
         assert store.load_status(key).manifest_revision == status.manifest_revision
         with store.connection() as connection:
+            assert (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+                ).fetchone()
+                is None
+            )
             plan = " ".join(
                 str(row[3])
                 for row in connection.execute(
@@ -983,5 +989,40 @@ def test_lexical_exclusion_predicates_match_live_oracle_before_top_k(tmp_path):
                 assert (
                     tuple(c.relative_path for c in found) == expected[:limit]
                 ), raw_floor
+    finally:
+        store.close_native()
+
+
+@pytest.mark.parametrize(
+    "operation", ["publish", "clear_revoked", "clear_owned_namespace"]
+)
+def test_index_timestamp_writers_store_canonical_utc(tmp_path, operation):
+    from tldw_chatbook.Utils.timestamps import is_canonical_utc
+
+    key = make_index_key(tmp_path)
+    store, key, scope, claim = enabled_store(
+        tmp_path, owner_token="native-v1:" + key.binding_namespace + ":timestamp-test"
+    )
+    try:
+        assert store.commit_scan_page(
+            scope,
+            claim.job_id,
+            page(),
+            expected_job_revision=claim.job_revision,
+            authority_revision=1,
+        )
+        if operation == "publish":
+            value = store.load_status(key).last_scan_at
+        else:
+            revoked = store.revoke(key, clear=False, expected_scope=scope)
+            if operation == "clear_revoked":
+                assert store.clear_revoked(revoked)
+            else:
+                store.clear_owned_namespace(key.namespace, key.binding_namespace)
+            with store.connection() as connection:
+                value = connection.execute(
+                    "SELECT cleared_at FROM cleanup_receipts WHERE epoch=(SELECT epoch FROM control)"
+                ).fetchone()[0]
+        assert is_canonical_utc(value), value
     finally:
         store.close_native()

@@ -12,8 +12,11 @@ dependencies:
   - TASK-36003
 documentation:
   - Docs/superpowers/plans/2026-10-20-workspace-project-keyword-index.md
-  - backlog/decisions/240-workspace-project-context-and-folder-bound-index.md
+  - backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
 ---
+
+
+Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
 
 ## Description
 
@@ -41,5 +44,5 @@ AC5 refinement from source audit: explicit binding-wide Clear inventories valida
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented app-owned folder-bound lifecycle and runtime admission, schema-v2 incremental membership, inherited native retirement capability, exact-scope/job management and binding-wide in-place Clear with conservative physical quota headroom. Registry-before-store publication and new-unit admission reject remote revocation; delayed cancellation targets only captured runs. Commits 7f5255e270 and485c23cf7e; independent spec/quality review and scoped fix review approved. Targeted amended service/store54passed plus test-helper3passed; native/owner/recovery30passed earlier on unchanged paths. Scoped lint/format/diff pass; inherited warning,16baseline E721 and Windows-only/POSIX-unexecuted limits retained. See Docs/superpowers/qa/2026-10-20-workspace-project-context/keyword/task-3-report.md, task-3-review.md, task-3-re-review-1.md and k3-evidence.json. Existing ADR240 (backlog/decisions/240-workspace-project-context-and-folder-bound-index.md), ADR101/102/126/174/228 apply; refinements recorded before code. No Library/tool/UI/semantic changes. Known minor historical run retention goes to whole-branch review.
+Implemented app-owned folder-bound lifecycle and runtime admission, schema-v2 incremental membership, inherited native retirement capability, exact-scope/job management and binding-wide in-place Clear with conservative physical quota headroom. Registry-before-store publication and new-unit admission reject remote revocation; delayed cancellation targets only captured runs. Commits 7f5255e270 and485c23cf7e; independent spec/quality review and scoped fix review approved. Targeted amended service/store54passed plus test-helper3passed; native/owner/recovery30passed earlier on unchanged paths. Scoped lint/format/diff pass; inherited warning,16baseline E721 and Windows-only/POSIX-unexecuted limits retained. See Docs/superpowers/qa/2026-10-20-workspace-project-context/keyword/task-3-report.md, task-3-review.md, task-3-re-review-1.md and k3-evidence.json. Existing ADR240 (backlog/decisions/241-workspace-project-context-and-folder-bound-index.md), ADR101/102/126/174/228 apply; refinements recorded before code. No Library/tool/UI/semantic changes. Known minor historical run retention goes to whole-branch review.
 <!-- SECTION:NOTES:END -->

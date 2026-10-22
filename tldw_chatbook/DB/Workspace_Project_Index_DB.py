@@ -5,7 +5,6 @@ from __future__ import annotations
 from contextlib import nullcontext
 from dataclasses import asdict
 from functools import wraps
-from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +13,7 @@ import sqlite3
 from uuid import uuid4
 
 from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Workspaces.project_index.models import (
     MAX_CACHE_BYTES,
     MAX_ENTRIES,
@@ -924,7 +924,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             conn.execute("INSERT INTO scan_pages VALUES(?,?)", (job_id, page.digest))
             conn.execute(
                 "UPDATE control SET manifest_revision=manifest_revision+1,last_scan_at=?",
-                (datetime.now(timezone.utc).isoformat(),),
+                (utc_now_iso(),),
             )
             return True
 
@@ -1103,7 +1103,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
             conn.execute(
                 "INSERT INTO cleanup_receipts VALUES(?,?)",
-                (scope.epoch, datetime.now(timezone.utc).isoformat()),
+                (scope.epoch, utc_now_iso()),
             )
             return True
 
@@ -1152,7 +1152,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute(
                 "INSERT INTO cleanup_receipts SELECT epoch,? FROM control",
-                (datetime.now(timezone.utc).isoformat(),),
+                (utc_now_iso(),),
             )
 
     @_activated
