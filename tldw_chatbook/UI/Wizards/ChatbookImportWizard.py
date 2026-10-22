@@ -295,28 +295,25 @@ class FileSelectionStep(WizardStep):
             await self._browse_for_file()
 
     async def _browse_for_file(self) -> None:
-        """Open file browser to select chatbook."""
+        """Open file browser to select chatbook.
+
+        TASK-34000.19 fix round 1 (found live, 2026-10-22): this used to
+        ``await push_screen(file_dialog, wait_for_dismiss=True)`` from a
+        button handler. Textual 8 pushes the dialog and THEN raises
+        ``NoActiveWorker`` for a wait outside a worker, and the ``except``
+        below turned that into an "Error selecting file" toast -- so the
+        dialog showed, the user picked a file, and nothing was selected
+        (Next stayed disabled; the import could never start). The chosen
+        path now arrives through the push callback.
+        """
         try:
             # Use the enhanced file picker
             file_dialog = EnhancedFileOpen(
                 title="Select Chatbook File", filters=["*.zip"], must_exist=True
             )
-
-            file_path = await self.wizard.app_instance.push_screen(
-                file_dialog, wait_for_dismiss=True
+            await self.wizard.app_instance.push_screen(
+                file_dialog, callback=self._on_file_dialog_dismissed
             )
-
-            if file_path:
-                logger.info(
-                    f"FileSelectionStep._browse_for_file: File selected: {file_path}"
-                )
-                self.selected_file = Path(file_path)
-                self._update_file_display()
-                # Notify wizard that we can proceed
-                self.wizard.refresh_current_step()
-            else:
-                logger.info("FileSelectionStep._browse_for_file: No file selected")
-
         except Exception as e:
             logger.opt(exception=True).error(
                 f"FileSelectionStep._browse_for_file: Error selecting file: {e}"
@@ -324,6 +321,19 @@ class FileSelectionStep(WizardStep):
             self.wizard.app_instance.notify(
                 f"Error selecting file: {str(e)}", severity="error"
             )
+
+    def _on_file_dialog_dismissed(self, file_path: object) -> None:
+        """Record the dialog's choice and let the wizard re-validate."""
+        if file_path:
+            logger.info(
+                f"FileSelectionStep._browse_for_file: File selected: {file_path}"
+            )
+            self.selected_file = Path(str(file_path))
+            self._update_file_display()
+            # Notify wizard that we can proceed
+            self.wizard.refresh_current_step()
+        else:
+            logger.info("FileSelectionStep._browse_for_file: No file selected")
 
     def _update_file_display(self) -> None:
         """Update the file path display."""

@@ -3831,7 +3831,7 @@
     },
     {
       "call_count": 10,
-      "diagnostic_digest": "e17c03cfb1ed3f6a21a2",
+      "diagnostic_digest": "fd9a2546ee3810bc5184",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Wizards/ChatbookImportWizard.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -10492,12 +10492,12 @@
     {
       "candidates": [
         {
-          "call_digest": "c71e1cbd9434c868",
+          "call_digest": "f147684903d90571",
           "method": "info",
           "path_expressions": [
             "file_path"
           ],
-          "scope": "FileSelectionStep._browse_for_file",
+          "scope": "FileSelectionStep._on_file_dialog_dismissed",
           "status": "legacy_unreviewed"
         },
         {
