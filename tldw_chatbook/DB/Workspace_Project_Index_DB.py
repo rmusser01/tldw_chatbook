@@ -964,8 +964,36 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 if Path("x" + suffix).suffix.casefold() == suffix
             )
 
+            # Freeze this query's current run floor before SQLite evaluates rows.
+            # Keep the same normalization as the live-validation predicate.
+            exclusions = tuple(
+                (item.kind, item.value.replace("\\", "/").strip("/").casefold())
+                for item in authority.exclusions
+            )
+            subtrees = frozenset(
+                value for kind, value in exclusions if kind == "subtree"
+            )
+            denied_paths = frozenset(
+                value for kind, value in exclusions if kind in {"file", "subtree"}
+            )
+            denied_names = frozenset(
+                value for kind, value in exclusions if kind == "name"
+            )
+            denied_parents = frozenset(
+                value for kind, value in exclusions if kind == "direct_children"
+            )
+            subtree_heads = tuple(value + "/" for value in subtrees)
+            deny_all = "" in subtrees
+
             def allowed(path):
-                if not _path_allowed(path, authority.exclusions):
+                value = path.casefold()
+                if (
+                    deny_all
+                    or value in denied_paths
+                    or value.startswith(subtree_heads)
+                    or value.rsplit("/", 1)[-1] in denied_names
+                    or value.rpartition("/")[0] in denied_parents
+                ):
                     return 0
                 if (
                     not all_prefixes

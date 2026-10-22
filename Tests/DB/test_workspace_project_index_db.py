@@ -871,3 +871,117 @@ def test_failed_migration_native_close_retains_count_and_binding_capability(
             # Same test owner, after evidence: no product retry or foreign close.
             retained_store.close_native()
             lease.close()
+
+
+def test_lexical_exclusion_predicates_match_live_oracle_before_top_k(tmp_path):
+    """Every fresh run floor filters real FTS candidates before ranking limits."""
+    from hashlib import sha256
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import (
+        _path_allowed,
+        prepare_scan_page,
+    )
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+    from tldw_chatbook.Workspaces.project_index.models import (
+        FileCapture,
+        ScanEntry,
+        ScanPage,
+    )
+
+    paths = (
+        "root.py",
+        "secret.py",
+        "SECRET.PY",
+        "src",
+        "src/a.py",
+        "src/nested/a.py",
+        "src/nested/secret.py",
+        "src-peer/a.py",
+        "srcpeer/a.py",
+        "other/a.py",
+        "other/secret.py",
+        "other/SECRET.PY",
+        "Stra\u00dfe/a.py",
+        "STRASSE/b.py",
+        "caf\u00e9/\u039b.py",
+        "CAF\u00c9/\u03bb.py",
+        "other/Stra\u00dfe.py",
+        "other/STRASSE.PY",
+    )
+    text = "equivalence marker"
+    captures = tuple(
+        FileCapture(
+            path, "logical", 1, len(text), sha256(text.encode()).hexdigest(), text
+        )
+        for path in paths
+    )
+    entries = tuple(
+        ScanEntry(c.relative_path, "file", c.identity, c.mtime_ns, c.size_bytes)
+        for c in captures
+    )
+    floors = (
+        (),
+        (("subtree", "SRC"),),
+        (("subtree", "/src\\nested/"),),
+        (("subtree", "\\"),),
+        (("file", "/SECRET.PY/"),),
+        (("file", "\\src\\a.py"),),
+        (("name", "/secret.PY/"),),
+        (("direct_children", ""),),
+        (("direct_children", "/SRC/"),),
+        (("direct_children", "src\\nested"),),
+        (("subtree", "STRASSE"),),
+        (("file", "CAF\u00c9/\u03bb.PY"),),
+        (("name", "strasse.py"),),
+        (
+            ("subtree", "src/nested"),
+            ("file", "root.py"),
+            ("name", "secret.py"),
+            ("direct_children", "OTHER"),
+        ),
+        (),
+    )
+    store = open_index_store(tmp_path)
+    key = make_index_key(tmp_path)
+    try:
+        scope = store.configure(
+            key,
+            ProjectIndexPolicy((), ()),
+            enabled=True,
+            expected_scope=store.load_status(key).scope,
+        )
+        claim = store.claim_job(
+            scope,
+            owner_token="exclusion-oracle",
+            authority_revision=1,
+            expected_job_revision=store.load_status(key).job_revision,
+        )
+        assert store.commit_scan_page(
+            scope,
+            claim.job_id,
+            prepare_scan_page(ScanPage("", "root", entries, captures, True, 1)),
+            expected_job_revision=claim.job_revision,
+            authority_revision=1,
+        )
+        ordered = tuple(
+            c.relative_path
+            for c in store.lexical_candidates(
+                search_authority(tmp_path, scope),
+                "equivalence",
+                limit=100,
+            )
+        )
+        assert set(ordered) == set(paths)
+        for raw_floor in floors:
+            floor = tuple(SensitiveExclusion(kind, value) for kind, value in raw_floor)
+            expected = tuple(path for path in ordered if _path_allowed(path, floor))
+            for limit in (1, 100):
+                found = store.lexical_candidates(
+                    search_authority(tmp_path, scope, floor),
+                    "equivalence",
+                    limit=limit,
+                )
+                assert (
+                    tuple(c.relative_path for c in found) == expected[:limit]
+                ), raw_floor
+    finally:
+        store.close_native()
