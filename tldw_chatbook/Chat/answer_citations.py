@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from typing import Any, Mapping
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.citation_evidence_models import (
     CitationRef,
     EvidenceBundle,
