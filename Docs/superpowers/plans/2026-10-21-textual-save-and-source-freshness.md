@@ -90,3 +90,18 @@ Review refinements within TASK-36098 retain expanded nondefault sections and exp
 - [x] Regenerate only required diagnostic/size metadata after checking exact source ownership deltas; no blanket baseline relaxations.
 - [x] Run targeted combined UI/architecture/governance and Backlog guards, scoped lint/format and whitespace/source checks. Review the whole branch with `superpowers:requesting-code-review` instead of Qodo.
 - [ ] Commit and push the reviewed changes; create and attach a PR against dev. Watch required CI and Perf Guard, inspect review threads, verify feedback before fixes, and continue until checks pass and actionable feedback is addressed. The user requested a PR, not a merge.
+
+
+## Rebase CI follow-up: native served-relay import
+
+The inherited dev Perf Guard and PR3205 both measure 1032 modules against 1031 at UI-ready; the native Windows reproduction measures 1033 because windows_files is also resident. app_served._served_relay_wrap_pending_approval imports the served publisher before returning the original callback for a native app with no publisher. Preserve that early-return behavior while avoiding its unnecessary Web_Server package/publisher imports.
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/236-served-desktop-approval-relay.md
+Reason: Mechanical deferral inside the existing TASK-35033 native/served seam; no behavior, authority, lifetime, service contract or budget increase.
+
+1. Record current hosted and native census failures; add a fresh-process native wrapper regression and a real served publisher call-through control.
+2. Verify the native import regression fails, then move the publisher import below the existing no-publisher return.
+3. Verify focused publisher tests and real UI-ready census, lint/format, and independent Superpowers review. Push only while auto-merge is disabled, then re-arm after current-head review/thread checks and monitor CI through merge.
+
+Verification: the new native-wrapper regression failed before the import move while its served positive control passed. Native full UI-ready census decreased from 1033 to 1031 without changing the 1031 ceiling (19 focused publisher/census tests passed in 79.792s); that legacy subprocess emitted a cp1252 stderr-reader warning, so clean stderr is not claimed. Final formatted source retains the 125-line module ceiling; all 18 publisher cases and both size checks passed (20 tests, 1.369s). Ruff lint and formatting pass. Historical incoming-dev Perf run 39744284548 already had the same Linux 1032/1031 breach as rebased PR run 39796132452. Fresh hosted verification is required after this follow-up push.

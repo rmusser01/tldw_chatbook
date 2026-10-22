@@ -15,6 +15,9 @@ its return value, and must keep running when publishing fails.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -391,3 +394,54 @@ async def test_wrapper_without_publisher_returns_the_original_untouched() -> Non
     wrapped = wrap_pending_approval_hook(None, original)
     assert wrapped is original
     assert wrapped(None) == "unwrapped"
+
+
+def test_native_app_approval_wrapper_leaves_served_modules_unloaded() -> None:
+    """A native hook binding keeps its callable and pays no served import cost."""
+    script = """
+import sys
+from types import SimpleNamespace
+from tldw_chatbook.app_served import _served_relay_wrap_pending_approval
+
+assert "tldw_chatbook.Web_Server" not in sys.modules
+original = lambda payload: "original"
+app = SimpleNamespace(served_relay_publisher=None)
+assert _served_relay_wrap_pending_approval(app, original) is original
+assert "tldw_chatbook.Web_Server" not in sys.modules
+assert "tldw_chatbook.Web_Server.served_relay_publisher" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.asyncio
+async def test_app_approval_wrapper_with_publisher_keeps_original_and_relay() -> None:
+    from tldw_chatbook.app_served import _served_relay_wrap_pending_approval
+
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client)
+    publisher.attach()
+    calls = []
+
+    def original(payload):
+        calls.append(payload)
+        return "card-mounted"
+
+    try:
+        wrapped = _served_relay_wrap_pending_approval(
+            SimpleNamespace(served_relay_publisher=publisher), original
+        )
+        assert wrapped(CONSOLE_APPROVAL_PAYLOAD) == "card-mounted"
+        assert calls == [CONSOLE_APPROVAL_PAYLOAD]
+        await _drain(publisher)
+        assert [frame[0] for frame in client.frames] == ["relay.approval.raised"]
+    finally:
+        await publisher.aclose()
