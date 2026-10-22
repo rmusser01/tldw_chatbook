@@ -239,6 +239,23 @@ def _pending_rounds(store: Any, controller: Any) -> tuple:
     return rounds, controller.fleet_summary_counts()
 
 
+def _legacy_approval(screen: Any) -> tuple | bool:
+    """The resume state's approval, read by value as the approval count reads it.
+
+    A legacy unscoped tool round mounts its card with no kind-registry
+    entry, so no pending-round count moves; ``ChatScreen.
+    _console_pending_approval_count`` counts it from here for the controls,
+    rail and Inspector, dropping one whose phase is ``finishing`` or that
+    another chat owns. The interrupt host can set a retained round's phase
+    in place, so a held reference would compare equal to itself.
+    """
+    state = getattr(screen, "_task_resume_state", None)
+    approval = getattr(state, "pending_approval", None)
+    if isinstance(approval, dict):
+        return tuple(approval.get(key) for key in ("round_id", "phase", "session_id"))
+    return bool(approval)
+
+
 def _cost_inputs(
     store: Any, controller: Any, agent: Any, session_id: str, in_flight: bool
 ) -> tuple:
@@ -337,6 +354,7 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
             )
         ),
         evidence.version if evidence is not None else None,
+        _legacy_approval(screen),
         run,
     )
     return objects, values

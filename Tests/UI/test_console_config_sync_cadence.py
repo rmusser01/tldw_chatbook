@@ -30,6 +30,7 @@ import threading
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_send_acknowledgement import (
     build,
     eager_tasks,
@@ -567,6 +568,78 @@ async def test_agent_progress_and_cost_total_project_on_the_next_tick(monkeypatc
                 tick.release()
                 gateway.validation_release.set()
             await _run_over(console)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_legacy_tool_approval_projects_on_the_next_tick(
+    request: pytest.FixtureRequest, tmp_path, monkeypatch
+):
+    """A legacy unscoped tool round's arrival and resolution keep the tick rate.
+
+    Rebase onto dev 7700c63a68 (2026-10-22): such a round mounts its card
+    with no kind-registry entry, so no pending-round count moves, yet
+    ``_console_pending_approval_count`` counts it from the resume state for
+    the controls, rail and Inspector. The clock stands still, so only the
+    round itself can project. The send harness cannot take a round armed on
+    a worker thread (its controller posts to the unstarted inner app), so
+    this runs on the navigation app the mounted approval journeys use.
+    """
+    from Tests.UI.test_console_headless_approval import _arm, _risk_row
+    from Tests.UI.test_console_pending_interrupt_projection import (
+        _build_app,
+        _seed_console,
+        _start_live_turn,
+    )
+
+    _install_clock(monkeypatch)
+    app = _build_app(tmp_path)
+    async with app.run_test(size=(160, 48)) as pilot:
+        console, controller, store, session_id = await _seed_console(app, pilot)
+        _start_live_turn(console, controller, store, session_id)
+        tick = _Poll(console)
+        # A live poll (it would stop itself, and settle, with no run work).
+        monkeypatch.setattr(console, "_console_transcript_poll_needed", lambda: True)
+        seen = _Projections(monkeypatch, console)
+        worker = None
+
+        def resume_approval():
+            return console._task_resume_state.pending_approval
+
+        try:
+            await _explicit_sync(console, seen)
+            await _quiesce(tick, seen)
+            base = seen.calls
+            worker, result = _arm(controller, None, call=_risk_row())
+            await until(lambda: bool(resume_approval()), timeout=30)
+            assert controller.pending_round_count(session_id) == 0
+            assert console._console_pending_approval_count() == 1
+            await tick()
+            assert seen.calls == base + 1, "a legacy approval waited"
+            await tick()
+            assert seen.calls == base + 1, "the tick after it projected"
+
+            controller.resolve_pending_approval(
+                {"builtin__write_file": "deny"},
+                round_id=resume_approval()["round_id"],
+            )
+            await until(lambda: not worker.is_alive(), timeout=30)
+            assert result["decisions"] == {"builtin__write_file": "deny"}
+            await until(
+                lambda: console._console_pending_approval_count() == 0, timeout=30
+            )
+            await tick()
+            assert seen.calls == base + 2, "a resolved legacy approval waited"
+        finally:
+            if worker is not None and worker.is_alive() and resume_approval():
+                controller.resolve_pending_approval(
+                    {"builtin__write_file": "deny"},
+                    round_id=resume_approval()["round_id"],
+                )
+            tick.release()
+            controller.begin_shutdown()
+            if worker is not None:
+                await until(lambda: not worker.is_alive(), timeout=30)
 
 
 @pytest.mark.asyncio

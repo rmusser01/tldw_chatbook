@@ -19,6 +19,7 @@ import asyncio
 import gc
 import weakref
 from contextlib import contextmanager, nullcontext
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,7 @@ from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import storage_admission
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.UI.Console_Modules import config_sync
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
 # Tests/UI's autouse fixtures read the config through participant admission.
 pytestmark = pytest.mark.bootstrap_profile
@@ -115,6 +117,7 @@ class _Screen:
         self._retrieval = SimpleNamespace(
             _active_dictionaries_summary=None, _active_world_books_summary=None
         )
+        self._task_resume_state = TaskResumeState()
         self.scopes = 0
         self._workspace = SimpleNamespace(tick_workspace_build_scope=self._scope)
         self.active = False
@@ -250,6 +253,16 @@ def _background_chat_round(monkeypatch, screen):
     screen._console_chat_controller.rounds["s9"] = {"approval": 1}
 
 
+# Rebase onto dev 7700c63a68 (2026-10-22): a legacy unscoped tool round
+# mounts its card with no kind-registry entry, so no pending-round count
+# moves; ``ChatScreen._console_pending_approval_count`` counts it from the
+# resume state's approval, which the controls, rail and Inspector render.
+def _legacy_approval(monkeypatch, screen):
+    screen._task_resume_state = replace(
+        screen._task_resume_state, pending_approval={"round_id": "legacy-1"}
+    )
+
+
 def _fleet_counts(monkeypatch, screen):
     screen._console_chat_controller.fleet = (1, 1)
 
@@ -327,6 +340,7 @@ def _dictionaries_summary(monkeypatch, screen):
         _approval,
         _question_round,
         _background_chat_round,
+        _legacy_approval,
         _fleet_counts,
         _agent_step,
         _fleet_row_progress,
@@ -350,6 +364,29 @@ def test_each_input_change_is_one_projection_on_the_next_tick(
     change(monkeypatch, screen)
     assert _tick(screen) == 1, f"{change.__name__}: the next tick did not project"
     assert _tick(screen) == 0, f"{change.__name__}: the tick after it projected"
+
+
+def test_a_legacy_approval_projects_as_it_finishes_and_clears(clock):
+    """The resume state's approval is read by value, as the count reads it.
+
+    The count drops a round whose phase is ``finishing`` and one owned by
+    another chat; the interrupt host sets a retained round's phase in place,
+    so a held reference would compare equal to itself.
+    """
+    screen = _settled(clock)
+    approval = {"round_id": "legacy-1", "session_id": "s1"}
+    screen._task_resume_state = replace(
+        screen._task_resume_state, pending_approval=approval
+    )
+    assert [_tick(screen), _tick(screen)] == [1, 0]
+    approval["phase"] = "finishing"
+    assert [_tick(screen), _tick(screen)] == [1, 0], "a finishing phase waited"
+    approval["session_id"] = "s9"
+    assert [_tick(screen), _tick(screen)] == [1, 0], "a new owner waited"
+    screen._task_resume_state = replace(
+        screen._task_resume_state, pending_approval=None
+    )
+    assert [_tick(screen), _tick(screen)] == [1, 0], "a cleared approval waited"
 
 
 def test_an_explicit_sync_always_projects_and_settles_the_next_tick(clock):
