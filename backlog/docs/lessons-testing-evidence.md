@@ -88,7 +88,8 @@ assertions and bounded test budget. Here eight targeted controls passed;
 deliberately incomplete attachment still failed the setup assertion, and
 disabling poll arming still failed the original assertion with
 `reconciled=True`. This barrier does not witness retirement of later queued
-refreshes; that remains the separate lesson below.
+refreshes; that remains TASK-34406.5's separate lesson below ("Attach
+completion does not retire queued mount refreshes").
 
 **TASK-35833 follow-up, 2026-10-22.** Reconcile-ended is not effect-landed
 on a cached Console. The headless-delivery test reopens the same ChatScreen,

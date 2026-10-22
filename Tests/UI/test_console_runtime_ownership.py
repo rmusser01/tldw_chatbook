@@ -2150,6 +2150,33 @@ async def test_public_startup_console_keeps_its_claim_across_navigation(tmp_path
             await pilot.pause(0.1)
         assert chat._console_attach_reconciled
         assert app.screen_stack == [app.screen_stack[0], chat]
+
+        async def wait_for_reconcile_end():
+            # TASK-35833: the retained Console's reconcile skips the view
+            # start and arms the poll through the wake hook's `call_later`,
+            # so wait for the reconcile to END, then for one screen message.
+            def ended():
+                return (
+                    chat._console_attach_reconciled
+                    and not chat._console_attach_reconcile_running
+                )
+
+            for _ in range(50):
+                if ended():
+                    break
+                await pilot.pause(0.1)
+            assert app.screen is chat and ended(), (
+                "Console attach reconcile never ended before the poll check "
+                "(_console_attach_reconciled and not "
+                "_console_attach_reconcile_running): "
+                f"reconciled={chat._console_attach_reconciled}, "
+                f"running={chat._console_attach_reconcile_running}"
+            )
+            assert await pump_runs(chat, 5.0), (
+                "the Console never ran a callback posted after its attach "
+                "reconcile ended, so a deferred poll arm could not have run"
+            )
+
         runtime = app.console_runtime
         controller = chat._ensure_console_chat_controller()
         store, bridge = runtime.chat_store, runtime.agent_bridge
@@ -2160,12 +2187,7 @@ async def test_public_startup_console_keeps_its_claim_across_navigation(tmp_path
         assert chat.is_mounted  # Installed startup screens suspend under current dev.
         await app.handle_screen_navigation(NavigateToScreen("chat"))
         await _wait_for_selector(chat, pilot, "#console-native-composer")
-        for _ in range(50):
-            if chat._console_attach_reconciled:
-                break
-            await pilot.pause(0.1)
-        assert app.screen is chat
-        assert chat._console_attach_reconciled
+        await wait_for_reconcile_end()
         assert app.console_runtime is runtime
         assert (runtime.chat_controller, runtime.chat_store, runtime.agent_bridge) == (
             controller,
@@ -2187,11 +2209,7 @@ async def test_public_startup_console_keeps_its_claim_across_navigation(tmp_path
         try:
             await app.handle_screen_navigation(NavigateToScreen("chat"))
             await _wait_for_selector(chat, pilot, "#console-native-composer")
-            for _ in range(50):
-                if chat._console_attach_reconciled:
-                    break
-                await pilot.pause(0.1)
-            assert app.screen is chat and chat._console_attach_reconciled
+            await wait_for_reconcile_end()
             assert runtime.view is chat
             assert runtime._attached_generation == generation
             assert chat._console_transcript_sync_timer is not None

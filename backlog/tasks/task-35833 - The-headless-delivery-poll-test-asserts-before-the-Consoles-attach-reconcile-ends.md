@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-20 12:49
-updated_date: 2026-10-22 19:51
+updated_date: 2026-10-22 20:14
 labels:
 - follow-up
 - tests
@@ -33,6 +33,7 @@ references:
 - [x] #1 The test asserts the poll only after the Console's attach reconcile has ended, and its cause is recorded
 - [x] #2 20 of 20 serial single-node runs pass on dev
 - [x] #3 The assertion still fails when the delivery leg arms no poll (a negative control)
+- [x] #4 The same file's other test that reopens a cached Console during a wake delivery (test_public_startup_console_keeps_its_claim_across_navigation) waits for the reconcile to end and the deferred arm to run before both of its poll checks
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,6 +57,14 @@ references:
 - AC#2: the fixed node passed 20 of 20 serial single-node runs through the wrapper, each a separate pytest invocation without xdist (11.6-20.2 s each). The comparison is 0 of 10 failures at dev 28beeb9ed5 and 3 of 10 for the pre-TASK-35710 form.
 - AC#3: with `_on_console_wake_delivery_started` returning early (temporary edit, reverted), the test failed with `Console opened during a wake delivery with no transcript poll armed: reconciled=True`. A second control, with `_reconcile_console_after_attach` returning early, failed at the new wait: `Console attach reconcile never ended before the poll check (_console_attach_reconciled and not _console_attach_reconcile_running): reconciled=False, running=False, ...`.
 - Whole file with `-n 4`: 86 passed, 1 xfailed (the TASK-32873 strict xfail, already on dev). `Tests/UI/test_console_attach_completion.py`, which imports from this file, and `Tests/Packaging/test_voice_source_digest.py`, which lists it, passed together: 84 passed. Preflight passed. Ruff reports the same findings as dev.
+
+**Review round 1 (AC#4, added from the review of 811d9b3939).** `test_public_startup_console_keeps_its_claim_across_navigation` reopens the retained startup Console, the same `chat` instance, both with nothing delivering and during a stand-in wake delivery. Both returns had the same gap: they waited only for `_console_attach_reconciled`, then checked the timer (`is None`, then `is not None`). Both return waits now go through a local `wait_for_reconcile_end()`. It waits for `reconciled and not running`, with a message naming that condition, then runs `pump_runs(chat, 5.0)`. The initial startup wait has no poll check after it and is unchanged. The test at line 3660 builds a fresh ChatScreen, so the reviewer left it alone. Evidence:
+- 5 of 5 serial single-node runs pass.
+- With `_on_console_wake_delivery_started` returning early (temporary, reverted), the test fails at its poll assertion: `assert None is not None` on `_console_transcript_sync_timer`, line 2215.
+- The whole file plus `Tests/UI/test_console_attach_completion.py` with `-n 4`: 97 passed, 1 xfailed (the strict xfail already on dev).
+- Preflight passed, and ruff reports the same findings as dev.
+
+The lesson's "separate lesson below" pointer now names TASK-34406.5 ("Attach completion does not retire queued mount refreshes"), since the follow-up paragraph now sits between them.
 
 **Files:** `Tests/UI/test_console_runtime_ownership.py`, `backlog/docs/lessons-testing-evidence.md` (a follow-up under TASK-35710's lesson), and this task.
 <!-- SECTION:NOTES:END -->
