@@ -66,10 +66,10 @@ def _served_relay_wrap_pending_approval(self: Any, original: Any) -> Any:
     identity — so nothing outside served mode changes behavior.
     """
 
-    from .Web_Server.served_relay_publisher import wrap_pending_approval_hook
-
     if self.served_relay_publisher is None:
         return original
+    from .Web_Server.served_relay_publisher import wrap_pending_approval_hook
+
     return wrap_pending_approval_hook(self.served_relay_publisher, original)
 
 

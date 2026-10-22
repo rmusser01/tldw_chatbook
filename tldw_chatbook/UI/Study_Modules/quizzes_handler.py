@@ -620,8 +620,10 @@ class StudyQuizzesController:
 
         name_input = self.window.query_one("#new-quiz-name-input", Input)
         description_input = self.window.query_one("#new-quiz-description-input", Input)
-        name = str(name_input.value or "").strip()
-        description = str(description_input.value or "").strip() or None
+        submitted_name = name_input.value
+        submitted_description = description_input.value
+        name = str(submitted_name or "").strip()
+        description = str(submitted_description or "").strip() or None
         if not name:
             self._notify("Quiz name is required.")
             return
@@ -640,8 +642,10 @@ class StudyQuizzesController:
             self._notify("Failed to create quiz.", severity="error")
             return
 
-        name_input.value = ""
-        description_input.value = ""
+        if name_input.value == submitted_name:
+            name_input.value = ""
+        if description_input.value == submitted_description:
+            description_input.value = ""
         created_id = str(
             created.get("backing_id") or created.get("record_id") or Select.BLANK
         )
@@ -672,8 +676,10 @@ class StudyQuizzesController:
         correct_answer_widget = self.window.query_one(
             "#quiz-correct-answer-input", Input
         )
-        question_text = str(question_text_widget.text or "").strip()
-        correct_answer = str(correct_answer_widget.value or "").strip()
+        submitted_question_text = question_text_widget.text
+        submitted_correct_answer = correct_answer_widget.value
+        question_text = str(submitted_question_text or "").strip()
+        correct_answer = str(submitted_correct_answer or "").strip()
         if not question_text:
             self._notify("Question text is required.")
             return
@@ -702,8 +708,10 @@ class StudyQuizzesController:
             self._notify("Failed to create quiz question.", severity="error")
             return
 
-        question_text_widget.text = ""
-        correct_answer_widget.value = ""
+        if question_text_widget.text == submitted_question_text:
+            question_text_widget.text = ""
+        if correct_answer_widget.value == submitted_correct_answer:
+            correct_answer_widget.value = ""
         await self.refresh_questions()
         self._set_attempt_status("Question created.")
         self._notify_shell_state_changed()

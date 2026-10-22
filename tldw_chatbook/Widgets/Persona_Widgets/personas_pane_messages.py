@@ -167,9 +167,12 @@ class CharacterSaveRequested(Message):
     Relocated from the retired ``CCP_Widgets.ccp_character_editor_widget``.
     """
 
-    def __init__(self, character_data: Dict[str, Any]) -> None:
+    def __init__(
+        self, character_data: Dict[str, Any], *, submitted_snapshot: tuple | None = None
+    ) -> None:
         super().__init__()
         self.character_data = character_data
+        self.submitted_snapshot = submitted_snapshot
 
 
 class CharacterEditorCancelled(Message):
@@ -268,8 +271,11 @@ class EditPersonaProfileRequested(Message):
 class PersonaProfileSaveRequested(Message):
     """The persona editor form was submitted."""
 
-    def __init__(self, data: Dict[str, Any]) -> None:
+    def __init__(
+        self, data: Dict[str, Any], *, submitted_snapshot: tuple | None = None
+    ) -> None:
         self.data = data
+        self.submitted_snapshot = submitted_snapshot
         super().__init__()
 
 

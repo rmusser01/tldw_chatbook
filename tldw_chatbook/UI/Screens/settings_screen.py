@@ -8764,6 +8764,8 @@ class SettingsScreen(BaseAppScreen):
         message: str | None,
         token: object,
     ) -> None:
+        from ..Settings_Modules.media_gen_save import recompose_media_gen_panel
+
         if token is not self._image_gen_load_token:
             return
         try:
@@ -8772,8 +8774,9 @@ class SettingsScreen(BaseAppScreen):
             return
         panel.config = cfg
         panel.cleared_key_sources = cleared_key_sources
+        panel.overlay = self._image_gen_overlay_values()
         self._queue_image_gen_select_suppression(panel.overlay, cfg)
-        await panel.recompose()
+        await recompose_media_gen_panel(self, panel)
         if message is not None:
             self._set_static_text("#settings-imagegen-save-result", message)
         # A fresh panel mounts its Test buttons enabled by default; if a
@@ -8784,14 +8787,11 @@ class SettingsScreen(BaseAppScreen):
             self._image_gen_set_test_buttons_disabled(True)
 
     def _image_gen_stage(self, key: str, original: object, value: object) -> None:
-        category = SettingsCategoryId.IMAGE_GENERATION
-        draft = self._settings_drafts.setdefault(
-            category, SettingsDraft(category=category)
+        from ..Settings_Modules.media_gen_save import stage_media_gen_value
+
+        stage_media_gen_value(
+            self, SettingsCategoryId.IMAGE_GENERATION, key, original, value
         )
-        draft.set_value(key, original, value)
-        if not draft.is_dirty:
-            self._settings_drafts.pop(category, None)
-        self._update_draft_status_widgets(category)
 
     def _image_gen_unstage(self, key: str) -> None:
         """Remove one staged key without touching any other (e.g. a fresh
@@ -8802,7 +8802,9 @@ class SettingsScreen(BaseAppScreen):
             return
         draft.values.pop(key, None)
         draft.originals.pop(key, None)
-        if not draft.is_dirty:
+        # Retain explicitly typed equal-to-original fields when cancelling
+        # Clear: an in-flight deletion can make them unsaved on completion.
+        if not draft.values:
             self._settings_drafts.pop(category, None)
 
     def _stage_image_gen_field(
@@ -9227,11 +9229,20 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-imagegen-save-result", "Saving Image Gen defaults..."
         )
-        self._settings_save_image_gen_worker(draft_values, warnings)
+        submitted = copy.deepcopy(
+            self._settings_drafts.get(
+                SettingsCategoryId.IMAGE_GENERATION,
+                SettingsDraft(category=SettingsCategoryId.IMAGE_GENERATION),
+            )
+        )
+        self._settings_save_image_gen_worker(draft_values, warnings, submitted)
 
     @work(exclusive=True, group="settings-save-image-gen", thread=True)
     def _settings_save_image_gen_worker(
-        self, draft_values: ImageGenDraftValues, warnings: list[str]
+        self,
+        draft_values: ImageGenDraftValues,
+        warnings: list[str],
+        submitted: SettingsDraft,
     ) -> None:
         raw_config = SettingsConfigAdapter().load()
         sections, deletions = image_gen_diff_to_sections(draft_values, raw_config)
@@ -9241,33 +9252,16 @@ class SettingsScreen(BaseAppScreen):
         if mutation.file_replaced:
             reset_image_generation_runtime()
         ok = mutation.failure_phase is None
-        self.app.call_from_thread(self._apply_image_gen_save_result, ok, warnings)
+        self.app.call_from_thread(
+            self._apply_image_gen_save_result, ok, warnings, submitted
+        )
 
     async def _apply_image_gen_save_result(
-        self, saved: bool, warnings: list[str]
+        self, saved: bool, warnings: list[str], submitted: SettingsDraft
     ) -> None:
-        if not saved:
-            message = "Failed to save Image Gen defaults."
-            self._set_static_text("#settings-imagegen-save-result", message)
-            self.app.notify(message, severity="error")
-            return
-        self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
-        # Qodo PR #901 fix 3: the save just changed the on-disk truth --
-        # invalidate the cached raw-section baseline (see
-        # `_image_gen_raw_section_cache`'s docstring).
-        self._image_gen_raw_section_cache = None
-        message = "Image Gen defaults saved."
-        if warnings:
-            message = f"{message} {' '.join(warnings)}"
-        try:
-            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
-        except QueryError:
-            panel = None
-        if panel is not None:
-            panel.overlay = {}
-            self._start_image_gen_panel_load({}, message)
-        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
-        self.app.notify(message, severity="warning" if warnings else "information")
+        from ..Settings_Modules.media_gen_save import apply_image_gen_save_result
+
+        await apply_image_gen_save_result(self, saved, warnings, submitted)
 
     async def _handle_image_gen_revert(self) -> None:
         self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
@@ -9606,6 +9600,8 @@ class SettingsScreen(BaseAppScreen):
         message: str | None,
         token: object,
     ) -> None:
+        from ..Settings_Modules.media_gen_save import recompose_media_gen_panel
+
         if token is not self._video_gen_load_token:
             return
         try:
@@ -9614,8 +9610,9 @@ class SettingsScreen(BaseAppScreen):
             return
         panel.config = cfg
         panel.cleared_key_sources = cleared_key_sources
+        panel.overlay = self._video_gen_overlay_values()
         self._queue_video_gen_select_suppression(panel.overlay, cfg)
-        await panel.recompose()
+        await recompose_media_gen_panel(self, panel)
         if message is not None:
             self._set_static_text("#settings-videogen-save-result", message)
 
@@ -9634,14 +9631,11 @@ class SettingsScreen(BaseAppScreen):
         return False
 
     def _video_gen_stage(self, key: str, original: object, value: object) -> None:
-        category = SettingsCategoryId.VIDEO_GENERATION
-        draft = self._settings_drafts.setdefault(
-            category, SettingsDraft(category=category)
+        from ..Settings_Modules.media_gen_save import stage_media_gen_value
+
+        stage_media_gen_value(
+            self, SettingsCategoryId.VIDEO_GENERATION, key, original, value
         )
-        draft.set_value(key, original, value)
-        if not draft.is_dirty:
-            self._settings_drafts.pop(category, None)
-        self._update_draft_status_widgets(category)
 
     def _video_gen_unstage(self, key: str) -> None:
         """Remove one staged key without touching any other."""
@@ -9651,7 +9645,9 @@ class SettingsScreen(BaseAppScreen):
             return
         draft.values.pop(key, None)
         draft.originals.pop(key, None)
-        if not draft.is_dirty:
+        # Retain explicitly typed equal-to-original fields when cancelling
+        # Clear: an in-flight deletion can make them unsaved on completion.
+        if not draft.values:
             self._settings_drafts.pop(category, None)
 
     def _stage_video_gen_field(
@@ -9914,11 +9910,20 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-videogen-save-result", "Saving Video Gen defaults..."
         )
-        self._settings_save_video_gen_worker(draft_values, warnings)
+        submitted = copy.deepcopy(
+            self._settings_drafts.get(
+                SettingsCategoryId.VIDEO_GENERATION,
+                SettingsDraft(category=SettingsCategoryId.VIDEO_GENERATION),
+            )
+        )
+        self._settings_save_video_gen_worker(draft_values, warnings, submitted)
 
     @work(exclusive=True, group="settings-save-video-gen", thread=True)
     def _settings_save_video_gen_worker(
-        self, draft_values: VideoGenDraftValues, warnings: list[str]
+        self,
+        draft_values: VideoGenDraftValues,
+        warnings: list[str],
+        submitted: SettingsDraft,
     ) -> None:
         raw_config = SettingsConfigAdapter().load()
         sections, deletions = video_gen_diff_to_sections(draft_values, raw_config)
@@ -9931,30 +9936,16 @@ class SettingsScreen(BaseAppScreen):
                 ok = adapter.delete_values(section, keys) and ok
         if ok:
             reset_video_generation_runtime()
-        self.app.call_from_thread(self._apply_video_gen_save_result, ok, warnings)
+        self.app.call_from_thread(
+            self._apply_video_gen_save_result, ok, warnings, submitted
+        )
 
     async def _apply_video_gen_save_result(
-        self, saved: bool, warnings: list[str]
+        self, saved: bool, warnings: list[str], submitted: SettingsDraft
     ) -> None:
-        if not saved:
-            message = "Failed to save Video Gen defaults."
-            self._set_static_text("#settings-videogen-save-result", message)
-            self.app.notify(message, severity="error")
-            return
-        self._settings_drafts.pop(SettingsCategoryId.VIDEO_GENERATION, None)
-        self._video_gen_raw_section_cache = None
-        message = "Video Gen defaults saved."
-        if warnings:
-            message = f"{message} {' '.join(warnings)}"
-        try:
-            panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
-        except QueryError:
-            panel = None
-        if panel is not None:
-            panel.overlay = {}
-            self._start_video_gen_panel_load({}, message)
-        self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
-        self.app.notify(message, severity="warning" if warnings else "information")
+        from ..Settings_Modules.media_gen_save import apply_video_gen_save_result
+
+        await apply_video_gen_save_result(self, saved, warnings, submitted)
 
     async def _handle_video_gen_revert(self) -> None:
         self._settings_drafts.pop(SettingsCategoryId.VIDEO_GENERATION, None)

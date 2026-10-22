@@ -30,6 +30,10 @@ The adapter registry is **lease-based with a revision + generation model**: ever
 
 Profiles live in a dedicated SQLite store (`config.get_tts_profiles_db_path()`, default `<user_data>/tldw_chatbook_tts_profiles.db`): UUID ids, NFKC-casefold name uniqueness, monotonic revisions with CAS updates, v2/v3 migrations with backups, portable bundles with hostile-archive admission (exact member order, size caps, expansion-ratio limit), and private clone-reference assets (ADR-051). The store requires the `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` capability and fails closed without it.
 
+## Audiobook chapter source authority
+
+`UI/STTS_Window.py::AudioBookGenerationWidget` advances chapter publication generation when current TextArea source changes, including clear and the debounce interval. Dispatch also advances it, so a slow superseded worker cannot replace current chapters or announce stale success. A same-source programmatic import echo keeps its dispatch valid; the short-import regression does not qualify the existing long-preview truncation behavior (TASK-36100).
+
 ## Backends
 
 | Backend | Transport | Notes |

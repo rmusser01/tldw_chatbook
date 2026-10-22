@@ -55,6 +55,7 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_permissions_mode_state_cyc
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_rail_scope_changed	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::select_tool_policy_profile	1
 tldw_chatbook/UI/Outputs_Panel.py::_run_operation	1
+tldw_chatbook/UI/Persona_Modules/persona_save_completion.py::finish_profile_save	2
 tldw_chatbook/UI/Research_Workspace_Modules/add_source_modal.py::_search_catalog	4
 tldw_chatbook/UI/STTS_Window.py::_import_from_conversation_worker	1
 tldw_chatbook/UI/STTS_Window.py::_import_from_notes_worker	1
@@ -67,7 +68,6 @@ tldw_chatbook/UI/Screens/chunking_lab_screen.py::_refresh_session	15
 tldw_chatbook/UI/Screens/library_screen.py::_refresh_search_rag_panel_state_widgets	2
 tldw_chatbook/UI/Screens/personas_screen.py::_after_character_save	5
 tldw_chatbook/UI/Screens/personas_screen.py::_after_delete	2
-tldw_chatbook/UI/Screens/personas_screen.py::_after_profile_save	2
 tldw_chatbook/UI/Screens/personas_screen.py::_apply_mode	3
 tldw_chatbook/UI/Screens/personas_screen.py::_begin_create_actor_pack	1
 tldw_chatbook/UI/Screens/personas_screen.py::_begin_create_character	1
