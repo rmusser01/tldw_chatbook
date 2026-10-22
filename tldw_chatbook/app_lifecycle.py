@@ -39,9 +39,6 @@ from textual.worker import Worker, WorkerCancelled, WorkerState
 from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
-from tldw_chatbook.Chat.console_settings_durability import (
-    ConsoleSettingsDurabilityOwner,
-)
 from tldw_chatbook.config import (
     get_cli_config_path,
     get_cli_setting,
@@ -603,19 +600,10 @@ class LifecycleMixin:
         await asyncio.shield(task)
 
     async def _shutdown_console_settings_durability(self) -> None:
-        """Drain admitted settings writes without cancelling thread work.
+        """Drain admitted settings writes without cancelling thread work."""
+        from .Chat.console_settings_durability import shutdown_console_settings_durability
 
-        The coordinator tasks can be awaiting ``asyncio.to_thread`` writes,
-        which cannot be recalled once admitted. Shielding preserves those
-        writes if application shutdown is cancelled; ``_shutdown`` retries
-        this lifecycle pass and does not dispose the Console runtime until the
-        registry is empty.
-        """
-
-        owner = getattr(self, "console_settings_durability_owner", None)
-        if not isinstance(owner, ConsoleSettingsDurabilityOwner):
-            return
-        await owner.close_and_drain()
+        await shutdown_console_settings_durability(self)
 
     @property
     def meeting_session_owner(self):

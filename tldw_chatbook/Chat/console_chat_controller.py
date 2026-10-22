@@ -15517,56 +15517,9 @@ class ConsoleChatController:
 
     def _prepare_project_index_scopes(self, admitted_roots):
         """Retire registry handles opened by scope preparation, including guards."""
-        from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
+        from .console_project_index_preparation import prepare_project_index_scopes
 
-        try:
-            service = get_project_index_service(self.app)
-            with service.registry_connection_scope():
-                return self._prepare_project_index_scopes_owned(admitted_roots)
-        except Exception:
-            logger.debug("Project index preparation unavailable")
-            return None, {}
-
-    def _prepare_project_index_scopes_owned(self, admitted_roots):
-        """Read compatible immutable scopes off-loop after exact run capture."""
-        from types import MappingProxyType
-        from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
-        from tldw_chatbook.Workspaces.project_index.runtime import (
-            get_project_index_service,
-            project_index_key,
-        )
-
-        scopes = {}
-        service = None
-        for authority in admitted_roots:
-            if is_remote(authority.root):
-                continue
-            try:
-                if not authority.guard(False):
-                    continue
-                root = local_root_path(
-                    authority.root, site="project index scope preparation"
-                )
-                key = project_index_key(
-                    self.app, authority.workspace_id, authority.binding_id, root
-                )
-                service = get_project_index_service(self.app)
-                status = service.status(key)
-                compatible = status.state in {"Ready", "Partial"}
-                if status.state == "Building" and status.indexed > 0:
-                    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
-
-                    paths = authority.exclusions_provider() if authority.exclusions_provider else ()
-                    floor = tuple(
-                        SensitiveExclusion("subtree", Path(path).relative_to(root).as_posix())
-                        for path in paths
-                    )
-                    compatible = service.building_coverage(status.scope, floor)
-                if compatible and authority.guard(False):
-                    scopes[authority.alias] = status.scope
-            except Exception:  # unavailable optional capability grants no authority
-                logger.debug("Project index unavailable for this run binding")
-        return service, MappingProxyType(scopes)
+        return prepare_project_index_scopes(self, admitted_roots)
 
     def _compose_local_provider(
         self,
@@ -22555,56 +22508,11 @@ class ConsoleChatController:
         instructions: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         """Prefix optional guidance and exact evidence to the provider-only message."""
+        from .answer_citations import prepend_console_evidence_context
 
-        final_index = next(
-            (
-                index
-                for index in range(len(provider_messages) - 1, -1, -1)
-                if provider_messages[index].get("role") == ConsoleMessageRole.USER.value
-            ),
-            None,
+        return prepend_console_evidence_context(
+            provider_messages, context, instructions=instructions
         )
-        if final_index is None:
-            return provider_messages
-        guidance = (
-            "[Citation instructions]\n" + "\n".join(instructions) + "\n\n"
-            if instructions
-            else ""
-        )
-        prefix = f"{guidance}Evidence: {context}\n\n---\n\n"
-        message = provider_messages[final_index]
-        content = message.get("content")
-        if isinstance(content, str):
-            new_content: Any = ConsoleChatController._preserve_plugin_text_transform(
-                content, prefix + content
-            )
-        elif isinstance(content, list):
-            new_content = list(content)
-            text_index = next(
-                (
-                    index
-                    for index, part in enumerate(new_content)
-                    if isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and isinstance(part.get("text"), str)
-                ),
-                None,
-            )
-            if text_index is None:
-                new_content.insert(0, {"type": "text", "text": prefix})
-            else:
-                text_part = new_content[text_index]
-                new_content[text_index] = {
-                    **text_part,
-                    "text": ConsoleChatController._preserve_plugin_text_transform(
-                        text_part["text"], prefix + text_part["text"]
-                    ),
-                }
-        else:
-            return provider_messages
-        updated = list(provider_messages)
-        updated[final_index] = {**message, "content": new_content}
-        return updated
 
     def _notify_submission_accepted(
         self,

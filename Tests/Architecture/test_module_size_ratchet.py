@@ -106,9 +106,9 @@ _BUDGETS: dict[str, int] = {
     # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
     # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.
     # TASK-35992: frozen Library preparation delegates to console_library_preparation.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29050,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29043,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6453,
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
@@ -262,7 +262,7 @@ _BUDGETS: dict[str, int] = {
     # S1's base of 35,770): 35,747.
     # TASK-35677/35678: bounded paste ownership and action support (-13).
     # TASK-35680: parallel-run origin handling removes one more line.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35732,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35671,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

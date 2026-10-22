@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from typing import Any, Mapping
 
 from tldw_chatbook.Chat.citation_evidence_models import (
@@ -412,3 +413,63 @@ def _quote_for_marker(answer_text: str, marker_span: EvidenceLabelMarkerSpan) ->
         else len(answer_text)
     )
     return answer_text[start:end].strip()
+
+
+def prepend_console_evidence_context(
+    provider_messages: list[dict[str, Any]],
+    context: str,
+    *,
+    instructions: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    """Prefix optional guidance and exact evidence to the provider-only message."""
+    from .console_chat_controller import ConsoleChatController
+
+    final_index = next(
+        (
+            index
+            for index in range(len(provider_messages) - 1, -1, -1)
+            if provider_messages[index].get("role") == ConsoleMessageRole.USER.value
+        ),
+        None,
+    )
+    if final_index is None:
+        return provider_messages
+    guidance = (
+        "[Citation instructions]\n" + "\n".join(instructions) + "\n\n"
+        if instructions
+        else ""
+    )
+    prefix = f"{guidance}Evidence: {context}\n\n---\n\n"
+    message = provider_messages[final_index]
+    content = message.get("content")
+    if isinstance(content, str):
+        new_content: Any = ConsoleChatController._preserve_plugin_text_transform(
+            content, prefix + content
+        )
+    elif isinstance(content, list):
+        new_content = list(content)
+        text_index = next(
+            (
+                index
+                for index, part in enumerate(new_content)
+                if isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            ),
+            None,
+        )
+        if text_index is None:
+            new_content.insert(0, {"type": "text", "text": prefix})
+        else:
+            text_part = new_content[text_index]
+            new_content[text_index] = {
+                **text_part,
+                "text": ConsoleChatController._preserve_plugin_text_transform(
+                    text_part["text"], prefix + text_part["text"]
+                ),
+            }
+    else:
+        return provider_messages
+    updated = list(provider_messages)
+    updated[final_index] = {**message, "content": new_content}
+    return updated
