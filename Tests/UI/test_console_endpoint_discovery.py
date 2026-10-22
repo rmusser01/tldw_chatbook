@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     console_send_connection,
 )
+from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
@@ -748,7 +749,7 @@ async def test_a_models_listing_never_changes_the_model():
         assert modal._current_model_value() == "model-a"
         assert modal._current_model_discovery_matches_current_draft()
         status = modal.query_one("#console-settings-model-discover-status", Static)
-        assert str(status.content) == "1 model listed"
+        assert str(status.content) == f"1 model listed. {SAVED_LIST_NOTE}"
 
 
 @pytest.mark.asyncio

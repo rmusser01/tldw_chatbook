@@ -111,6 +111,15 @@ PROVIDER_CUSTOM_GROUP_KEYS = frozenset(
 #: which stay listable (ADR-146) while Console hides an alias unless it is
 #: configured or current (ADR-066).
 PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
+#: TASK-35578: said under a server's listing in Chat settings and the first-run
+#: wizard's model step, whose picks never join a provider's saved model list
+#: (``[providers]``). The controls are named as Settings names them
+#: (``UI/Settings_Modules/saved_model_list.py``).
+SAVED_LIST_NOTE = (
+    "A pick here is not added to the saved model list. To add one, use Settings "
+    "▸ Providers & Models: after Discover models, choose it in Default model and "
+    "press s, or check it and press Add to model list."
+)
 
 
 def provider_display_name(

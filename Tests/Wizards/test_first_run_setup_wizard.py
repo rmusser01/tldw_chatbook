@@ -11916,6 +11916,52 @@ async def test_model_step_subtitle_display_cases_provider_and_marks_recommended(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("discover", "rows", "note"),
+    [
+        (AsyncMock(return_value=["model-alpha"]), True, True),
+        (AsyncMock(return_value=[]), True, False),
+        (AsyncMock(side_effect=RuntimeError("refused")), False, False),
+    ],
+    ids=["listed", "saved-list", "failed"],
+)
+async def test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list(
+    monkeypatch, discover, rows, note
+):
+    """TASK-35578 AC#2: rows a server listed come with the saved-list note
+    on the subtitle; rows from the saved [providers] list (the fallback when
+    nothing was listed) and a failed listing come without it."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_providers_and_models",
+        lambda: {"Anthropic": ["saved-model"]},
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "anthropic", "provider_value": "anthropic"}
+        },
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=discover)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.3)
+        assert bool(list(step.query("#setup-model-option-0"))) is rows
+        subtitle = str(step.query_one("#setup-model-provider-line", Static).render())
+    line = "Models for Anthropic."
+    assert subtitle == (f"{line} {SAVED_LIST_NOTE}" if note else line)
+
+
+@pytest.mark.asyncio
 async def test_tools_step_rows_are_described_and_do_not_overlap():
     """TASK-1501: aligned rows with plain-language descriptions."""
     from types import SimpleNamespace

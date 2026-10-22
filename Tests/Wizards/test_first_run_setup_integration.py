@@ -1063,3 +1063,40 @@ async def test_skip_leaves_an_untouched_console_chat_on_the_saved_defaults(
     shown = console._session._ensure_active_console_session_settings()
     assert shown == blank_console_session_settings(config)
     assert (shown.provider, shown.model) == ("llama_cpp", "settings-model.gguf")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone(request):
+    """TASK-35578 AC#3: the Model step's commit of a model a server listed
+    (provenance "discovered", as ``ModelStep.commit`` sends a radio pick)
+    writes chat_defaults through the real writer and leaves the config file's
+    [providers] table as it was."""
+    import os
+    from pathlib import Path
+
+    from tldw_chatbook.config import (
+        load_cli_config_and_ensure_existence,
+        save_settings_to_cli_config,
+    )
+
+    load_cli_config_and_ensure_existence(force_reload=True)
+    assert save_settings_to_cli_config({"providers": {"Llama_cpp": ["model-a"]}})
+    path = Path(os.environ["TLDW_CONFIG_PATH"])
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))["providers"]
+    assert saved["Llama_cpp"] == ["model-a"]
+    draft = _typed_provider_draft(
+        provider="llama_cpp", endpoint="http://127.0.0.1:8080", source="none", value=""
+    )
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    assert container.stage_provider_setup(draft)
+
+    assert await container.commit_staged_provider_setup(
+        "served-y",
+        discovery_key=wizard_state.build_first_run_model_discovery_key(draft),
+        model_provenance="discovered",
+    )
+
+    on_disk = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["chat_defaults"]["model"] == "served-y"
+    assert on_disk["providers"] == saved

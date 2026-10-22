@@ -17,6 +17,7 @@ import pytest
 from textual import events
 from textual.widgets import Button, Input, Select, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_settings_core_first import (
     CoreFirstHarness,
     _open,
@@ -31,6 +32,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     readiness_words,
 )
+from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
@@ -731,6 +733,84 @@ async def test_a_listing_feeds_pick_mode_but_never_picks() -> None:
             "llama_cpp",
             "served-y",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("served", "line"),
+    [
+        (("model-a", "served-y"), f"2 models listed. {SAVED_LIST_NOTE}"),
+        ((), "No models reported"),
+    ],
+    ids=["listed", "none"],
+)
+async def test_a_listing_says_its_picks_are_not_added_to_the_saved_model_list(
+    served, line
+) -> None:
+    """TASK-35578 AC#1: a listing that found models says a pick from it is
+    not added to the saved model list, and where Settings adds one; a listing
+    that found none says only that."""
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+
+    async def connection(_identity):
+        return ProviderProbeResult("reachable", served)
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(), connection_tester=connection)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        modal.query_one("#console-settings-model-discover", Button).press()
+        await settle(pilot, app)
+        status = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+        assert str(status.content) == line
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_listed_model_made_the_default_leaves_the_saved_model_list_alone(
+    request, monkeypatch
+) -> None:
+    """TASK-35578 AC#3: a model only Test connection listed, picked with
+    Change and saved with Make default for new chats, is the file's
+    chat_defaults model, and the file's [providers] table is what it was."""
+    import os
+    import tomllib
+    from pathlib import Path
+
+    from Tests.UI.test_console_endpoint_discovery import _stub_llama_network
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _drain_settings_tasks,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    _stub_llama_network(monkeypatch, {"up": True}, {9099: ("model-a", "served-y")})
+    assert save_settings_to_cli_config({"providers": {"Llama_cpp": ["model-a"]}})
+    app = _persisted_console_app()
+    path = Path(os.environ["TLDW_CONFIG_PATH"])
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))["providers"]
+    assert saved["Llama_cpp"] == ["model-a"]
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        await console._open_console_settings(focus_model=True)
+        await settle(pilot, harness)
+        modal = harness.screen
+        assert isinstance(modal, ConsoleSettingsModal)
+        modal.query_one("#console-settings-model-discover", Button).press()
+        await settle(pilot, harness)
+        await pick(pilot, harness, modal, "served-y")
+        assert modal._current_model_value() == "served-y"
+        modal.query_one("#console-settings-make-default", Button).press()
+        await pilot.pause()
+        await _drain_settings_tasks(app)
+
+    on_disk = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["chat_defaults"]["model"] == "served-y"
+    assert on_disk["providers"] == saved
 
 
 async def _type(pilot, modal, name: str, value: str) -> None:

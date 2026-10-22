@@ -106,7 +106,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
     probe_models_endpoint,
 )
-from tldw_chatbook.Chat.provider_catalog import provider_display_name
+from tldw_chatbook.Chat.provider_catalog import SAVED_LIST_NOTE, provider_display_name
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     canonical_connection_identity,
@@ -452,14 +452,6 @@ def _snapshot_provider(value: object) -> str | None:
     if normalized != value or _SNAPSHOT_PROVIDER_RE.fullmatch(value) is None:
         return None
     return value
-
-
-def _snapshot_model(
-    value: object, *, allow_none: bool = False, allow_blank: bool = False
-) -> bool:
-    return (allow_none and value is None) or _snapshot_text(
-        value, limit=_SNAPSHOT_MODEL_TEXT_LIMIT, allow_blank=allow_blank
-    )
 
 
 def _valid_snapshot_context_overrides(source: Mapping[str, object]) -> bool:
@@ -5342,7 +5334,8 @@ class ConsoleSettingsModal(
             )
             return
         count = self._keep_served_models(provider, result.model_ids)
-        self._set_model_discover_status(_model_availability_copy(count, ""))
+        note = f". {SAVED_LIST_NOTE}" if count else ""  # TASK-35578
+        self._set_model_discover_status(_model_availability_copy(count, "") + note)
         if fenced:
             self._current_model_discovery_identity = identity
         self._sync_readiness_display()

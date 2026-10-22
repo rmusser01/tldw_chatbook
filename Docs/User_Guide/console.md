@@ -641,7 +641,12 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   readiness detail. It has no provider or model picker: a provider is never
   chosen without a model. A models listing reports what the server serves
   ("2 models listed") but never picks a model, even when it lists only one;
-  **Change** does, and pick mode then lists the served models too. When the chat is not ready (a missing key, an endpoint to
+  **Change** does, and pick mode then lists the served models too. A model
+  picked from a listing is not added to the provider's saved model list, and
+  the listing's line says so after its count. To add one, use Settings ▸
+  Providers & Models (Advanced ▸ Saved model list): after **Discover models**,
+  a model chosen in **Default model** joins the list when **s** saves, and
+  **Add to model list** adds the models you check. When the chat is not ready (a missing key, an endpoint to
   set, no model), Chat settings opens with **Connection** already open and
   the fix focused (**Change** when the model is missing). Help that points at
   Settings names **F4**, the key that opens it.
