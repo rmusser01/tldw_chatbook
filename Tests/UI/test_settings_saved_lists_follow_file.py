@@ -627,7 +627,7 @@ async def test_an_untouched_server_with_no_model_is_probed_listed_or_not_running
 
 @private_profile_test
 async def test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged(
-    request,
+    request, monkeypatch
 ):
     """NO-1, ruled 2026-10-20: koboldcpp's template endpoint is KoboldAI's
     native /api/v1/generate. It resolves with koboldcpp's OpenAI-compatible
@@ -635,7 +635,9 @@ async def test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged
     URL a send uses and the URL a Settings save writes stay the native one.
     Other providers given that path are still refused, and a koboldcpp root
     resolves as before. AC#10: an untouched Aphrodite still sends with its
-    table's model."""
+    table's model. TASK-35832: Settings ▸ Discover models lists that same
+    /v1/models, and Add to model list saves to koboldcpp's list while its
+    endpoint stays the native route."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
     from tldw_chatbook.Chat.provider_endpoint_contract import (
@@ -696,6 +698,37 @@ async def test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged
     assert (kobold.ready, kobold.base_url) == (True, native)
     assert kwargs.get("api_base_url", native) == native
     assert aphrodite.model == "aphrodite-engine"
+
+    # TASK-35832: Settings on a profile whose koboldcpp table is the template.
+    _write({"chat_defaults": {"provider": "koboldcpp", "model": ""}})
+    file_config = tomllib.loads(_config_path().read_text())
+    assert file_config["api_settings"]["koboldcpp"]["api_url"] == native
+    app = _booted_app()
+    served = _listing("kobold-served-a", "kobold-served-b")
+    _route_discovery_to(monkeypatch, served)
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        assert screen._provider_widget_value() == "koboldcpp"
+        line = await _save_selected(
+            host, pilot, screen, "kobold-served-a", "kobold-served-b"
+        )
+        label = screen._provider_display_label("koboldcpp")
+
+    # AC#1: the URL Switch model lists from, and nothing else.
+    assert [str(sent.url) for sent in served.requests] == [resolution.models_url]
+    # AC#2: the list gains them; the send URL is still the native route.
+    assert line.startswith(
+        f"Added kobold-served-a and kobold-served-b to {label}'s model list."
+    ), line
+    saved = tomllib.loads(_config_path().read_text())
+    assert saved["providers"]["koboldcpp"] == [
+        "None",
+        "kobold-served-a",
+        "kobold-served-b",
+    ]
+    assert saved["api_settings"]["koboldcpp"]["api_url"] == native
 
 
 # --- Case 8 and D-a: what the locked write reports --------------------------

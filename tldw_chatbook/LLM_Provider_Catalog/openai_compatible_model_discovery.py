@@ -23,6 +23,10 @@ from tldw_chatbook.Chat.local_server_discovery import (
     connect_error_is_refused,
     read_bounded_model_response,
 )
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    ProviderEndpointResolution,
+    resolve_provider_endpoint,
+)
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.qwencloud_url import (
     QwenCloudBaseURLValidationError,
@@ -40,10 +44,14 @@ from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
-    "koboldcpp": frozenset({"/api/v1/generate"}),
     "ollama": frozenset({"/api/tags"}),
     "local_ollama": frozenset({"/api/tags"}),
 }
+#: koboldcpp's template endpoint, KoboldAI's native generate route. It lists
+#: where the endpoint contract says (the root's /v1/models, the URL Switch
+#: model probes), so discovery asks the contract rather than keeping a second
+#: mapping (TASK-35832).
+_CONTRACT_LISTED_NATIVE_ROUTES = {"koboldcpp": "/api/v1/generate"}
 _QWENCLOUD_PROVIDER_KEY = "qwencloud"
 _MAX_ENDPOINT_LENGTH = 2000
 _MAX_GENERIC_PATH_DECODE_PASSES = 2
@@ -410,6 +418,17 @@ def _is_explicit_openai_compatible_path(path: str) -> bool:
     )
 
 
+def _contract_native_resolution(
+    provider_key: str, endpoint: str | None, parsed: ParseResult
+) -> ProviderEndpointResolution | None:
+    """The endpoint contract's reading of a native route it lists, else None."""
+    route = _CONTRACT_LISTED_NATIVE_ROUTES.get(provider_key)
+    # As the contract matches it: case and all.
+    if route is None or not parsed.path.rstrip("/").endswith(route):
+        return None
+    return resolve_provider_endpoint(provider_key, str(endpoint or ""))
+
+
 def supports_openai_compatible_model_discovery(
     provider_identity: str,
     normalized_endpoint: str | None,
@@ -438,6 +457,10 @@ def supports_openai_compatible_model_discovery(
         return False
 
     path = _normalized_path(parsed)
+    native = _contract_native_resolution(provider_key, normalized_endpoint, parsed)
+    if native is not None:
+        # An API suffix before the route is ambiguous: the contract refuses it.
+        return native.models_url is not None
     native_paths = _NATIVE_ENDPOINT_PATHS_BY_PROVIDER.get(provider_key, frozenset())
     if path in native_paths:
         return False
@@ -463,6 +486,11 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
     if parsed is None:
         return str(endpoint or "").strip()
 
+    native = _contract_native_resolution(
+        _normalized_provider_identity(provider_identity), endpoint, parsed
+    )
+    if native is not None and native.models_url is not None:
+        return native.models_url
     path = _normalized_path(parsed)
     if path in {"/completion", "/completions"}:
         base_url = normalize_llamacpp_base_url(endpoint)

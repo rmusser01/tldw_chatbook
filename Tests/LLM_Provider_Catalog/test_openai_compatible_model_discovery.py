@@ -415,14 +415,45 @@ def test_malformed_endpoint_port_is_not_eligible_and_does_not_crash():
     assert fingerprint_endpoint(endpoint) == "https://example.test/v1/models"
 
 
-def test_native_kobold_generate_is_not_eligible():
-    assert (
-        supports_openai_compatible_model_discovery(
-            "koboldcpp",
-            "http://127.0.0.1:5001/api/v1/generate",
-        )
-        is False
+@pytest.mark.parametrize(
+    ("endpoint", "models_url"),
+    [
+        ("http://127.0.0.1:5001/api/v1/generate", "http://127.0.0.1:5001/v1/models"),
+        ("http://localhost:5001/api/v1/generate/", "http://localhost:5001/v1/models"),
+        (
+            "https://kobold.example.test/proxy/api/v1/generate",
+            "https://kobold.example.test/proxy/v1/models",
+        ),
+    ],
+)
+def test_native_kobold_generate_lists_where_the_endpoint_contract_says(
+    endpoint, models_url
+):
+    """TASK-35832, rewritten on purpose (was refused as native): koboldcpp's
+    template endpoint lists at the URL Switch model probes, its root's
+    /v1/models, which the endpoint contract names."""
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        resolve_provider_endpoint,
     )
+
+    assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is True
+    assert build_models_url(endpoint, "koboldcpp") == models_url
+    assert resolve_provider_endpoint("koboldcpp", endpoint).models_url == models_url
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://127.0.0.1:5001/v1/api/v1/generate",
+        "http://127.0.0.1:5001/v1/models/api/v1/generate",
+        "http://127.0.0.1:5001/api/v1/generate?key=secret",
+        # Not the route as the contract matches it, so not native either.
+        "http://127.0.0.1:5001/API/V1/GENERATE",
+    ],
+)
+def test_kobold_generate_the_endpoint_contract_refuses_is_not_eligible(endpoint):
+    """TASK-35832 AC#3: an API suffix before the native route is ambiguous."""
+    assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is False
 
 
 def test_kobold_with_explicit_v1_endpoint_is_eligible():
@@ -624,14 +655,42 @@ async def test_malformed_endpoint_reports_distinct_error_kind():
     assert malformed.error.kind == "malformed_endpoint"
 
     # A valid URL whose PATH is not OpenAI-compatible stays unsupported_endpoint.
+    # TASK-35832, rewritten on purpose: koboldcpp's bare native route now
+    # lists, so the example is the one the endpoint contract calls ambiguous.
     unsupported = await discover_openai_compatible_models(
         provider="koboldcpp",
         provider_list_key="koboldcpp",
-        endpoint="http://127.0.0.1:5001/api/v1/generate",
+        endpoint="http://127.0.0.1:5001/v1/api/v1/generate",
         api_key=None,
     )
     assert unsupported.status == "unsupported"
     assert unsupported.error.kind == "unsupported_endpoint"
+
+
+@pytest.mark.asyncio
+async def test_kobold_native_endpoint_discovers_from_its_roots_v1_models():
+    """TASK-35832 AC#1: the request goes to the root's /v1/models."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "kobold-served"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await discover_openai_compatible_models(
+            provider="koboldcpp",
+            provider_list_key="koboldcpp",
+            endpoint="http://127.0.0.1:5001/api/v1/generate",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "success", result.error
+    assert [model.model_id for model in result.models] == ["kobold-served"]
+    assert [str(request.url) for request in requests] == [
+        "http://127.0.0.1:5001/v1/models"
+    ]
+    assert result.endpoint_fingerprint == "http://127.0.0.1:5001/api/v1/generate"
 
 
 @pytest.mark.asyncio

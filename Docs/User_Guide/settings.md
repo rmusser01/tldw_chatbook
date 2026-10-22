@@ -312,6 +312,12 @@ was for, such as "OpenAI: Could not save discovered models to the providers list
 Changing provider, endpoint or credentials clears the old results, and a model
 chosen from them no longer joins the list on **s**; a delayed operation cannot
 replace the new form’s results or Model value.
+For koboldcpp at its shipped endpoint, KoboldAI's native
+`http://localhost:5001/api/v1/generate`, **Discover models** lists what the
+server serves at `http://localhost:5001/v1/models`, the list Switch model
+shows; the endpoint you send to stays the native one. An endpoint with an API
+path before `/api/v1/generate` (such as `/v1/api/v1/generate`) is ambiguous
+and is not discovered.
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
