@@ -575,9 +575,7 @@ class AudioBookGenerationWidget(Widget):
             # Update content preview
             self.content_text = content
             content_preview = self.query_one("#content-preview", TextArea)
-            content_preview.load_text(
-                content[:1000] + "..." if len(content) > 1000 else content
-            )
+            content_preview.load_text(content)
             content_preview.disabled = False
 
             # Auto-detect chapters. This used to be gated by an
@@ -684,12 +682,7 @@ class AudioBookGenerationWidget(Widget):
         # Load combined content
         self.content_text = "\n".join(combined_content)
         content_preview = self.query_one("#content-preview", TextArea)
-        preview_text = (
-            self.content_text[:1000] + "..."
-            if len(self.content_text) > 1000
-            else self.content_text
-        )
-        content_preview.load_text(preview_text)
+        content_preview.load_text(self.content_text)
         content_preview.disabled = False
 
         # Auto-detect chapters (see task-15478: the switch that
@@ -841,12 +834,7 @@ class AudioBookGenerationWidget(Widget):
         # Load combined content
         self.content_text = "\n".join(content_parts)
         content_preview = self.query_one("#content-preview", TextArea)
-        preview_text = (
-            self.content_text[:1000] + "..."
-            if len(self.content_text) > 1000
-            else self.content_text
-        )
-        content_preview.load_text(preview_text)
+        content_preview.load_text(self.content_text)
         content_preview.disabled = False
 
         # Auto-detect chapters might not be suitable for
