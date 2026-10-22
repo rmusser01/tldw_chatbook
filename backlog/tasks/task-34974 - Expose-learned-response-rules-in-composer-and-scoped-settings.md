@@ -3,16 +3,16 @@ id: TASK-34974
 title: Expose learned response rules in composer and scoped settings
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-04 05:55'
-updated_date: '2026-10-13 03:03'
+- '@codex'
+created_date: 2026-10-04 05:55
+updated_date: 2026-10-22 19:11
 labels: []
 dependencies:
-  - TASK-34805
+- TASK-34805
 references:
-  - Docs/superpowers/plans/2026-10-03-console-response-rules.md
+- Docs/superpowers/plans/2026-10-03-console-response-rules.md
 documentation:
-  - backlog/decisions/232-console-learned-response-rules.md
+- backlog/decisions/232-console-learned-response-rules.md
 ---
 
 ## Description
@@ -43,8 +43,13 @@ Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-
 2026-10-12 Task3 at separate Rootleaf START1ed1da223c8754356aa1270975e38a4d11d7f0bc, preserving frozen Goal3a. Ruling: complete current required publication contracts and documented optional DeepSeek parameter plumbing under the standing all-issues-before-merge instruction. Cost if wrong: one bounded implementation/review and affected qualification cycle; stale modal results, altered provider defaults or falsely renewed diagnostic pins. ADR required: no new ADR. Existing ADR173/232/062 (successor063)/064 govern; amend064 for documented distinct none and honest unimplemented Responses refusal. Before code retain genuine gone-subtree/queued-action, timestamp and actual primary/leased-helper request RED. Guard view attachment and captured reload scope/currentness without suppressing store errors or weakening CAS; use canonical UTC only for new builder writes. Forward explicitly selected/configured optional DeepSeek none/low/high/max through existing immutable resolution and strict adapter validation; omitted remains omitted. Refuse unsupported Responses before effect, no Responses migration/default nonthinking/alias expansion. Review every final changed diagnostic statement and sink topology against current0ac pin98dbeef before canonical inventory generation. Qualify affected lifecycle/saved-revision/custody/HTTP/refusal/usage/closure/schema/UTC and final required Derived scripts; preserve all15 existing critical selectors, processes, profiles and caps and measure any bounded added selection. No source/native/provider acceptance waiver, paid/model/GUI/user-profile/keyring/children/ref changes. Task status/open AC/history retained. New task3 receipts/report/handoff and one scoped SPEC/QUALITY review; root owns publication/live qualification.
 
 Task3 fix round1, START947136507cb1948eec7a14a589807b541f9b5312: address sole scoped T3-1. Ruling: successful Save must reconcile committed immutable revision and current binding/CAS even when newer editor text arrives during the postcommit reload. Cost if wrong: a bounded correction/review cycle, overwritten drafts, false tested status or weakened scope/CAS. ADR required: no new ADR; existing ADR232/currentness/native ownership apply, no renumber/rebase (root owns newer-dev reconciliation). Before product edits reproduce the public Test/Save revision2 -> held real post-Save DB read -> further edit -> release -> Promote or Disable/Enable sequence at both80x24/120x35 geometries by extending the already enrolled exact saved-revision selector. Smallest correction separates committed row identity/binding/CAS from editable field replacement. For a mutation-selected revision, refresh selection/CAS but preserve a differing/invalid draft and label its examples/status untested; ordinary stale reload/scope/generation/attachment fences remain. Save must not subsequently mark a newer draft tested. Qualify new and existing manager/F1/R1/critical membership controls with unchanged20 selectors/processes/caps. Prove diagnostic-relevant statements/sinks unchanged rather than regenerating pin. Commit normally, clean source-bound proof and new task3-fix1-report/handoff, retain85+323 historical seals and all failed/model/native/Goal/hosted limits. No paid/network/model/GUI/key/profile/ref/children/Done changes.
+2026-10-22 PR #3207 Console P0 CI synchronization correction (existing AC2/AC4).
+ADR required: no new ADR. ADR path: backlog/decisions/232-console-learned-response-rules.md. Reason: test-only completion barrier within the existing manager/revision contract; preserve production behavior and all native/authority budgets.
+1. Preserve hosted failure and exact-node/control evidence. Use source-unchanged real call-through post-Disable reload hold to verify busy/disabled second press and absence of an Enable mutation; distinguish this deterministic witness from inferred hosted state.
+2. Replace the toggle sequence's frame-count polling with a finite wall-clock wait for expected stored state and settled usable manager action before the next press. Preserve all selected revision, row, dirty-draft, CAS and state oracles; do not change production, timeout ceilings or guards.
+3. Run the exact failing node, complete existing saved-edit manager-action selector, and a controlled delayed-reload witness with independent release; record RED/GREEN receipts, scoped lint/format and source identity.
+4. Independently review the narrow correction, append implementation evidence and CI qualification, then verify actual current-head hosted CI. Keep this broader task In Progress; unrelated paid/native/owner acceptance remains open.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
