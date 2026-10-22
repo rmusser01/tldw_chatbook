@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-20 14:53
-updated_date: '2026-10-22 20:13'
+updated_date: '2026-10-22 23:02'
 labels:
 - follow-up
 - settings
@@ -66,12 +66,12 @@ Found in S1's live verification (2026-10-20). It reproduces on plain dev 1bbc145
 
 ## Implementation Notes
 
-**Intent (AC#1): the whole-file rewrite was not intended.** Before TASK-491 the quit ran "Save encrypted config if encryption is enabled": it wrote only when encryption was on and unlocked, to encrypt the keys at rest. a9ccde5723 (TASK-491, 2026-07-24) moved that decision into `_config_data_for_persistence` and wrote unconditionally. Its task and plan route "shutdown persistence" through the config owner; neither asks for defaults on disk. b5251e9a6e (TASK-32628) then called it "a defaults-only rewrite" and skipped it for a recovered profile. b04fc23ebc (TASK-33001.7) worked around it. The function force-reloads from disk, so it never carried in-memory state. Loads re-merge the template and migrations persist through their own writer (`_CONFIG_MIGRATIONS` is empty). So all a quit can still owe the disk is encryption of a plaintext secret, such as a hand edit, in an unlocked encrypted file.
+**Intent (AC#1): the whole-file rewrite was not intended.** Before TASK-491 the quit ran "Save encrypted config if encryption is enabled": it wrote only when encryption was on and unlocked, to encrypt the keys at rest. a9ccde5723 (TASK-491, 2026-07-24) moved that decision into `_config_data_for_persistence` and wrote unconditionally. Its task and plan route "shutdown persistence" through the config owner; neither asks for defaults on disk. b5251e9a6e (TASK-32628) then called it "a defaults-only rewrite" and skipped it for a recovered profile. b04fc23ebc (TASK-33001.7) worked around it. The function force-reloads from disk, so it never carried in-memory state. Loads re-merge the template and migrations persist through their own writer (`_CONFIG_MIGRATIONS` is empty). So all a quit can still owe the disk is encryption work that needs an unlocked session: encrypting a plaintext secret (such as a hand edit), and upgrading legacy v1 ciphertext (review round 1, below).
 
 **Fix** (in `persist_cli_config_for_shutdown()`, so every caller gets it):
 - The recovery guard and the "file loads safely" gate stay; an unreadable or undecryptable file still returns False.
 - The template-merge write is gone.
-- The function writes only when the file has encryption enabled, a password is set, and it holds a plaintext sensitive value. It then encrypts the file's own contents, so no template keys come back.
+- The function writes only when the file has encryption enabled, a password is set, and it holds a plaintext sensitive value or a v1 `enc:` value. It then works on the file's own contents, so no template keys come back.
 
 **Tests** (private profiles, all through the wrapper):
 - `Tests/UI/test_settings_configuration_hub.py::test_settings_keyless_provider_save_keeps_template_env_name_out` (AC#2, AC#3): a real Settings save, then `persist_cli_config_for_shutdown()`, then the bytes must match what the save wrote. Red at dev on `[legacy-env-unset]`: "At index 26452 diff: b'k' != b'u'", which is `api_key_env_var` re-inserted. The other two cases keep every template key, so dev already left them byte-identical.
@@ -98,3 +98,25 @@ Found in S1's live verification (2026-10-20). It reproduces on plain dev 1bbc145
 - `Tests/ProductionApp/test_config_profile_isolation.py`
 - `Docs/User_Guide/settings.md`: Credentials row; the name returns in **Env var** after a restart, not in the file.
 - `backlog/docs/lessons-testing-evidence.md`: an update to the TASK-33001.7 lesson.
+
+**Review round 1 (verdict "With fixes"; commit 0f4c79824d):**
+- **The v1 upgrade stays (finding 1).**
+  - Dev's quit decrypted the whole merge and re-encrypted it as v2. It was the only pass, short of a password change or rekey, that moved legacy v1 values and the v1 password check forward. Saves skip values that are already encrypted.
+  - A v1 value costs a 2^20 scrypt derivation (about 1 GiB, 3 s) at every launch, so dropping the upgrade made that cost permanent.
+  - `_upgrade_legacy_ciphertext` re-encrypts only the values that carry the v1 version byte (`ConfigEncryption.is_legacy`), in place and under the session password. A value stays `enc:` whatever its key. It walks tables the way decryption does.
+  - The whole document is not decrypted, which would bring template keys back and write `enc:` values under non-sensitive keys as plaintext.
+  - Plaintext secrets are still encrypted as before. A v2-only file and a locked session write nothing. The docstring now says what the quit still carries.
+- **Validate before writing (finding 2).** `_validate_encrypted_document(persisted, password)` checks the exact document just before `_write_raw_cli_config_unlocked`. A ValueError returns False.
+- **New tests** in `Tests/test_config_persistence_owner.py`. The v1 fixture is built the reviewer's way, with `ConfigEncryption.VERSION` patched to 1: one key and the check, about 3.9 s per worker.
+  - `test_unlocked_quit_upgrades_legacy_ciphertext_in_place`: both values end up v2, decrypt to the same plaintext, and the document keeps its shape; a second quit on the v2 file writes nothing. Red at e5550a20ec: `(1, 1) == (2, 2)`.
+  - `test_locked_quit_leaves_legacy_ciphertext_byte_identical`: an invariant e5550a20ec already kept. Red at dev 28beeb9ed5, where the locked quit returned False. Red under a temporary edit that writes on a locked quit (the file's comment was gone).
+  - `test_quit_refuses_a_value_another_password_wrote_between_its_reads`: a hand edit simulated inside the quit's load. Red at e5550a20ec, which wrote a new check value (the stranded state). Red under a temporary edit that drops the validation.
+- **No-write pin (finding 3).** `test_shutdown_persistence_uses_only_effective_path` now runs a second quit on the encrypted, nothing-to-do file, with a comment prepended so any rewrite shows. Red under the reviewer's mutant at e5550a20ec, which dropped the plaintext check. Red under the post-fix equivalent, "write whenever unlocked", which fails that test and the v2-only second quit.
+  - Without the comment, that mutant passed: the dumped file rewrites byte-identically.
+- **Lane (finding 4).** `...keeps_template_env_name_out[legacy-env-unset]` is appended at the tail of `scripts/ui_pr_gate_census.txt`, and the floor in `scripts/check_ui_pr_gate_census.py` goes from 588 to 589. `Tests/CI`: 1025 passed, 1 skipped.
+- **Runs at 0f4c79824d** (`-n 4`):
+  - Config and encryption files (9 files): 161 passed.
+  - Backup_Recovery (participant lifetimes, startup unlock, credentials): 3 failed, the same set at e5550a20ec.
+  - The encryption card, theme and ProductionApp files: 43 passed.
+  - The hub file: 242 failed, the same names as round 0 and dev.
+  - Preflight passed.
