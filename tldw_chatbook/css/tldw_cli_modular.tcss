@@ -10968,9 +10968,6 @@ ResponseRulesModal .rr-actions Button {
     min-width: $ds-size-0;
 }
 
-/* ===== MODULE: features/_library_notes_panels.tcss ===== */
-
-
 /* ===== MODULE: features/_library_artifacts.tcss ===== */
 
 

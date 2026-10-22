@@ -4431,14 +4431,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 .library-notes-sync-attention-actions > Button {
     width: $ds-width-full;
 }
-/* Library Notes panels: the note editor's own vocabulary, listed directly
-   after _library_panels.tcss in CSS_MODULES and the library split so cascade
-   order is unchanged. Opened on 2026-10-21 (TASK-34000.10) because
-   _library_panels.tcss is over ADR-161 spec 3.5's 2,000-active-line ceiling
-   (TASK-24451: "split the sheet by vocabulary"); the clarify batch
-   (TASK-34000.24, 76850b108c) carves the Notes workbench's row wrappers, New
-   note and lasting-sync rules into a sheet of this same name, and this block
-   joins them on the rebase. */
+
 
 /* TASK-34000.10 (review N-07): a validation veto marks the field itself. The
    vetoed field carries `library-note-field-invalid` (an error outline, the
