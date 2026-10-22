@@ -70,11 +70,14 @@ def release_unsent_turn_preparation(
     if not shelf_releasable(store.preparation_for_session(session_id), preparation_id):
         return False
     draft = store.session_draft(session_id)
-    controller.cancel_library_preparation(preparation_id)
-    # Cancelling restores the sent text as the draft; a discarded (or already
-    # restored) turn must not come back that way.
-    if store.session_draft(session_id) != draft:
-        store.set_session_draft(session_id, draft)
+    try:
+        controller.cancel_library_preparation(preparation_id)
+    finally:
+        # Cancelling restores the sent text as the draft; a discarded (or
+        # already restored) turn must not come back that way -- not even when
+        # the cancel then fails, which propagates so the shelf keeps the turn.
+        if store.session_draft(session_id) != draft:
+            store.set_session_draft(session_id, draft)
     current = store.preparation_for_session(session_id)
     return current is None or current.preparation_id != preparation_id
 

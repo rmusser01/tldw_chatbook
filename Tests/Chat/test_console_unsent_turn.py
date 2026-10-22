@@ -93,3 +93,26 @@ def test_another_preparation_is_never_released():
     assert store.preparation_for_session(SESSION).state is (
         ConsoleTurnPreparationState.PAUSED
     )
+
+
+def test_a_release_that_fails_still_keeps_the_composers_draft(monkeypatch):
+    """Dev's TASK-35992 guarantee, kept through the rebase onto 7700c63a68.
+
+    Dev's shelf release put the composer's draft back in a ``finally``: a
+    cancel that wrote the sent text into the draft and then failed in storage
+    must not leave that text behind. The failure itself still propagates, so
+    the shelf keeps the recovery (dev's
+    ``test_recovery_storage_failure_is_nonfatal_and_retains_inputs_in_worker``).
+    """
+    controller, store = _paused(ConsolePreparationPauseKind.RETRIEVAL)
+    store.set_session_draft(SESSION, "my next question")
+
+    def failing_cancel(preparation_id):
+        store.set_session_draft(SESSION, "the sent text")
+        raise RuntimeError("storage failed")
+
+    monkeypatch.setattr(controller, "cancel_library_preparation", failing_cancel)
+
+    with pytest.raises(RuntimeError, match="storage failed"):
+        release_unsent_turn_preparation(controller, SESSION, PREPARATION)
+    assert store.session_draft(SESSION) == "my next question"
