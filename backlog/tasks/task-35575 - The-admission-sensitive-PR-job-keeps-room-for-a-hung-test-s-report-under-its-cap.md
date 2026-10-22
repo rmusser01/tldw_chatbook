@@ -1,8 +1,9 @@
 ---
 id: TASK-35575
 title: The admission-sensitive PR job keeps room for a hung test's report under its cap
-status: In Progress
+status: Done
 created_date: 2026-10-19 05:40
+updated_date: 2026-10-22 17:54
 dependencies: []
 labels:
 - model-config-redesign
@@ -28,7 +29,7 @@ The PR's own CI runs give the real number; record them here.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The owner's decision is recorded in this task: a second admission-sensitive job, a timeout change, or moving targets out under the rule TASK-35570 decides
-- [ ] #2 After the change, the slowest of at least 5 measured PR runs of each admission-sensitive job ends at least 8 minutes under its cap, which leaves room for one hung test's report
+- [x] #2 After the change, the slowest of at least 5 measured PR runs of each admission-sensitive job ends at least 8 minutes under its cap, which leaves room for one hung test's report
 - [x] #3 Tests/CI's lane contracts and ADR-103's runner note match the jobs as changed
 <!-- AC:END -->
 
@@ -52,7 +53,13 @@ The PR's own CI runs give the real number; record them here.
 
 **AC#3.** Tests/CI: `ADMISSION_2_TARGETS` with its `EXACT_STEPS` entry (so the selection-flag, shorter-limit and missing-target mutations cover it), `test_second_admission_target_set_is_exact` (the three rule tests lead; no target shared with the first job, a node beside its whole file included), the aggregate's `needs`, verdict and continue-on-error contracts, `test_required_aggregation_contract_rejects_a_dropped_admission_lane`, the one-serial-job contract, the Console P0 gate's own-targets check, `test_derived_artifacts_workflow.py`'s job list, verdicts and disjoint-targets step list, and the P0 gate's `_lanes()` and `_BOOTSTRAP_OK`. ADR-103 has a dated note, and its runner counts are now sixteen, seventeen with perf-guard (`test_ui_lane_shard_count_statements.py` failed on the old counts until then). Negative controls on the real workflow: dropping one target from the new job fails `test_second_admission_target_set_is_exact`; dropping one from the first job fails `test_admission_target_set_is_exact` (and, for a Notes sync file, the real-stack test); dropping the new job from the aggregate's `needs` fails six tests, `test_required_aggregation_contract_rejects_a_dropped_admission_lane[pr-fast-lane-admission-2]` among them. Tests/CI: 1015 passed, 1 skipped.
 
-**AC#2 stays open** until five PR runs of each job are measured.
+**AC#2, measured (2026-10-22).** The data is every pull_request run of derived-artifacts.yml created from #3169's merge (2026-10-20 13:31:31Z) to 2026-10-22 14:52:52Z: 93 runs, each read at its latest attempt. Job wall time runs from start to completion, setup included.
+- **PR Fast Lane (admission-sensitive):** 82 completed runs. Median 17.4 min, slowest 20.1 min, 14.9 min under the 35-min cap. 0 failures.
+- **PR Fast Lane (admission-sensitive 2):** 85 completed runs. Median 10.1 min, slowest 13.4 min, 21.6 min under the cap. 0 failures.
+
+In the other runs, the jobs were cancelled by a newer push (job 1: 8, job 2: 5) or never started (3 runs). The longest cancelled job ran 16.5 min, so none reached the cap. Of the 31 runs with more than one attempt, every earlier attempt was an approval hold with no jobs, or ran no slower than the figures above (job 1 at most 20.1, job 2 at most 11.4 min).
+
+Both slowest runs end more than 8 minutes under the cap. That leaves room for one hung test's report, about 5.3 minutes.
 
 Files: .github/workflows/derived-artifacts.yml, Tests/CI/test_ci_queue_pressure_contract.py, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_console_p0_regression_gate.py, Tests/CI/test_ui_lane_shard_count_statements.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
 <!-- SECTION:NOTES:END -->
