@@ -518,10 +518,6 @@ from ..Library_Modules.library_conversations_state import LibraryConversationsSt
 from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_ingest_state import LibraryIngestState
-from ..Library_Modules.parakeet_install_selection import (
-    apply_parakeet_install_result,
-    capture_parakeet_install_selection,
-)
 from ..Library_Modules.library_media_state import (
     LibraryMediaLinkReceipt,
     LibraryMediaState,
@@ -29272,7 +29268,9 @@ class LibraryScreen(BaseAppScreen):
                 severity="information",
             )
             return
-        self._parakeet_v2_pending_selection = capture_parakeet_install_selection(self)
+        from ..Library_Modules import parakeet_install_selection as selection
+
+        self._parakeet_v2_pending_selection = selection.capture_selection(self)
         self._parakeet_v2_install_worker = self._run_parakeet_v2_preflight()
 
     @on(LibraryIngestCanvas.TranscribeCppGGUFRequested)
@@ -29519,7 +29517,9 @@ class LibraryScreen(BaseAppScreen):
         error: str | None,
     ) -> None:
         """Publish installation through the original UI-thread callback owner."""
-        apply_parakeet_install_result(self, installed, error)
+        from ..Library_Modules import parakeet_install_selection as selection
+
+        selection.apply_parakeet_install_result(self, installed, error)
 
     def _invalidate_library_external_submission(self) -> None:
         """Fence and release any not-yet-enqueued external-root submission."""

@@ -35,7 +35,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 )
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Library_Modules.parakeet_install_selection import (
-    capture_parakeet_install_selection,
+    capture_selection,
 )
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.library_screen import (
@@ -499,7 +499,7 @@ def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> N
     screen.app_instance = MagicMock()
     screen.refresh = MagicMock()
     screen.query_one = MagicMock()
-    screen._parakeet_v2_pending_selection = capture_parakeet_install_selection(screen)
+    screen._parakeet_v2_pending_selection = capture_selection(screen)
 
     screen._apply_parakeet_v2_install_result(None, mapped)
 
@@ -535,7 +535,7 @@ def test_successful_install_prefers_managed_and_clears_external_override(
     screen.app_instance = MagicMock()
     screen.refresh = MagicMock()
     screen.query_one = MagicMock()
-    screen._parakeet_v2_pending_selection = capture_parakeet_install_selection(screen)
+    screen._parakeet_v2_pending_selection = capture_selection(screen)
 
     screen._apply_parakeet_v2_install_result(installed, None)
 
