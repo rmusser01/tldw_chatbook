@@ -33,7 +33,9 @@ either sit two docked panels, **"Dictionaries (copied into this character)"**
 and **"World Books (copied into this character)"**. The rail's **New**,
 **Import** and **Duplicate** act on the current mode; the Inspector's
 **Attach to Console**, **Start Chat**, **Export JSON**, **Export PNG** and
-**Delete** act on the current selection.
+**Delete** act on the current selection: the open item, never the marked
+rows. To export or delete several items at once, mark them in the list and
+use the marks bar (see [Marks and the marks bar](../roleplay-chat-dictionaries.md#marks-and-the-marks-bar)).
 
 ## Included pixel-migu character and Buddy
 
@@ -186,6 +188,9 @@ the selection — description, personality, scenario, greetings, tags, avatar
 and all — as **"{name} (copy)"**, then "(copy 2)", "(copy 3)"…, with **no
 confirmation**. **Delete** (Inspector) confirms with **"Delete {name}? This
 cannot be undone here."** (**Delete** / **Cancel**) and reports "Deleted."
+To delete several characters, mark them and press **Delete…** in the marks
+bar: the same dialog lists up to five names, then "and N more", and its
+button reads **Delete N marked**.
 
 ### Importing and exporting a card
 

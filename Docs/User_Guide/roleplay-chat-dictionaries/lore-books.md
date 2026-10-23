@@ -23,11 +23,13 @@ yet, the rail reads "No lore books yet - use New or Import to add one."
 
 ![Lore entries and preview](../images/roleplay/lore-entries.svg)
 
-- **Library rail** (left) — one row per book: its name plus a meta line
-  reading "3 entries · on" (or "· off" when the book is switched off). The
-  "Search..." box filters by name only, and Lore never paginates, so there is
-  no "Sort:" or "Tag:" button. The toolbar carries **New**, **Import**, and
-  **Duplicate**.
+- **Library rail** (left) — one row per book: its name and **on** or
+  **off** (a book that is off has a muted name), with "3 entries" on a dim
+  second line when the list is wide enough. Highlight a row and press
+  **Space** to switch the book on or off without opening it; switching one
+  off says "{name} turned off · space to undo". The "Search..." box filters
+  by name only, and there is no "Sort:" or "Tag:" button. The toolbar
+  carries **New**, **Import**, and **Duplicate**.
 - **Detail** (centre) — three tabs: **Entries**, **Settings**, and
   **Attachments**, plus a status line underneath that reports the result of
   whatever you just did.
@@ -174,6 +176,7 @@ character card that ships with a lorebook attaches one automatically
 |---|---|
 | Ctrl+N | Create a new lore book |
 | Ctrl+F | Jump to the rail's "Search..." box |
+| Space | Turn the highlighted book on or off (in the rail's list) |
 | Ctrl+Enter | Run the injection preview (when the preview pane has focus) |
 
 **Ctrl+S does not save here.** It only reaches the character and persona

@@ -24,9 +24,10 @@ mode while this screen is open (the mode keys are the single letters
 "Dictionaries — text find/replace rules."
 
 The Library rail lists your dictionaries; before you have any it reads "No
-dictionaries yet - use New or Import to add one." Each row shows the name with
-"{N} entries · on" (or "· off") underneath. Highlight a row and press **Space**
-to switch that dictionary on or off without opening it.
+dictionaries yet - use New or Import to add one." Each row shows the name and
+**on** or **off**, with "{N} rules" on a dim second line when the list is wide
+enough. Highlight a row and press **Space** to switch that dictionary on or off
+without opening it; switching one off says "{name} turned off · space to undo".
 
 ## Layout tour
 

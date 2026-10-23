@@ -40,7 +40,7 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     "◆": "[!]",  # waiting for approval
     "⚠": "[!]",  # stuck/blocked (STATUS_GLYPHS) -- same attention mark
     "✗": "[X]",  # failed
-    "✓": "[x]",  # finished ok / done
+    "✓": "[x]",  # finished ok / done; marked (Roleplay items list, frame slice B2a)
     "◈": "[s]",  # background sub-agent ended -- unseen (PR3a-2 Task 4)
     # Session + voice lifecycle (console_glyphs).
     "◌": "[~]",  # temporary session

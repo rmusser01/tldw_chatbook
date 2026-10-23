@@ -65,7 +65,8 @@ Top to bottom:
 Below the chips sit three panes:
 
 - **Library** (left rail) — the searchable list of items in the current
-  mode, with its **New** / **Import** / **Duplicate** buttons. The **<**
+  mode, with its **New** / **Import** / **Duplicate** buttons. Its top
+  border names the kind and counts it ("Characters 349"). The **<**
   button in its header collapses it to a slim **Library** handle; click the
   handle to bring it back.
 - The **centre pane** — the detail view or editor for whatever you
@@ -86,28 +87,93 @@ panes (handle → Library → centre → Inspector → handle).
 
 | Control | What it does | Shown in |
 |---|---|---|
-| **Search...** | Filters the list as you type. In Characters mode it searches the whole library, not just the page you're on. | every mode |
+| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter puts the first match under the cursor in the list. | every mode |
 | **New** | Creates a new item in the current mode. ("Create a new item in this mode.") | every mode |
 | **Import** | Opens a file picker; the tooltip names the accepted formats per mode — "Import a character card (PNG or JSON).", "Import a dictionary (JSON or Markdown).", "Import a world book (JSON)." | Characters, Dictionaries, Lore — **hidden in Personas** |
 | **Duplicate** | Copies the selected item. ("Duplicate the selected item.") | Characters, Dictionaries, Lore — **hidden in Personas** |
 | **Sort: Name** | Cycles the list order — Name → Recent edit → Recent add (plus Relevance while a Characters search is running). ("Cycle the list sort order.") | Characters, Personas — **hidden in Dictionaries and Lore** |
 | **Tag: All** | Opens the "Filter by tag" picker. ("Filter characters by tag.") | **Characters only** |
 
-Below the list:
+**Empty states** name the way out: "No characters yet - use New or
+Import to add one.", "No personas yet - use New to add one." (Personas has
+no Import), and the same "use New or Import" wording for "No dictionaries
+yet - …" and "No lore books yet - …".
 
-- **Empty states** name the way out: "No characters yet - use New or
-  Import to add one.", "No personas yet - use New to add one." (Personas
-  has no Import), and the same "use New or Import" wording for "No
-  dictionaries yet - …" and "No lore books yet - …".
-- **The count line** reads "12 characters" (singular at one — "1
-  character"), "3 of 12 characters" while a filter is on, or "Showing 7
-  character matches from full library" when a search reaches past the
-  current page.
-- **A page bar** replaces the count line once Characters or Personas pass
-  50 items — "1-50 of 137 characters", with **<** and **>** either side.
-  Dictionaries and Lore never paginate.
-- Highlighting a row doesn't select it — press Enter or click. In
-  Dictionaries mode, **Space** turns the highlighted dictionary on or off.
+#### The list
+
+Every item takes one line when the list is narrow (as at 120 columns) or a
+kind holds more than 40 items. When the list is at least 40 cells wide and
+the kind holds 40 or fewer, each item takes two lines, the second one dim:
+a character's age, first tag and the start of its description ("3d ·
+fantasy · Commands the…"), the first words of a persona's system prompt,
+"250 entries" for a lore book, "150 rules" for a dictionary. Lore books and
+dictionaries end their first line with **on** or **off**, and a book that
+is off has a muted name. A name too long for the list is cut in the middle
+("Highspire Gazette…om card) 2"); hover over it to read it whole.
+
+The first columns are a gutter: **▸** marks the item open in the centre
+pane and **✓** a marked item (">" and "[x]" with ASCII glyphs on).
+
+There are no pages. The list scrolls through the whole library and loads
+200 more rows as you near the end; **End** jumps to the last item and loads
+the rest on the way. Personas lists every persona, not only the newest 100.
+
+Highlighting a row doesn't open it: press **Enter** or click. With the list
+focused, **Space** turns the highlighted lore book or dictionary on or off
+(turning one off says "{name} turned off · space to undo"; press **Space**
+again to undo), and **s** cycles the sort in Characters and Personas. These
+keys act on the list only, never on a focused button.
+
+#### Counts in the border
+
+The list's top border names the kind and its count: "Characters 349",
+"Personas 114", "Lore books 3 · 2 on" and "Chat dictionaries 3 · 2 on"
+(books add how many are on). While a search or a tag narrows the list it
+reads "Characters 48 of 349", adding "· tag fantasy" for a tag. It shows
+"(…)" while counting, "100+" on a server until the total is known, and
+"(?)" when the list could not load.
+
+The bottom border gives the open item's place in the list, "#4 of 28". It
+is blank while nothing is open, or while a search hides the open item.
+
+#### Marks and the marks bar
+
+To act on several items at once, mark them: press **m** on the highlighted
+row, or click its ✓ column (the tooltip reads "Click to mark"). Do the same
+again to unmark. A click anywhere else on a row opens the item and never
+marks it.
+
+While marks exist, the list's bottom row is the **marks bar**:
+"✓ 3 marked · Export… · Delete… · Clear esc". Lore books and dictionaries
+have no **Export…**. On a narrow list the bar drops words first, then whole
+buttons, **Clear** before **Export**; at its narrowest it shows only
+**Delete**, with the count in its tooltip.
+
+Marks are kept per kind. They survive searching, sorting, tags and
+switching to another kind and back. When a search or tag hides some of
+them, the bar says so: "✓ 3 marked (2 hidden)". **Clear**, or **Escape**
+while the list or the marks bar has focus, clears the current kind's marks.
+Leaving Roleplay clears them all: marks are never saved.
+
+- **Export…** asks for a folder ("Export 3 items as JSON") and writes one
+  JSON file per marked item.
+- **Delete…** opens the delete dialog below, naming the marked items.
+
+The Inspector's **Export JSON** and **Delete** act on the open item only,
+whatever is marked.
+
+#### Deleting
+
+Every delete asks once, in the same dialog:
+
+- The Inspector's **Delete** asks "Delete {name}? This cannot be undone
+  here." (**Delete** / **Cancel**).
+- The marks bar's **Delete…** is titled "Delete 3 marked" and asks "Delete
+  these 3 characters? This cannot be undone here.", then lists up to five
+  names and "and N more". Its confirm button reads **Delete 3 marked**.
+
+**Cancel** has the focus, and **Escape** cancels. Focus then returns to the
+button you pressed.
 
 ### The Inspector
 
@@ -225,11 +291,15 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | c / p / d / l | Switch to Characters / Personas / Dictionaries / Lore — **only when focus is not in a text box** (in a text box they type the letter) |
 | [ / ] | Previous / next mode — **only when focus is not in a text box** (in a text box they type the bracket) |
 | Ctrl+N | New item in the current mode |
-| Ctrl+F | Focus the **Search...** box |
+| Ctrl+F | Focus the **Search...** box; Enter there puts the first match under the cursor in the list |
 | Ctrl+Enter | Attach to Console — only with a saved character or persona selected |
 | Ctrl+S | Save — character and persona editors only |
-| Escape | Back: cancels the open editor, returns from a conversation transcript to the card, or moves focus from the search box to the list. It never leaves the screen. |
-| Space | Turn the highlighted dictionary on or off (Dictionaries mode, in the Library list) |
+| Escape | Back: cancels the open editor, returns from a conversation transcript to the card, or moves focus from the search box to the list. On the list or its marks bar it clears the current kind's marks. It never leaves the screen. |
+| Enter | Open the highlighted item (Library list) |
+| m | Mark or unmark the highlighted item (Library list) |
+| Space | Turn the highlighted lore book or dictionary on or off (Library list) |
+| s | Cycle the sort (Library list; Characters and Personas) |
+| End | Jump to the last item, loading the rest of the list (Library list) |
 | F6 / Shift+F6 | Next / previous pane |
 
 ## Related settings & docs
@@ -265,6 +335,11 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 - **My collapsed rail came back.** Rail collapse lasts for the current
   visit — leaving the screen and returning gives you both rails open
   again.
+- **My marks are gone.** Leaving Roleplay clears every mark, by design
+  (marks are never saved, so a bulk delete never acts on rows you marked
+  on an earlier visit). Switching kinds keeps them.
+- **The Inspector's Delete ignored my marks.** It acts on the open item
+  only. Use **Delete…** in the marks bar to delete the marked items.
 - **Ctrl+S did nothing.** It only presses Save in the character and
   persona editors. Dictionaries and lore books save from their own Save
   buttons.
