@@ -1,7 +1,9 @@
 """Shared harness for the TASK-34000.11 note-link Pilot tests.
 
-Two files use it: ``test_library_note_links_picker_and_preview.py`` (the
-PR-gated lane file) and its ``_extended.py`` sibling. Not a test module, so
+Three files use it: the two PR-gated census files
+``test_library_note_links_picker_and_preview.py`` (insert + Escape) and
+``test_library_note_links_preview_opens_in_app.py`` (Preview links), and the
+``_extended.py`` sibling outside the census. Not a test module, so
 pytest does not collect it (no ``test_`` prefix).
 
 Every test drives the real ``TldwCli`` booted into Library over a real
