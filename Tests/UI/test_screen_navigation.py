@@ -2506,7 +2506,11 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     screen._media_state.confirming_delete = True
     screen._register_footer_shortcuts()
     _source, delete_shortcuts = screen._footer_shortcut_registration
-    assert dict(delete_shortcuts)["esc"] == "close"
+    # TASK-34000.22 (fix round 2, R2-5): Escape over an armed delete
+    # CANCELS the confirm (it is checked before the dirty-form refusal), so
+    # the chip says what Escape does -- still not "back to list".
+    assert dict(delete_shortcuts)["esc"] == "cancel"
+    assert delete_shortcuts != plain_shortcuts
 
     screen._media_state.confirming_delete = False
     screen._media_state.editing_analysis = True

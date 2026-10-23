@@ -2319,6 +2319,8 @@ def test_t_key_arms_delete_confirmation():
     fake._sync_library_media_viewer_or_recompose = lambda: setattr(
         fake, "_synced", fake._synced + 1
     )
+    # TASK-34000.22: `t` refuses while a Media form is dirty; a clean one.
+    fake._library_media_editor_dirty = lambda: ""
     LibraryScreen.action_library_media_move_to_trash(fake)
     assert fake._media_state.confirming_delete is True
     assert fake._media_state.delete_receipt_ids == ()
