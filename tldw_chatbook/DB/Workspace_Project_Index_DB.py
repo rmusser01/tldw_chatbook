@@ -20,6 +20,9 @@ from tldw_chatbook.Workspaces.project_index.allocation import (
     admit_keyword_connection,
     allocation_gate,
     allocation_store,
+    assert_store_unoccupied,
+    existing_namespace_paths,
+    legacy_namespace_paths,
     retain_uncertain,
     verify_legacy_pre_open,
     verify_legacy_settlement,
@@ -47,6 +50,10 @@ from tldw_chatbook.Workspaces.project_index.models import (
     ProjectSemanticState,
     ScanPage,
 )
+
+# Keep an exact native peer owner whenever probe retirement is unproven.
+_UNCERTAIN_PEER_CONNECTIONS: dict[Path, sqlite3.Connection] = {}
+
 
 _SCHEMA_V2 = (
     "CREATE TABLE schema_version(version INTEGER PRIMARY KEY CHECK(version=2))",
@@ -263,7 +270,17 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             else None
         )
         self._init_store_kernel()
-        with self.sql_unit(write=not self.db_path.exists() and not cleanup_only):
+        control_preexisting = (
+            self._allocation_group is None
+            or (self._allocation_group / "allocation-v1.lock").exists()
+        )
+        if (
+            self._allocation_group is not None
+            and not control_preexisting
+            and not cleanup_only
+        ):
+            self._refuse_v4_without_control(self._allocation_group)
+        with self.sql_unit(write=not cleanup_only):
             try:
                 # Native ownership acquisition and disk accounting never happen in a
                 # SQL transaction. Recheck the version after the migration capability.
@@ -285,7 +302,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 if (
                     self._allocation_group is not None
                     and versions == [4]
-                    and not (self._allocation_group / "allocation-v1.lock").exists()
+                    and not control_preexisting
                 ):
                     raise ValueError("index_allocation_control_missing")
                 if needs_migration and migration_context is None:
@@ -358,6 +375,83 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 self.close_native()
                 raise
 
+    @staticmethod
+    def _probe_peer(peer: Path, group: Path, *, gated: bool) -> tuple[int, bool]:
+        """Read one existing catalog and prove native close before the next peer."""
+        (verify_pre_open if gated else verify_legacy_pre_open)(peer, group)
+        conn = None
+        try:
+            conn = connect_private_sqlite(
+                OWNER_ID,
+                peer,
+                read_only=True,
+                must_exist=True,
+                timeout=0,
+                isolation_level=None,
+            )
+            versions = [
+                row[0] for row in conn.execute("SELECT version FROM schema_version")
+            ]
+            if versions == [2]:
+                _validate_catalog(conn, _SCHEMA_V2, 2)
+                return 2, False
+            if versions == [3]:
+                _validate_catalog(conn, _SCHEMA_V3, 3)
+                return 3, False
+            if versions != [4]:
+                raise ValueError("project_index_schema_version")
+            _validate_catalog(conn, _SCHEMA, 4)
+            semantic = bool(
+                conn.execute(
+                    "SELECT 1 FROM semantic_control "
+                    "WHERE enabled=1 OR ready_generation_id IS NOT NULL LIMIT 1"
+                ).fetchone()
+                or conn.execute("SELECT 1 FROM semantic_generations LIMIT 1").fetchone()
+                or conn.execute("SELECT 1 FROM semantic_members LIMIT 1").fetchone()
+            )
+            return 4, semantic
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                    try:
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        pass
+                    else:
+                        raise RuntimeError("peer_connection_still_open")
+                except BaseException as error:
+                    _UNCERTAIN_PEER_CONNECTIONS[group] = conn
+                    raise ProjectIndexRetirementUnproven(
+                        "index_peer_retirement_unproven"
+                    ) from error
+            try:
+                (verify_settlement if gated else verify_legacy_settlement)(peer, group)
+            except OSError as error:
+                if conn is not None:
+                    _UNCERTAIN_PEER_CONNECTIONS[group] = conn
+                raise ProjectIndexRetirementUnproven(
+                    "index_peer_settlement_unproven"
+                ) from error
+
+    @classmethod
+    def _refuse_v4_without_control(cls, group: Path) -> None:
+        """Do not create a missing gate over an already-v4 group."""
+        if group in _UNCERTAIN_PEER_CONNECTIONS:
+            raise ProjectIndexRetirementUnproven("index_peer_retirement_unproven")
+        for peer in legacy_namespace_paths(group):
+            version, _ = cls._probe_peer(peer, group, gated=False)
+            if version == 4:
+                raise ValueError("index_allocation_control_missing")
+
+    def _group_has_semantics(self, group: Path) -> bool:
+        """Inspect closed peers serially before this unit opens its target."""
+        qualified = False
+        for peer in existing_namespace_paths(group):
+            _, semantic = self._probe_peer(peer, group, gated=True)
+            qualified |= semantic
+        return qualified
+
     @contextmanager
     def sql_unit(self, *, write: bool = False):
         """Own one finite native SQLite unit under the binding allocation gate."""
@@ -368,6 +462,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             return
         depth = getattr(self._thread_local, "allocation_depth", 0)
         if depth:
+            if write and not self._thread_local.allocation_write:
+                raise ValueError("index_allocation_nested_write_refused")
             with allocation_store(group, self):
                 self._thread_local.allocation_depth = depth + 1
                 try:
@@ -375,6 +471,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 finally:
                     self._thread_local.allocation_depth -= 1
             return
+        if group in _UNCERTAIN_PEER_CONNECTIONS:
+            raise ProjectIndexRetirementUnproven("index_peer_retirement_unproven")
         gate_path = group / "allocation-v1.lock"
         if not write and not gate_path.exists():
             # Validated legacy keyword reads remain available before opt-in.
@@ -391,9 +489,13 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 verify_legacy_settlement(self.db_path, group)
             return
         with allocation_gate(group, existing_only=not write) as lease:
+            assert_store_unoccupied(group)
+            group_semantic = self._group_has_semantics(group) if write else False
             with allocation_store(group, self):
                 verify_pre_open(self.db_path, group)
                 self._thread_local.allocation_depth = 1
+                self._thread_local.allocation_write = write
+                self._thread_local.group_semantic = group_semantic
                 try:
                     yield
                 finally:
@@ -410,6 +512,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                         raise
                     finally:
                         self._thread_local.allocation_depth = 0
+                        self._thread_local.allocation_write = False
+                        self._thread_local.group_semantic = False
 
     @contextmanager
     def connection(self):
@@ -433,7 +537,11 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             return
         with self.sql_unit(write=True):
             conn = self._held_connection()
-            if semantic or self._semantic_enabled(conn):
+            if (
+                semantic
+                or self._thread_local.group_semantic
+                or self._semantic_enabled(conn)
+            ):
                 admit_connection(
                     conn,
                     self.db_path,

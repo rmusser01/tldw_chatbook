@@ -585,3 +585,363 @@ async def test_keyword_lookup_during_real_scanner_wait_outside_sql(
     finally:
         release.set()
         await rig.close()
+
+
+def test_group_semantic_peer_qualifies_keyword_target_before_native_open(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+    from Tests.Workspaces.project_index_support import (
+        make_index_key,
+        open_semantic_store,
+    )
+    from Tests.Workspaces.test_project_semantic_settings import settings
+
+    first = open_semantic_store(tmp_path)
+    key = make_index_key(tmp_path)
+    first.configure_semantic(
+        first.load_status(key).scope,
+        settings(),
+        enabled=True,
+        expected_semantic_revision=0,
+    )
+    first.close_native()
+    second = module.WorkspaceProjectIndexDB(namespace(first.db_path.parent.parent, "b"))
+    observed = []
+    original = module.admit_connection
+
+    def recorded(conn, path, group, **kwargs):
+        observed.append(path)
+        return original(conn, path, group, **kwargs)
+
+    monkeypatch.setattr(module, "admit_connection", recorded)
+    try:
+        with second.transaction() as conn:
+            conn.execute("CREATE TABLE peer_keyword(value TEXT)")
+        assert second.db_path in observed
+    finally:
+        second.close_native()
+
+
+def test_pure_keyword_group_uses_keyword_allowance(tmp_path, monkeypatch):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+
+    group = tmp_path / ("f" * 64)
+    group.mkdir()
+    first = module.WorkspaceProjectIndexDB(namespace(group, "a"))
+    first.close_native()
+    second = module.WorkspaceProjectIndexDB(namespace(group, "b"))
+    monkeypatch.setattr(
+        module,
+        "admit_connection",
+        lambda *args, **kwargs: pytest.fail("pure keyword must not qualify source"),
+    )
+    try:
+        with second.transaction() as conn:
+            conn.execute("CREATE TABLE peer_keyword(value TEXT)")
+    finally:
+        second.close_native()
+
+
+def test_read_to_write_nesting_refuses_before_target_mutation(tmp_path):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+
+    group = tmp_path / ("f" * 64)
+    group.mkdir()
+    store = module.WorkspaceProjectIndexDB(namespace(group, "a"))
+    try:
+        with store.sql_unit():
+            with pytest.raises(ValueError, match="write"):
+                with store.transaction() as conn:
+                    conn.execute("CREATE TABLE should_not_exist(value TEXT)")
+        with store.connection() as conn:
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name='should_not_exist'"
+                ).fetchone()
+                is None
+            )
+    finally:
+        store.close_native()
+
+
+def test_missing_group_gate_with_existing_v4_peer_refuses_repeatedly(tmp_path):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+    from Tests.Workspaces.project_index_support import open_semantic_store
+
+    first = open_semantic_store(tmp_path)
+    group = first.db_path.parent.parent
+    first.close_native()
+    gate = group / "allocation-v1.lock"
+    gate.unlink()
+    second = namespace(group, "b")
+    for _ in range(2):
+        with pytest.raises(ValueError, match="index_allocation_control_missing"):
+            module.WorkspaceProjectIndexDB(second)
+        assert not gate.exists()
+        assert not second.exists()
+
+
+def test_retained_generation_after_revoke_qualifies_peer_and_closes_probes(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+    from Tests.Workspaces.project_index_support import (
+        make_index_key,
+        open_semantic_store,
+    )
+    from Tests.Workspaces.test_project_semantic_settings import settings
+
+    first = open_semantic_store(tmp_path)
+    key = make_index_key(tmp_path)
+    scope = first.load_status(key).scope
+    configured = first.configure_semantic(
+        scope, settings(), enabled=True, expected_semantic_revision=0
+    )
+    first.configure_semantic(
+        scope,
+        None,
+        enabled=False,
+        expected_semantic_revision=configured.semantic_revision,
+    )
+    with first.transaction(semantic=True) as conn:
+        conn.execute(
+            "INSERT INTO semantic_generations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "retained-1",
+                key.namespace,
+                scope.epoch,
+                scope.processing_revision,
+                2,
+                "huggingface",
+                "e5-small-v2",
+                "digest-a",
+                "digest-b",
+                "artifact",
+                "test-v1",
+                1,
+                0,
+                None,
+                None,
+                "Retained",
+                0,
+            ),
+        )
+    first.close_native()
+    observed = []
+    opened = []
+    original_admit = module.admit_connection
+    original_connect = module.connect_private_sqlite
+
+    def recorded_admit(conn, path, group, **kwargs):
+        observed.append(path)
+        return original_admit(conn, path, group, **kwargs)
+
+    def recorded_connect(owner, path, **kwargs):
+        conn = original_connect(owner, path, **kwargs)
+        if kwargs.get("read_only"):
+            opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(module, "admit_connection", recorded_admit)
+    monkeypatch.setattr(module, "connect_private_sqlite", recorded_connect)
+    second = module.WorkspaceProjectIndexDB(namespace(first.db_path.parent.parent, "b"))
+    try:
+        with second.transaction() as conn:
+            conn.execute("CREATE TABLE retained_peer(value TEXT)")
+        assert second.db_path in observed
+        assert opened
+        for conn in opened:
+            with pytest.raises(sqlite3.ProgrammingError):
+                sqlite3.Connection.in_transaction.__get__(conn)
+    finally:
+        second.close_native()
+
+
+def test_project_owner_peer_read_only_open_never_writes_or_creates(tmp_path):
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+    from tldw_chatbook.Workspaces.project_index.models import OWNER_ID
+
+    group = tmp_path / ("f" * 64)
+    group.mkdir()
+    existing = WorkspaceProjectIndexDB(namespace(group, "a"))
+    path = existing.db_path
+    existing.close_native()
+    conn = connect_private_sqlite(
+        OWNER_ID, path, read_only=True, must_exist=True, isolation_level=None
+    )
+    try:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute("CREATE TABLE should_not_write(value TEXT)")
+    finally:
+        conn.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        sqlite3.Connection.in_transaction.__get__(conn)
+    missing = group / ("b" * 64) / "workspace_project_index.db"
+    missing.parent.mkdir()
+    with pytest.raises((FileNotFoundError, sqlite3.OperationalError, OSError)):
+        connect_private_sqlite(
+            OWNER_ID, missing, read_only=True, must_exist=True, isolation_level=None
+        )
+    assert not missing.exists()
+
+
+def test_pre_gate_peer_close_uncertainty_retains_exact_native_and_blocks_retry(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+    from Tests.Workspaces.project_index_support import open_semantic_store
+
+    first = open_semantic_store(tmp_path)
+    group = first.db_path.parent.parent
+    first.close_native()
+    gate = group / "allocation-v1.lock"
+    gate.unlink()
+    second = namespace(group, "b")
+    original = module.connect_private_sqlite
+    retained = {}
+
+    class CloseFails(sqlite3.Connection):
+        def close(self):
+            raise OSError("injected_peer_close_uncertainty")
+
+    def failing_owner(owner, path, **kwargs):
+        conn = original(owner, path, factory=CloseFails, **kwargs)
+        retained["connection"] = conn
+        return conn
+
+    monkeypatch.setattr(module, "_UNCERTAIN_PEER_CONNECTIONS", {})
+    monkeypatch.setattr(module, "connect_private_sqlite", failing_owner)
+    try:
+        with pytest.raises(
+            module.ProjectIndexRetirementUnproven, match="peer_retirement"
+        ):
+            module.WorkspaceProjectIndexDB(second)
+        conn = retained["connection"]
+        assert module._UNCERTAIN_PEER_CONNECTIONS[group] is conn
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+        assert not gate.exists() and not second.exists()
+        monkeypatch.setattr(module, "connect_private_sqlite", original)
+        with pytest.raises(
+            module.ProjectIndexRetirementUnproven, match="peer_retirement"
+        ):
+            module.WorkspaceProjectIndexDB(second)
+        with pytest.raises(
+            module.ProjectIndexRetirementUnproven, match="peer_retirement"
+        ):
+            module.WorkspaceProjectIndexDB(first.db_path, cleanup_only=True)
+        assert not gate.exists() and not second.exists()
+    finally:
+        if "connection" in retained:
+            sqlite3.Connection.close(retained["connection"])
+
+
+def test_nested_other_store_write_refuses_before_peer_probe(tmp_path, monkeypatch):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+
+    group = tmp_path / ("f" * 64)
+    group.mkdir()
+    first = module.WorkspaceProjectIndexDB(namespace(group, "a"))
+    second = module.WorkspaceProjectIndexDB(namespace(group, "b"))
+    first.close_native()
+    second.close_native()
+    original = module.connect_private_sqlite
+    probes = []
+
+    def observed(owner, path, **kwargs):
+        if kwargs.get("read_only"):
+            probes.append(path)
+        return original(owner, path, **kwargs)
+
+    try:
+        with first.sql_unit(write=True):
+            with first.connection() as conn:
+                assert conn.execute("SELECT 1").fetchone()[0] == 1
+            monkeypatch.setattr(module, "connect_private_sqlite", observed)
+            with pytest.raises(ValueError, match="overlapping"):
+                with second.transaction() as conn:
+                    conn.execute("CREATE TABLE should_not_exist(value TEXT)")
+            assert probes == []
+    finally:
+        first.close_native()
+        second.close_native()
+
+
+def test_disabled_settings_without_generations_keep_keyword_allowance(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+    from Tests.Workspaces.project_index_support import (
+        make_index_key,
+        open_semantic_store,
+    )
+    from Tests.Workspaces.test_project_semantic_settings import settings
+
+    first = open_semantic_store(tmp_path)
+    key = make_index_key(tmp_path)
+    first.configure_semantic(
+        first.load_status(key).scope,
+        settings(),
+        enabled=False,
+        expected_semantic_revision=0,
+    )
+    first.close_native()
+    monkeypatch.setattr(
+        module,
+        "admit_connection",
+        lambda *args, **kwargs: pytest.fail("disabled metadata is keyword-only"),
+    )
+    second = module.WorkspaceProjectIndexDB(namespace(first.db_path.parent.parent, "b"))
+    try:
+        with second.transaction() as conn:
+            conn.execute("CREATE TABLE keyword_only(value TEXT)")
+    finally:
+        second.close_native()
+
+
+def test_gated_peer_close_uncertainty_retains_connection_and_gate(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+    from tldw_chatbook.Workspaces.project_index import allocation
+    from Tests.Workspaces.project_index_support import open_semantic_store
+
+    first = open_semantic_store(tmp_path)
+    group = first.db_path.parent.parent
+    first.close_native()
+    second = namespace(group, "b")
+    original = module.connect_private_sqlite
+    retained = {}
+
+    class CloseFails(sqlite3.Connection):
+        def close(self):
+            raise OSError("injected_gated_peer_close_uncertainty")
+
+    def failing_owner(owner, path, **kwargs):
+        conn = original(owner, path, factory=CloseFails, **kwargs)
+        retained["connection"] = conn
+        return conn
+
+    monkeypatch.setattr(module, "_UNCERTAIN_PEER_CONNECTIONS", {})
+    monkeypatch.setattr(allocation, "_QUARANTINED", {})
+    monkeypatch.setattr(module, "connect_private_sqlite", failing_owner)
+    try:
+        with pytest.raises(
+            module.ProjectIndexRetirementUnproven, match="peer_retirement"
+        ):
+            module.WorkspaceProjectIndexDB(second)
+        conn = retained["connection"]
+        assert module._UNCERTAIN_PEER_CONNECTIONS[group] is conn
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+        assert group in allocation._QUARANTINED
+        with pytest.raises(ValueError, match="retirement_unproven"):
+            with allocation_gate(group, existing_only=True):
+                pass
+        assert not second.exists()
+    finally:
+        if "connection" in retained:
+            sqlite3.Connection.close(retained["connection"])
+        if group in allocation._QUARANTINED:
+            allocation._QUARANTINED.pop(group).close()

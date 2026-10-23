@@ -409,8 +409,8 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "db.workspace_project_index": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Workspace_Project_Index_DB",
-        _PRIVATE_FILE,
-        "Rebuildable per-binding keyword cache; excluded from backup and sync.",
+        _PRIVATE_AND_READ_ONLY,
+        "Rebuildable per-binding project cache and existing-only peer catalog reads; excluded from backup and sync.",
     ),
     "db.rag_indexing": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/RAG_Indexing_DB",
