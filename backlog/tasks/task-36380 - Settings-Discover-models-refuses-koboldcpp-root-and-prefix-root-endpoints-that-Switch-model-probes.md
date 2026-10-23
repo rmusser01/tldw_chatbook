@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 16:29
+updated_date: 2026-10-23 17:27
 labels:
 - follow-up
 - settings
@@ -46,14 +46,20 @@ The refusal also shows Settings' generic copy ("This endpoint is not a valid Ope
 
 ## Implementation Notes
 
-koboldcpp's Discover models now follows the endpoint contract alone, so it lists exactly where Switch model probes. No koboldcpp shape the contract accepts stays refused.
+koboldcpp's Discover models now follows the endpoint contract alone, so for every endpoint that passes discovery's own URL checks it lists exactly where Switch model probes.
 - `supports_openai_compatible_model_discovery`: for koboldcpp, once discovery's own URL parse passes, eligibility is `connection_probe_availability("koboldcpp", endpoint) is MODELS_ROUTE`, the decision Switch model makes. `build_models_url` returns the contract's `models_url`. So `http://localhost:5001` lists at `/v1/models`, `/kobold` at `/kobold/v1/models`, `/API/V1/GENERATE` at `/API/V1/GENERATE/v1/models`, and the native route as before.
 - This replaces TASK-35832's native-route special case. `_contract_native_resolution` and the contract's `is_native_generate_route` (whose only caller it was) are deleted.
 - Other providers keep the generic rules; `_BASE_URL_INFERABLE_PROVIDER_KEYS` is unchanged.
+- AC#1, the shapes that stay refused: discovery's own URL parse (`_parse_endpoint`) still runs first and is kept, as a safety check on what discovery requests. It refuses a few shapes the contract accepts and Switch model probes:
+  - a request tail that is not final, such as `/chat/completions/x`, `/responses/kobold` or `/models/chat/completions`;
+  - a double escape, such as `/%252541`;
+  - an endpoint over 2,000 characters (the contract allows 4,096).
+
+  None of these is a route koboldcpp's native send uses. Settings shows the generic copy for them, because the contract gives no reason to name. `test_kobold_shapes_discoverys_url_checks_refuse_stay_refused` pins them.
 - Because the contract is now the whole rule, koboldcpp rows the generic rules used to accept also move to the contract's reading:
   - `/models`, `/completion(s)`, `/chat/completions`, `/foo/chat/completions`, `/api/gateway` and `/api/paas/v4` are prefix roots to the contract. They now list at `<path>/v1/models`, which is Switch model's URL.
   - The contract refuses `/v1/openai`, a schemeless remote host (`example.com/v1`), an IPv6 zone id, a query, a fragment, user info and port 0. Discover now refuses them too, and gives the contract's reason.
-- AC#2: the new `contract_refusal_reason(provider, endpoint)` returns the contract's first error for a koboldcpp endpoint it refuses. The local catalog service, which is the Settings path, uses that reason as the `unsupported_endpoint` message in place of "This endpoint is not a valid OpenAI-compatible models endpoint." The recovery hint is unchanged. Settings shows it in `#settings-model-discovery-status`, a `markup=False` Static, after `redact_secret_text`, so it is markup-safe.
+- AC#2: the new `contract_refusal_reason(provider, endpoint)` returns the contract's first error for a koboldcpp endpoint it refuses. The local catalog service, which is the Settings path, uses that reason as the `unsupported_endpoint` message in place of "This endpoint is not a valid OpenAI-compatible models endpoint." With a reason, the hint is `KOBOLDCPP_ENDPOINT_HINT`: "Use the server's address, such as http://localhost:5001, or its /api/v1/generate route." The generic "/v1 models endpoint" hint would move a koboldcpp user off the native route that `chat_with_kobold` posts to. Without a reason, the generic message and hint are unchanged. Settings shows the line in `#settings-model-discovery-status`, a `markup=False` Static, after `redact_secret_text`, so it is markup-safe.
 - AC#2 is scoped to koboldcpp. Other providers refuse under discovery's own path rules, where the contract's reason can be wrong. Example: a hyphenated registry key reads "Select a valid provider.".
 
 AC#3 differential probe, through run.sh on a scratch profile:
@@ -68,9 +74,12 @@ Tests:
   - `test_kobold_uppercase_generate_is_a_prefix_root_that_generic_rules_refuse` became `test_kobold_root_and_prefix_roots_list_where_switch_model_probes`, a rewrite on purpose: it pins the six literal URLs.
   - New `test_kobold_discovery_lists_exactly_where_switch_model_probes` checks the invariant on 12 endpoints.
   - New `test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason`.
-- The census-listed `Tests/UI/test_settings_saved_lists_follow_file.py` gained `test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes`. On a private profile it discovers from a saved root and then from a prefix root typed into Endpoint, and asserts the MockTransport saw exactly the two contract URLs. For the ambiguous `/v1/api/v1/generate` it asserts the line beside Discover starts with "Endpoint path has ambiguous API suffixes.".
+  - New `test_kobold_shapes_discoverys_url_checks_refuse_stay_refused` (5 shapes).
+- `Tests/UI/test_settings_default_model_picker.py` gained `test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes`. `scripts/ui_pr_gate_census.txt` lists that file whole, so a PR lane runs the test. It was first written in `test_settings_saved_lists_follow_file.py`, but the census lists that file test by test, so the test would not have run in any lane; review round 1 moved it.
+  - It runs the real discovery service on a private profile, with only the transport stubbed. It discovers from a saved root, then from a prefix root typed into Endpoint, and asserts the MockTransport saw exactly the two contract URLs.
+  - For the ambiguous `/v1/api/v1/generate`, it asserts the whole line: "Endpoint path has ambiguous API suffixes. Use the server's address, such as http://localhost:5001, or its /api/v1/generate route."
 - Red before the fix: 13 unit cases failed, for example `assert False is True` for `supports_...('koboldcpp', 'http://127.0.0.1:5001')` and the `/models` URL mismatch. The UI journey failed in `_press_discover` with "This endpoint is not a valid OpenAI-compatible models endpoint. ...".
-- Negative control, reverted: with `contract_refusal_reason` returning None, the unit test failed (`assert None == 'Endpoint path has ambiguous API suffixes.'`), and so did the UI journey (the generic copy is shown).
+- Negative control, reverted: with `contract_refusal_reason` returning None, the unit test failed (`assert None == 'Endpoint path has ambiguous API suffixes.'`), and so did the UI journey (the generic copy is shown). In review round 1, with the generic hint forced back, the moved UI test failed on its line ("... ambiguous API suffixes. Configure an explicit http:// or https:// /v1 models endpoint ...").
 
 Runs, all `-n 4` through run.sh:
 - Covering set: `Tests/LLM_Provider_Catalog`, the contract, local-server-discovery and switcher-probe tests, the provider preset tests, five Settings discovery UI files, and the boot, import and keystroke census tests. Result: 1269 passed, 10 failed.
@@ -79,6 +88,14 @@ Runs, all `-n 4` through run.sh:
 - Wider Settings, Console and wizard UI run (16 files): 95 failures (RecoveryRequired, network policy). The same 95 nodes and exception mix (53 AssertionError, 40 RecoveryRequired, 1 AttributeError) occur on dev source.
 - `Tests/Architecture` size ratchets, run serially: the screen ratchet passes. 8 module-ratchet rows fail on files this change does not touch, and those files have the same line counts as on dev.
 - `check_markup_interpolation.py` reports OK, and `preflight.sh` passes.
+- Review round 1 (`-n 4`): the discovery unit file, `test_settings_default_model_picker.py`, `test_settings_saved_lists_follow_file.py` and `test_local_llm_provider_catalog_service.py` gave 318 passed, 1 failed.
+  - The failure was `test_an_id_the_save_refuses_is_named_as_the_cause_not_config_access[saved-model]`. It asserts unsaved changes after a single `pilot.pause()` following an Input edit, which is load-dependent.
+  - Further `-n 4` runs of the picker file:
+    - at head: 1 failure in 4 runs on that node;
+    - at head without the new test: 1 run, passed;
+    - at dev: 1 of 3 runs failed, on a sibling focus test (`test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left[focus-moves-away]`).
+  - The two head runs that passed ran at load averages of 30 to 38 on 18 CPUs.
+  - Private-profile tests each run in their own child process with their own profile, so the new test cannot leak state into it.
 
-Files: `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`, `tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py`, `tldw_chatbook/Chat/provider_endpoint_contract.py`, `Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py`, `Tests/UI/test_settings_saved_lists_follow_file.py`, `Docs/User_Guide/settings.md`.
+Files: `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`, `tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py`, `tldw_chatbook/Chat/provider_endpoint_contract.py`, `Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py`, `Tests/UI/test_settings_default_model_picker.py`, `Docs/User_Guide/settings.md`.
 

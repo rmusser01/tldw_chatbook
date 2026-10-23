@@ -538,6 +538,34 @@ def test_kobold_discovery_lists_exactly_where_switch_model_probes(endpoint):
         )
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://localhost:5001/chat/completions/x",
+        "http://localhost:5001/responses/kobold",
+        "http://localhost:5001/models/chat/completions",
+        "http://localhost:5001/%252541",
+        "http://localhost:5001/" + "k" * 1990,
+    ],
+)
+def test_kobold_shapes_discoverys_url_checks_refuse_stay_refused(endpoint):
+    """TASK-36380 AC#1, a recorded gap: discovery's own URL checks run first
+    and refuse a non-final request tail, a double escape or an endpoint over
+    2,000 characters, though Switch model probes them. None is a shape
+    koboldcpp's native send uses; Settings shows its generic copy."""
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        ConnectionProbeAvailability,
+        connection_probe_availability,
+    )
+
+    assert connection_probe_availability("koboldcpp", endpoint) is (
+        ConnectionProbeAvailability.MODELS_ROUTE
+    )
+    reason = openai_compatible_model_discovery.contract_refusal_reason
+    assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is False
+    assert reason("koboldcpp", endpoint) is None
+
+
 def test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason():
     """TASK-36380 AC#2: Settings names why the contract refuses a koboldcpp
     endpoint. Other providers keep their own rules, so no reason for them."""

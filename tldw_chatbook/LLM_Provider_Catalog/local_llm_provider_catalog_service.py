@@ -56,6 +56,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import
     resolve_provider_list_key,
 )
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    KOBOLDCPP_ENDPOINT_HINT,
     build_models_url,
     contract_refusal_reason,
     discover_openai_compatible_models,
@@ -645,6 +646,9 @@ class LocalLLMProviderCatalogService:
         if not supports_openai_compatible_model_discovery(
             provider_key, endpoint
         ) or not validate_url(models_url):
+            # TASK-36380: koboldcpp names the endpoint contract's reason and a
+            # fix that keeps its native send route.
+            reason = contract_refusal_reason(provider_key, endpoint)
             return ModelDiscoveryResult(
                 provider=provider,
                 provider_list_key=provider_resolution.provider_list_key,
@@ -652,10 +656,11 @@ class LocalLLMProviderCatalogService:
                 status="unsupported",
                 error=ModelDiscoveryError(
                     kind="unsupported_endpoint",
-                    # TASK-36380: name the endpoint contract's reason where it has one.
-                    message=contract_refusal_reason(provider_key, endpoint)
+                    message=reason
                     or "This endpoint is not a valid OpenAI-compatible models endpoint.",
-                    recovery_hint="Configure an explicit http:// or https:// /v1 models endpoint before discovering models.",
+                    recovery_hint=KOBOLDCPP_ENDPOINT_HINT
+                    if reason
+                    else "Configure an explicit http:// or https:// /v1 models endpoint before discovering models.",
                 ),
             )
 

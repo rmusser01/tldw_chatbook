@@ -51,6 +51,13 @@ _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
 }
 _QWENCLOUD_PROVIDER_KEY = "qwencloud"
 _KOBOLDCPP_PROVIDER_KEY = "koboldcpp"
+#: The fix Settings offers with the contract's reason (TASK-36380). The
+#: generic "/v1 models endpoint" hint would move koboldcpp off the native
+#: route its sends post to.
+KOBOLDCPP_ENDPOINT_HINT = (
+    "Use the server's address, such as http://localhost:5001, "
+    "or its /api/v1/generate route."
+)
 _MAX_ENDPOINT_LENGTH = 2000
 _MAX_GENERIC_PATH_DECODE_PASSES = 2
 _GENERIC_ENDPOINT_TAILS = (("models",), ("responses",), ("chat", "completions"))
@@ -435,9 +442,9 @@ def contract_refusal_reason(
 ) -> str | None:
     """Return why the endpoint contract refuses a koboldcpp endpoint, else None.
 
-    Settings shows it in place of its generic unsupported-endpoint copy
-    (TASK-36380). Other providers' discovery has its own rules, so they get
-    no contract reason.
+    Settings shows it, with ``KOBOLDCPP_ENDPOINT_HINT``, in place of its
+    generic unsupported-endpoint copy (TASK-36380). Other providers'
+    discovery has its own rules, so they get no contract reason.
 
     Args:
         provider_identity: Provider name/identity.
