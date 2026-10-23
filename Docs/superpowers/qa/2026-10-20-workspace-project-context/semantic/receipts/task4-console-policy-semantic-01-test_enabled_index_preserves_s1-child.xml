@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="32.207" timestamp="2026-10-23T14:49:25.012647-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.Chat.test_console_workspace_folder_note_contract" name="test_enabled_index_preserves_saved_library_policy_and_scope[blocked-automatic]" time="31.177"><failure message="tldw_chatbook.Workspaces.project_index.lifetime.LifetimeBusy: binding_lifetime_busy">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_enabled_index_preserves_s1/private-profile-process/pytest/test_enabled_index_preserves_s0')
+request = &lt;FixtureRequest for &lt;Coroutine test_enabled_index_preserves_saved_library_policy_and_scope[blocked-automatic]&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001EEFC05CA10&gt;
+automatic = 1, access = 0
+
+    @pytest.mark.parametrize("automatic", [0, 1], ids=["never", "automatic"])
+    @pytest.mark.parametrize("access", [0, 1], ids=["blocked", "allowed"])
+    @private_profile_test
+    async def test_enabled_index_preserves_saved_library_policy_and_scope(
+        tmp_path, request, monkeypatch, automatic, access
+    ):
+        import asyncio
+        import time
+        from Tests.Chat.test_console_workspace_guidance import _project_case, _policy_rows
+        from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+        from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+        from tldw_chatbook.Workspaces.project_index.semantic import _settings_for_project_model
+        from tldw_chatbook.Workspaces.project_index.runtime import (
+            get_project_index_service,
+            project_index_key,
+            close_project_index_service,
+        )
+    
+        case = await _project_case(
+            tmp_path, monkeypatch, native=True, automatic=automatic, access=access
+        )
+        try:
+            app = case.controller.app
+            service = await asyncio.to_thread(get_project_index_service, app)
+            key = await asyncio.to_thread(
+                project_index_key, app, "owned", case.aliases["owned"], tmp_path / "owned"
+            )
+    
+            def build():
+                status = service.status(key)
+                status = service.enable(
+                    key, ProjectIndexPolicy(("",), (".md",)), expected_scope=status.scope
+                )
+                service.refresh(
+                    key,
+                    expected_scope=status.scope,
+                    expected_job_revision=status.job_revision,
+                )
+                deadline = time.monotonic() + 30
+                while time.monotonic() &lt; deadline:
+                    if service.status(key).state == "Ready":
+                        return
+                    time.sleep(0.02)
+                pytest.fail("index did not become Ready")
+    
+&gt;           await asyncio.to_thread(build)
+
+Tests\Chat\test_console_workspace_folder_note_contract.py:479: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python312\Lib\asyncio\threads.py:25: in to_thread
+    return await loop.run_in_executor(None, func_call)
+C:\Python312\Lib\concurrent\futures\thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+Tests\Chat\test_console_workspace_folder_note_contract.py:474: in build
+    if service.status(key).state == "Ready":
+tldw_chatbook\Workspaces\project_index\service.py:440: in status
+    return self._retry_read(key, read)
+tldw_chatbook\Workspaces\project_index\service.py:409: in _retry_read
+    return operation()
+tldw_chatbook\Workspaces\project_index\service.py:435: in read
+    with self._store(key, cleanup_only=True) as store:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Workspaces\project_index\service.py:306: in _store
+    with self.registry_connection_scope(), self._store_owned(
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Workspaces\project_index\service.py:317: in _store_owned
+    with self._opened_store(key, cleanup_only=cleanup_only) as store:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Workspaces\project_index\service.py:344: in _opened_store
+    store = opener(key)
+tldw_chatbook\Workspaces\project_index\runtime.py:228: in open_cleanup
+    return self(key, cleanup_only=True)
+tldw_chatbook\Workspaces\project_index\runtime.py:262: in __call__
+    return WorkspaceProjectIndexDB(
+tldw_chatbook\DB\Workspace_Project_Index_DB.py:290: in __init__
+    with self.sql_unit(write=not cleanup_only):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\DB\Workspace_Project_Index_DB.py:498: in sql_unit
+    with allocation_gate(group, existing_only=not write) as lease:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Workspaces\project_index\allocation.py:111: in allocation_gate
+    lease = BindingLifetime.acquire(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = &lt;class 'tldw_chatbook.Workspaces.project_index.lifetime.BindingLifetime'&gt;
+path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...dw_cli/default_user/project_index/161cc1e7c137b5be4b22f4ebaf0ca022ceb5cc99a0fad48c10757d76e4435335/allocation-v1.lock')
+
+    @classmethod
+    def acquire(cls, path: Path, *, existing_only: bool = False) -&gt; BindingLifetime:
+        """Acquire an existing-or-new stable object; caller admits private parent."""
+        path = Path(path)
+        if os.name == "nt":
+            from ctypes import wintypes
+    
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            create = kernel.CreateFileW
+            create.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.LPVOID,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.HANDLE,
+            ]
+            create.restype = wintypes.HANDLE
+            handle = create(
+                str(path),
+                0x80000000 | 0x40000000,
+                0,
+                None,
+                3 if existing_only else 4,
+                0x00200000,
+                None,
+            )  # OPEN_ALWAYS, OPEN_REPARSE_POINT
+            if handle == wintypes.HANDLE(-1).value:
+                error = ctypes.get_last_error()
+                if error in (32, 33):
+&gt;                   raise LifetimeBusy("binding_lifetime_busy")
+E                   tldw_chatbook.Workspaces.project_index.lifetime.LifetimeBusy: binding_lifetime_busy
+
+tldw_chatbook\Workspaces\project_index\lifetime.py:81: LifetimeBusy</failure></testcase></testsuite></testsuites>

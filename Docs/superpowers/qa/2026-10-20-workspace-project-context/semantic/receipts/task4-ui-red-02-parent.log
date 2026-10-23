@@ -1,0 +1,608 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFF                                                                      [100%]
+================================== FAILURES ===================================
+_________ test_mounted_semantic_controls_and_status_do_not_load_model _________
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-red-02\pytest-of-GDesktop-1\pytest-0\test_mounted_semantic_controls0\private-profile-process\pytest.log
+E   --- child failure: textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+E   request = <FixtureRequest for <Coroutine test_mounted_semantic_controls_and_status_do_not_load_model>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FAB94BC770>
+E   
+E       @private_profile_test
+E       async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(80, 24)) as pilot:
+E                   await wait_for_card(card, pilot)
+E   >               assert card.query_one(".project-semantic-model", Input).value
+E   
+E   Tests\UI\test_project_semantic_consent.py:27: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   selector = '.project-semantic-model'
+E   expect_type = <class 'textual.widgets._input.Input'>
+E   
+E       def query_one(
+E           self,
+E           selector: str | type[QueryType],
+E           expect_type: type[QueryType] | None = None,
+E       ) -> QueryType | Widget:
+E           """Get a widget from this widget's children that matches a selector or widget type.
+E       
+E           Args:
+E               selector: A selector or widget type.
+E               expect_type: Require the object be of the supplied type, or None for any type.
+E       
+E           Raises:
+E               WrongType: If the wrong type was found.
+E               NoMatches: If no node matches the query.
+E       
+E           Returns:
+E               A widget matching the selector.
+E           """
+E           _rich_traceback_omit = True
+E       
+E           base_node = self._get_dom_base()
+E       
+E           if isinstance(selector, str):
+E               query_selector = selector
+E           else:
+E               query_selector = selector.__name__
+E       
+E           if is_id_selector(query_selector):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E               if (
+E                   node := walk_breadth_search_id(
+E                       base_node, query_selector[1:], with_root=False
+E                   )
+E               ) is not None:
+E                   if expect_type is not None and not isinstance(node, expect_type):
+E                       raise WrongType(
+E                           f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                       )
+E                   base_node._query_one_cache[cache_key] = node
+E                   return node
+E               raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       
+E           try:
+E               selector_set = parse_selectors(query_selector)
+E           except TokenError:
+E               raise InvalidQueryFormat(
+E                   f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+E               ) from None
+E       
+E           if all(selectors.is_simple for selectors in selector_set):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E           else:
+E               cache_key = None
+E       
+E           for node in walk_breadth_first(base_node, with_root=False):
+E               if not match(selector_set, node):
+E                   continue
+E               if expect_type is not None and not isinstance(node, expect_type):
+E                   raise WrongType(
+E                       f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                   )
+E               if cache_key is not None:
+E                   base_node._query_one_cache[cache_key] = node
+E               return node
+E       
+E   >       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   E       textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')
+E   
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\dom.py:1533: NoMatches
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _________ test_mounted_semantic_controls_and_status_do_not_load_model _________
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+E   request = <FixtureRequest for <Coroutine test_mounted_semantic_controls_and_status_do_not_load_model>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FAB94BC770>
+E   
+E       @private_profile_test
+E       async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(80, 24)) as pilot:
+E                   await wait_for_card(card, pilot)
+E   >               assert card.query_one(".project-semantic-model", Input).value
+E   
+E   Tests\UI\test_project_semantic_consent.py:27: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   selector = '.project-semantic-model'
+E   expect_type = <class 'textual.widgets._input.Input'>
+E   
+E       def query_one(
+E           self,
+E           selector: str | type[QueryType],
+E           expect_type: type[QueryType] | None = None,
+E       ) -> QueryType | Widget:
+E           """Get a widget from this widget's children that matches a selector or widget type.
+E       
+E           Args:
+E               selector: A selector or widget type.
+E               expect_type: Require the object be of the supplied type, or None for any type.
+E       
+E           Raises:
+E               WrongType: If the wrong type was found.
+E               NoMatches: If no node matches the query.
+E       
+E           Returns:
+E               A widget matching the selector.
+E           """
+E           _rich_traceback_omit = True
+E       
+E           base_node = self._get_dom_base()
+E       
+E           if isinstance(selector, str):
+E               query_selector = selector
+E           else:
+E               query_selector = selector.__name__
+E       
+E           if is_id_selector(query_selector):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E               if (
+E                   node := walk_breadth_search_id(
+E                       base_node, query_selector[1:], with_root=False
+E                   )
+E               ) is not None:
+E                   if expect_type is not None and not isinstance(node, expect_type):
+E                       raise WrongType(
+E                           f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                       )
+E                   base_node._query_one_cache[cache_key] = node
+E                   return node
+E               raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       
+E           try:
+E               selector_set = parse_selectors(query_selector)
+E           except TokenError:
+E               raise InvalidQueryFormat(
+E                   f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+E               ) from None
+E       
+E           if all(selectors.is_simple for selectors in selector_set):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E           else:
+E               cache_key = None
+E       
+E           for node in walk_breadth_first(base_node, with_root=False):
+E               if not match(selector_set, node):
+E                   continue
+E               if expect_type is not None and not isinstance(node, expect_type):
+E                   raise WrongType(
+E                       f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                   )
+E               if cache_key is not None:
+E                   base_node._query_one_cache[cache_key] = node
+E               return node
+E       
+E   >       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   E       textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')
+E   
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\dom.py:1533: NoMatches
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 13:45:55.194 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 13:45:55.313 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 13:45:55.314 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 13:45:55.314 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 13:45:56.213 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-red-02\pytest-of-GDesktop-1\pytest-0\test_mounted_semantic_controls0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   1.97s setup    Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E   1.68s call     Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E   1 failed, 1 warning in 4.75s
+_ test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-red-02\pytest-of-GDesktop-1\pytest-0\test_stage_without_disclosure_0\private-profile-process\pytest.log
+E   --- child failure: textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stage_without_disclosure_0/private-profile-process/pytest/test_stage_without_disclosure_0')
+E   request = <FixtureRequest for <Coroutine test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001CF5684C980>
+E   
+E       @private_profile_test
+E       async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           before_keyword = rig.service.status(rig.key)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E   >               card.query_one(".project-semantic-model", Input).value = "openai-3-small"
+E   
+E   Tests\UI\test_project_semantic_consent.py:53: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   selector = '.project-semantic-model'
+E   expect_type = <class 'textual.widgets._input.Input'>
+E   
+E       def query_one(
+E           self,
+E           selector: str | type[QueryType],
+E           expect_type: type[QueryType] | None = None,
+E       ) -> QueryType | Widget:
+E           """Get a widget from this widget's children that matches a selector or widget type.
+E       
+E           Args:
+E               selector: A selector or widget type.
+E               expect_type: Require the object be of the supplied type, or None for any type.
+E       
+E           Raises:
+E               WrongType: If the wrong type was found.
+E               NoMatches: If no node matches the query.
+E       
+E           Returns:
+E               A widget matching the selector.
+E           """
+E           _rich_traceback_omit = True
+E       
+E           base_node = self._get_dom_base()
+E       
+E           if isinstance(selector, str):
+E               query_selector = selector
+E           else:
+E               query_selector = selector.__name__
+E       
+E           if is_id_selector(query_selector):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E               if (
+E                   node := walk_breadth_search_id(
+E                       base_node, query_selector[1:], with_root=False
+E                   )
+E               ) is not None:
+E                   if expect_type is not None and not isinstance(node, expect_type):
+E                       raise WrongType(
+E                           f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                       )
+E                   base_node._query_one_cache[cache_key] = node
+E                   return node
+E               raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       
+E           try:
+E               selector_set = parse_selectors(query_selector)
+E           except TokenError:
+E               raise InvalidQueryFormat(
+E                   f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+E               ) from None
+E       
+E           if all(selectors.is_simple for selectors in selector_set):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E           else:
+E               cache_key = None
+E       
+E           for node in walk_breadth_first(base_node, with_root=False):
+E               if not match(selector_set, node):
+E                   continue
+E               if expect_type is not None and not isinstance(node, expect_type):
+E                   raise WrongType(
+E                       f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                   )
+E               if cache_key is not None:
+E                   base_node._query_one_cache[cache_key] = node
+E               return node
+E       
+E   >       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   E       textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')
+E   
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\dom.py:1533: NoMatches
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _ test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call _
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stage_without_disclosure_0/private-profile-process/pytest/test_stage_without_disclosure_0')
+E   request = <FixtureRequest for <Coroutine test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001CF5684C980>
+E   
+E       @private_profile_test
+E       async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           before_keyword = rig.service.status(rig.key)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E   >               card.query_one(".project-semantic-model", Input).value = "openai-3-small"
+E   
+E   Tests\UI\test_project_semantic_consent.py:53: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   selector = '.project-semantic-model'
+E   expect_type = <class 'textual.widgets._input.Input'>
+E   
+E       def query_one(
+E           self,
+E           selector: str | type[QueryType],
+E           expect_type: type[QueryType] | None = None,
+E       ) -> QueryType | Widget:
+E           """Get a widget from this widget's children that matches a selector or widget type.
+E       
+E           Args:
+E               selector: A selector or widget type.
+E               expect_type: Require the object be of the supplied type, or None for any type.
+E       
+E           Raises:
+E               WrongType: If the wrong type was found.
+E               NoMatches: If no node matches the query.
+E       
+E           Returns:
+E               A widget matching the selector.
+E           """
+E           _rich_traceback_omit = True
+E       
+E           base_node = self._get_dom_base()
+E       
+E           if isinstance(selector, str):
+E               query_selector = selector
+E           else:
+E               query_selector = selector.__name__
+E       
+E           if is_id_selector(query_selector):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E               if (
+E                   node := walk_breadth_search_id(
+E                       base_node, query_selector[1:], with_root=False
+E                   )
+E               ) is not None:
+E                   if expect_type is not None and not isinstance(node, expect_type):
+E                       raise WrongType(
+E                           f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                       )
+E                   base_node._query_one_cache[cache_key] = node
+E                   return node
+E               raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       
+E           try:
+E               selector_set = parse_selectors(query_selector)
+E           except TokenError:
+E               raise InvalidQueryFormat(
+E                   f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+E               ) from None
+E       
+E           if all(selectors.is_simple for selectors in selector_set):
+E               cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E               cached_result = base_node._query_one_cache.get(cache_key)
+E               if cached_result is not None:
+E                   return cached_result
+E           else:
+E               cache_key = None
+E       
+E           for node in walk_breadth_first(base_node, with_root=False):
+E               if not match(selector_set, node):
+E                   continue
+E               if expect_type is not None and not isinstance(node, expect_type):
+E                   raise WrongType(
+E                       f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                   )
+E               if cache_key is not None:
+E                   base_node._query_one_cache[cache_key] = node
+E               return node
+E       
+E   >       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   E       textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')
+E   
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\dom.py:1533: NoMatches
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 13:46:04.358 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 13:46:04.483 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 13:46:04.484 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 13:46:04.485 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 13:46:05.411 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-red-02\pytest-of-GDesktop-1\pytest-0\test_stage_without_disclosure_0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   6.95s call     Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E   1.96s setup    Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E   1 failed, 1 warning in 10.00s
+_______ test_stale_semantic_action_after_clear_cannot_enable_new_epoch ________
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-red-02\pytest-of-GDesktop-1\pytest-0\test_stale_semantic_action_aft0\private-profile-process\pytest.log
+E   --- child failure: AttributeError: 'ProjectIndexBindingCard' object has no attribute 'SemanticActionRequested'
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_semantic_action_aft0/private-profile-process/pytest/test_stale_semantic_action_aft0')
+E   request = <FixtureRequest for <Coroutine test_stale_semantic_action_after_clear_cannot_enable_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000014DCC7CC590>
+E   
+E       @private_profile_test
+E       async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E   >               action = card.SemanticActionRequested(
+E                       card.binding_id, card.workspace_id, card.status,
+E                       card.semantic_status, "stage", "all-MiniLM-L6-v2",
+E                   )
+E   E               AttributeError: 'ProjectIndexBindingCard' object has no attribute 'SemanticActionRequested'
+E   
+E   Tests\UI\test_project_semantic_consent.py:90: AttributeError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _______ test_stale_semantic_action_after_clear_cannot_enable_new_epoch ________
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_semantic_action_aft0/private-profile-process/pytest/test_stale_semantic_action_aft0')
+E   request = <FixtureRequest for <Coroutine test_stale_semantic_action_after_clear_cannot_enable_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000014DCC7CC590>
+E   
+E       @private_profile_test
+E       async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E   >               action = card.SemanticActionRequested(
+E                       card.binding_id, card.workspace_id, card.status,
+E                       card.semantic_status, "stage", "all-MiniLM-L6-v2",
+E                   )
+E   E               AttributeError: 'ProjectIndexBindingCard' object has no attribute 'SemanticActionRequested'
+E   
+E   Tests\UI\test_project_semantic_consent.py:90: AttributeError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 13:46:18.252 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 13:46:18.369 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 13:46:18.370 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 13:46:18.370 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 13:46:19.269 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-red-02\pytest-of-GDesktop-1\pytest-0\test_stale_semantic_action_aft0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   5.74s call     Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E   1.89s setup    Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E   1 failed, 1 warning in 8.74s
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+14.02s call     Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+12.58s call     Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+8.68s call     Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+
+(6 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+FAILED Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+FAILED Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+3 failed, 1 warning in 37.49s

@@ -1,0 +1,651 @@
+{
+  "count": 129,
+  "source": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task2-receipts and .superpowers/sdd/2026-10-20-workspace-project-semantic-index",
+  "files": [
+    {
+      "name": "run-task4-retained-read-diagnostic.ps1",
+      "sha256": "728F11A7939FB0D9AFFB08623BEEA3414E388321D160EC9083B173DE207EEB15",
+      "bytes": 2486
+    },
+    {
+      "name": "task4_retained_read_diagnostic.py",
+      "sha256": "964098199F2CC1CFC6446E5153C1441356B535F01727DE49E800E5D8B03C6EF1",
+      "bytes": 6654
+    },
+    {
+      "name": "task4-ci-relocate-green-01-parent.log",
+      "sha256": "937E969BC1165F250E6F2BD362223E56FABBE694A9AF1E4886BA0C5A08EEED15",
+      "bytes": 1592
+    },
+    {
+      "name": "task4-ci-relocate-green-01-pre.json",
+      "sha256": "07D56E4F5F91AE0404B19A0E7EC714CCB709D43D2E8682C503AAE4273E3E479E",
+      "bytes": 1950
+    },
+    {
+      "name": "task4-ci-relocate-red-01-parent.log",
+      "sha256": "FDCB228F76FE36C14BA693340CB7429401B15895058B0A916146588C6D1FEED4",
+      "bytes": 2480
+    },
+    {
+      "name": "task4-ci-relocate-red-01-pre.json",
+      "sha256": "FA0A0F5B29B5F127CA9B5DE3007727449278A44A25EC82FE44B0C0C9648CC55E",
+      "bytes": 1950
+    },
+    {
+      "name": "task4-ci-windows-ui-node-01-parent.log",
+      "sha256": "E3645046ECF1A81EE5243B6DC93F7697EA3EB92DCFEE9EF08418150D00A0E3C0",
+      "bytes": 1739
+    },
+    {
+      "name": "task4-ci-windows-ui-node-01-pre.json",
+      "sha256": "2F4E897F1F6FC45D77203376FDF41E751404631479556ADDB027B7E7B9564C1A",
+      "bytes": 1952
+    },
+    {
+      "name": "task4-ci-windows-ui-node-01-test_stage_without_disclosure_0-child.log",
+      "sha256": "F530780039B25AED8671DF40AF64189626ED17CE91498C92B93705E22CC8ADD7",
+      "bytes": 2176
+    },
+    {
+      "name": "task4-ci-windows-ui-node-01-test_stage_without_disclosure_0-child.xml",
+      "sha256": "448A9058C6C419270A2DE18587107BDDB218B01D8301B94D28F2A77CCD027FED",
+      "bytes": 398
+    },
+    {
+      "name": "task4-consent-catalog-green-01-parent.log",
+      "sha256": "AA37D236887028E91264FBA16F29FB0BCEEC2C4B5B8FEDC50EF5A6936B266B2A",
+      "bytes": 1731
+    },
+    {
+      "name": "task4-consent-catalog-green-01-pre.json",
+      "sha256": "6D262B82B9EF7EE79936DE77004ACFB1BA6F3D5A24447B3DE3D3540B06390CD8",
+      "bytes": 1948
+    },
+    {
+      "name": "task4-consent-catalog-green-01-test_catalog_destination_chang0-child.log",
+      "sha256": "CC0C334AE0FE740CC47A177287A563DF50800372E406102C68B084BD5EE43FB8",
+      "bytes": 2167
+    },
+    {
+      "name": "task4-consent-catalog-green-01-test_catalog_destination_chang0-child.xml",
+      "sha256": "C666AED1D51699E7D1604D7A7C82F663DCA890D7B48ED46524856055D202B7A8",
+      "bytes": 394
+    },
+    {
+      "name": "task4-consent-catalog-red-01-parent.log",
+      "sha256": "51771ADD73499D45CD3C45FD4B731E8C35DB810CEA1E1DC5B0CC121AC7713085",
+      "bytes": 13695
+    },
+    {
+      "name": "task4-consent-catalog-red-01-pre.json",
+      "sha256": "FEBEC26B2F346AB22A2E4D1382CDF3700F09AB386D8C08E557C90AAF1534794F",
+      "bytes": 1948
+    },
+    {
+      "name": "task4-consent-catalog-red-01-test_catalog_destination_chang0-child.log",
+      "sha256": "45CC003D2861E54923ECEACEC3E9AA3162B51A5A29600AC080A91B4CB0D967DA",
+      "bytes": 6496
+    },
+    {
+      "name": "task4-consent-catalog-red-01-test_catalog_destination_chang0-child.xml",
+      "sha256": "ACFD10EEBA47D5C9AB64E300C7C3F4D8EE64F9D253C885A9F32B7FB91E0FD7BB",
+      "bytes": 4318
+    },
+    {
+      "name": "task4-consent-positive-final-01-parent.log",
+      "sha256": "A511CE99CCBA25066A8F78D692D456F541D92FE58923C12ED060B1F9A7FA5ABF",
+      "bytes": 1709
+    },
+    {
+      "name": "task4-consent-positive-final-01-pre.json",
+      "sha256": "995DF29BADA79653658CE17516AE2899930C567141BD4476BD9ACA0FB439968F",
+      "bytes": 1937
+    },
+    {
+      "name": "task4-consent-positive-final-01-test_approval_then_destination0-child.log",
+      "sha256": "84716695F535143FE1016F8698D4F495F5B68B88717AD4728FF71115C9FF151D",
+      "bytes": 2135
+    },
+    {
+      "name": "task4-consent-positive-final-01-test_approval_then_destination0-child.xml",
+      "sha256": "49A78C68117C6466084D3FB6E7BC412884604EE8B3DB1D98E7F76A5D6531A04E",
+      "bytes": 383
+    },
+    {
+      "name": "task4-console-policy-semantic-01-parent.log",
+      "sha256": "5C35AD83D8517093EA087F84EFF06114301ADFEA31DE9B37AD32C93938A0726A",
+      "bytes": 105841
+    },
+    {
+      "name": "task4-console-policy-semantic-01-pre.json",
+      "sha256": "594ECA7899611B698BFA2CA709073484208DB848B2D3E688861B7C4090AFF7C3",
+      "bytes": 1962
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s0-child.log",
+      "sha256": "739A2AD5EBA6C9E0C6E06E19AFEF4DB2B65A2E0147E26FF7AE1FB7EB3C4933B2",
+      "bytes": 51210
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s0-child.xml",
+      "sha256": "5E6D2AFDE5F3576FD3D11BA2E0CF82FA363240DE83F2BD4EAB190A0C776945BB",
+      "bytes": 9325
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s1-child.log",
+      "sha256": "7408A389DA7CF97ED9CB6FA6A2D0F844E2287796D089558864CF2CB0EDCE4DA6",
+      "bytes": 49516
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s1-child.xml",
+      "sha256": "DB160D76BC51B606FD92A47E2A9E231A83514974E8A19D11C9A8439B5FEAE6D6",
+      "bytes": 7125
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s2-child.log",
+      "sha256": "E356657090086B3DDAF64F0A700F63CC794EE9E6DE67AF02093404B269B1B24C",
+      "bytes": 51210
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s2-child.xml",
+      "sha256": "5204A9D34772EF78AFED657AE322F294CDD4D7BA714C509E6A86DACD4E75C09C",
+      "bytes": 9325
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s3-child.log",
+      "sha256": "D50BF669B2E8B3A78B2663EF2F42DBE20C5E3DF8923C75FFEAE9C8DDC5D0403D",
+      "bytes": 49516
+    },
+    {
+      "name": "task4-console-policy-semantic-01-test_enabled_index_preserves_s3-child.xml",
+      "sha256": "C6A177AFBFFAFD53FEBD52EAD17DCBA403E2A3837609453F2109867D7E46FC7C",
+      "bytes": 7125
+    },
+    {
+      "name": "task4-console-policy-semantic-02-parent.log",
+      "sha256": "9CFA3B4F8BEFCE28C8B8A80865FF0061EF6B9D1307D765A8991FE66D320B0E28",
+      "bytes": 1775
+    },
+    {
+      "name": "task4-console-policy-semantic-02-pre.json",
+      "sha256": "C7F5CAF1B22FC72253D3D58CA4B8EAA7D9D37EE2A29539DEA5F25480D8FD44B8",
+      "bytes": 1981
+    },
+    {
+      "name": "task4-console-policy-semantic-02-test_enabled_index_preserves_s0-child.log",
+      "sha256": "6A3140C697ED2664E5F8452F64FDA916F011D636055E72585788CFA2D863A25F",
+      "bytes": 2076
+    },
+    {
+      "name": "task4-console-policy-semantic-02-test_enabled_index_preserves_s0-child.xml",
+      "sha256": "4F33C50D3D9D502BA83AD80EC126A85232728B0CD2FD012611BCF950F3AE0F26",
+      "bytes": 411
+    },
+    {
+      "name": "task4-console-policy-semantic-03-parent.log",
+      "sha256": "54655144AD8A3EA59BB87797F2497741BEC6370B370857C225C125E5A642DC45",
+      "bytes": 2074
+    },
+    {
+      "name": "task4-console-policy-semantic-03-pre.json",
+      "sha256": "43965F4406F4E9668A4A5D22D40BA27F50CD13D7FFFF94D3221A24F6C1EB5CAF",
+      "bytes": 2265
+    },
+    {
+      "name": "task4-console-policy-semantic-03-test_enabled_index_preserves_s0-child.log",
+      "sha256": "B3690E13105101E808CF69828F5B09A8A794DD02843B39C4E4EB5A0256D85EBB",
+      "bytes": 2068
+    },
+    {
+      "name": "task4-console-policy-semantic-03-test_enabled_index_preserves_s0-child.xml",
+      "sha256": "771797B19B4D071D58A2D18900EFE60CFF78F1EAE3203177693D18CBA0B4B5A2",
+      "bytes": 407
+    },
+    {
+      "name": "task4-console-policy-semantic-03-test_enabled_index_preserves_s1-child.log",
+      "sha256": "8C48FF4642905B2DCAE44D91DD64A5CC69FA9E6BA575FACEAC2F1BBE0D81C89E",
+      "bytes": 2068
+    },
+    {
+      "name": "task4-console-policy-semantic-03-test_enabled_index_preserves_s1-child.xml",
+      "sha256": "91838D14C5F6BA84FF310FC4B34573DCEF749237AB1F9C460D2054A8F631A737",
+      "bytes": 407
+    },
+    {
+      "name": "task4-console-policy-semantic-03-test_enabled_index_preserves_s2-child.log",
+      "sha256": "6EECA7880F7838B150F9B61E1C45A19670A06D9823F07333BE426C3E43621F72",
+      "bytes": 2076
+    },
+    {
+      "name": "task4-console-policy-semantic-03-test_enabled_index_preserves_s2-child.xml",
+      "sha256": "C97D3CC2C398ADE84181DF683C22E72A74CAA20E44383F801CF02EE746ECDF8F",
+      "bytes": 411
+    },
+    {
+      "name": "task4-core-ci-eleven-01-parent.log",
+      "sha256": "E9D4254AB3523113FBCAD6F15D2FC19B52A119B14388A25DCB902D00ECA5B1CB",
+      "bytes": 6459
+    },
+    {
+      "name": "task4-core-ci-eleven-01-pre.json",
+      "sha256": "53B73DF046946F326ADBBADE312A8740D5762C3D1C5FC68189622D91A83B38D4",
+      "bytes": 4195
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_incompatible_ready_artifa0-child.log",
+      "sha256": "308698ECDC0678A31478409CB92AF3C2B74A5CA71381E692526440E516BA4BC2",
+      "bytes": 1983
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_incompatible_ready_artifa0-child.xml",
+      "sha256": "2DB9C214AE8DEAB56C9F280797A89F9037A29EAACCE8E202FFE37F09FF8DC884",
+      "bytes": 374
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_scan_to_public_search_cas0-child.log",
+      "sha256": "E16D5555EBBFE98532DB2F90CC604444991858C1792D2FF94C1BB959D91319B6",
+      "bytes": 1971
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_scan_to_public_search_cas0-child.xml",
+      "sha256": "A6F70ABAF9F2FD186B2C7D770FE454A799411DE13BFF1A325BB7B412CE2EFD74",
+      "bytes": 368
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_scan_to_public_search_cas1-child.log",
+      "sha256": "2A879D7559F09FFAEE737CBC35A6DE63D673C11578AA9EA1DF1D3B4FF3F53C8E",
+      "bytes": 1991
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_scan_to_public_search_cas1-child.xml",
+      "sha256": "C06DD2EC89F3A653295921860A41E2B1617DAFF2B2CE158EF87C55726AF1A19E",
+      "bytes": 378
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_stage_without_disclosure_0-child.log",
+      "sha256": "39EAF1BFBD77A6277C44341C28A6B19F473C99C9497D9236B5CA3B96B9B86ADA",
+      "bytes": 2172
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_stage_without_disclosure_0-child.xml",
+      "sha256": "501BC992F440DB92E900427E3B0D814971A50A5ABD07742EB7D9B3AD7FD0A680",
+      "bytes": 398
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_unknown_registry_retireme0-child.log",
+      "sha256": "81492DB5002490420EE6A346E60F27A71C13C82EC1D644329B11695E7C73E0F6",
+      "bytes": 2017
+    },
+    {
+      "name": "task4-core-ci-eleven-01-test_unknown_registry_retireme0-child.xml",
+      "sha256": "2BEFBD0D53DE4B211A18A288A1DAA8547F01F51F952A69558E8C23FFF27166BE",
+      "bytes": 391
+    },
+    {
+      "name": "task4-dtype-probe-01-pre.json",
+      "sha256": "D039EEA36587A75CBFA3E78E2D2216A52D1CFCADDBBADBE1632AFF32C20111C9",
+      "bytes": 530
+    },
+    {
+      "name": "task4-dtype-probe-01-raw.log",
+      "sha256": "F4B8A4C52750A7335586F40F91D639F2E09869CB89F957B7820D635DC24D9B84",
+      "bytes": 4865
+    },
+    {
+      "name": "task4-dtype-probe-green-01-pre.json",
+      "sha256": "52DDF33B4273197D18CD595DF2F22CFC279E1B30532E24415965027D61CE0B75",
+      "bytes": 533
+    },
+    {
+      "name": "task4-dtype-probe-green-01-raw.log",
+      "sha256": "BB7504D05108B017A2C137847B5E2029C725EDE409D438EAFEA05DB2A3E8CF23",
+      "bytes": 5435
+    },
+    {
+      "name": "task4-hf-device-green-01-parent.log",
+      "sha256": "EE450E2B2434AB9796B38DC329A7D8D85417AA4D26E3AF119F9E09134D150FBA",
+      "bytes": 1590
+    },
+    {
+      "name": "task4-hf-device-green-01-pre.json",
+      "sha256": "CCB9828E86362BAB398337B760F638865423E612308FC181DE7D38BC62A9FB1B",
+      "bytes": 1881
+    },
+    {
+      "name": "task4-hf-device-red-01-parent.log",
+      "sha256": "9BF941F4AAEE19F9BDD4066A9A1C52CA99665D7C37553116B36DB973A2F4B727",
+      "bytes": 2202
+    },
+    {
+      "name": "task4-hf-device-red-01-pre.json",
+      "sha256": "BAD2D87623534CB915452E336B70376F5543BF81B68BF608FE3D7C230FADD90A",
+      "bytes": 1881
+    },
+    {
+      "name": "task4-library-matrix-01-parent.log",
+      "sha256": "BB3E4DD4688D7724DE81069A55B3BE1F404AB348BE3E59BE31758506053453BC",
+      "bytes": 1753
+    },
+    {
+      "name": "task4-library-matrix-01-pre.json",
+      "sha256": "DC042CC46A5E2CA4824C667AE8E8190130B79265B6EFF3D95EB30F1F2FF334CD",
+      "bytes": 1966
+    },
+    {
+      "name": "task4-library-matrix-01-test_all_saved_library_source_0-child.log",
+      "sha256": "FA77D165B8CD166B80FB0139A544431A956C8ADE4DD085E519E9C32AFD11810A",
+      "bytes": 2045
+    },
+    {
+      "name": "task4-library-matrix-01-test_all_saved_library_source_0-child.xml",
+      "sha256": "561A7F5495340C8D0CD4E2957A8C26FA0643954D7F84D294794B988A748C67A6",
+      "bytes": 400
+    },
+    {
+      "name": "task4-model-free-stage-01-parent.log",
+      "sha256": "1AD626A36732C895F37C43A3A2D5EFAA4B51999C9E7F9D0024C48053AD1A07EB",
+      "bytes": 1695
+    },
+    {
+      "name": "task4-model-free-stage-01-pre.json",
+      "sha256": "1FEC7EF955855FD39781D9B848CA9AF954CDC9121AE073FE387FF8332BB89236",
+      "bytes": 1942
+    },
+    {
+      "name": "task4-model-free-stage-01-test_model_free_four_page_sema0-child.log",
+      "sha256": "60EE88E04ED4EEFB84324D2358F2B021724CD8DC8E209AC5B59DC9421C7945A4",
+      "bytes": 1989
+    },
+    {
+      "name": "task4-model-free-stage-01-test_model_free_four_page_sema0-child.xml",
+      "sha256": "10C4BF3C5025F9F35123871EBDF1AAC94E1BAD4F1F48288EEAE2A548A2267AED",
+      "bytes": 376
+    },
+    {
+      "name": "task4-model-free-stage-captured-01-parent.log",
+      "sha256": "92D4C5A3F02876CC73D53A6494D7E8AA31A9C9F04A72A19CBC8F7695FCB68697",
+      "bytes": 6945
+    },
+    {
+      "name": "task4-model-free-stage-captured-01-pre.json",
+      "sha256": "26B87375FC65EADE128DAA452D1E0119EE5DF4E46A97C9F3E9B91FDBE0D9DAB5",
+      "bytes": 1953
+    },
+    {
+      "name": "task4-model-free-stage-captured-01-test_model_free_four_page_sema0-child.log",
+      "sha256": "B58DE7A5691B72A5C84B16AC87BFB6835A95C951FA62435666DB95D8BFD881DE",
+      "bytes": 1998
+    },
+    {
+      "name": "task4-model-free-stage-captured-01-test_model_free_four_page_sema0-child.xml",
+      "sha256": "AECDB1ECE53148A9DDC1C9A11998FB25864E86F75053E38B3631AB9243BE9317",
+      "bytes": 376
+    },
+    {
+      "name": "task4-model-free-stage-json-01-parent.log",
+      "sha256": "C71D73163488883E406D83E6E6DC0D52533085DE188E6902948184EFA9F0DB5B",
+      "bytes": 1695
+    },
+    {
+      "name": "task4-model-free-stage-json-01-pre.json",
+      "sha256": "B75463D8924010FFC8213613714F603E5269A02AE61C537051880F6BCB7475AD",
+      "bytes": 1942
+    },
+    {
+      "name": "task4-model-free-stage-json-01-stage-timing.json",
+      "sha256": "D5CFE38D0E1DB0DA042C9F9E8230BA8F611BD0B69BEC08115F1AA680E2FA4365",
+      "bytes": 1118
+    },
+    {
+      "name": "task4-model-free-stage-json-01-test_model_free_four_page_sema0-child.log",
+      "sha256": "5360EE382121BB5B6FFAB7E4AE790E91AB1458553DE7CA4E71AA3821BE0D9F0F",
+      "bytes": 1994
+    },
+    {
+      "name": "task4-model-free-stage-json-01-test_model_free_four_page_sema0-child.xml",
+      "sha256": "9EDB24E3351F847ED1822A40899DA57FAFE7CFE2D98429CF5A7FE9D681FFD220",
+      "bytes": 376
+    },
+    {
+      "name": "task4-real-app-stage-01-parent.log",
+      "sha256": "52C2DA5158CA3F86E8359304C2D8BF4BB2DF5AB4038D31FB090AA690DA387437",
+      "bytes": 1695
+    },
+    {
+      "name": "task4-real-app-stage-01-pre.json",
+      "sha256": "9F647E69278F2F7AF442F85E1A5B6E005A7AE687E21843ED8A4F5067044558C3",
+      "bytes": 1942
+    },
+    {
+      "name": "task4-real-app-stage-01-real-app-stage-timing.json",
+      "sha256": "6BDDC4E79D5E8445618935C98472AC64519010C237C23006349551251E92B5BB",
+      "bytes": 1898
+    },
+    {
+      "name": "task4-real-app-stage-01-test_real_app_model_free_four_0-child.log",
+      "sha256": "8B493308D59A7D9272A1B25AA9627C5C58FA9E8F0FAD03904083131EA5B16E0A",
+      "bytes": 1987
+    },
+    {
+      "name": "task4-real-app-stage-01-test_real_app_model_free_four_0-child.xml",
+      "sha256": "042A095BE3171DA16E921E20C6961D1C59693FFDD90A8F4F51779D446085FD90",
+      "bytes": 376
+    },
+    {
+      "name": "task4-real-model-failure-01-parent.log",
+      "sha256": "532097CBFFC7B1EFE5B0D7F39515EB628CD81DB6D9EF5B18C75DDFD12B5E1DF2",
+      "bytes": 1743
+    },
+    {
+      "name": "task4-real-model-failure-01-pre.json",
+      "sha256": "6E030D81289456A19EF1F204F45DB84ADB96AB84610677BC3331015E9AD30020",
+      "bytes": 1960
+    },
+    {
+      "name": "task4-real-model-failure-01-test_cached_minilm_real_app_pa0-child.log",
+      "sha256": "D4911D0D0AE7F192C3FF3013BAD8F80676D3F8339DF0F90BF3A669945AED32C0",
+      "bytes": 2176
+    },
+    {
+      "name": "task4-real-model-failure-01-test_cached_minilm_real_app_pa0-child.xml",
+      "sha256": "D1875A3B2C82816951B91D858DE0CD182BEC51A56324A58DE8A5A6B067BFA0A5",
+      "bytes": 396
+    },
+    {
+      "name": "task4-retained-read-01-pre.json",
+      "sha256": "2D0F39E027DE8AFC593A8CCA7F3536209EC1AF634D3BFAA05C77B99999522230",
+      "bytes": 1652
+    },
+    {
+      "name": "task4-retained-read-01-raw.log",
+      "sha256": "8EB3181EE7B37AF69E410D990FACAFA2BA987AE7B4A12A925DE6E634333CAE3A",
+      "bytes": 10359
+    },
+    {
+      "name": "task4-retained-read-diagnostic-01.json",
+      "sha256": "1E6047A0FB0B562C400D1F2E9BA76894975BA8C7FFE14E1652B4E38FBA20882D",
+      "bytes": 1093
+    },
+    {
+      "name": "task4-semantic-scale-01-pre.json",
+      "sha256": "2BD2954FADFC85920BE448EC5A2E5D32C5BD5539608CB136E4A961DA322E1EC7",
+      "bytes": 2714
+    },
+    {
+      "name": "task4-semantic-scale-01-raw.log",
+      "sha256": "685D82AB44AFE3F97D09BEA4F0273BCC187AE97DCA522D8980BA7F7CF1E05BF0",
+      "bytes": 242011
+    },
+    {
+      "name": "task4-settings-dark-07-parent.log",
+      "sha256": "DAA1988675E891A511E117B95D8AF5B3625D3466FB95F231AE01F638ECC5A480",
+      "bytes": 28206
+    },
+    {
+      "name": "task4-settings-dark-07-pre.json",
+      "sha256": "C17C41B38663AF03CA1A94D33EAF49892D0B44C8672331E1CF43F7CEEC4AD467",
+      "bytes": 1959
+    },
+    {
+      "name": "task4-settings-dark-07-test_actual_settings_semantic_0-child.log",
+      "sha256": "FEC54595BA3EEC0D80369E1155E5104DF160AA9994D48E61D83191C752045EAD",
+      "bytes": 20189
+    },
+    {
+      "name": "task4-settings-dark-07-test_actual_settings_semantic_0-child.xml",
+      "sha256": "B831B418DC22A2944BCCAD21F8F36DEC7B4C10B8A316A9C7920B7FFA0196A551",
+      "bytes": 8595
+    },
+    {
+      "name": "task4-settings-dark-08-parent.log",
+      "sha256": "AE06EBAE27011D617916B656D21B3CB604D4074BEAF173FFBB0F23FE5B7F5D13",
+      "bytes": 1763
+    },
+    {
+      "name": "task4-settings-dark-08-pre.json",
+      "sha256": "B01E875E0162845086AFBF8A72F7ABF0A4C380B3A9A59DA2DDCDF2BDE61D2B27",
+      "bytes": 1959
+    },
+    {
+      "name": "task4-settings-dark-08-test_actual_settings_semantic_0-child.log",
+      "sha256": "FF9E06E43965E20C2F94A58EED08C3A0FEC1A2CB8D437FF88E682B293A47EDB4",
+      "bytes": 3165
+    },
+    {
+      "name": "task4-settings-dark-08-test_actual_settings_semantic_0-child.xml",
+      "sha256": "209BF5777C36742D084BEEA0F2FD2FB77BEE10E85866CFA484A82FA3EEF86480",
+      "bytes": 405
+    },
+    {
+      "name": "task4-settings-light-01-parent.log",
+      "sha256": "DBB11E7BACCF2944D9133348FE73931E8301A3CE1D0E3508E9B0EB9823EE5BC0",
+      "bytes": 1765
+    },
+    {
+      "name": "task4-settings-light-01-pre.json",
+      "sha256": "12EF660B4FFDF38A8F6F25D6218978711C2EBAE6506F2C59DA553232436AD668",
+      "bytes": 1960
+    },
+    {
+      "name": "task4-settings-light-01-test_actual_settings_semantic_0-child.log",
+      "sha256": "7AB36E2C0A37F76F568FCC3F82A89284F3A24D7FE0EB822A96B3AAC9A763724A",
+      "bytes": 3172
+    },
+    {
+      "name": "task4-settings-light-01-test_actual_settings_semantic_0-child.xml",
+      "sha256": "BA9DECC6A135455CA8099EE0AA6B700582A9690258DDE78F7173AC6076487970",
+      "bytes": 406
+    },
+    {
+      "name": "task4-settings-semantic-textual-dark-80.svg",
+      "sha256": "7B94BAA5C9831B2888C89970BCC5ED4713D20E8F859BD00454BAB21457E479E8",
+      "bytes": 77406
+    },
+    {
+      "name": "task4-settings-semantic-textual-light-170.svg",
+      "sha256": "637006ACC79A4BCF08800A138F81D841295BC704E64799393D9CF1CCE743447E",
+      "bytes": 222066
+    },
+    {
+      "name": "task4-ui-green-01-parent.log",
+      "sha256": "457C59E7E73E3CA1BB696133511E8C94A8B04AA277E78A7FFEA2070FE4AF41CE",
+      "bytes": 68671
+    },
+    {
+      "name": "task4-ui-green-01-pre.json",
+      "sha256": "432CC54199DDF3D53CD3368626B1000419CB1410A2D356E5D25CC744F6A075BB",
+      "bytes": 1869
+    },
+    {
+      "name": "task4-ui-green-01-test_mounted_semantic_controls0-child.log",
+      "sha256": "AB0E2891928CEB37296CE51A545E925798981E426CC12EE38EA4873238F74D9F",
+      "bytes": 13589
+    },
+    {
+      "name": "task4-ui-green-01-test_mounted_semantic_controls0-child.xml",
+      "sha256": "A61A2370A2D8E6D2DBD4A00F98409C14138514D29A5C60F5A0B330FEEC9D2983",
+      "bytes": 6878
+    },
+    {
+      "name": "task4-ui-green-01-test_stage_without_disclosure_0-child.log",
+      "sha256": "0F06EFD9C639E0B721B517D22A710DBC674BFEEFDC663714BCBCB00CCF12D4FA",
+      "bytes": 13769
+    },
+    {
+      "name": "task4-ui-green-01-test_stage_without_disclosure_0-child.xml",
+      "sha256": "44A3E8EAE03AFC5C8BF4F3BB45CB4C9248060546F854232E9D89B368FA7976EE",
+      "bytes": 6986
+    },
+    {
+      "name": "task4-ui-green-01-test_stale_semantic_action_aft0-child.log",
+      "sha256": "3406F945107A67E828C83BB61919DD0D1ABAB9AE6CA5378D12E0250B82F5D9C4",
+      "bytes": 13494
+    },
+    {
+      "name": "task4-ui-green-01-test_stale_semantic_action_aft0-child.xml",
+      "sha256": "FD1E9F05F8D001E88B2DD1DE5685C49B7C5111549BC8D2E849847A3EAD766B89",
+      "bytes": 6774
+    },
+    {
+      "name": "task4-ui-green-02-parent.log",
+      "sha256": "09CC6E0526CE6106C687ABE5F9D28927B6B563A4634AE2BCCAF1B2553598C045",
+      "bytes": 1694
+    },
+    {
+      "name": "task4-ui-green-02-pre.json",
+      "sha256": "B4D53FAFC65031B396E432A78005E9A50018D875B64EE9C8B5EDD79545102F9F",
+      "bytes": 1930
+    },
+    {
+      "name": "task4-ui-green-02-test_mounted_semantic_controls0-child.log",
+      "sha256": "62DF7C061B449A0B0212200763C9D668D534F7AC22940655D3A660A7E57749CA",
+      "bytes": 2098
+    },
+    {
+      "name": "task4-ui-green-02-test_mounted_semantic_controls0-child.xml",
+      "sha256": "E69C30BD5FFEF5280E5C0B4744DC8856AE222207912AC73E639ABF65CBCB6690",
+      "bytes": 374
+    },
+    {
+      "name": "task4-ui-red-02-parent.log",
+      "sha256": "8515D6AF8A1F6DC9A3822B63097289A55C2F3AB2DA39ACB8E793AED305B55A9E",
+      "bytes": 39621
+    },
+    {
+      "name": "task4-ui-red-02-pre.json",
+      "sha256": "2AC10DB71BB0A79AC3F1AE3C4876FBE4C6DD00DD9526886C1D01AE7FFEC48BD9",
+      "bytes": 1869
+    },
+    {
+      "name": "task4-ui-red-02-test_mounted_semantic_controls0-child.log",
+      "sha256": "2F1B446C79B27A20B32FD35E6A741AC2FF506D6DAFB154852D82E89B561CC21C",
+      "bytes": 8052
+    },
+    {
+      "name": "task4-ui-red-02-test_mounted_semantic_controls0-child.xml",
+      "sha256": "2BD8F3BC0BBC0F1F7E10F5F31FD6E002187DBEE4115F57783367617227995991",
+      "bytes": 5315
+    },
+    {
+      "name": "task4-ui-red-02-test_stage_without_disclosure_0-child.log",
+      "sha256": "CF27CC01256F519A1E548AA99487333DE330E81A9B1254ED7201E79A188566B5",
+      "bytes": 8203
+    },
+    {
+      "name": "task4-ui-red-02-test_stage_without_disclosure_0-child.xml",
+      "sha256": "2F29BC4950F927C579B360A416A9D74AAADF1C23463B60D0961BA8E18D2651DB",
+      "bytes": 5393
+    },
+    {
+      "name": "task4-ui-red-02-test_stale_semantic_action_aft0-child.log",
+      "sha256": "4B4294C3F091432B707A898F23690F02078950391BC36E6760CC4993A2D4DDB8",
+      "bytes": 4817
+    },
+    {
+      "name": "task4-ui-red-02-test_stale_semantic_action_aft0-child.xml",
+      "sha256": "CA666ADA96878B17703C48AD3B99041A7F68A656F0F57EADCBAD4C78BD17BDD4",
+      "bytes": 2036
+    }
+  ]
+}

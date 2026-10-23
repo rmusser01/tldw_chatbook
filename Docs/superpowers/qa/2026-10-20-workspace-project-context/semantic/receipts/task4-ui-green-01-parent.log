@@ -1,0 +1,988 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFF                                                                      [100%]
+================================== FAILURES ===================================
+_________ test_mounted_semantic_controls_and_status_do_not_load_model _________
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-green-01\pytest-of-GDesktop-1\pytest-0\test_mounted_semantic_controls0\private-profile-process\pytest.log
+E   --- child failure: TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+E   request = <FixtureRequest for <Coroutine test_mounted_semantic_controls_and_status_do_not_load_model>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002218A5D07A0>
+E   
+E       @private_profile_test
+E       async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(80, 24)) as pilot:
+E   >               await wait_for_card(card, pilot)
+E   
+E   Tests\UI\test_project_semantic_consent.py:26: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   card = ProjectIndexBindingCard(classes='h-auto')
+E   pilot = <Pilot app=CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
+E   
+E       async def wait_for_card(card, pilot):
+E           import time
+E       
+E           deadline = time.monotonic() + 60
+E           while card.status is None or card._pending:
+E   >           assert time.monotonic() < deadline, (
+E                   card.is_mounted,
+E                   card._request,
+E                   card._pending,
+E               )
+E   E           AssertionError: (True, 0, 0)
+E   E           assert 171979.953 < 171979.953
+E   E            +  where 171979.953 = <built-in function monotonic>()
+E   E            +    where <built-in function monotonic> = <module 'time' (built-in)>.monotonic
+E   
+E   Tests\UI\test_workspace_project_index_settings.py:28: AssertionError
+E   
+E   During handling of the above exception, another exception occurred:
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+E   request = <FixtureRequest for <Coroutine test_mounted_semantic_controls_and_status_do_not_load_model>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002218A5D07A0>
+E   
+E       @private_profile_test
+E       async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E   >           async with CardApp(card).run_test(size=(80, 24)) as pilot:
+E   
+E   Tests\UI\test_project_semantic_consent.py:25: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\contextlib.py:231: in __aexit__
+E       await self.gen.athrow(value)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\app.py:2218: in run_test
+E       raise self._exception
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:604: in _pre_process
+E       await self._dispatch_message(events.Mount())
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:727: in _dispatch_message
+E       await self.on_event(message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:808: in on_event
+E       await self._on_message(event)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:829: in _on_message
+E       await invoke(method, message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:96: in invoke
+E       return await _invoke(callback, *params)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:56: in _invoke
+E       result = callback(*params[:parameter_count])
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209: in on_mount
+E       self._paint()
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   
+E       def _paint(self) -> None:
+E           status = self.status
+E           if not self.supported:
+E               text = "Keyword index unavailable: SSH folders are not supported."
+E           elif not self.available:
+E               text = "Keyword index unavailable. Restore folder access in Settings."
+E           else:
+E               text = (
+E                   index_status_copy(status, self.requires_upgrade)
+E                   if status
+E                   else "Keyword index: checking…"
+E               )
+E           self.query_one(".project-index-status", Static).update(text)
+E           state = status.state if status else None
+E           actions = {"reload"} if self.available and self.supported else set()
+E           if status and self.available and self.supported:
+E               actions |= {"clear"}
+E               if self.requires_upgrade:
+E                   actions.add("enable" if state == "Off" else "refresh")
+E               elif state == "Off":
+E                   actions.add("enable")
+E               else:
+E                   actions.add("disable")
+E                   if state == "Building":
+E                       actions.add("pause")
+E                   else:
+E                       actions |= {"refresh", "apply"}
+E                       if state in {"Paused", "Interrupted"} and status.job_id:
+E                           actions.add("resume")
+E   >       for button in self.query(".project-index-action", Button):
+E   E       TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257: TypeError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _________ test_mounted_semantic_controls_and_status_do_not_load_model _________
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+E   request = <FixtureRequest for <Coroutine test_mounted_semantic_controls_and_status_do_not_load_model>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002218A5D07A0>
+E   
+E       @private_profile_test
+E       async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(80, 24)) as pilot:
+E   >               await wait_for_card(card, pilot)
+E   
+E   Tests\UI\test_project_semantic_consent.py:26: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   card = ProjectIndexBindingCard(classes='h-auto')
+E   pilot = <Pilot app=CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
+E   
+E       async def wait_for_card(card, pilot):
+E           import time
+E       
+E           deadline = time.monotonic() + 60
+E           while card.status is None or card._pending:
+E   >           assert time.monotonic() < deadline, (
+E                   card.is_mounted,
+E                   card._request,
+E                   card._pending,
+E               )
+E   E           AssertionError: (True, 0, 0)
+E   E           assert 171979.953 < 171979.953
+E   E            +  where 171979.953 = <built-in function monotonic>()
+E   E            +    where <built-in function monotonic> = <module 'time' (built-in)>.monotonic
+E   
+E   Tests\UI\test_workspace_project_index_settings.py:28: AssertionError
+E   
+E   During handling of the above exception, another exception occurred:
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+E   request = <FixtureRequest for <Coroutine test_mounted_semantic_controls_and_status_do_not_load_model>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002218A5D07A0>
+E   
+E       @private_profile_test
+E       async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E   >           async with CardApp(card).run_test(size=(80, 24)) as pilot:
+E   
+E   Tests\UI\test_project_semantic_consent.py:25: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\contextlib.py:231: in __aexit__
+E       await self.gen.athrow(value)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\app.py:2218: in run_test
+E       raise self._exception
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:604: in _pre_process
+E       await self._dispatch_message(events.Mount())
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:727: in _dispatch_message
+E       await self.on_event(message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:808: in on_event
+E       await self._on_message(event)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:829: in _on_message
+E       await invoke(method, message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:96: in invoke
+E       return await _invoke(callback, *params)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:56: in _invoke
+E       result = callback(*params[:parameter_count])
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209: in on_mount
+E       self._paint()
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   
+E       def _paint(self) -> None:
+E           status = self.status
+E           if not self.supported:
+E               text = "Keyword index unavailable: SSH folders are not supported."
+E           elif not self.available:
+E               text = "Keyword index unavailable. Restore folder access in Settings."
+E           else:
+E               text = (
+E                   index_status_copy(status, self.requires_upgrade)
+E                   if status
+E                   else "Keyword index: checking…"
+E               )
+E           self.query_one(".project-index-status", Static).update(text)
+E           state = status.state if status else None
+E           actions = {"reload"} if self.available and self.supported else set()
+E           if status and self.available and self.supported:
+E               actions |= {"clear"}
+E               if self.requires_upgrade:
+E                   actions.add("enable" if state == "Off" else "refresh")
+E               elif state == "Off":
+E                   actions.add("enable")
+E               else:
+E                   actions.add("disable")
+E                   if state == "Building":
+E                       actions.add("pause")
+E                   else:
+E                       actions |= {"refresh", "apply"}
+E                       if state in {"Paused", "Interrupted"} and status.job_id:
+E                           actions.add("resume")
+E   >       for button in self.query(".project-index-action", Button):
+E   E       TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257: TypeError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 13:47:55.900 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 13:47:56.045 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 13:47:56.045 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 13:47:56.046 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 13:47:56.993 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ---------------------------- Captured stderr call -----------------------------
+E   ╭───────────────────── Traceback (most recent call last) ──────────────────────
+E   │ C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tld 
+E   │ w_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209 in     
+E   │ on_mount                                                                     
+E   │                                                                              
+E   │   206 │                                                                      
+E   │   207 │   def on_mount(self) -> None:                                        
+E   │   208 │   │   self._visit += 1                                               
+E   │ ❱ 209 │   │   self._paint()                                                  
+E   │   210 │   │   self.call_after_refresh(self.reload_status)                    
+E   │   211 │   │   self.set_interval(2, self._poll)                               
+E   │   212                                                                        
+E   │                                                                              
+E   │ ╭───────────────────── locals ─────────────────────╮                         
+E   │ │ self = ProjectIndexBindingCard(classes='h-auto') │                         
+E   │ ╰──────────────────────────────────────────────────╯                         
+E   │                                                                              
+E   │ C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tld 
+E   │ w_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257 in     
+E   │ _paint                                                                       
+E   │                                                                              
+E   │   254 │   │   │   │   │   actions |= {"refresh", "apply"}                    
+E   │   255 │   │   │   │   │   if state in {"Paused", "Interrupted"} and status.j 
+E   │   256 │   │   │   │   │   │   actions.add("resume")                          
+E   │ ❱ 257 │   │   for button in self.query(".project-index-action", Button):     
+E   │   258 │   │   │   button.display = button.name in actions                    
+E   │   259 │   │   for field in self._keyword_inputs():                           
+E   │   260 │   │   │   field.disabled = (                                         
+E   │                                                                              
+E   │ ╭────────────────────── locals ───────────────────────╮                      
+E   │ │ actions = {'reload'}                                │                      
+E   │ │    self = ProjectIndexBindingCard(classes='h-auto') │                      
+E   │ │   state = None                                      │                      
+E   │ │  status = None                                      │                      
+E   │ │    text = 'Keyword index: checking…'                │                      
+E   │ ╰─────────────────────────────────────────────────────╯                      
+E   ╰──────────────────────────────────────────────────────────────────────────────
+E   TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were 
+E   given
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-green-01\pytest-of-GDesktop-1\pytest-0\test_mounted_semantic_controls0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   60.62s call     Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E   2.01s setup    Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+E   1 failed, 1 warning in 63.86s (0:01:03)
+_ test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-green-01\pytest-of-GDesktop-1\pytest-0\test_stage_without_disclosure_0\private-profile-process\pytest.log
+E   --- child failure: TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stage_without_disclosure_0/private-profile-process/pytest/test_stage_without_disclosure_0')
+E   request = <FixtureRequest for <Coroutine test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000144FF8E0C80>
+E   
+E       @private_profile_test
+E       async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           before_keyword = rig.service.status(rig.key)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   >               await wait_for_card(card, pilot)
+E   
+E   Tests\UI\test_project_semantic_consent.py:52: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   card = ProjectIndexBindingCard(classes='h-auto')
+E   pilot = <Pilot app=CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
+E   
+E       async def wait_for_card(card, pilot):
+E           import time
+E       
+E           deadline = time.monotonic() + 60
+E           while card.status is None or card._pending:
+E   >           assert time.monotonic() < deadline, (
+E                   card.is_mounted,
+E                   card._request,
+E                   card._pending,
+E               )
+E   E           AssertionError: (True, 0, 0)
+E   E           assert 172052.89 < 172052.875
+E   E            +  where 172052.89 = <built-in function monotonic>()
+E   E            +    where <built-in function monotonic> = <module 'time' (built-in)>.monotonic
+E   
+E   Tests\UI\test_workspace_project_index_settings.py:28: AssertionError
+E   
+E   During handling of the above exception, another exception occurred:
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stage_without_disclosure_0/private-profile-process/pytest/test_stage_without_disclosure_0')
+E   request = <FixtureRequest for <Coroutine test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000144FF8E0C80>
+E   
+E       @private_profile_test
+E       async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           before_keyword = rig.service.status(rig.key)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E   >           async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   
+E   Tests\UI\test_project_semantic_consent.py:51: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\contextlib.py:231: in __aexit__
+E       await self.gen.athrow(value)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\app.py:2218: in run_test
+E       raise self._exception
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:604: in _pre_process
+E       await self._dispatch_message(events.Mount())
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:727: in _dispatch_message
+E       await self.on_event(message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:808: in on_event
+E       await self._on_message(event)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:829: in _on_message
+E       await invoke(method, message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:96: in invoke
+E       return await _invoke(callback, *params)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:56: in _invoke
+E       result = callback(*params[:parameter_count])
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209: in on_mount
+E       self._paint()
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   
+E       def _paint(self) -> None:
+E           status = self.status
+E           if not self.supported:
+E               text = "Keyword index unavailable: SSH folders are not supported."
+E           elif not self.available:
+E               text = "Keyword index unavailable. Restore folder access in Settings."
+E           else:
+E               text = (
+E                   index_status_copy(status, self.requires_upgrade)
+E                   if status
+E                   else "Keyword index: checking…"
+E               )
+E           self.query_one(".project-index-status", Static).update(text)
+E           state = status.state if status else None
+E           actions = {"reload"} if self.available and self.supported else set()
+E           if status and self.available and self.supported:
+E               actions |= {"clear"}
+E               if self.requires_upgrade:
+E                   actions.add("enable" if state == "Off" else "refresh")
+E               elif state == "Off":
+E                   actions.add("enable")
+E               else:
+E                   actions.add("disable")
+E                   if state == "Building":
+E                       actions.add("pause")
+E                   else:
+E                       actions |= {"refresh", "apply"}
+E                       if state in {"Paused", "Interrupted"} and status.job_id:
+E                           actions.add("resume")
+E   >       for button in self.query(".project-index-action", Button):
+E   E       TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257: TypeError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _ test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call _
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stage_without_disclosure_0/private-profile-process/pytest/test_stage_without_disclosure_0')
+E   request = <FixtureRequest for <Coroutine test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000144FF8E0C80>
+E   
+E       @private_profile_test
+E       async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           before_keyword = rig.service.status(rig.key)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   >               await wait_for_card(card, pilot)
+E   
+E   Tests\UI\test_project_semantic_consent.py:52: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   card = ProjectIndexBindingCard(classes='h-auto')
+E   pilot = <Pilot app=CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
+E   
+E       async def wait_for_card(card, pilot):
+E           import time
+E       
+E           deadline = time.monotonic() + 60
+E           while card.status is None or card._pending:
+E   >           assert time.monotonic() < deadline, (
+E                   card.is_mounted,
+E                   card._request,
+E                   card._pending,
+E               )
+E   E           AssertionError: (True, 0, 0)
+E   E           assert 172052.89 < 172052.875
+E   E            +  where 172052.89 = <built-in function monotonic>()
+E   E            +    where <built-in function monotonic> = <module 'time' (built-in)>.monotonic
+E   
+E   Tests\UI\test_workspace_project_index_settings.py:28: AssertionError
+E   
+E   During handling of the above exception, another exception occurred:
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stage_without_disclosure_0/private-profile-process/pytest/test_stage_without_disclosure_0')
+E   request = <FixtureRequest for <Coroutine test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000144FF8E0C80>
+E   
+E       @private_profile_test
+E       async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           before_keyword = rig.service.status(rig.key)
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E   >           async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   
+E   Tests\UI\test_project_semantic_consent.py:51: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\contextlib.py:231: in __aexit__
+E       await self.gen.athrow(value)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\app.py:2218: in run_test
+E       raise self._exception
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:604: in _pre_process
+E       await self._dispatch_message(events.Mount())
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:727: in _dispatch_message
+E       await self.on_event(message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:808: in on_event
+E       await self._on_message(event)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:829: in _on_message
+E       await invoke(method, message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:96: in invoke
+E       return await _invoke(callback, *params)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:56: in _invoke
+E       result = callback(*params[:parameter_count])
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209: in on_mount
+E       self._paint()
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   
+E       def _paint(self) -> None:
+E           status = self.status
+E           if not self.supported:
+E               text = "Keyword index unavailable: SSH folders are not supported."
+E           elif not self.available:
+E               text = "Keyword index unavailable. Restore folder access in Settings."
+E           else:
+E               text = (
+E                   index_status_copy(status, self.requires_upgrade)
+E                   if status
+E                   else "Keyword index: checking…"
+E               )
+E           self.query_one(".project-index-status", Static).update(text)
+E           state = status.state if status else None
+E           actions = {"reload"} if self.available and self.supported else set()
+E           if status and self.available and self.supported:
+E               actions |= {"clear"}
+E               if self.requires_upgrade:
+E                   actions.add("enable" if state == "Off" else "refresh")
+E               elif state == "Off":
+E                   actions.add("enable")
+E               else:
+E                   actions.add("disable")
+E                   if state == "Building":
+E                       actions.add("pause")
+E                   else:
+E                       actions |= {"refresh", "apply"}
+E                       if state in {"Paused", "Interrupted"} and status.job_id:
+E                           actions.add("resume")
+E   >       for button in self.query(".project-index-action", Button):
+E   E       TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257: TypeError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 13:49:04.273 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 13:49:04.392 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 13:49:04.392 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 13:49:04.393 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 13:49:05.227 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ---------------------------- Captured stderr call -----------------------------
+E   ╭───────────────────── Traceback (most recent call last) ──────────────────────
+E   │ C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tld 
+E   │ w_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209 in     
+E   │ on_mount                                                                     
+E   │                                                                              
+E   │   206 │                                                                      
+E   │   207 │   def on_mount(self) -> None:                                        
+E   │   208 │   │   self._visit += 1                                               
+E   │ ❱ 209 │   │   self._paint()                                                  
+E   │   210 │   │   self.call_after_refresh(self.reload_status)                    
+E   │   211 │   │   self.set_interval(2, self._poll)                               
+E   │   212                                                                        
+E   │                                                                              
+E   │ ╭───────────────────── locals ─────────────────────╮                         
+E   │ │ self = ProjectIndexBindingCard(classes='h-auto') │                         
+E   │ ╰──────────────────────────────────────────────────╯                         
+E   │                                                                              
+E   │ C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tld 
+E   │ w_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257 in     
+E   │ _paint                                                                       
+E   │                                                                              
+E   │   254 │   │   │   │   │   actions |= {"refresh", "apply"}                    
+E   │   255 │   │   │   │   │   if state in {"Paused", "Interrupted"} and status.j 
+E   │   256 │   │   │   │   │   │   actions.add("resume")                          
+E   │ ❱ 257 │   │   for button in self.query(".project-index-action", Button):     
+E   │   258 │   │   │   button.display = button.name in actions                    
+E   │   259 │   │   for field in self._keyword_inputs():                           
+E   │   260 │   │   │   field.disabled = (                                         
+E   │                                                                              
+E   │ ╭────────────────────── locals ───────────────────────╮                      
+E   │ │ actions = {'reload'}                                │                      
+E   │ │    self = ProjectIndexBindingCard(classes='h-auto') │                      
+E   │ │   state = None                                      │                      
+E   │ │  status = None                                      │                      
+E   │ │    text = 'Keyword index: checking…'                │                      
+E   │ ╰─────────────────────────────────────────────────────╯                      
+E   ╰──────────────────────────────────────────────────────────────────────────────
+E   TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were 
+E   given
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-green-01\pytest-of-GDesktop-1\pytest-0\test_stage_without_disclosure_0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   65.37s call     Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E   1.78s setup    Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+E   1 failed, 1 warning in 68.31s (0:01:08)
+_______ test_stale_semantic_action_after_clear_cannot_enable_new_epoch ________
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-green-01\pytest-of-GDesktop-1\pytest-0\test_stale_semantic_action_aft0\private-profile-process\pytest.log
+E   --- child failure: TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_semantic_action_aft0/private-profile-process/pytest/test_stale_semantic_action_aft0')
+E   request = <FixtureRequest for <Coroutine test_stale_semantic_action_after_clear_cannot_enable_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B104BAC530>
+E   
+E       @private_profile_test
+E       async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   >               await wait_for_card(card, pilot)
+E   
+E   Tests\UI\test_project_semantic_consent.py:89: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   card = ProjectIndexBindingCard(classes='h-auto')
+E   pilot = <Pilot app=CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'})>
+E   
+E       async def wait_for_card(card, pilot):
+E           import time
+E       
+E           deadline = time.monotonic() + 60
+E           while card.status is None or card._pending:
+E   >           assert time.monotonic() < deadline, (
+E                   card.is_mounted,
+E                   card._request,
+E                   card._pending,
+E               )
+E   E           AssertionError: (True, 0, 0)
+E   E           assert 172125.75 < 172125.75
+E   E            +  where 172125.75 = <built-in function monotonic>()
+E   E            +    where <built-in function monotonic> = <module 'time' (built-in)>.monotonic
+E   
+E   Tests\UI\test_workspace_project_index_settings.py:28: AssertionError
+E   
+E   During handling of the above exception, another exception occurred:
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_semantic_action_aft0/private-profile-process/pytest/test_stale_semantic_action_aft0')
+E   request = <FixtureRequest for <Coroutine test_stale_semantic_action_after_clear_cannot_enable_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B104BAC530>
+E   
+E       @private_profile_test
+E       async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E   >           async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   
+E   Tests\UI\test_project_semantic_consent.py:88: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\contextlib.py:231: in __aexit__
+E       await self.gen.athrow(value)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\app.py:2218: in run_test
+E       raise self._exception
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:604: in _pre_process
+E       await self._dispatch_message(events.Mount())
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:727: in _dispatch_message
+E       await self.on_event(message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:808: in on_event
+E       await self._on_message(event)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:829: in _on_message
+E       await invoke(method, message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:96: in invoke
+E       return await _invoke(callback, *params)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:56: in _invoke
+E       result = callback(*params[:parameter_count])
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209: in on_mount
+E       self._paint()
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   
+E       def _paint(self) -> None:
+E           status = self.status
+E           if not self.supported:
+E               text = "Keyword index unavailable: SSH folders are not supported."
+E           elif not self.available:
+E               text = "Keyword index unavailable. Restore folder access in Settings."
+E           else:
+E               text = (
+E                   index_status_copy(status, self.requires_upgrade)
+E                   if status
+E                   else "Keyword index: checking…"
+E               )
+E           self.query_one(".project-index-status", Static).update(text)
+E           state = status.state if status else None
+E           actions = {"reload"} if self.available and self.supported else set()
+E           if status and self.available and self.supported:
+E               actions |= {"clear"}
+E               if self.requires_upgrade:
+E                   actions.add("enable" if state == "Off" else "refresh")
+E               elif state == "Off":
+E                   actions.add("enable")
+E               else:
+E                   actions.add("disable")
+E                   if state == "Building":
+E                       actions.add("pause")
+E                   else:
+E                       actions |= {"refresh", "apply"}
+E                       if state in {"Paused", "Interrupted"} and status.job_id:
+E                           actions.add("resume")
+E   >       for button in self.query(".project-index-action"):
+E   E       TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257: TypeError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _______ test_stale_semantic_action_after_clear_cannot_enable_new_epoch ________
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_semantic_action_aft0/private-profile-process/pytest/test_stale_semantic_action_aft0')
+E   request = <FixtureRequest for <Coroutine test_stale_semantic_action_after_clear_cannot_enable_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B104BAC530>
+E   
+E       @private_profile_test
+E       async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   >               await wait_for_card(card, pilot)
+E   
+E   Tests\UI\test_project_semantic_consent.py:89: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   card = ProjectIndexBindingCard(classes='h-auto')
+E   pilot = <Pilot app=CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'})>
+E   
+E       async def wait_for_card(card, pilot):
+E           import time
+E       
+E           deadline = time.monotonic() + 60
+E           while card.status is None or card._pending:
+E   >           assert time.monotonic() < deadline, (
+E                   card.is_mounted,
+E                   card._request,
+E                   card._pending,
+E               )
+E   E           AssertionError: (True, 0, 0)
+E   E           assert 172125.75 < 172125.75
+E   E            +  where 172125.75 = <built-in function monotonic>()
+E   E            +    where <built-in function monotonic> = <module 'time' (built-in)>.monotonic
+E   
+E   Tests\UI\test_workspace_project_index_settings.py:28: AssertionError
+E   
+E   During handling of the above exception, another exception occurred:
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_semantic_action_aft0/private-profile-process/pytest/test_stale_semantic_action_aft0')
+E   request = <FixtureRequest for <Coroutine test_stale_semantic_action_after_clear_cannot_enable_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B104BAC530>
+E   
+E       @private_profile_test
+E       async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E   >           async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E   
+E   Tests\UI\test_project_semantic_consent.py:88: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\contextlib.py:231: in __aexit__
+E       await self.gen.athrow(value)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\app.py:2218: in run_test
+E       raise self._exception
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:604: in _pre_process
+E       await self._dispatch_message(events.Mount())
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:727: in _dispatch_message
+E       await self.on_event(message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:808: in on_event
+E       await self._on_message(event)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:829: in _on_message
+E       await invoke(method, message)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:96: in invoke
+E       return await _invoke(callback, *params)
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:56: in _invoke
+E       result = callback(*params[:parameter_count])
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209: in on_mount
+E       self._paint()
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = ProjectIndexBindingCard(classes='h-auto')
+E   
+E       def _paint(self) -> None:
+E           status = self.status
+E           if not self.supported:
+E               text = "Keyword index unavailable: SSH folders are not supported."
+E           elif not self.available:
+E               text = "Keyword index unavailable. Restore folder access in Settings."
+E           else:
+E               text = (
+E                   index_status_copy(status, self.requires_upgrade)
+E                   if status
+E                   else "Keyword index: checking…"
+E               )
+E           self.query_one(".project-index-status", Static).update(text)
+E           state = status.state if status else None
+E           actions = {"reload"} if self.available and self.supported else set()
+E           if status and self.available and self.supported:
+E               actions |= {"clear"}
+E               if self.requires_upgrade:
+E                   actions.add("enable" if state == "Off" else "refresh")
+E               elif state == "Off":
+E                   actions.add("enable")
+E               else:
+E                   actions.add("disable")
+E                   if state == "Building":
+E                       actions.add("pause")
+E                   else:
+E                       actions |= {"refresh", "apply"}
+E                       if state in {"Paused", "Interrupted"} and status.job_id:
+E                           actions.add("resume")
+E   >       for button in self.query(".project-index-action"):
+E   E       TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+E   
+E   tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257: TypeError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 13:50:17.194 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 13:50:17.342 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 13:50:17.343 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 13:50:17.343 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 13:50:18.417 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ---------------------------- Captured stderr call -----------------------------
+E   ╭───────────────────── Traceback (most recent call last) ──────────────────────
+E   │ C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tld 
+E   │ w_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209 in     
+E   │ on_mount                                                                     
+E   │                                                                              
+E   │   206 │                                                                      
+E   │   207 │   def on_mount(self) -> None:                                        
+E   │   208 │   │   self._visit += 1                                               
+E   │ ❱ 209 │   │   self._paint()                                                  
+E   │   210 │   │   self.call_after_refresh(self.reload_status)                    
+E   │   211 │   │   self.set_interval(2, self._poll)                               
+E   │   212                                                                        
+E   │                                                                              
+E   │ ╭───────────────────── locals ─────────────────────╮                         
+E   │ │ self = ProjectIndexBindingCard(classes='h-auto') │                         
+E   │ ╰──────────────────────────────────────────────────╯                         
+E   │                                                                              
+E   │ C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tld 
+E   │ w_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257 in     
+E   │ _paint                                                                       
+E   │                                                                              
+E   │   254 │   │   │   │   │   actions |= {"refresh", "apply"}                    
+E   │   255 │   │   │   │   │   if state in {"Paused", "Interrupted"} and status.j 
+E   │   256 │   │   │   │   │   │   actions.add("resume")                          
+E   │ ❱ 257 │   │   for button in self.query(".project-index-action", Button):     
+E   │   258 │   │   │   button.display = button.name in actions                    
+E   │   259 │   │   for field in self._keyword_inputs():                           
+E   │   260 │   │   │   field.disabled = (                                         
+E   │                                                                              
+E   │ ╭────────────────────── locals ───────────────────────╮                      
+E   │ │ actions = {'reload'}                                │                      
+E   │ │    self = ProjectIndexBindingCard(classes='h-auto') │                      
+E   │ │   state = None                                      │                      
+E   │ │  status = None                                      │                      
+E   │ │    text = 'Keyword index: checking…'                │                      
+E   │ ╰─────────────────────────────────────────────────────╯                      
+E   ╰──────────────────────────────────────────────────────────────────────────────
+E   TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were 
+E   given
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-ui-green-01\pytest-of-GDesktop-1\pytest-0\test_stale_semantic_action_aft0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   64.90s call     Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E   2.25s setup    Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+E   1 failed, 1 warning in 68.50s (0:01:08)
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+72.77s call     Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+72.65s call     Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+67.92s call     Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+
+(6 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_mounted_semantic_controls_and_status_do_not_load_model
+FAILED Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+FAILED Tests/UI/test_project_semantic_consent.py::test_stale_semantic_action_after_clear_cannot_enable_new_epoch
+3 failed, 1 warning in 215.57s (0:03:35)

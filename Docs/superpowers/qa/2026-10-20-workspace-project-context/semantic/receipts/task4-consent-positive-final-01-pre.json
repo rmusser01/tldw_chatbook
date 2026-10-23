@@ -1,0 +1,40 @@
+{
+  "hashes": [
+    {
+      "path": "Tests/UI/test_project_semantic_consent.py",
+      "sha256": "437B149C15CCB9C90289F4999C392314307CBE8269BE9D97CE814F0DC86358F6"
+    },
+    {
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py",
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/semantic.py",
+      "sha256": "D0351BB50D2753859330A871C058B4006C5944082F0388D197920A5912AFB715"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "sha256": "5333B8EE4EA78E9FBD0648B14713B1EFBE39A315AB058694575B8C0E3030220C"
+    }
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "shared_site": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Lib/site-packages",
+  "argv": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "-c",
+    "import os,site,json; site.addsitedir(os.environ[\"TLDW_TEST_SHARED_SITE\"]); import pytest; raise SystemExit(pytest.main([*json.loads(os.environ[\"TLDW_TEST_SELECTORS_JSON\"]),\"-q\",\"--tb=short\",\"--show-capture=no\",\"--no-showlocals\"]))"
+  ],
+  "hf_hub_cache": "C:/Users/GDesktop-1/.cache/huggingface/hub",
+  "selectors": [
+    "Tests/UI/test_project_semantic_consent.py::test_approval_then_destination_change_pauses_and_preserves_keyword"
+  ],
+  "offline_model": "sentence-transformers/all-MiniLM-L6-v2"
+}

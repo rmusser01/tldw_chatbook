@@ -131,6 +131,9 @@ Primary proof references: [SQLite3.49.1 release](https://www.sqlite.org/releasel
 - [ ] Retain raw RED/GREEN/native/provider/visual receipts as they retire, exact hashes/limitations/rulings and documentation; self review, independent task review, then one whole-branch review/fix wave. Close tasks only on actual evidence. User has not authorized auto-merging a future semantic PR and PR3204 Qodo waiver does not carry.
 
 - [ ] Gate critical semantic schema/settings/native/project-admission and current embeddings-free keyword regressions in a bounded required PR lane on an actually qualified SQLite runtime, with explicit UI census classification. Keep optional ML/20k work separate and existing lane caps/shards unchanged; update exact CI contracts and ADR103 before workflow changes. Parent owns external hosted qualification/PR actions.
+- [ ] Bind disclosure text and approval to one inspected current catalog snapshot; refuse a changed destination before opening the dialog. Retain staged revision and service CAS checks. Qualify the mounted catalog-change RED/GREEN.
+- [ ] Correct the existing Hugging Face producer's explicit CPU precision on CUDA-capable hosts by resolving actual device before load/dtype (CPU float32, actual CUDA float16). Focused device-contract RED/GREEN and one owned offline synthetic probe qualify numerical correctness; keep it separate from the operator-stopped 20k throughput diagnosis.
+- [ ] Place the native-positive mounted stage/cancel node in the existing bounded qualified Windows job, not the unqualified Ubuntu UI shard; restore the uncommitted local census entry/floor and pin exact inclusion/absence. Keep 13 shards, the 20-minute cap and core dependencies. Diagnose the measured inter-batch gap with a small model-free per-stage control before proposing service performance changes or another retained scale attempt.
 
 ## Delivery gate
 

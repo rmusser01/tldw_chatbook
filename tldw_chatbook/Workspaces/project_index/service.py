@@ -483,17 +483,20 @@ class ProjectIndexService:
         """Read exact management state without upgrading a validated legacy cache."""
 
         def read():
-            with self._store(key, cleanup_only=True) as store:
-                status = self._status_from_store(store, key)
-                with self._read_fenced(store, key) as authority:
-                    if authority is None:
-                        raise ValueError("authority_unavailable")
-                    policy = store.policy(status.scope)
-                return (
-                    status,
-                    policy,
-                    store.schema_version < store._CURRENT_SCHEMA_VERSION,
-                )
+            try:
+                with self._store(key, cleanup_only=True) as store:
+                    status = self._status_from_store(store, key)
+                    with self._read_fenced(store, key) as authority:
+                        if authority is None:
+                            raise ValueError("authority_unavailable")
+                        policy = store.policy(status.scope)
+                    return (
+                        status,
+                        policy,
+                        store.schema_version < store._CURRENT_SCHEMA_VERSION,
+                    )
+            except FileNotFoundError:
+                return self._fresh_status(key), ProjectIndexPolicy((), ()), False
 
         return self._retry_read(key, read)
 

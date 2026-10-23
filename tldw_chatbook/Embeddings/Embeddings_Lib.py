@@ -387,6 +387,18 @@ class _HuggingFaceEmbedder:
                 "HuggingFace embeddings require torch and transformers. "
                 "Install with: pip install tldw_chatbook[embeddings_rag]"
             )
+        if cfg.device == "auto" or cfg.device is None:
+            if torch.cuda.is_available():
+                self._device = torch.device("cuda")
+                logger.info("Auto-selected CUDA device for embeddings")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self._device = torch.device("mps")
+                logger.info("Auto-selected MPS device for embeddings")
+            else:
+                self._device = torch.device("cpu")
+                logger.info("Auto-selected CPU device for embeddings")
+        else:
+            self._device = torch.device(cfg.device)
         try:
             # Use cache_dir if provided, otherwise HuggingFace will use default
             cache_dir = cfg.cache_dir if cfg.cache_dir else None
@@ -412,16 +424,8 @@ class _HuggingFaceEmbedder:
                     cache_dir=cache_dir,
                     revision=cfg.revision,  # Pin to specific revision if provided
                 )
-                # Check if torch is available before using it
-                if torch is not None:
-                    dtype = (
-                        torch.float16 if torch.cuda.is_available() else torch.float32
-                    )
-                    # Store dtype as instance variable for use in error handlers
-                    self._dtype = dtype
-                else:
-                    # This shouldn't happen due to the check in _build, but just in case
-                    raise ImportError("torch is required for HuggingFace embeddings")
+                dtype = torch.float16 if self._device.type == "cuda" else torch.float32
+                self._dtype = dtype
 
                 # Load model with low_cpu_mem_usage to avoid meta tensors
                 self._model = AutoModel.from_pretrained(
@@ -440,24 +444,6 @@ class _HuggingFaceEmbedder:
                 "Check the model name and your network connection."
             ) from e
 
-        # Handle device selection including "auto" option
-        if torch is None:
-            raise ImportError("torch is required for HuggingFace embeddings")
-
-        if cfg.device == "auto" or cfg.device is None:
-            # Auto-detect best available device
-            if torch.cuda.is_available():
-                self._device = torch.device("cuda")
-                logger.info("Auto-selected CUDA device for embeddings")
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                self._device = torch.device("mps")
-                logger.info("Auto-selected MPS device for embeddings")
-            else:
-                self._device = torch.device("cpu")
-                logger.info("Auto-selected CPU device for embeddings")
-        else:
-            # Use explicitly specified device
-            self._device = torch.device(cfg.device)
         # Try to move model to device, handling meta tensor issues
         try:
             # Check if model is on meta device first

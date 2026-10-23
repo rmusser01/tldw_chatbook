@@ -1,0 +1,14 @@
+{
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "hashes": [
+    {
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23",
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
+    },
+    {
+      "sha256": "A8EF90C6C12B14D6306ED3B5780A09D6D20EBFA42E43B09091F5FDC871479FE1",
+      "path": ".superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4_dtype_probe.py"
+    }
+  ],
+  "model": "sentence-transformers/all-MiniLM-L6-v2"
+}
