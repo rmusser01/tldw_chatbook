@@ -28,6 +28,7 @@ from textual.events import AppFocus
 from textual.screen import Screen
 from textual.widgets import Button
 
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_fleet_panel import _FleetBridge
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_right_rail import make_console_pilot
@@ -122,6 +123,10 @@ async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
         screen._set_console_rail_preference(right_open=True)
         await pilot.pause()
         assert dispatches
+        # TASK-36389: cover a Console whose first attach has ended. Covered
+        # sooner, its first return runs as the mount's resume, which does
+        # not refresh the environment.
+        await console_attach_ended(screen)
         await pilot.app.push_screen(Screen())
         await pilot.pause()
         assert screen.is_mounted and _right_rail_open(screen)
@@ -134,6 +139,8 @@ async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
         assert not owner._rail_open_accessor()
         await pilot.app.pop_screen()
         await pilot.pause()
+        # The refresh runs in the return's attach reconcile.
+        await console_attach_ended(screen)
         assert pilot.app.screen is screen
         assert screen._console_environment is owner
         assert ("local", "/w") in dispatches
