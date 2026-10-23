@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -638,6 +639,152 @@ def test_search_batch_loads_collapsed_placements_matching_folder_path(
         membership_id
     ]
     assert [note["id"] for note in page.notes] == [note_id]
+
+
+def _keyword(repository: LocalNoteFolderRepository, note_id: str, text: str) -> int:
+    """Attach keyword ``text`` to ``note_id`` through the real DB API."""
+    keyword_id = repository.db.add_keyword(text)
+    assert keyword_id is not None
+    assert repository.db.link_note_to_keyword(note_id, keyword_id) is True
+    return int(keyword_id)
+
+
+def _filter_ids(repository: LocalNoteFolderRepository, query: str) -> set[str]:
+    """The note ids the Notes list filter answers ``query`` with."""
+    page = repository.search_note_tree_placements(query=query, limit=50, offset=0)
+    return {str(placement.note["id"]) for placement in page.placements}
+
+
+def _filter_corpus(repository: LocalNoteFolderRepository) -> tuple[str, str]:
+    """The review's A/B corpus (TASK-34000.12): Lisbon and the meeting."""
+    lisbon = repository.db.add_note(
+        "Trip planning: Lisbon", "itinerary and chunk size notes"
+    )
+    meeting = repository.db.add_note("Meeting notes", "team meeting about size of chunk")
+    assert lisbon and meeting
+    return lisbon, meeting
+
+
+def test_filter_matches_any_word_order_and_a_partial_last_word(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#1: words in any order; the last word may be a prefix.
+
+    Before the fix the whole input was ONE FTS5 phrase, so ``size chunk``,
+    ``meet`` and ``Lisb`` each returned nothing.
+    """
+    lisbon, meeting = _filter_corpus(repository)
+
+    assert _filter_ids(repository, "size chunk") == {lisbon, meeting}
+    assert _filter_ids(repository, "chunk size") == {lisbon, meeting}
+    assert _filter_ids(repository, "meet") == {meeting}
+    assert _filter_ids(repository, "Lisb") == {lisbon}
+    assert _filter_ids(repository, "LISB") == {lisbon}
+    # every word must appear somewhere in the SAME note
+    assert _filter_ids(repository, "lisbon meeting") == set()
+
+
+def test_quoted_input_is_a_phrase_and_only_quoted_input_is(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#2: straight or curly quotes around the input mean
+    "these words, adjacent, in this order"; nothing else does."""
+    lisbon, meeting = _filter_corpus(repository)
+
+    assert _filter_ids(repository, '"chunk size"') == {lisbon}
+    assert _filter_ids(repository, "“chunk size”") == {lisbon}
+    assert _filter_ids(repository, '"size chunk"') == set()
+    # an unbalanced quote is ordinary text (the primitive doubles it, the
+    # tokenizer drops it): the word is still a prefix of "meeting"
+    assert _filter_ids(repository, 'meet"') == {meeting}
+    assert _filter_ids(repository, '"meet') == {meeting}
+    assert _filter_ids(repository, "size chunk") == {lisbon, meeting}
+
+
+def test_a_note_found_only_by_its_keyword_is_found(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#3: a word may match one of the note's live keywords.
+
+    This is the User Guide's ``conversation:`` claim (a captured answer is
+    keyed ``conversation:<id>`` by ``Chat/console_save_targets.py``), and
+    the review's ``zebra`` capture.
+    """
+    lisbon, meeting = _filter_corpus(repository)
+    zebra = repository.db.add_note("Zebra", "nothing here")
+    assert zebra
+    _keyword(repository, zebra, "zebra")
+    _keyword(repository, meeting, "conversation:71d30fb1-aaaa")
+    homelab = _keyword(repository, lisbon, "homelab")
+    # a deleted note titled Zebra never comes back through its title
+    deleted = repository.db.add_note("Zebra", "deleted twin")
+    assert deleted and repository.db.soft_delete_note(deleted, expected_version=1)
+
+    assert _filter_ids(repository, "zebra") == {zebra}
+    assert _filter_ids(repository, "zebra nothing") == {zebra}
+    assert _filter_ids(repository, "zebra meeting") == set()
+    assert _filter_ids(repository, "71d30fb1") == {meeting}
+    assert _filter_ids(repository, "conversation:71d") == {meeting}
+    assert _filter_ids(repository, "homelab") == {lisbon}
+    assert _filter_ids(repository, '"homelab"') == {lisbon}
+
+    # a soft-deleted keyword is no longer a way to find the note
+    assert repository.db.soft_delete_keyword(homelab, expected_version=1) is True
+    assert _filter_ids(repository, "homelab") == set()
+    # ...and the title/body legs still answer
+    assert _filter_ids(repository, "Lisb") == {lisbon}
+
+
+def test_the_filter_cte_never_scans_the_fts_tables(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """The plan budget for TASK-34000.12's CTE, captured the way users run it.
+
+    No index is added by the task (CLAUDE.md gotcha 1: no ``CREATE INDEX``,
+    so no plan-pin row), so this pins the shape the EXISTING indexes give:
+    each FTS5 leg is MATCH-driven (SQLite prints a MATCH-driven virtual
+    table step as ``... VIRTUAL TABLE INDEX 0:M<n>``; a step WITHOUT the
+    ``M`` flag would be a full FTS scan) and the keyword leg walks
+    ``idx_notekw_kw``. The statement is the production template itself.
+    """
+    lisbon, meeting = _filter_corpus(repository)
+    _keyword(repository, lisbon, "homelab")
+    _keyword(repository, meeting, "meeting")
+    connection = repository.db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    ), "ChaChaNotes never runs ANALYZE; a plan with stats is not the users' plan"
+
+    statement = folder_repository_module._notes_filter_match_sql(2)
+    assert statement.count("?") == 4
+    details = [
+        str(row["detail"])
+        for row in connection.execute(
+            f"EXPLAIN QUERY PLAN {statement}",
+            ('"size"', '"size"', '"chunk"*', '"chunk"*'),
+        )
+    ]
+
+    fts_steps = [
+        detail
+        for detail in details
+        if "notes_fts" in detail or "keywords_fts" in detail
+    ]
+    assert len(fts_steps) == 4, details
+    for detail in fts_steps:
+        assert "VIRTUAL TABLE INDEX 0:M" in detail, details
+    assert any(
+        "SEARCH nk USING INDEX idx_notekw_kw (keyword_id=?)" in detail
+        for detail in details
+    ), details
+    # the keyword tables themselves are never walked whole (``SCAN k`` would
+    # also prefix ``SCAN keywords_fts``, hence the word boundary)
+    assert not any(re.match(r"^SCAN (nk|k)\b", detail) for detail in details), details
+    # and the statement is the one the repository really binds
+    assert folder_repository_module._NOTES_FILTER_MATCH_LEG_SQL.count("MATCH ?") == 2
 
 
 def test_managed_subtree_cannot_be_renamed_through_repository_boundary(
