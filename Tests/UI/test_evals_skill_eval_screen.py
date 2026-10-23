@@ -1039,9 +1039,10 @@ async def test_skill_eval_bench_can_be_deleted(evals_app, evals_db):
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         screen = pilot.app.screen
         screen.select(kind="skill_eval_bench", id=bench_id)
+        # select() sets _selection at once and only SCHEDULES the inspector
+        # swap, so wait for the control itself (TASK-36382).
         await _wait_until(
-            pilot,
-            lambda: pilot.app.screen._selection.kind == "skill_eval_bench",
+            pilot, lambda: screen.query_one("#evals-delete-bench", Button)
         )
         # The inspector pane composes the delete control for this kind.
         delete_button = screen.query_one("#evals-delete-bench", Button)
@@ -1196,10 +1197,7 @@ async def test_escape_on_launch_panel_clears_the_selection(evals_app, evals_db):
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         screen = pilot.app.screen
         screen.select(kind="skill_eval_bench", id=bench_id)
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query(SkillEvalPanel)),
-        )
+        await _wait_until(pilot, lambda: screen.query_one("#skill-eval-subject-dir"))
         panel = screen.query_one(SkillEvalPanel)
         panel.query_one("#skill-eval-subject-dir").focus()
         await pilot.press("escape")
@@ -1221,7 +1219,6 @@ async def test_run_again_on_report_dispatches_with_persisted_config(
         create_skill_eval_run,
         save_report,
     )
-    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
     from textual.widgets import Button
 
     subject = SkillSubject(
@@ -1270,14 +1267,14 @@ async def test_run_again_on_report_dispatches_with_persisted_config(
         screen = pilot.app.screen
         screen.select(kind="run_group", id=group_id)
         await _wait_until(
-            pilot, lambda: bool(screen.query(SkillEvalDetail))
+            pilot, lambda: screen.query_one("#skill-eval-run-again", Button)
         )
         button = screen.query_one("#skill-eval-run-again", Button)
 
         dispatched: list = []
         screen.run_worker = lambda *a, **kw: dispatched.append(a)
         button.press()
-        await pilot.pause()
+        await _wait_until(pilot, lambda: dispatched)
         assert len(dispatched) == 1
         assert screen._skill_eval_bench_id == bench_id
         assert screen._skill_eval_depth is SkillEvalDepth.STANDARD
@@ -1362,12 +1359,17 @@ async def test_launch_picks_survive_navigation_away_and_back(
         # Poll the RESTORED values, not a vacuous options-truthiness (the
         # NULL padding row makes `_options` truthy before any feed lands):
         # the remount panel's feed is applied by the swap's safety net,
-        # which waits for the panel's children to compose first.
+        # which waits for the panel's children to compose first. Poll all
+        # three: the compose-time callback restores depth alone, before the
+        # safety net restores the model picks (TASK-36382: 3 of 10 serial
+        # runs at load ~30 asserted in that gap).
         await _wait_until(
             pilot,
             lambda: (
                 screen.query_one("#skill-eval-depth", Select).value
                 is SkillEvalDepth.DEEP
+                and screen.query_one("#skill-eval-generator", Select).value == gen_id
+                and screen.query_one("#skill-eval-judge", Select).value == jud_id
             ),
         )
 
@@ -1395,7 +1397,7 @@ async def test_tab_traversal_never_navigates_away(evals_app, evals_db):
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         screen = pilot.app.screen
         screen.select(kind="skill_eval_bench", id=bench_id)
-        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        await _wait_until(pilot, lambda: screen.query_one("#skill-eval-subject-dir"))
         screen.query_one("#skill-eval-subject-dir").focus()
 
         for _ in range(24):
@@ -1727,7 +1729,6 @@ async def test_report_rerun_running_state_and_stop(evals_app, evals_db, tmp_path
     """Qodo review #2: a rerun launched from a report shows its running
     state on the report's own controls and is stoppable there."""
     from tldw_chatbook.Evals.skill_eval.models import SkillSubject
-    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
     from textual.widgets import Button
 
     subject = SkillSubject(
@@ -1759,7 +1760,12 @@ async def test_report_rerun_running_state_and_stop(evals_app, evals_db, tmp_path
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         screen = pilot.app.screen
         screen.select(kind="run_group", id=group_id)
-        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalDetail)))
+        # Wait for the controls, not the detail: Textual attaches a mounted
+        # widget before its own message loop composes its children
+        # (TASK-36382).
+        await _wait_until(
+            pilot, lambda: screen.query_one("#skill-eval-detail-stop", Button)
+        )
 
         # Simulate the in-flight window: the running-UI helper is what the
         # dispatch and progress callbacks drive (worker dispatch itself is
@@ -1781,7 +1787,9 @@ async def test_report_rerun_running_state_and_stop(evals_app, evals_db, tmp_path
         token = _Token()
         screen._skill_eval_cancel = token
         stop.press()
-        await pilot.pause()
+        # Press -> detail -> screen is more than one pump turn under load
+        # (TASK-36382: 1 of 24 concurrent runs asserted after one pause).
+        await _wait_until(pilot, lambda: token.cancelled)
         assert token.cancelled
 
         screen._reset_skill_eval_running_ui()
@@ -1812,7 +1820,13 @@ async def test_unfed_remount_restores_depth_and_running_state(
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         screen = pilot.app.screen
         screen.select(kind="skill_eval_bench", id=bench_id)
-        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        # Wait for the Select to finish MOUNTING, not just to be queryable:
+        # its own message loop composes SelectOverlay after it joins the DOM,
+        # and set_options() below needs it (TASK-36382: NoMatches
+        # 'SelectOverlay' at load ~50).
+        await _wait_until(
+            pilot, lambda: screen.query_one("#skill-eval-generator", Select).is_mounted
+        )
 
         # Sabotage the panel into the "unfed remount" state and simulate
         # an in-flight run, then run the safety net directly -- this is

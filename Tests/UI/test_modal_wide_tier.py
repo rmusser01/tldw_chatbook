@@ -6,7 +6,7 @@ model popover in PR #2672):
 
 * Coverage contract -- every anchor registered in
   ``Tests/UI/modal_wide_tier_registry.py`` has an ``App.-wide-viewport`` rule
-  in the built bundle (and the source module) with the registered cap, every
+  in the built sheets (and the source modules) with the registered cap, every
   rule in the block is registered, and every anchor still targets real code
   (the owner module names its id/class/type). A renamed modal id without a
   tier update fails here instead of silently losing the wide tier.
@@ -73,6 +73,16 @@ WIDE_TIER_SOURCE = CSS_ROOT / "components/_agentic_terminal.tcss"
 #: The boot bundle the app parses (rebuilt from the modules by build_css).
 WIDE_TIER_BUNDLE = CSS_ROOT / "tldw_cli_modular.tcss"
 
+#: The hook-review rule left the boot bundle with the rest of that modal's
+#: CSS (1256af2d39, startup budget): it lives in the Settings source module
+#: and its built screen sheet, which the modal loads through ``CSS_PATH``.
+WIDE_TIER_SCREEN_SOURCE = CSS_ROOT / "features/_settings.tcss"
+WIDE_TIER_SCREEN_BUNDLE = CSS_ROOT / "screen_agentic_settings.tcss"
+
+#: Source modules, then the built sheets they produce.
+WIDE_TIER_SOURCES = (WIDE_TIER_SOURCE, WIDE_TIER_SCREEN_SOURCE)
+WIDE_TIER_BUILT = (WIDE_TIER_BUNDLE, WIDE_TIER_SCREEN_BUNDLE)
+
 #: One ``App.-wide-viewport <anchor> { width: $ds-percent-85; max-width: N }``.
 WIDE_RULE_RE = re.compile(
     r"App\.-wide-viewport\s+([^\n{}]+?)\s*\{\s*"
@@ -111,18 +121,22 @@ def test_wide_tier_block_exists_in_source_module() -> None:
     assert "App.-wide-viewport" in source
 
 
-@pytest.mark.parametrize("path", [WIDE_TIER_SOURCE, WIDE_TIER_BUNDLE])
-def test_every_registered_anchor_has_a_wide_tier_rule(path: Path) -> None:
-    """The registry and the shipped block agree, anchor for anchor."""
-    rules = _wide_rules(path.read_text(encoding="utf-8"))
+@pytest.mark.parametrize("paths", [WIDE_TIER_SOURCES, WIDE_TIER_BUILT])
+def test_every_registered_anchor_has_a_wide_tier_rule(paths: tuple[Path, ...]) -> None:
+    """The registry and the shipped blocks agree, anchor for anchor."""
+    rules: dict[str, int] = {}
+    for path in paths:
+        found = _wide_rules(path.read_text(encoding="utf-8"))
+        assert found, f"no App.-wide-viewport rules parsed from {path.name}"
+        assert not set(found) & set(rules), (path.name, set(found) & set(rules))
+        rules.update(found)
     expected = {anchor: cap for anchor, cap, _owner in MODAL_WIDE_TIER}
-    assert rules, f"no App.-wide-viewport rules parsed from {path.name}"
     assert rules == expected
 
 
 def test_every_wide_tier_rule_is_registered() -> None:
     """No orphan rules: an unregistered rule means the registry is stale."""
-    for path in (WIDE_TIER_SOURCE, WIDE_TIER_BUNDLE):
+    for path in (*WIDE_TIER_SOURCES, *WIDE_TIER_BUILT):
         rules = _wide_rules(path.read_text(encoding="utf-8"))
         registered = {anchor for anchor, _cap, _owner in MODAL_WIDE_TIER}
         assert set(rules) <= registered, (path.name, set(rules) - registered)
