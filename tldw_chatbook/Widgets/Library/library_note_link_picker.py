@@ -88,6 +88,11 @@ class LibraryNoteLinkPicker(Widget):
         #: same-rows re-show plus the controller's reposition) drifted the
         #: box off screen (fix round 2: offset (-72, -57) measured).
         self._anchor_pass_pending = False
+        #: Fix round 3 (R3-2): resize settle chains in flight. A body scroll
+        #: that arrives while a chain is settling belongs to the chain (the
+        #: caret is being scrolled into view against new geometry), not to
+        #: the scroll rule that would close the box on a half-laid-out read.
+        self.resize_chains = 0
         self._desired_height = 0
         self._desired_width = MIN_WIDTH
         # region == flow_base + the last offset applied; the two together
@@ -254,9 +259,16 @@ class LibraryNoteLinkPicker(Widget):
         self._anchor_bounds = (region.x, region.y, region.right, region.bottom)
         if self._anchor_cell_provider is not None:
             cell = self._anchor_cell_provider()
-            if cell is not None:
-                self._anchor_cell = cell
-        elif self._anchor_cell == (0, 0):
+            if cell is None:
+                # Fix round 3 (R3-2): the caret is not on screen -- a box
+                # the user cannot see must never take Enter. Close.
+                self.hide()
+                return
+            self._anchor_cell = cell
+        else:
+            # Fix round 3 (R3-4): no caret to follow (follow mode) -- the
+            # anchor is the region's own top-left, recomputed every time
+            # (it used to keep the cell from the previous size).
             self._anchor_cell = (region.x + 1, region.y)
         self._apply_anchor()
 

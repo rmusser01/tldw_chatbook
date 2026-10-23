@@ -574,7 +574,13 @@ _BUDGETS: dict[str, int] = {
     # 6991 (+25) -- a held accept is cancelled by a highlight move over
     # stale rows, a stale row click inserts nothing, the Tab claim lapses
     # over a hint row, the no-context sync supersedes an in-flight load.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6991,
+    # 2026-10-23, TASK-34000.11 fix round 3 (same owner decision): 6991 ->
+    # 7109 (+118) -- the caret-visibility rule (a picker never anchors to a
+    # caret the user cannot see), the scroll re-anchor path, the two-step
+    # resize settle chain that waits for the compact restage to finish
+    # before it judges, and the follow-row click freed from insert mode's
+    # stale-row guard.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7109,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

@@ -991,6 +991,25 @@ class NoteEditorTextArea(DetachSafeTextArea):
         event.prevent_default()
         self.post_message(self.LinkPickerKey(self, event.key))
 
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Fix round 3 (R3-3): a body scroll re-anchors the open picker, or
+        closes it when the caret row leaves the body -- routed as the
+        pseudo-key ``"scroll"`` so the controller owns the one re-anchor
+        path. ``Widget.watch_scroll_y`` still runs (the scrollbar, the
+        refresh); ``TextArea._watch_scroll_y`` is a separate private watcher."""
+        super().watch_scroll_y(old_value, new_value)
+        if self.link_picker_open and round(old_value) != round(new_value):
+            self.post_message(self.LinkPickerKey(self, "scroll"))
+
+    def on_resize(self, event: Resize) -> None:
+        """Fix round 3 (R3-2): on a resize the controller scrolls the caret
+        into view before the picker re-anchors, and closes the picker when
+        the caret still is not visible (Textual's ``TextArea`` does not
+        scroll the caret into view on resize). ``TextArea._on_resize`` still
+        runs after this (the MRO walk)."""
+        if self.link_picker_open:
+            self.post_message(self.LinkPickerKey(self, "resize"))
+
     def _on_blur(self, event: Blur) -> None:
         """Fix round 1 (M-4): the picker goes with the focus.
 
@@ -4441,7 +4460,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             picker = self.query_one("#library-note-link-picker", LibraryNoteLinkPicker)
         except NoMatches:
             return
-        if picker.is_open:
+        # Insert mode re-anchors through the body's own resize (the
+        # controller scrolls the caret into view first, R3-2); this hook is
+        # the follow picker's, anchored to the Preview region (R3-4).
+        if picker.is_open and picker.mode == "follow":
             picker.reanchor()
 
     def _restate_note_location(self) -> None:
