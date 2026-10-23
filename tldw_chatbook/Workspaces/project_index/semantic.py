@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
+import math
 import os
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -15,9 +17,73 @@ from tldw_chatbook.RAG_Search.projection_scope import (
     _issue_carrier,
 )
 from tldw_chatbook.Workspaces.project_index.models import (
+    IndexCandidate,
     ProjectIndexScope,
     ProjectSemanticSettings,
 )
+from .semantic_vectors import decode_vector, encode_vector
+
+
+def fuse_candidates(lexical, semantic):
+    """Fuse two bounded ranked lists, retaining one immutable chunk identity."""
+    scores = {}
+    candidates = {}
+    for ranked in (lexical, semantic):
+        for item in ranked:
+            identity = (
+                item.relative_path, item.file_identity, item.content_sha256,
+                item.line_start, item.line_end,
+            )
+            scores[identity] = scores.get(identity, 0.0) + 1.0 / (60 + item.rank + 1)
+            candidates.setdefault(identity, item)
+    ordered = sorted(scores, key=lambda identity: (-scores[identity], identity))[:100]
+    return tuple(candidates[identity] for identity in ordered)
+
+
+def rank_semantic(store, scope, state, artifact_fingerprint, query_vector, exclusions, *, limit=100):
+    """Stream compatible filtered members through an exact cosine heap."""
+    if type(limit) is not int or not 1 <= limit <= 100:  # noqa: E721
+        raise ValueError("invalid_semantic_limit")
+    generation = store.semantic_ready_generation(scope, state, artifact_fingerprint)
+    if generation is None:
+        return None
+    if generation.chunk_count == 0:
+        return ()
+    query = decode_vector(encode_vector(query_vector), generation.dimension)
+    query_norm = math.sqrt(math.fsum(value * value for value in query))
+    if not query_norm:
+        raise ValueError("invalid_semantic_query")
+    heap = []
+    after = 0
+    while True:
+        page = store.semantic_member_page(
+            scope, state, artifact_fingerprint, exclusions, after=after
+        )
+        if page is None:
+            return None
+        if not page:
+            break
+        for member in page:
+            vector = decode_vector(member.vector, generation.dimension)
+            norm = math.sqrt(math.fsum(value * value for value in vector))
+            if not norm:
+                continue
+            score = math.fsum(a * b for a, b in zip(query, vector)) / (query_norm * norm)
+            item = (score, -member.ordinal, member)
+            if len(heap) < limit:
+                heapq.heappush(heap, item)
+            elif item[:2] > heap[0][:2]:
+                heapq.heapreplace(heap, item)
+        after = page[-1].ordinal
+    ranked = sorted(heap, key=lambda item: (-item[0], -item[1]))
+    return tuple(
+        IndexCandidate(
+            item[2].relative_path, item[2].identity,
+            item[2].content_sha256, item[2].line_start,
+            item[2].line_end, rank,
+        )
+        for rank, item in enumerate(ranked)
+    )
 
 
 def _fingerprint(*values) -> str:
@@ -241,6 +307,7 @@ def _issue_project_projection_scope(service, scope, settings, semantic_revision)
                     raise ProjectProjectionRequired()
         spec, destination = _require_current_catalog(settings)
         target = _target(spec, destination)
+        service._retire_registry_for_model()
         parent = _Parent(stack, pin, service._operation_local.operation)
         return _issue_carrier(
             service=service,

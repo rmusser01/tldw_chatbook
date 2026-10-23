@@ -55,6 +55,33 @@ class _Run:
     read_admission: ExitStack | None = None
 
 
+@dataclass
+class _SemanticRun:
+    job_id: str
+    scope: ProjectIndexScope
+    state: object
+    authority: object
+    stop: threading.Event
+    thread: threading.Thread | None = None
+    lease: BindingLifetime | None = None
+    pin: object | None = None
+    read_admission: ExitStack | None = None
+    error: BaseException | None = None
+    generation_id: str | None = None
+    native_retired: bool = False
+    close_pending: bool = False
+    close_loop: asyncio.AbstractEventLoop | None = None
+    close_signal: asyncio.Event | None = None
+    store: object | None = None
+
+
+@dataclass
+class _SemanticQuery:
+    key: ProjectIndexKey
+    signal: threading.Event
+    close_pending: bool = False
+
+
 @dataclass(eq=False)
 class _SearchRun:
     key: ProjectIndexKey
@@ -72,6 +99,7 @@ class _Operation:
     projection_close_pending: dict[object, tuple[ProjectIndexKey, object]] = field(
         default_factory=dict
     )
+    retire_registry_for_model: object | None = None
 
 
 def binding_bytes(directory: Path) -> int:
@@ -126,6 +154,9 @@ class ProjectIndexService:
         self._cleanup_thread: threading.Thread | None = None
         self._lock = threading.RLock()
         self._runs: dict[str, _Run] = {}
+        self._semantic_runs: dict[str, _SemanticRun] = {}
+        self._semantic_query: _SemanticQuery | None = None
+        self._semantic_query_slot = threading.BoundedSemaphore(1)
         self._closed = False
         self._operations: set[_Operation] = set()
         self._operation_local = threading.local()
@@ -154,7 +185,8 @@ class ProjectIndexService:
             self._operations.add(operation)
             self._operation_local.operation = operation
         try:
-            with self._registry_connections():
+            with self._registry_connections() as retire_registry:
+                operation.retire_registry_for_model = retire_registry
                 yield
         except ProjectIndexRetirementUnproven:
             operation.retirement_unproven = True
@@ -165,6 +197,23 @@ class ProjectIndexService:
                 if not operation.retirement_unproven:
                     self._operations.discard(operation)
             operation.done.set()
+
+    def _retire_registry_for_model(self) -> None:
+        """Retire this operation's owned registry SQL before model effects."""
+        operation = getattr(self._operation_local, "operation", None)
+        if operation is None:
+            raise ProjectIndexRetirementUnproven("index_operation_owner_missing")
+        retire = operation.retire_registry_for_model
+        if retire is not None:
+            retire()
+
+    def _retain_uncertain_model(self, *owners: object) -> None:
+        """Keep actual owners when native registry retirement cannot be proved."""
+        operation = getattr(self._operation_local, "operation", None)
+        if operation is None:
+            raise ProjectIndexRetirementUnproven("index_operation_owner_missing")
+        operation.retirement_unproven = True
+        operation.retained.extend(owner for owner in owners if owner is not None)
 
     def _require_projection_open(self, key: ProjectIndexKey) -> None:
         """Refuse new semantic use of a binding with unresolved model close."""
@@ -206,6 +255,43 @@ class ProjectIndexService:
     def _projection_close_pending(self, operation: _Operation) -> bool:
         with self._lock:
             return bool(operation.projection_close_pending)
+
+    def retry_semantic_close(self, key: ProjectIndexKey) -> bool:
+        """Signal only an exact binding's retained model owner to retry close."""
+        if type(key) is not ProjectIndexKey:
+            return False
+        signalled = False
+        with self._lock:
+            for run in self._semantic_runs.values():
+                if (
+                    run.scope.key == key and run.close_pending
+                    and run.close_loop is not None and run.close_signal is not None
+                ):
+                    run.close_loop.call_soon_threadsafe(run.close_signal.set)
+                    signalled = True
+            query = self._semantic_query
+            if query is not None and query.key == key and query.close_pending:
+                query.signal.set()
+                signalled = True
+        return signalled
+
+    def semantic_close_pending(self, key: ProjectIndexKey) -> bool:
+        """Project exact-binding retained close state without opening a model/DB."""
+        if type(key) is not ProjectIndexKey:
+            return False
+        with self._lock:
+            return (
+                self._semantic_query is not None
+                and self._semantic_query.key == key
+                and self._semantic_query.close_pending
+            ) or any(
+                run.scope.key == key and run.close_pending
+                for run in self._semantic_runs.values()
+            ) or any(
+                selected == key
+                for operation in self._operations
+                for selected, _ in operation.projection_close_pending.values()
+            )
 
     def _admission_closed(self):
         return (
@@ -350,6 +436,26 @@ class ProjectIndexService:
 
         return self._retry_read(key, read)
 
+    def semantic_state(self, key: ProjectIndexKey):
+        """Read separate consent/readiness without importing a model backend."""
+        from .models import ProjectSemanticState
+
+        def read():
+            try:
+                with self._store(key, cleanup_only=True) as store:
+                    with self._read_fenced(store, key) as authority:
+                        if authority is None:
+                            raise ValueError("authority_unavailable")
+                        status = store.load_status(key)
+                        return store.load_semantic_state(status.scope)
+            except FileNotFoundError:
+                return ProjectSemanticState(self._fresh_status(key).scope, 0, False, None, "Off")
+
+        return replace(
+            self._retry_read(key, read),
+            close_pending=self.semantic_close_pending(key),
+        )
+
     def building_coverage(self, scope: ProjectIndexScope, exclusions=()) -> bool:
         """Check committed compatibility without granting a search authority."""
         try:
@@ -489,12 +595,129 @@ class ProjectIndexService:
             deliberately absent: management counters are not run-scoped.
         """
         try:
+            if type(authority) is not ProjectIndexSearchAuthority:
+                raise ValueError("invalid_search_authority")
+            if not isinstance(query, str) or not query.strip() or len(query) > 2048:
+                raise ValueError("invalid_query")
+            if type(limit) is not int or not 1 <= limit <= 10:  # noqa: E721
+                raise ValueError("invalid_limit")
+            try:
+                semantic_query = self._semantic_query_vector(authority, query)
+            except ProjectIndexRetirementUnproven:
+                raise
+            except Exception:
+                semantic_query = None
             with self.registry_connection_scope():
-                return self._search_owned(authority, query, limit=limit)
+                return self._search_owned(
+                    authority, query, limit=limit, semantic_query=semantic_query
+                )
         except LifetimeBusy:
             return ProjectSearchResult("unavailable", (), None, False)
 
-    def _search_owned(self, authority, query, *, limit):
+    def _semantic_query_vector(self, authority, query):
+        """Project once on this finite tool worker, before acquiring a read slot."""
+        if not authority.guard() or not self._semantic_query_slot.acquire(blocking=False):
+            return None
+        owned = _SemanticQuery(authority.scope.key, threading.Event())
+        with self._lock:
+            self._semantic_query = owned
+        try:
+            with self.registry_connection_scope():
+                state = self.semantic_state(authority.scope.key)
+                if (
+                    state.scope != authority.scope or not state.enabled
+                    or state.state != "Ready" or state.settings is None
+                ):
+                    return None
+                from tldw_chatbook.RAG_Search.simplified.embeddings_wrapper import (
+                    EmbeddingsServiceWrapper,
+                )
+                from . import semantic
+
+                try:
+                    carrier = semantic._issue_project_projection_scope(
+                        self, authority.scope, state.settings, state.semantic_revision
+                    )
+                except ProjectIndexRetirementUnproven:
+                    raise
+                except Exception:
+                    return None
+                wrapper = None
+                vector = None
+                try:
+                    self._retire_registry_for_model()
+                except ProjectIndexRetirementUnproven:
+                    self._retain_uncertain_model(carrier)
+                    raise
+                except BaseException:
+                    try:
+                        carrier.close()
+                    except BaseException as error:
+                        self._retain_uncertain_model(carrier)
+                        raise ProjectIndexRetirementUnproven(
+                            "index_projection_retirement_unproven"
+                        ) from error
+                    raise
+                try:
+                    wrapper = EmbeddingsServiceWrapper(
+                        model_name=carrier.model_name,
+                        api_key=carrier.api_key,
+                        base_url=carrier.base_url,
+                        device=getattr(carrier, "_config", {}).get("device"),
+                        execution_scope=carrier,
+                        local_files_only=carrier.local_files_only,
+                    )
+                    try:
+                        vector = wrapper.create_embedding(query)
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        self._retire_registry_for_model()
+                    except BaseException as error:
+                        self._retain_uncertain_model(wrapper, carrier)
+                        if isinstance(error, ProjectIndexRetirementUnproven):
+                            raise
+                        raise ProjectIndexRetirementUnproven(
+                            "index_registry_retirement_unproven"
+                        ) from error
+                    if wrapper is not None:
+                        try:
+                            wrapper.close()
+                        except BaseException:
+                            # One immediate same-owner retry before explicit signals.
+                            try:
+                                wrapper.close()
+                            except BaseException:
+                                with self._lock:
+                                    owned.close_pending = True
+                                while True:
+                                    owned.signal.wait()
+                                    owned.signal.clear()
+                                    try:
+                                        wrapper.close()
+                                    except BaseException:
+                                        continue
+                                    with self._lock:
+                                        owned.close_pending = False
+                                    break
+                    try:
+                        carrier.close()
+                    except BaseException as error:
+                        self._retain_uncertain_model(carrier)
+                        raise ProjectIndexRetirementUnproven(
+                            "index_projection_retirement_unproven"
+                        ) from error
+                if vector is not None:
+                    return state, carrier.artifact_fingerprint, vector
+                return None
+        finally:
+            with self._lock:
+                if self._semantic_query is owned:
+                    self._semantic_query = None
+            self._semantic_query_slot.release()
+
+    def _search_owned(self, authority, query, *, limit, semantic_query=None):
         if type(authority) is not ProjectIndexSearchAuthority:
             raise ValueError("invalid_search_authority")
         if not isinstance(query, str) or not query.strip() or len(query) > 2048:
@@ -534,6 +757,27 @@ class ProjectIndexService:
                 ):
                     return unavailable
                 candidates = store.lexical_candidates(admitted, query, limit=100)
+            semantic_status = "unavailable"
+            if semantic_query is not None:
+                semantic_state, artifact, vector = semantic_query
+                from . import semantic
+
+                try:
+                    spec, destination = semantic._require_current_catalog(
+                        semantic_state.settings
+                    )
+                    if semantic._target(spec, destination).artifact_fingerprint == artifact:
+                        with store.sql_unit(), self._fence(authority.scope.key) as current:
+                            if current == live:
+                                ranked = semantic.rank_semantic(
+                                    store, admitted.scope, semantic_state, artifact,
+                                    vector, admitted.exclusions,
+                                )
+                                if ranked is not None:
+                                    semantic_status = "ready"
+                                    candidates = semantic.fuse_candidates(candidates, ranked)
+                except (ValueError, ImportError, OSError):
+                    pass
             hits = []
             stale = False
             for candidate in candidates:
@@ -584,6 +828,7 @@ class ProjectIndexService:
                     tuple(hits + [hit]),
                     None,
                     stale,
+                    semantic_status,
                 )
                 if (
                     len(
@@ -613,6 +858,7 @@ class ProjectIndexService:
                     tuple(hits),
                     None,
                     stale,
+                    semantic_status,
                 )
                 # A later stale candidate enlarges the final wrapper. Trim
                 # whole hits only, preserving valid JSON and honest evidence.
@@ -655,6 +901,358 @@ class ProjectIndexService:
             finally:
                 self._close_capability(lease)
 
+    def enable_semantic(
+        self, key, settings, *, expected_epoch: int, expected_semantic_revision: int
+    ):
+        """CAS separate semantic consent against current safe catalog identity."""
+        from .models import ProjectSemanticSettings
+        from .semantic import _settings_for_project_model
+
+        if type(settings) is not ProjectSemanticSettings:
+            raise ValueError("invalid_semantic_settings")
+        candidate = _settings_for_project_model(settings.model_id)
+        if replace(settings, approved_destination_fingerprint=None) != candidate:
+            raise ValueError("project_embedding_configuration_changed")
+        return self._configure_semantic(
+            key, settings, enabled=True, expected_epoch=expected_epoch,
+            expected_semantic_revision=expected_semantic_revision,
+        )
+
+    def disable_semantic(
+        self, key, *, expected_epoch: int, expected_semantic_revision: int
+    ):
+        """Revoke semantic work without changing keyword consent or policy."""
+        return self._configure_semantic(
+            key, None, enabled=False, expected_epoch=expected_epoch,
+            expected_semantic_revision=expected_semantic_revision,
+        )
+
+    def _configure_semantic(
+        self, key, settings, *, enabled, expected_epoch, expected_semantic_revision
+    ):
+        if type(expected_epoch) is not int or expected_epoch < 0:  # noqa: E721
+            raise ValueError("invalid_semantic_epoch")
+        with self._store(key) as store:
+            own_lease = None
+            with self._lock:
+                active = next(
+                    (
+                        run for run in self._semantic_runs.values()
+                        if run.scope.key == key and not run.native_retired
+                    ), None,
+                )
+                if active is None:
+                    own_lease = self._lifetime(store, key)
+                else:
+                    store.bind_native_lifetime(active.lease)
+                try:
+                    with self._admitted(store, key) as authority:
+                        if authority is None:
+                            raise ValueError("authority_unavailable")
+                        status = store.load_status(key)
+                        if status.scope.epoch != expected_epoch:
+                            raise ValueError("stale_scope")
+                        result = store.configure_semantic(
+                            status.scope, settings, enabled=enabled,
+                            expected_semantic_revision=expected_semantic_revision,
+                        )
+                    affected = tuple(
+                        run for run in self._semantic_runs.values()
+                        if run.scope.key == key and not run.native_retired
+                    )
+                    for run in affected:
+                        run.stop.set()
+                finally:
+                    if own_lease is not None:
+                        self._close_capability(own_lease)
+            self._stop_semantic_local(affected)
+            return result
+
+    def _stop_semantic_local(self, runs):
+        for run in runs:
+            run.stop.set()
+        for run in runs:
+            if run.thread is not None:
+                run.thread.join()
+            if not run.native_retired:
+                raise RuntimeError("index_retirement_unproven") from run.error
+
+    def refresh_semantic(
+        self, key, *, expected_epoch: int, expected_semantic_revision: int
+    ) -> str:
+        """Start one finite off-UI async generation job for this binding."""
+        with self.registry_connection_scope():
+            if not self._read_slots.acquire(blocking=False):
+                raise LifetimeBusy("index_reads_busy")
+            with ExitStack() as read_admission:
+                read_admission.callback(self._read_slots.release)
+                pin = self._retain(key)
+                store = lease = None
+                dispatched = False
+                try:
+                    with self._bind(pin), self._lock:
+                        if any(not item.native_retired for item in self._runs.values()):
+                            raise LifetimeBusy("scanner_busy")
+                        if any(
+                            not item.native_retired
+                            and item.scope.key.binding_namespace == key.binding_namespace
+                            for item in self._semantic_runs.values()
+                        ):
+                            raise LifetimeBusy("semantic_writer_busy")
+                        store = self._factory(key)
+                        store.status_cache_bytes = binding_bytes(self._binding_root(store))
+                        lease = self._lifetime(store, key)
+                        with self._admitted(store, key) as authority:
+                            if authority is None:
+                                raise ValueError("authority_unavailable")
+                            status = store.load_status(key)
+                            state = store.load_semantic_state(status.scope)
+                            if (
+                                status.scope.epoch != expected_epoch
+                                or status.state not in {"Ready", "Partial"}
+                                or not state.enabled
+                                or state.semantic_revision != expected_semantic_revision
+                                or state.settings is None
+                                or state.settings.approved_destination_fingerprint
+                                != state.settings.destination_fingerprint
+                            ):
+                                raise ValueError("stale_semantic_configuration")
+                        self._enroll_cleanup_owner(store, key, authority)
+                        store.close_native()
+                        job_id = uuid4().hex
+                        run = _SemanticRun(
+                            job_id, status.scope, state, authority,
+                            threading.Event(), lease=lease, pin=pin,
+                            read_admission=read_admission.pop_all(),
+                        )
+                        self._semantic_runs[job_id] = run
+                        run.thread = threading.Thread(
+                            target=self._semantic_worker,
+                            args=(run, store), name="project-semantic-owner",
+                        )
+                        run.thread.start()
+                        dispatched = True
+                        return job_id
+                finally:
+                    if not dispatched:
+                        if store is not None:
+                            self._close_cleanup_store(store)
+                        if lease is not None:
+                            self._close_capability(lease)
+                        if pin is not None:
+                            self._close_capability(pin)
+
+    async def _semantic_build(self, run: _SemanticRun, store) -> None:
+        """Issue, embed and publish on one owned async task and worker loop."""
+        from tldw_chatbook.RAG_Search.simplified.embeddings_wrapper import (
+            EmbeddingsServiceWrapper,
+        )
+        from . import semantic
+        from .semantic_vectors import encode_vector
+
+        carrier = semantic._issue_project_projection_scope(
+            self, run.scope, run.state.settings, run.state.semantic_revision
+        )
+        wrapper = None
+        try:
+            self._retire_registry_for_model()
+        except ProjectIndexRetirementUnproven:
+            self._retain_uncertain_model(carrier, store)
+            raise
+        except BaseException:
+            try:
+                carrier.close()
+            except BaseException as error:
+                self._retain_uncertain_model(carrier, store)
+                raise ProjectIndexRetirementUnproven(
+                    "index_projection_retirement_unproven"
+                ) from error
+            raise
+        try:
+            wrapper = EmbeddingsServiceWrapper(
+                model_name=carrier.model_name,
+                api_key=carrier.api_key,
+                base_url=carrier.base_url,
+                device=getattr(carrier, "_config", {}).get("device"),
+                execution_scope=carrier,
+                local_files_only=carrier.local_files_only,
+            )
+            def claim():
+                with self._admitted(store, run.scope.key) as live:
+                    if live != run.authority or run.stop.is_set():
+                        raise ValueError("stale_semantic_claim")
+                    manifest = store.load_status(run.scope.key).manifest_revision
+                    return store.semantic_claim(
+                        run.scope, run.state, manifest_revision=manifest,
+                        artifact_fingerprint=carrier.artifact_fingerprint,
+                        claim_token=run.job_id,
+                    )
+
+            run.generation_id = self._retry_read(run.scope.key, claim)
+            after = 0
+            while True:
+                def read_page():
+                    with self._admitted(store, run.scope.key) as live:
+                        if live != run.authority or run.stop.is_set():
+                            raise ValueError("stale_semantic_page")
+                        return store.semantic_source_page(
+                            run.scope, run.generation_id, run.job_id, after=after
+                        )
+
+                page = self._retry_read(run.scope.key, read_page)
+                if not page:
+                    break
+                vectors = await wrapper.create_embeddings_async(
+                    [source.text for source in page]
+                )
+                encoded = tuple(encode_vector(vector) for vector in vectors)
+                # Split vector commits if a high-dimensional model exceeds the
+                # one-MiB page bound; source ownership remains one bounded page.
+                first = 0
+                while first < len(page):
+                    end = first
+                    total = 0
+                    while end < len(page) and total + len(encoded[end]) <= 1024 * 1024:
+                        total += len(encoded[end])
+                        end += 1
+                    if end == first:
+                        raise ValueError("semantic_vector_page_limit")
+                    def append_page():
+                        with self._admitted(store, run.scope.key) as live:
+                            return (
+                                live == run.authority
+                                and not run.stop.is_set()
+                                and store.semantic_append(
+                                    run.scope, run.generation_id, run.job_id,
+                                    page[first:end], encoded[first:end],
+                                )
+                            )
+                    if not self._retry_read(run.scope.key, append_page):
+                        raise ValueError("stale_semantic_checkpoint")
+                    first = end
+                after = page[-1].chunk_id
+        finally:
+            try:
+                self._retire_registry_for_model()
+            except BaseException as error:
+                self._retain_uncertain_model(wrapper, carrier, store)
+                if isinstance(error, ProjectIndexRetirementUnproven):
+                    raise
+                raise ProjectIndexRetirementUnproven(
+                    "index_registry_retirement_unproven"
+                ) from error
+            if wrapper is not None:
+                try:
+                    wrapper.close()
+                except BaseException as error:
+                    run.error = error
+                    signal = asyncio.Event()
+                    with self._lock:
+                        run.close_pending = True
+                        run.close_loop = asyncio.get_running_loop()
+                        run.close_signal = signal
+                    while True:
+                        await signal.wait()
+                        signal.clear()
+                        try:
+                            wrapper.close()
+                        except BaseException as retry_error:
+                            run.error = retry_error
+                        else:
+                            with self._lock:
+                                run.close_pending = False
+                                run.close_loop = None
+                                run.close_signal = None
+                            break
+            try:
+                carrier.close()
+            except BaseException as error:
+                self._retain_uncertain_model(carrier, store)
+                raise ProjectIndexRetirementUnproven(
+                    "index_projection_retirement_unproven"
+                ) from error
+        # Only a positively closed wrapper/carrier may publish Ready. The
+        # selected config and complete artifact identity are checked again
+        # after model retirement, outside the final finite SQL/fence unit.
+        spec, destination = semantic._require_current_catalog(run.state.settings)
+        if semantic._target(spec, destination).artifact_fingerprint != carrier.artifact_fingerprint:
+            raise ValueError("semantic_artifact_changed")
+
+        def publish():
+            with self._admitted(store, run.scope.key) as live:
+                return (
+                    live == run.authority
+                    and not run.stop.is_set()
+                    and store.semantic_publish(run.scope, run.generation_id, run.job_id)
+                )
+
+        if not self._retry_read(run.scope.key, publish):
+            raise ValueError("stale_semantic_publication")
+
+    def _semantic_worker(self, run: _SemanticRun, store) -> None:
+        run.store = store
+        try:
+            with self._bind(run.pin), self.registry_connection_scope():
+                try:
+                    asyncio.run(self._semantic_build(run, store))
+                except ProjectIndexRetirementUnproven:
+                    raise
+                except BaseException as error:
+                    run.error = error
+                    if run.generation_id is not None:
+                        reason = (
+                            "quota_refused"
+                            if (
+                                isinstance(error, ValueError)
+                                and str(error) == "index_cache_limit"
+                            ) or (
+                                isinstance(error, sqlite3.OperationalError)
+                                and getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL
+                            )
+                            else "interrupted" if run.stop.is_set()
+                            else "source_changed" if (
+                                isinstance(error, ValueError)
+                                and str(error) in {
+                                    "stale_semantic_page",
+                                    "stale_semantic_checkpoint",
+                                    "stale_semantic_publication",
+                                }
+                            ) else "provider_unavailable"
+                        )
+                        def fail():
+                            with self._admitted(store, run.scope.key) as live:
+                                if live == run.authority:
+                                    store.semantic_fail(
+                                        run.scope, run.generation_id, run.job_id,
+                                        reason=reason,
+                                    )
+                        self._retry_read(run.scope.key, fail)
+                finally:
+                    try:
+                        store.close_native()
+                    except BaseException:
+                        self._retain_uncertain_model(store)
+                        raise
+            run.lease.close()
+            if run.pin is not None:
+                run.pin.close()
+            run.read_admission.close()
+            run.native_retired = True
+            run.store = None
+            with self._lock:
+                # A retired run is diagnostic history only. Its exception may
+                # retain the page, encoded vectors and model worker frames.
+                run.error = None
+                retired = [
+                    job for job, item in self._semantic_runs.items() if item.native_retired
+                ]
+                for job in retired[:-16]:
+                    owner = self._semantic_runs[job].thread
+                    if owner is None or not owner.is_alive():
+                        self._semantic_runs.pop(job, None)
+        except BaseException as error:
+            run.error = error
+
     def _stop_local(self, runs: tuple[_Run, ...]) -> None:
         for run in runs:
             run.stop.set()
@@ -677,6 +1275,14 @@ class ProjectIndexService:
                     ):
                         store.bind_native_lifetime(run.lease)
                         break
+                for run in self._semantic_runs.values():
+                    if (
+                        run.scope.key == key
+                        and run.lease is not None
+                        and not run.lease.closed
+                    ):
+                        store.bind_native_lifetime(run.lease)
+                        break
             with self._lock, store.sql_unit(write=True), self._fence(key) as authority:
                 if expected_scope is not None and authority is None:
                     raise ValueError("authority_unavailable")
@@ -686,7 +1292,12 @@ class ProjectIndexService:
                 affected = tuple(
                     run for run in self._runs.values() if run.claim.scope.key == key
                 )
+                semantic_affected = tuple(
+                    run for run in self._semantic_runs.values()
+                    if run.scope.key == key and not run.native_retired
+                )
             self._stop_local(affected)
+            self._stop_semantic_local(semantic_affected)
             if clear:
                 # Revocation is already durable if external retirement or cleanup
                 # fails. Retry Clear explicitly; there is no background reopen.
@@ -1108,6 +1719,11 @@ class ProjectIndexService:
                     )
                 if any(not run.native_retired for run in self._runs.values()):
                     raise LifetimeBusy("scanner_busy")
+                if any(
+                    not run.native_retired and run.scope.key.binding_namespace == scope.key.binding_namespace
+                    for run in self._semantic_runs.values()
+                ):
+                    raise LifetimeBusy("semantic_writer_busy")
                 store = self._factory(scope.key)
                 store.status_cache_bytes = binding_bytes(self._binding_root(store))
                 lease = self._lifetime(store, scope.key)
@@ -1420,6 +2036,9 @@ class ProjectIndexService:
         for run in tuple(self._runs.values()):
             if run.claim.scope.key.binding_id == binding_id:
                 run.stop.set()
+        for run in tuple(self._semantic_runs.values()):
+            if run.scope.key.binding_id == binding_id:
+                run.stop.set()
         if self._detached_fence is None:
             return
         with self._lock:
@@ -1448,21 +2067,31 @@ class ProjectIndexService:
             with self._lock:
                 self._closed = True
                 runs = tuple(self._runs.values())
+                semantic_runs = tuple(self._semantic_runs.values())
                 searches = tuple(self._searches)
                 operations = tuple(self._operations)
                 for run in runs:
                     run.stop.set()
-                return runs, searches, operations
+                for run in semantic_runs:
+                    run.stop.set()
+                return runs, semantic_runs, searches, operations
 
         async def drain():
-            _, _, operations = await asyncio.to_thread(stop_and_snapshot)
-            if any(self._projection_close_pending(operation) for operation in operations):
+            _, semantic_runs, _, operations = await asyncio.to_thread(stop_and_snapshot)
+            if (
+                self._semantic_query is not None and self._semantic_query.close_pending
+            ) or any(run.close_pending for run in semantic_runs) or any(
+                self._projection_close_pending(operation) for operation in operations
+            ):
                 raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
             if self._cleanup_thread is not None:
                 await asyncio.to_thread(self._cleanup_thread.join)
             for operation in operations:
                 while not operation.done.is_set():
-                    if self._projection_close_pending(operation):
+                    if (
+                        self._semantic_query is not None
+                        and self._semantic_query.close_pending
+                    ) or any(run.close_pending for run in semantic_runs) or self._projection_close_pending(operation):
                         raise ProjectIndexRetirementUnproven(
                             "project_embedding_close_pending"
                         )
@@ -1473,12 +2102,17 @@ class ProjectIndexService:
                     )
             # An already-admitted start may have dispatched while close waited.
             # Its operation retires before this final writer/search snapshot.
-            runs, searches, _ = await asyncio.to_thread(stop_and_snapshot)
+            runs, semantic_runs, searches, _ = await asyncio.to_thread(stop_and_snapshot)
             for search in searches:
                 await asyncio.to_thread(search.done.wait)
             for run in runs:
                 if run.supervisor is not None:
                     await asyncio.to_thread(run.supervisor.join)
+                if not run.native_retired:
+                    raise RuntimeError("index_retirement_unproven") from run.error
+            for run in semantic_runs:
+                if run.thread is not None:
+                    await asyncio.to_thread(run.thread.join)
                 if not run.native_retired:
                     raise RuntimeError("index_retirement_unproven") from run.error
             if any(search.retirement_unproven for search in searches):
