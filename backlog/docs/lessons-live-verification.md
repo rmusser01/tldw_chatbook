@@ -1,5 +1,43 @@
 # Lessons: verifying against the real thing
 
+## On a quiet host, 4 ms stack samples cannot rank the parts of a 20 ms callback: time the suspects (TASK-33620.15.8, 2026-10-23)
+
+**Incident.** TASK-33620.15.8 was filed from samples taken at load averages of
+78-109, where run start's longest callback ran 160-700 ms wall and collected
+dozens of 4 ms samples. Re-measured at a load of 4-7, the same callback was
+16-23 ms and collected one to three samples, each in a different function
+(`_sync_interaction_classes` 1, `_build_durable_trace_request` 1,
+`default_prompt_history_path` 1): nothing could be ranked. The rebuilt probe
+then wrapped about 30 named methods with `perf_counter`/`thread_time` timers,
+recorded only on the main thread inside a timed callback and keyed by its
+sequence number. Over 17 sends that ranked them at once: of a 19 ms callback,
+the composer's `load_draft("")` took 11-16 ms, `App.update_styles` 13 ms of
+that, and one class change 10 ms, because Textual restyles the node's whole
+26-node subtree for a class two rules use.
+
+**What to do.** Use samples to find suspects and exact timers to rank them.
+Have the probe wrap the suspects on their class from its writer thread once
+each module is imported, record inclusive wall and CPU per call, and report
+them per callback. When a host is quiet and the callbacks are under about
+30 ms, do not attribute from samples alone.
+
+## Two drivers that launch the same tmux names kill each other's apps (TASK-33620.15.8, 2026-10-23)
+
+**Incident.** A paired round was stopped with `pkill -f "rs8/drive.py"`, and a
+new round was started under the same names. The driver had been started as
+`python drive.py ...` from inside `rs8/`, so its command line did not contain
+`rs8/`; the pattern matched nothing and the old driver kept running.
+`launch.sh` kills any tmux server with the name it is given and deletes that
+profile, so each driver's next launch killed the other's apps mid-send. Both
+arms' apps vanished between two log lines, and the driver waited out its
+120 s idle timeout on a dead server. Both rounds had to be discarded.
+
+**What to do.** After stopping a driver, check with `pgrep -fl drive.py` (or
+`ps`) that it is gone before you start another. Give every round its own
+launch-name prefix, so two drivers can never share a tmux server or a
+profile. When an app disappears mid-round, look for another launch of its
+name before suspecting a crash.
+
 ## A profile reused across launches can carry one arm's history into the next round (TASK-33620.15.14, 2026-10-20)
 
 **Incident.** Paired rounds typed a 29-character prompt 0.5 s after the
