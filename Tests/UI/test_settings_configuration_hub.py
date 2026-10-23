@@ -31,7 +31,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from Tests.private_profile import private_profile_test
+from Tests.private_profile import is_private_profile_child, private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -560,14 +560,6 @@ def test_settings_category_groups_cover_every_category_id_exactly_once():
 
 
 @pytest.mark.bootstrap_profile
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TASK-36381: product gap -- Tools & MCP (TASK-35150) shipped with no "
-        "_INSPECTOR_GUIDANCE entry, so its inspector shows the generic "
-        "fallback. Remove this marker when the entry lands."
-    ),
-)
 def test_inspector_guidance_covers_every_settings_category():
     """Every non-domain sidebar category must have an explicit guidance entry.
 
@@ -1405,13 +1397,16 @@ def _painted_settings_widget(screen, widget) -> str:
     )
 
 
-def _seed_active_config(text: str) -> Path:
+def _seed_active_config(request, text: str) -> Path:
     """Write ``text`` to the selected profile's config file and reload it.
 
     TASK-36381: config is bound to one profile per process (ADR-126), so a
     test seeds the selected file; pointing TLDW_CONFIG_PATH at another file
-    makes the next config read raise ``raw_source_selection_changed``.
+    makes the next config read raise ``raw_source_selection_changed``. Only
+    a private-profile child may do this: anywhere else the selected file is
+    the session's shared config.toml.
     """
+    assert is_private_profile_child(request), "needs @private_profile_test"
     config_path = Path(config_module.get_cli_config_path())
     config_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     config_path.write_text(text, encoding="utf-8")
@@ -1427,7 +1422,7 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
 ):
     """F4 Settings owns the global gate at normal and compact sizes."""
     config_path = _seed_active_config(
-        "[scheduling]\nbriefing_schedules_enabled = false\n"
+        request, "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
 
     app = _build_test_app()
@@ -1491,7 +1486,7 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
 ):
     """A replaced config is reported as saved even when live publish fails."""
     config_path = _seed_active_config(
-        "[scheduling]\nbriefing_schedules_enabled = false\n"
+        request, "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
     assert (
         config_module.get_cli_setting("scheduling", "briefing_schedules_enabled", True)
@@ -1555,7 +1550,7 @@ async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
 ):
     """A restart-required gate cannot be inverted by a second press."""
     config_path = _seed_active_config(
-        "[scheduling]\nbriefing_schedules_enabled = false\n"
+        request, "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
 
     app = _build_test_app()
@@ -2134,7 +2129,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(
 @private_profile_test
 async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(request):
     original = "[appearance]\nascii_glyphs = true\n"
-    config_path = _seed_active_config(original)
+    config_path = _seed_active_config(request, original)
 
     app = _build_test_app()
 
@@ -2173,7 +2168,7 @@ async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
     request,
 ):
     original = ""
-    config_path = _seed_active_config(original)
+    config_path = _seed_active_config(request, original)
 
     app = _build_test_app()
 
@@ -14414,6 +14409,9 @@ async def test_state_banner_is_pinned_outside_detail_scroll(request):
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
+        # Library/RAG starts the off-thread index-status worker; let it end
+        # inside run_test so teardown can retire the app (TASK-36381).
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         banner = screen.query_one("#settings-category-state-banner", Static)
         body = screen.query_one("#settings-detail-pane-body")

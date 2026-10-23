@@ -98,7 +98,8 @@ def build_test_app_config(
     redirect this call raises ``RecoveryRequired("raw_source_selection_
     changed")`` (TASK-36381). A caller runs under ``@private_profile_test``
     (a fresh profile in a child process) or ``bootstrap_profile`` (the shared
-    session profile, for tests that write no config).
+    session profile, for tests that neither save config nor assign into
+    ``app.app_config``: the dict below is the shared cache, see next).
 
     The dict is deliberately NOT deep-copied off `load_settings()`'s cache:
     production shares that object too (`load_settings` returns the cached
@@ -124,7 +125,7 @@ def build_test_app_config(
             them.
 
     Returns:
-        The app config dict, sourced from the per-test sandbox config file.
+        The app config dict, sourced from the selected profile's config file.
     """
     config = load_settings()
     _deep_merge_into(config, {"tldw_api": {"base_url": "http://localhost:8000"}})

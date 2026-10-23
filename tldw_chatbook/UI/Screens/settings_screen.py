@@ -2503,6 +2503,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "profiles contain policy only; policy editing is in Settings ▸ Tools & MCP, and importing never installs tools",
         ),
     ),
+    SettingsCategoryId.TOOLS: (
+        (
+            "Affected config",
+            "[tools] gates, [mcp] enable/expose controls, and MCP permission-store Tool policy",
+        ),
+        (
+            "Recovery",
+            "re-open the category, or press r to force a full workbench reload",
+        ),
+        (
+            "Boundary",
+            "gates and permissions save at once; a server form has its own Save; Tool Profiles owns profile lifecycle",
+        ),
+    ),
     SettingsCategoryId.PRIVACY_SECURITY: (
         (
             "Affected config",
