@@ -494,7 +494,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # ratchet, which ran in no PR lane while six unlisted declarations accreted.
 # A static node (an AST walk, about 5-10 s with its private-profile child),
 # appended at the tail after TASK-35648's.
-MINIMUM_FILES = 616
+# TASK-36360..36363 append48 nodes after the complete616-entry dev census.
+MINIMUM_FILES = 664
 
 
 def read_census(path: Path) -> list[str]:

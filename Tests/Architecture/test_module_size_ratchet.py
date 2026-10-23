@@ -292,7 +292,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-35647: the Tools & MCP badge branch (+2) folds two identical badge
     # branches (-2). TASK-35712: s names a model id the save refuses (+14);
     # two methods nothing calls go (-19): 35,663.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35663,
+    # TASK-36361: staged completion delegates to the same-owner helper (-45).
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35618,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

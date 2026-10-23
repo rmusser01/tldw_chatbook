@@ -37,6 +37,17 @@ still commit. Validation errors, server refusals and failed writes keep the draf
 open and restore Save for retry. Successful local saves and offline server saves
 retain the service's `saved` and `queued` outcomes respectively (ADR-018).
 
+Completion acknowledges the submitted raw form snapshot. Newer editable values
+keep the form open and dirty; an unchanged successful form still closes. A
+successful create adopts its durable definition ID before reading row metadata,
+so another Save updates the same row even if that postcommit read fails. Only
+the owner selector is locked during admission and after identity adoption;
+failed creates restore it. A later confirmed discard returns the last successful
+`saved`/`queued` outcome so the workbench refreshes the already persisted row
+(TASK-36362). These are form-local acknowledgements, not cancellation of an
+admitted physical write.
+
+
 Hosted Results review actions (`r`/`d`/`o`/`a`) admit one mutation
 synchronously before worker dispatch. Further review gestures show a busy refusal
 until the mutation and repaint settle, so they cannot cancel an admitted per-row

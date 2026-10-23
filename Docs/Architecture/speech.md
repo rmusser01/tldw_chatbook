@@ -34,6 +34,13 @@ Profiles live in a dedicated SQLite store (`config.get_tts_profiles_db_path()`, 
 
 `UI/STTS_Window.py::AudioBookGenerationWidget` keeps the complete file, Notes, or Conversation import in its editable TextArea and working source. Programmatic import echoes therefore retain the full source for chapter detection and Generate, including text beyond character 1000; deliberate edits replace that working source and clearing it blocks Generate (TASK-36130). Chapter publication generation advances when the current TextArea source changes, including clear and the debounce interval. Dispatch also advances it, so a slow superseded worker cannot replace current chapters or announce stale success. A same-source programmatic import echo keeps its dispatch valid (TASK-36100).
 
+Pending file reads additionally retain the current editor identity, live text and
+working-source snapshot across the off-loop read. Completion publishes only if
+the owning widget remains attached and all three still match. This preserves
+accepted edits or clear even while the parent's Changed message is queued, and
+a discarded import emits no success notification (TASK-36363).
+
+
 ## Backends
 
 | Backend | Transport | Notes |

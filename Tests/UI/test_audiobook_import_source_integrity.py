@@ -254,3 +254,111 @@ async def test_editing_import_before_detection_finishes_owns_generate(
         finally:
             release.set()
             await app.workers.wait_for_complete()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(40)
+@pytest.mark.parametrize("change", ["unchanged", "edit", "replace", "clear"])
+@private_profile_test
+async def test_pending_file_import_keeps_current_source(
+    request, tmp_path, monkeypatch, change
+):
+    """Blind import publication loses accepted input before Changed can run."""
+    initial = "Chapter 1: Initial\nINITIAL_DRAFT"
+    imported = _source(1600)
+    path = tmp_path / "pending-book.txt"
+    original_bytes = imported.encode("utf-8")
+    path.write_bytes(original_bytes)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_to_thread = asyncio.to_thread
+
+    async def hold_read_result(func, *args, **kwargs):
+        result = await original_to_thread(func, *args, **kwargs)
+        if func.__name__ == "_read_audiobook_text":
+            # The original off-loop UTF-8 read has physically completed.
+            assert result == imported
+            entered.set()
+            await release.wait()
+        return result
+
+    app = _Host()
+    typing = None
+    notifications = []
+    async with app.run_test(size=(120, 48)) as pilot:
+        widget = app.query_one(AudioBookGenerationWidget)
+        widget.query_one(Collapsible).collapsed = False
+        widget.query_one("#import-source-select", Select).value = "paste"
+        await pilot.pause()
+        widget.query_one("#import-content-btn", Button).press()
+        area = widget.query_one("#content-preview", TextArea)
+        await _until(lambda: not area.disabled)
+        area.load_text(initial)
+        await _until(lambda: widget.content_text == initial)
+        await _until(lambda: widget._chapter_detect_debounce_timer is None)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        if change in {"replace", "clear"}:
+            area.focus()
+            await pilot.press("f7")
+            assert area.selected_text == initial
+
+        original_notify = app.notify
+
+        def notify(message, **kwargs):
+            notifications.append(str(message))
+            original_notify(message, **kwargs)
+
+        monkeypatch.setattr(app, "notify", notify)
+        monkeypatch.setattr(asyncio, "to_thread", hold_read_result)
+        widget.query_one("#import-source-select", Select).value = "file"
+        await pilot.pause()
+        widget.query_one("#import-content-btn", Button).press()
+        await _until(lambda: isinstance(app.screen, FileOpen))
+        await _until(lambda: bool(app.screen.query("EnhancedDirectoryNavigation")))
+        await pilot.pause()
+        app.screen.dismiss(path)
+        expected = imported
+        try:
+            await _until(entered.is_set)
+            assert not area.disabled
+            area.focus()
+            if change in {"edit", "replace"}:
+                expected = "x" + initial if change == "edit" else "x"
+                typing = asyncio.create_task(pilot.press("x"))
+                # Pilot completion waits for the held parent pump. The live
+                # child text, rather than typing.done(), proves key delivery.
+                await _until(lambda: area.text == expected)
+            elif change == "clear":
+                expected = ""
+                # Run the existing bound keyboard action on the focused child;
+                # bubbling a non-printable Key waits behind the held callback.
+                await app.run_action("delete_left", default_namespace=area)
+                await _until(lambda: area.text == expected)
+            if change != "unchanged":
+                assert widget.content_text == initial
+        finally:
+            release.set()
+        if typing is not None:
+            await typing
+        await pilot.pause()
+        await _until(lambda: widget._chapter_detect_debounce_timer is None)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert path.read_bytes() == original_bytes
+        assert area.text == expected, "pending import overwrote accepted source input"
+        assert widget.content_text == expected
+        import_notices = [
+            notice for notice in notifications if notice.startswith("Imported ")
+        ]
+        if change == "unchanged":
+            _assert_full_source(widget, await _generate(app, widget), imported)
+            assert len(import_notices) == 1
+        else:
+            assert import_notices == []
+            if expected:
+                assert (await _generate(app, widget)).content == expected
+            else:
+                widget.query_one("#generate-audiobook-btn", Button).press()
+                await pilot.pause()
+                assert app.submissions == []

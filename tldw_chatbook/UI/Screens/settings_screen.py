@@ -33700,7 +33700,9 @@ class SettingsScreen(BaseAppScreen):
             )
             self._storage_result = "Storage defaults saving..."
             self._set_static_text("#settings-storage-save-result", self._storage_result)
-            self._settings_save_storage_worker(section_values)
+            self._settings_save_storage_worker(
+                section_values, self._staged_save_snapshot(SettingsCategoryId.STORAGE)
+            )
             return
 
         if category is SettingsCategoryId.LIBRARY_RAG:
@@ -33746,7 +33748,10 @@ class SettingsScreen(BaseAppScreen):
             self._set_static_text(
                 "#settings-appearance-save-result", self._appearance_result
             )
-            self._settings_save_appearance_worker(section_values)
+            self._settings_save_appearance_worker(
+                section_values,
+                self._staged_save_snapshot(SettingsCategoryId.APPEARANCE),
+            )
             return
 
         draft = self._settings_drafts.get(category)
@@ -33962,6 +33967,7 @@ class SettingsScreen(BaseAppScreen):
                     for key in GOAL_SETTING_KEYS
                     if key in dirty_values
                 },
+                self._staged_save_snapshot(SettingsCategoryId.CONSOLE_BEHAVIOR),
             )
             return
 
@@ -34632,45 +34638,33 @@ class SettingsScreen(BaseAppScreen):
                             "Library reader layout refresh failed after settings save."
                         )
 
+    def _staged_save_snapshot(self, category: SettingsCategoryId) -> dict[str, object]:
+        from ..Settings_Modules.staged_save_ack import capture_staged_values
+
+        return capture_staged_values(self, category)
+
     def _apply_appearance_save_result(
         self,
         saved: bool,
         section_values: Mapping[str, object],
+        submitted: Mapping[str, object] | None = None,
     ) -> None:
-        if saved:
-            # Merge per section: the saved sections omit keys Appearance does
-            # not own (general.default_theme), which must survive in memory.
-            target = self._app_config_update_target()
-            for section, values in copy.deepcopy(dict(section_values)).items():
-                current = target.get(section)
-                target[section] = (
-                    {**current, **values} if isinstance(current, Mapping) else values
-                )
-            self._signal_console_appearance_refresh()
-            self._signal_library_reader_layout_refresh()
-            self._settings_drafts.pop(SettingsCategoryId.APPEARANCE, None)
-            self._appearance_result = "Appearance defaults saved."
-            self._set_static_text(
-                "#settings-appearance-save-result", self._appearance_result
-            )
-            self._sync_appearance_widgets()
-            self.app.notify("Appearance defaults saved.", severity="information")
-            return
-        self._appearance_result = "Failed to save Appearance defaults."
-        self._set_static_text(
-            "#settings-appearance-save-result", self._appearance_result
-        )
-        self.app.notify(self._appearance_result, severity="error")
+        from ..Settings_Modules.staged_save_ack import apply_appearance_save_result
+
+        apply_appearance_save_result(self, saved, section_values, submitted)
 
     @work(exclusive=True, group="settings-save-appearance", thread=True)
     def _settings_save_appearance_worker(
-        self, section_values: Mapping[str, object]
+        self,
+        section_values: Mapping[str, object],
+        submitted: Mapping[str, object] | None = None,
     ) -> None:
         saved = self._save_appearance_sections(section_values)
         self.app.call_from_thread(
             self._apply_appearance_save_result,
             saved,
             dict(section_values),
+            submitted,
         )
 
     def _save_library_rag_category(self, action):
@@ -35048,30 +35042,24 @@ class SettingsScreen(BaseAppScreen):
         self,
         saved: bool,
         section_values: Mapping[str, object],
+        submitted: Mapping[str, object] | None = None,
     ) -> None:
-        if saved:
-            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
-            self._settings_drafts.pop(SettingsCategoryId.STORAGE, None)
-            self._storage_result = (
-                "Storage defaults saved. Restart Chatbook to use saved paths."
-            )
-            self._set_static_text("#settings-storage-save-result", self._storage_result)
-            self._sync_storage_widgets()
-            self.app.notify("Storage defaults saved.", severity="information")
-            return
-        self._storage_result = "Failed to save Storage defaults."
-        self._set_static_text("#settings-storage-save-result", self._storage_result)
-        self.app.notify(self._storage_result, severity="error")
+        from ..Settings_Modules.staged_save_ack import apply_storage_save_result
+
+        apply_storage_save_result(self, saved, section_values, submitted)
 
     @work(exclusive=True, group="settings-save-storage", thread=True)
     def _settings_save_storage_worker(
-        self, section_values: Mapping[str, object]
+        self,
+        section_values: Mapping[str, object],
+        submitted: Mapping[str, object] | None = None,
     ) -> None:
         saved = self._save_storage_sections(section_values)
         self.app.call_from_thread(
             self._apply_storage_save_result,
             saved,
             dict(section_values),
+            submitted,
         )
 
     def _apply_console_behavior_save_result(
@@ -35081,56 +35069,21 @@ class SettingsScreen(BaseAppScreen):
         chat_default_values: Mapping[str, object],
         workbench_scope_fallback: bool = False,
         agents_values: Mapping[str, object] | None = None,
+        submitted: Mapping[str, object] | None = None,
     ) -> None:
-        if saved:
-            if agents_values:
-                self._app_config_update_target().setdefault("agents", {}).update(
-                    agents_values
-                )
-            normalized_console_values = dict(console_values)
-            if "background_effects" in normalized_console_values:
-                self._console_settings()["background_effects"] = dict(
-                    normalized_console_values["background_effects"]
-                )
-                normalized_console_values = {
-                    key: value
-                    for key, value in normalized_console_values.items()
-                    if key != "background_effects"
-                }
-            self._console_settings().update(normalized_console_values)
-            self._chat_defaults().update(chat_default_values)
-            if "background_effects" in console_values:
-                self._signal_console_appearance_refresh()
-            if "user_display_name" in chat_default_values:
-                self._signal_console_identity_refresh()
-            self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
-            rail_result = (
-                f"Rail labels: {self._console_rail_label_style_name(loaded=True)}. "
-                "Return to Console to see the change."
-            )
-            if workbench_scope_fallback:
-                self._console_behavior_result = (
-                    f"Console behavior settings saved. {rail_result} "
-                    f"{CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY}"
-                )
-            else:
-                self._console_behavior_result = (
-                    f"Console behavior settings saved. {rail_result}"
-                )
-            self._console_behavior_saved_this_session = True
-            self._sync_console_behavior_widgets()
-            self.app.notify("Console behavior settings saved.", severity="information")
-            return
-        self._console_behavior_result = (
-            "Failed to save Console behavior settings. Your draft is still here; "
-            "the active rail-label style is still "
-            f"{self._console_rail_label_style_name(loaded=True)}. Try again."
+        from ..Settings_Modules.staged_save_ack import (
+            apply_console_behavior_save_result,
         )
-        self._set_static_text(
-            "#settings-console-behavior-result",
-            self._console_behavior_result,
+
+        apply_console_behavior_save_result(
+            self,
+            saved,
+            console_values,
+            chat_default_values,
+            workbench_scope_fallback,
+            agents_values,
+            submitted,
         )
-        self.app.notify("Failed to save Console behavior settings.", severity="error")
 
     @work(exclusive=True, group="settings-save-console-behavior", thread=True)
     def _settings_save_console_behavior_worker(
@@ -35139,6 +35092,7 @@ class SettingsScreen(BaseAppScreen):
         chat_default_values: Mapping[str, object],
         workbench_scope_fallback: bool = False,
         agents_values: Mapping[str, object] | None = None,
+        submitted: Mapping[str, object] | None = None,
     ) -> None:
         # An admitted write may finish after Settings has been unmounted.
         # Retain its host before blocking; the detached screen has no app parent.
@@ -35153,6 +35107,7 @@ class SettingsScreen(BaseAppScreen):
             dict(chat_default_values),
             workbench_scope_fallback,
             agents_values,
+            submitted,
         )
 
     def _sync_console_behavior_widgets(self) -> None:
