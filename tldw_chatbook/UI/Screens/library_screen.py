@@ -8368,6 +8368,10 @@ class LibraryScreen(BaseAppScreen):
     def on_resize(self, event: events.Resize) -> None:
         """Capture only a crossing, decided by the measured invariant grid."""
         del event
+        # TASK-34000.11 fix round 5: the open ``[[`` picker closes HERE, on
+        # the earliest resize the screen sees, before any frame paints it
+        # detached from the caret (the body's own Resize lands ~150 ms later).
+        self._notes_controller.close_library_note_link_picker_on_resize()
         self._notes_state.resize_epoch += 1
         self._notes_state.resize_settling = True
         # TASK-22228 (item 7): the Media reader layout leg is scheduled only
