@@ -1443,7 +1443,7 @@ in the editor.
 
 A captured note carries three keywords: `console`, `conversation:<id>` and
 `message:<id>`. They are ordinary keywords, so filtering the list on
-`conversation:` finds every answer kept from one chat. Capturing is blocked
+`conversation:<id>` finds every answer kept from one chat. Capturing is blocked
 while the Console chat is temporary — a temporary chat promises nothing is
 written locally, and a note is a local write.
 

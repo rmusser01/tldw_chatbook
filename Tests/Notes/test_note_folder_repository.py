@@ -711,17 +711,21 @@ def test_a_note_found_only_by_its_keyword_is_found(
     the review's ``zebra`` capture.
     """
     lisbon, meeting = _filter_corpus(repository)
-    zebra = repository.db.add_note("Zebra", "nothing here")
-    assert zebra
-    _keyword(repository, zebra, "zebra")
+    # the keyed note's keyword is in NEITHER its title nor its body, so only
+    # the keyword leg can find it (fix round 1, I-1)
+    keyed = repository.db.add_note("Field trip", "nothing here")
+    assert keyed
+    _keyword(repository, keyed, "zebra")
     _keyword(repository, meeting, "conversation:71d30fb1-aaaa")
     homelab = _keyword(repository, lisbon, "homelab")
-    # a deleted note titled Zebra never comes back through its title
+    # a deleted note that carries the word in its title never comes back
     deleted = repository.db.add_note("Zebra", "deleted twin")
     assert deleted and repository.db.soft_delete_note(deleted, expected_version=1)
 
-    assert _filter_ids(repository, "zebra") == {zebra}
-    assert _filter_ids(repository, "zebra nothing") == {zebra}
+    assert _filter_ids(repository, "zebra") == {keyed}
+    # one word in a keyword, the other in the body
+    assert _filter_ids(repository, "zebra nothing") == {keyed}
+    assert _filter_ids(repository, "homelab itinerary") == {lisbon}
     assert _filter_ids(repository, "zebra meeting") == set()
     assert _filter_ids(repository, "71d30fb1") == {meeting}
     assert _filter_ids(repository, "conversation:71d") == {meeting}
@@ -733,6 +737,23 @@ def test_a_note_found_only_by_its_keyword_is_found(
     assert _filter_ids(repository, "homelab") == set()
     # ...and the title/body legs still answer
     assert _filter_ids(repository, "Lisb") == {lisbon}
+
+
+def test_a_word_in_a_keyword_and_a_word_in_the_body_match_the_same_note(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#3 across legs: each word may be satisfied by a
+    different leg of the SAME note -- here ``homelab`` only as a keyword and
+    ``itinerary`` only in the body."""
+    lisbon, meeting = _filter_corpus(repository)
+    _keyword(repository, lisbon, "homelab")
+
+    assert _filter_ids(repository, "homelab itinerary") == {lisbon}
+    assert _filter_ids(repository, "itinerary homelab") == {lisbon}
+    # the keyword alone, and a body word that belongs to the OTHER note
+    assert _filter_ids(repository, "homelab") == {lisbon}
+    assert _filter_ids(repository, "homelab team") == set()
+    assert meeting not in _filter_ids(repository, "homelab")
 
 
 def test_the_filter_cte_never_scans_the_fts_tables(

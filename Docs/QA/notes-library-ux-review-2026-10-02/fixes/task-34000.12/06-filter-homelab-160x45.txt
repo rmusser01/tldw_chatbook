@@ -14,7 +14,7 @@
 │ │ ─────────────────────────────  │     │                                                              │                                                      │
 │ │ Browse                    ▾    │     │ Filter                                                       │                                                      │
 │ │    Media (23) — your files     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
-│ │    Conversations (0)           │     │ ▊ zebra                                                    ▎ │                                                      │
+│ │    Conversations (0)           │     │ ▊ homelab                                                  ▎ │                                                      │
 │ │  ▸ Notes (125)                 │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
 │ │    Prompts (0) — reuse         │     │                                                              │                                                      │
 │ │    Skills (1) — AI add-ons     │<--- │    New     ○ Sort: Newest     Select                         │                                                      │
@@ -24,11 +24,11 @@
 │ │ Artifacts                 ▾    │     │    ○ Remove placement                                        │                                                      │
 │ │    All artifacts               │     │ Note actions unavailable — select a note in the list         │<---                                                  │
 │ │    Chatbooks                   │     │ Sort unavailable — clear the filter                          │                                                      │
-│ │    Reports                     │     │ filter: zebra · 1 result                                     │                                                      │
+│ │    Reports                     │     │ filter: homelab · 1 result                                   │                                                      │
 │ │    Dreams                      │     │                                                              │                                                      │
 │ │ ─────────────────────────────  │     │   Clear filter                                               │                                                      │
 │ │ Create                    ▾    │<--- │  ▾ Unfiled                                                   │                                                      │
-│ │    New note                    │     │    Zebra · Unfiled · 2m                                      │                                                      │
+│ │    New note                    │     │    Trip planning: Lisbon · Unfiled · 42m                     │                                                      │
 │ │    New prompt                  │     │                                                              │                                                      │
 │ │    New skill                   │     │                                                              │                                                      │
 │ │ ─────────────────────────────  │     │                                                              │                                                      │
