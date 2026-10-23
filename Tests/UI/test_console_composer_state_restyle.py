@@ -167,6 +167,9 @@ async def test_targeted_state_restyles_leave_the_styles_a_full_restyle_computes(
         await settle_and_compare("draft added")
         composer.load_draft("")
         await settle_and_compare("draft cleared")
+        # Let the startup focus restore finish first: on origin/dev it ran
+        # after an early focus() and left focus on the nav bar's Home button.
+        await pilot.pause(0.5)
         visible.focus()
         await pilot.pause(0.1)
         assert composer.has_class("console-composer-focused")
