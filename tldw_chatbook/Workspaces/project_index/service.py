@@ -188,8 +188,11 @@ class ProjectIndexService:
             with self._registry_connections() as retire_registry:
                 operation.retire_registry_for_model = retire_registry
                 yield
-        except ProjectIndexRetirementUnproven:
-            operation.retirement_unproven = True
+        except ProjectIndexRetirementUnproven as error:
+            # A retained semantic model-close owner is known and separately
+            # rooted. This management operation can still retire its own SQL.
+            if str(error) != "project_embedding_close_pending":
+                operation.retirement_unproven = True
             raise
         finally:
             self._operation_local.operation = None
@@ -972,8 +975,12 @@ class ProjectIndexService:
         for run in runs:
             run.stop.set()
         for run in runs:
-            if run.thread is not None:
-                run.thread.join()
+            while run.thread is not None and run.thread.is_alive():
+                if run.close_pending:
+                    raise ProjectIndexRetirementUnproven(
+                        "project_embedding_close_pending"
+                    )
+                run.thread.join(0.1)
             if not run.native_retired:
                 raise RuntimeError("index_retirement_unproven") from run.error
 
@@ -1144,26 +1151,29 @@ class ProjectIndexService:
             if wrapper is not None:
                 try:
                     wrapper.close()
-                except BaseException as error:
-                    run.error = error
-                    signal = asyncio.Event()
-                    with self._lock:
-                        run.close_pending = True
-                        run.close_loop = asyncio.get_running_loop()
-                        run.close_signal = signal
-                    while True:
-                        await signal.wait()
-                        signal.clear()
-                        try:
-                            wrapper.close()
-                        except BaseException as retry_error:
-                            run.error = retry_error
-                        else:
-                            with self._lock:
-                                run.close_pending = False
-                                run.close_loop = None
-                                run.close_signal = None
-                            break
+                except BaseException:
+                    try:
+                        wrapper.close()
+                    except BaseException as error:
+                        run.error = error
+                        signal = asyncio.Event()
+                        with self._lock:
+                            run.close_pending = True
+                            run.close_loop = asyncio.get_running_loop()
+                            run.close_signal = signal
+                        while True:
+                            await signal.wait()
+                            signal.clear()
+                            try:
+                                wrapper.close()
+                            except BaseException as retry_error:
+                                run.error = retry_error
+                            else:
+                                with self._lock:
+                                    run.close_pending = False
+                                    run.close_loop = None
+                                    run.close_signal = None
+                                break
             try:
                 carrier.close()
             except BaseException as error:

@@ -42,6 +42,9 @@ def test_openai_embedder_failure_does_not_expose_endpoint_or_cause(
         def post(self, *args, **kwargs):
             raise embeddings_lib.requests.RequestException("connection refused")
 
+        def close(self):
+            pass
+
     monkeypatch.setattr(embeddings_lib.requests, "Session", _FailingSession)
 
     cfg = embeddings_lib.OpenAICfg(
@@ -50,10 +53,13 @@ def test_openai_embedder_failure_does_not_expose_endpoint_or_cause(
         dimension=1536,
         base_url="http://user:secret@127.0.0.1:1/v1?token=secret",
     )
-    embed = embeddings_lib._openai_embedder(cfg)
+    embed, close = embeddings_lib._openai_embedder(cfg)
 
-    with pytest.raises(embeddings_lib.requests.RequestException) as failure:
-        embed(["hello"])
+    try:
+        with pytest.raises(embeddings_lib.requests.RequestException) as failure:
+            embed(["hello"])
+    finally:
+        close()
 
     rendered = "".join(captured_logs)
     assert "secret" not in rendered + str(failure.value)
@@ -111,6 +117,7 @@ def test_actual_factory_http_paths_hide_credentials(
     monkeypatch.setattr(embeddings_lib, "_BACKOFF", (0, 0))
     monkeypatch.setattr(embeddings_lib, "_embeddings_rag_available", lambda: True)
     attempts = []
+    sessions = []
 
     class Response:
         def raise_for_status(self):
@@ -122,6 +129,11 @@ def test_actual_factory_http_paths_hide_credentials(
     class Session:
         def __init__(self):
             self.headers = {}
+            self.close_count = 0
+            sessions.append(self)
+
+        def close(self):
+            self.close_count += 1
 
         def post(self, url, *, json, timeout):
             attempts.append(url)
@@ -159,3 +171,53 @@ def test_actual_factory_http_paths_hide_credentials(
         assert "127.0.0.1" not in rendered
     finally:
         factory.close()
+    assert len(sessions) == 1 and sessions[0].close_count == 1
+
+
+def test_default_factory_retains_openai_session_after_close_failure(monkeypatch):
+    monkeypatch.setattr(embeddings_lib, "_embeddings_rag_available", lambda: True)
+    sessions = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"embedding": [1.0, 2.0]}]}
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.close_calls = 0
+            sessions.append(self)
+
+        def post(self, *args, **kwargs):
+            return Response()
+
+        def close(self):
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise RuntimeError("injected_close_failure")
+
+    monkeypatch.setattr(embeddings_lib.requests, "Session", Session)
+    factory = embeddings_lib.EmbeddingFactory(
+        {
+            "default_model_id": "test",
+            "models": {
+                "test": {
+                    "provider": "openai",
+                    "model_name_or_path": "synthetic-model",
+                    "base_url": "http://127.0.0.1:1/v1",
+                }
+            },
+        },
+        allow_dynamic_hf=False,
+    )
+    assert factory.embed(["synthetic text"]).shape == (1, 2)
+    with pytest.raises(RuntimeError, match="injected_close_failure"):
+        factory.close()
+    assert len(sessions) == 1 and sessions[0].close_calls == 1
+    assert "test" in factory._cache
+    factory.close()
+    assert sessions[0].close_calls == 2
+    assert not factory._cache
