@@ -588,9 +588,20 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
 from ...Widgets.Library.library_notes_canvas import (
     LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
     LibraryNotePresentationState,
+    NoteEditorTextArea,
     note_title_tiebreak_suffix,
     notes_sort_is_blocked,
     resolve_database_note_status_channels,
+)
+from ...Widgets.Library.library_note_link_picker import (
+    MAX_VISIBLE_ROWS as LIBRARY_NOTE_LINK_PICKER_ROWS,
+    LibraryNoteLinkPicker,
+    LinkCandidate,
+)
+from ...Notes.note_import_plan_models import (
+    note_link_entries,
+    stored_note_link,
+    wikilink_completion_context,
 )
 from ...Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
@@ -1550,6 +1561,9 @@ class LibraryNotesController:
             status_channels=status_channels,
             backlinks=self._library_notes_backlinks,
             backlinks_status=self._library_notes_backlinks_status,
+            # TASK-34000.11: computed only while Preview is shown (the same
+            # gate the preview source uses); the editor never scans for it.
+            note_links=self._library_note_preview_links(),
             # task-32640: resolved live by ``_load_library_note_location``.
             location_path=self._library_note_location[0],
             location_written=self._library_note_location[1],
@@ -3816,6 +3830,362 @@ class LibraryNotesController:
             self._notes_state.clear_vetoed_field("body")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
+        # TASK-34000.11 (AC#1): after the draft mutation, never before it --
+        # the picker reads the text the session now holds.
+        self._sync_library_note_link_picker(event.text_area)
+    @on(TextArea.SelectionChanged, "#library-note-body")
+    def handle_library_note_body_selection_changed(
+        self, event: TextArea.SelectionChanged
+    ) -> None:
+        """Keep the ``[[`` picker in step with the caret (TASK-34000.11).
+
+        An arrow key or a click moves the caret without a ``Changed``; the
+        picker closes when the caret leaves the completion and reopens
+        when it comes back.
+
+        Args:
+            event: The body's selection event, which carries the TextArea.
+        """
+        if (
+            self._library_note_presentation_syncing
+            or not self._library_note_editor_armed
+        ):
+            return
+        self._sync_library_note_link_picker(event.text_area)
+
+    # ------------------------------------------------------------------
+    # TASK-34000.11: the ``[[`` link picker, typed-title links, Preview links
+    # ------------------------------------------------------------------
+
+    def _library_note_link_picker_or_none(self) -> LibraryNoteLinkPicker | None:
+        """The mounted picker, or ``None`` outside the note editor."""
+        found = self.query("#library-note-link-picker")
+        if not found:
+            return None
+        picker = found.first()
+        return picker if isinstance(picker, LibraryNoteLinkPicker) else None
+
+    def _library_note_body_or_none(self) -> NoteEditorTextArea | None:
+        found = self.query("#library-note-body")
+        if not found:
+            return None
+        body = found.first()
+        return body if isinstance(body, NoteEditorTextArea) else None
+
+    def _library_note_link_picker_claims_tab(self) -> bool:
+        """Whether the open insert-mode picker owns Tab right now.
+
+        The body's Tab is a PRIORITY binding (``_NOTE_FIELD_TAB_BINDINGS``),
+        resolved by the App before the key reaches ``NoteEditorTextArea.
+        on_key``; the screen's ``check_action`` deactivates ``focus_next``
+        on this answer so Tab can accept the highlighted row instead.
+        """
+        picker = self._library_note_link_picker_or_none()
+        body = self._library_note_body_or_none()
+        return (
+            picker is not None
+            and picker.is_open
+            and picker.mode == "insert"
+            and body is not None
+            and self.focused is body
+        )
+
+    def _close_library_note_link_picker(self, body: NoteEditorTextArea | None) -> None:
+        picker = self._library_note_link_picker_or_none()
+        if picker is not None:
+            picker.hide()
+        if body is not None:
+            body.link_picker_open = False
+
+    def _sync_library_note_link_picker(self, body: NoteEditorTextArea | Any) -> None:
+        """Open, narrow, or close the picker for the caret's ``[[`` context.
+
+        ``None`` context -> hide and clear the Escape latch. A context whose
+        ``start`` equals the latched one -> stay hidden (the Console rule:
+        Escape keeps the picker away until the context changes). Otherwise
+        bump the generation and ask the loader for rows; the rows already
+        showing stay put until the answer lands.
+        """
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not isinstance(body, NoteEditorTextArea):
+            return
+        if picker.is_open and picker.mode == "follow":
+            return
+        context = wikilink_completion_context(body.text, body.cursor_location)
+        if context is None:
+            self._library_notes_link_picker_latch = None
+            self._close_library_note_link_picker(body)
+            return
+        query, start = context
+        if self._library_notes_link_picker_latch == start:
+            self._close_library_note_link_picker(body)
+            return
+        self._library_notes_link_picker_generation += 1
+        generation = self._library_notes_link_picker_generation
+        if picker.is_open:
+            self._anchor_library_note_link_picker(picker, body)
+        self.run_worker(
+            self._load_library_note_link_candidates(query, generation),
+            exclusive=True,
+            group="library_note_link_picker",
+        )
+
+    def _anchor_library_note_link_picker(
+        self, picker: LibraryNoteLinkPicker, body: NoteEditorTextArea
+    ) -> None:
+        """Put the picker's top-left under the caret, inside the editor pane."""
+        try:
+            pane = self.query_one("#library-note-editor-region")
+        except NoMatches:
+            pane = body
+        try:
+            cell = body.cursor_screen_offset
+            cell = (int(cell.x), int(cell.y))
+        except Exception:  # noqa: BLE001 - a detached body has no screen cell
+            cell = None
+        picker.reposition(pane, cell=cell)
+
+    async def _load_library_note_link_candidates(self, query: str, generation: int) -> None:
+        """Ask the service for the rows and show them -- unless superseded.
+
+        Args:
+            query: The text typed after ``[[`` (may be empty).
+            generation: The picker generation this load belongs to; a load
+                for an older generation is dropped on arrival.
+        """
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        method = getattr(service, "list_note_link_candidates", None)
+        snapshot = self._library_note_session.snapshot
+        open_note_id = snapshot.note_id if snapshot is not None else ""
+        rows: Any = []
+        if callable(method):
+            try:
+                rows = await method(
+                    scope="local_note",
+                    query=query,
+                    exclude_note_id=open_note_id or "",
+                    user_id=self._library_notes_user_id(),
+                    limit=LIBRARY_NOTE_LINK_PICKER_ROWS,
+                )
+            except Exception:  # noqa: BLE001 - one picker, never the note
+                # The typed query is user content: not logged (TASK-15103).
+                logger.opt(exception=True).debug("library_note_link_candidates_failed")
+                rows = []
+        if generation != self._library_notes_link_picker_generation:
+            return
+        picker = self._library_note_link_picker_or_none()
+        body = self._library_note_body_or_none()
+        if picker is None or body is None:
+            return
+        if self._library_notes_link_picker_latch is not None:
+            # Escape landed while this load was in flight.
+            return
+        candidates = [
+            LinkCandidate(str(row.get("id") or ""), str(row.get("title") or ""))
+            for row in rows or ()
+            if str(row.get("id") or "")
+        ]
+        picker.show_candidates(candidates, mode="insert", empty_query=query)
+        self._anchor_library_note_link_picker(picker, body)
+        body.link_picker_open = picker.is_open
+
+    def handle_library_note_link_picker_key(
+        self, message: NoteEditorTextArea.LinkPickerKey
+    ) -> None:
+        """Route one of the picker's keys (ADR-031: routed, not bound).
+
+        Args:
+            message: The key the body intercepted while the picker was open.
+        """
+        message.stop()
+        body = message.text_area
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not picker.is_open:
+            body.link_picker_open = False
+            return
+        key = message.key
+        if key == "up":
+            picker.move_highlight(-1)
+        elif key == "down":
+            picker.move_highlight(1)
+        elif key in {"enter", "tab"}:
+            self._accept_library_note_link_picker(body)
+        elif key == "escape":
+            # AC#1: the typed text stays exactly as it was, and the picker
+            # does not come back until the context changes.
+            context = wikilink_completion_context(body.text, body.cursor_location)
+            self._library_notes_link_picker_latch = context[1] if context else None
+            self._library_notes_link_picker_generation += 1
+            self._close_library_note_link_picker(body)
+
+    def _accept_library_note_link_picker(self, body: NoteEditorTextArea) -> None:
+        """Insert the highlighted note as a stored link, through the widget.
+
+        ``TextArea.replace`` fires ``TextArea.Changed``, so the existing
+        mutate -> autosave path is the only writer (ADR-027): the edge is
+        recorded by ``replace_note_links`` on save.
+        """
+        picker = self._library_note_link_picker_or_none()
+        if picker is None:
+            return
+        candidate = picker.accept_selected()
+        context = wikilink_completion_context(body.text, body.cursor_location)
+        if candidate is None or context is None:
+            self._close_library_note_link_picker(body)
+            return
+        _query, start = context
+        insert = stored_note_link(candidate.title, candidate.note_id)
+        result = body.replace(insert, start, body.cursor_location, maintain_selection_offset=False)
+        body.move_cursor(result.end_location)
+        self._library_notes_link_picker_latch = None
+        self._library_notes_link_picker_generation += 1
+        self._close_library_note_link_picker(body)
+
+    def _library_note_preview_links(self) -> tuple[tuple[str, str], ...]:
+        """``(label, note_id)`` for the open note's stored links, Preview only."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None or not self._library_note_preview:
+            return ()
+        return note_link_entries(snapshot.body)
+
+    async def handle_library_note_preview_link(self, event: Any) -> None:
+        """Preview's link policy (AC#3): nothing is handed to the OS blindly.
+
+        A ``note://<id>`` link opens that note in the editor; ``http(s)``
+        opens the system browser through the app's own thread worker with a
+        notice (the Settings About policy, ``_handle_about_link``); any other
+        scheme is refused with a notice. ``app.open_url`` is never called.
+
+        Args:
+            event: ``Markdown.LinkClicked`` from ``#library-note-preview-body``.
+        """
+        event.stop()
+        href = str(getattr(event, "href", "") or "").strip()
+        if href.startswith("note://"):
+            await self._open_library_note_link_target(href[len("note://") :].strip())
+            return
+        if href.startswith(("http://", "https://")):
+            import webbrowser  # noqa: PLC0415 -- lazy, as the Settings policy does
+
+            # OS spawn off the UI thread (TASK-34937's rule).
+            self.run_worker(
+                partial(webbrowser.open, href),
+                thread=True,
+                exit_on_error=False,
+                name="open-link",
+            )
+            self.app.notify(f"Opened in browser: {href}", timeout=4, markup=False)
+            return
+        self.app.notify(
+            f"Link not opened (unsupported scheme): {href}",
+            severity="warning",
+            timeout=6,
+            markup=False,
+        )
+
+    async def _open_library_note_link_target(self, note_id: str) -> None:
+        """Open the note a Preview link names, the backlink-row way.
+
+        The target is resolved through the Library database, never a
+        filesystem path. A missing or deleted target is refused with a
+        notice; a link to the open note itself says so.
+
+        Args:
+            note_id: The ``note://`` target.
+        """
+        self._close_library_note_link_picker(self._library_note_body_or_none())
+        snapshot = self._library_note_session.snapshot
+        if not note_id:
+            self.app.notify(
+                "That note isn't in the Library — it may have been deleted.",
+                severity="warning",
+                timeout=6,
+                markup=False,
+            )
+            return
+        if snapshot is not None and snapshot.note_id == note_id:
+            self.app.notify(
+                "This link points at the note you are reading.", timeout=4, markup=False
+            )
+            return
+        service = getattr(self.app_instance, "notes_service", None)
+        reader = getattr(service, "get_note_by_id", None)
+        row: Any = None
+        if callable(reader):
+            try:
+                row = await asyncio.to_thread(reader, self._library_notes_user_id(), note_id)
+            except Exception:  # noqa: BLE001 - refuse, never crash the screen
+                logger.opt(exception=True).debug(
+                    "library_note_link_target_read_failed", note_id=note_id
+                )
+                row = None
+        if not row or (isinstance(row, dict) and row.get("deleted")):
+            self.app.notify(
+                "That note isn't in the Library — it may have been deleted.",
+                severity="warning",
+                timeout=6,
+                markup=False,
+            )
+            return
+        if self._library_notes_mutation_fenced():
+            return
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            # A vetoed flush keeps the user where they are (the backlink rule).
+            return
+        self._library_notes_notice = ""
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
+        self._library_note_title_user_edited = False
+        self._begin_library_note_load(note_id)
+        _sync_library_canvas(self, "notes")
+
+    async def action_library_note_preview_follow_link(self) -> None:
+        """Enter on the focused Preview: follow the one link, or list them."""
+        links = self._library_note_preview_links()
+        if not links:
+            return
+        if len(links) == 1:
+            await self._open_library_note_link_target(links[0][1])
+            return
+        picker = self._library_note_link_picker_or_none()
+        if picker is None:
+            return
+        try:
+            region = self.query_one("#library-note-preview-region")
+        except NoMatches:
+            return
+        picker.show_candidates(
+            [LinkCandidate(note_id, label) for label, note_id in links], mode="follow"
+        )
+        picker.reposition(region)
+
+    def library_note_follow_picker_claims(self, key: str) -> bool:
+        """Whether the open follow-mode picker owns ``key`` (screen ``on_key``)."""
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not picker.is_open or picker.mode != "follow":
+            return False
+        focused = self.focused
+        if getattr(focused, "id", None) != "library-note-preview-region":
+            return False
+        return key in NoteEditorTextArea.LINK_PICKER_KEYS
+
+    async def handle_library_note_follow_picker_key(self, key: str) -> None:
+        """Route Up/Down/Enter/Escape to the follow-mode picker."""
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not picker.is_open:
+            return
+        if key == "up":
+            picker.move_highlight(-1)
+        elif key == "down":
+            picker.move_highlight(1)
+        elif key in {"enter", "tab"}:
+            candidate = picker.accept_selected()
+            picker.hide()
+            if candidate is not None:
+                await self._open_library_note_link_target(candidate.note_id)
+        elif key == "escape":
+            picker.hide()
     @on(Input.Changed, "#library-note-keywords")
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
         """Mark the open note dirty and (re)arm the autosave debounce.

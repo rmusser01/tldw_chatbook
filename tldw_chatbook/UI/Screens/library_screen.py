@@ -48,6 +48,7 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    Markdown,
     OptionList,
     SelectionList,
     Static,
@@ -477,6 +478,7 @@ from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
+    NoteEditorTextArea,
 )
 from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
 from ...Widgets.Library.library_notes_add_from_files_canvas import (
@@ -1076,6 +1078,15 @@ class LibraryScreen(BaseAppScreen):
         # view, so the broad focus-rail gate is False here too).
         ("escape", "library_media_trash_back", "Back to media list"),
         ("escape", "library_note_editor_back", "Back to notes list"),
+        # TASK-34000.11 (sharper AC#3): links inside a Textual Markdown are
+        # click meta on text, not focusable widgets, so the keyboard path is
+        # Enter on the focused Preview REGION -- follow the one link, or
+        # list several. Gated in ``check_action`` on that focus and on the
+        # note carrying a link; the Preview footer tier advertises it only
+        # then (ADR-031).
+        Binding(
+            "enter", "library_note_preview_follow_link", "Follow link", show=False
+        ),
         ("escape", "library_prompt_editor_back", "Back to prompts list"),
         # task-3302 (MI-04): a seventh "escape" binding, same disjoint-gate
         # contract -- active only while the Ingest canvas owns the row
@@ -8588,12 +8599,26 @@ class LibraryScreen(BaseAppScreen):
             # exactly as it does in Edit, and a blind Enter there fires Use
             # in Console -- so the tier owes the same focus chip the editor
             # tier has carried since task-32246.
-            return self._with_library_notes_focus_chip(
-                self._notes_footer_tier(
-                    self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
-                    self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
-                )
+            tier = self._notes_footer_tier(
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
             )
+            # TASK-34000.11 (sharper AC#3): "enter follow link" only when the
+            # note carries a note link -- the key's own gate, so the chip is
+            # never a lie (ADR-031). Ahead of esc, as the Console tiers order
+            # their act-then-leave pairs.
+            if self._notes_controller._library_note_preview_links():
+                follow = (
+                    ("enter", "follow")
+                    if self._notes_state.compact
+                    else ("enter", "follow link")
+                )
+                tier = (
+                    tuple(pair for pair in tier if pair[0] != "esc")
+                    + (follow,)
+                    + tuple(pair for pair in tier if pair[0] == "esc")
+                )
+            return self._with_library_notes_focus_chip(tier)
         if region == "context":
             # task-32607 AC#1: this was the ONE Notes tier still rendering
             # its literal "enter run action" on every stop -- eleven Tabs
@@ -9017,6 +9042,19 @@ class LibraryScreen(BaseAppScreen):
         settle-window timer is only ever the LAST resort for a
         still-armed, still-idle request.
         """
+        # TASK-34000.11: an open follow-mode link picker over the focused
+        # Preview claims Up/Down/Enter/Escape before any binding sees them
+        # (ADR-031: routed, not bound) -- the same overlay-first rule the
+        # Console's command popup applies in ``ChatScreen.on_key``.
+        if self._notes_controller.library_note_follow_picker_claims(event.key):
+            event.stop()
+            event.prevent_default()
+            self.run_worker(
+                self._notes_controller.handle_library_note_follow_picker_key(event.key),
+                exclusive=True,
+                group="library_note_link_follow",
+            )
+            return
         emergency_tab = bool(
             event.key in {"tab", "shift+tab", "backtab"}
             and self._library_emergency_stage == "canvas-only"
@@ -21432,6 +21470,26 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
         return self._notes_controller.handle_library_note_body_changed(event)
 
+    @on(TextArea.SelectionChanged, "#library-note-body")
+    def handle_library_note_body_selection_changed(
+        self, event: TextArea.SelectionChanged
+    ) -> None:
+        return self._notes_controller.handle_library_note_body_selection_changed(event)
+
+    @on(NoteEditorTextArea.LinkPickerKey)
+    def handle_library_note_link_picker_key(
+        self, message: NoteEditorTextArea.LinkPickerKey
+    ) -> None:
+        return self._notes_controller.handle_library_note_link_picker_key(message)
+
+    @on(Markdown.LinkClicked, "#library-note-preview-body")
+    async def handle_library_note_preview_link(self, event: Markdown.LinkClicked) -> None:
+        """Preview's link policy (TASK-34000.11 AC#3): handled in the app."""
+        return await self._notes_controller.handle_library_note_preview_link(event)
+
+    async def action_library_note_preview_follow_link(self) -> None:
+        return await self._notes_controller.action_library_note_preview_follow_link()
+
     @on(Input.Changed, "#library-note-keywords")
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
         return self._notes_controller.handle_library_note_keywords_changed(event)
@@ -26126,6 +26184,16 @@ class LibraryScreen(BaseAppScreen):
             default resolution.
         """
         if action in {"focus_next", "focus_previous"}:
+            # TASK-34000.11: while the ``[[`` picker is open over the body,
+            # Tab accepts the highlighted row (``NoteEditorTextArea.on_key``)
+            # -- the body's Tab is a PRIORITY binding the App resolves
+            # before the key reaches the widget, so the action is
+            # deactivated for exactly that window.
+            if (
+                action == "focus_next"
+                and self._notes_controller._library_note_link_picker_claims_tab()
+            ):
+                return False
             # task-32106 (PR #2571 re-review, NEW-1). These stay universal
             # everywhere except the canvas-only emergency stage, where
             # ``on_key``'s ``emergency_tab`` branch OWNS Tab: it advances the
@@ -26204,6 +26272,16 @@ class LibraryScreen(BaseAppScreen):
             return self._library_skill_save_available()
         if action == "library_skill_back":
             return self._library_skill_editor_active()
+        if action == "library_note_preview_follow_link":
+            # TASK-34000.11: only with the Preview REGION itself focused and
+            # the open note carrying at least one stored note link. The
+            # follow-mode picker's own keys are routed in ``on_key`` before
+            # this binding is consulted.
+            if self._library_notes_focus_region() != "preview":
+                return False
+            if getattr(self.focused, "id", None) != "library-note-preview-region":
+                return False
+            return bool(self._notes_controller._library_note_preview_links())
         if action == "library_notes_files_back":
             return self._file_notes_active()
         if action == "library_media_viewer_back":

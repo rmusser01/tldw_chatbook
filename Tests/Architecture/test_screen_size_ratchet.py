@@ -1037,7 +1037,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: editor-to-list return call it (fix round 1: after the locate, and
     #: never against a suspended screen), and the ``g`` gate tells Unfiled
     #: from a real folder row.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37675, 1356),
+    #: 2026-10-23, TASK-34000.11 (same owner decision): 37675 -> 37753 (+78),
+    #: methods 1356 -> 1360 -- the Preview's Enter-follows-link binding and
+    #: its ``check_action`` arm, the follow-picker ``on_key`` branch, the
+    #: ``[[`` picker's Tab gate, three ``@on`` delegators (caret, picker
+    #: keys, ``Markdown.LinkClicked``) and the Preview footer chip.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37753, 1360),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

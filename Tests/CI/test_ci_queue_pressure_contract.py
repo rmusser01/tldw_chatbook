@@ -88,6 +88,11 @@ FAST_LANE_TARGETS = (
     # table (any order, a partial last word, quotes for a phrase, FTS
     # operators never honoured); pure, no Hypothesis, under a second.
     "Tests/Utils/test_notes_filter_match.py",
+    # TASK-34000.11: a typed [[Title]] records a backlink only for exactly
+    # one live title match; the [[ picker's candidates and pure helpers
+    # (real tmp SQLite, no Hypothesis -- the properties sit in the
+    # `_properties.py` sibling outside this lane); about three seconds.
+    "Tests/Notes/test_note_links_typed_titles.py",
     # TASK-34000.25: the ``[<title>](media://<uuid>)`` source line a note
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).

@@ -18,7 +18,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import Focus, Resize
+from textual.events import Focus, Key, Resize
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
@@ -57,6 +58,9 @@ from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
+)
+from tldw_chatbook.Widgets.Library.library_note_link_picker import (
+    LibraryNoteLinkPicker,
 )
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
@@ -937,6 +941,47 @@ class NoteEditorTextArea(DetachSafeTextArea):
 
     BINDINGS = _NOTE_BODY_BINDINGS
 
+    #: TASK-34000.11: the keys the open ``[[`` picker owns. Up/Down move its
+    #: highlight, Enter/Tab accept, Escape dismisses -- routed to the owning
+    #: screen as ``LinkPickerKey`` (ADR-031: routed, not bound), and never
+    #: a printable key, so typing keeps narrowing.
+    LINK_PICKER_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {"up", "down", "enter", "escape", "tab"}
+    )
+
+    #: TASK-34000.11: set by the Notes controller while the picker is open.
+    #: A plain attribute, not a reactive: it gates a key handler, nothing
+    #: paints from it.
+    link_picker_open: bool = False
+
+    class LinkPickerKey(Message):
+        """One of ``LINK_PICKER_KEYS`` pressed while the picker is open."""
+
+        def __init__(self, text_area: "NoteEditorTextArea", key: str) -> None:
+            super().__init__()
+            self.text_area = text_area
+            self.key = key
+
+        @property
+        def control(self) -> "NoteEditorTextArea":
+            return self.text_area
+
+    def on_key(self, event: Key) -> None:
+        """Hand the picker its keys before ``TextArea._on_key`` sees them.
+
+        ``prevent_default()`` is what keeps Textual's MRO walk from reaching
+        the base ``_on_key`` (``message_pump._get_dispatch_methods`` breaks
+        on ``_no_default_action``), so Enter does not also insert a newline;
+        ``stop()`` keeps Up/Down/Escape from bubbling to the screen's
+        bindings. Tab reaches here only while the screen deactivates its
+        priority ``focus_next`` binding for the open picker.
+        """
+        if not self.link_picker_open or event.key not in self.LINK_PICKER_KEYS:
+            return
+        event.stop()
+        event.prevent_default()
+        self.post_message(self.LinkPickerKey(self, event.key))
+
     def action_cursor_document_end(self) -> None:
         """Move the caret to the end of the note body."""
         self.move_cursor(self.document.end)
@@ -1106,6 +1151,11 @@ class LibraryNotePresentationState:
     #: Whether the backlink query has answered yet -- see
     #: ``library_note_backlink_header``.
     backlinks_status: str = "loading"
+    #: TASK-34000.11: ``(label, note_id)`` for each stored note link the body
+    #: carries, computed only while Preview is shown (the same gate the
+    #: preview source uses). The Preview's Enter follows the one link or
+    #: lists several; the footer advertises ``enter follow link`` from it.
+    note_links: tuple[tuple[str, str], ...] = ()
     #: Words in the draft body, for the editor chrome strip (task-32143).
     #: The controller counts this for ``metadata_line`` anyway; carrying the
     #: number instead of the sentence keeps the strip off a second scan.
@@ -3327,11 +3377,28 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="destination-section",
                 markup=False,
             )
+            # TASK-34000.11 (AC#3): ``open_links=False`` -- Textual's default
+            # hands every clicked href to ``app.open_url``, which sent a
+            # ``note://<id>`` to the operating system. The screen handles
+            # ``Markdown.LinkClicked`` for this body instead (a note link
+            # opens the note; http(s) goes to the browser through the app's
+            # own worker; anything else is refused with a notice).
             yield Markdown(
                 render_preview_source(content, title=title),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
+                open_links=False,
             )
+        # TASK-34000.11 (AC#1): the ``[[`` picker. Its own root, not a child
+        # of ``#library-note-editor-region``: that region is hidden while
+        # Preview shows, and the Preview's Enter lists several links through
+        # this same overlay (follow mode). Hidden in code until the
+        # controller shows it.
+        yield root(
+            LibraryNoteLinkPicker(
+                id="library-note-link-picker", classes="library-note-link-picker"
+            )
+        )
         with root(VerticalScroll(id="library-note-context-region", can_focus=True)):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
@@ -3956,6 +4023,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         node("#library-note-preview-body").can_focus = False
         node("#library-note-preview-region").can_focus = show_preview
         node("#library-note-context-region").can_focus = show_context
+        # TASK-34000.11: the link picker lives with the surface that opened
+        # it -- the editor in insert mode, Preview in follow mode. When that
+        # surface goes (Preview pressed over an open ``[[`` picker, Back,
+        # Info), the picker goes with it and the body's key routing is
+        # released; the controller owns every other show/hide.
+        picker = node("#library-note-link-picker")
+        if picker.is_open and (
+            (picker.mode == "insert" and not show_editor)
+            or (picker.mode == "follow" and not show_preview)
+        ):
+            picker.hide()
+            node("#library-note-body").link_picker_open = False
 
         for selector in (
             "#library-note-edit",

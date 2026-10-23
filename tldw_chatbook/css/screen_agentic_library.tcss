@@ -4478,6 +4478,39 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
+
+/* TASK-34000.11 (AC#1): the `[[` note-link picker. A screen-owned overlay
+   (`overlay: screen` + offset set in code, the Console popup's technique)
+   that sits under the body's caret row in insert mode and at the top of the
+   Preview region in follow mode; it never takes focus. Width and height are
+   measured from the rows in code (`ds-runtime`); the sheet owns the bounds
+   and the chrome. `display: none` here AND in code, so a bare test app is
+   right without the bundle. */
+.library-note-link-picker {
+    display: none;
+    width: $ds-width-auto;
+    min-width: $ds-size-30;
+    max-width: $ds-size-70;
+    height: $ds-height-auto;
+    max-height: $ds-size-10;
+    border: round $ds-focus-accent;
+    background: $ds-surface-panel;
+    padding: $ds-space-0;
+}
+
+/* Textual's default OptionList chrome (tall border + padding) costs two
+   rows that an eight-row picker cannot spare; the picker carries the border. */
+.library-note-link-picker OptionList {
+    height: $ds-height-auto;
+    border: none;
+    padding: $ds-space-0;
+    background: $ds-surface-panel;
+    /* One row per title: a title wider than the picker is cut with an
+       ellipsis, never wrapped (live, the seed's very long title took two
+       rows and pushed the eighth row out of view). */
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 /* Artifacts compose the shared reader and standard interactive control states. */
 #library-artifacts-reader-shell {
     height: $ds-height-fill;

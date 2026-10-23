@@ -130,6 +130,7 @@ from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Utils.fts5_match_forms import (
     build_and_match_query,
+    build_notes_filter_match,
     build_phrase_match_query,
     quote_fts5_prefix,
     quote_fts5_token,
@@ -18549,6 +18550,52 @@ DELETE FROM keywords
             LIMIT ?
         """
 
+    #: TASK-34000.11: titles per ``IN (...)`` statement when a body names
+    #: more bare ``[[Title]]`` links than SQLite's default variable limit
+    #: comfortably holds. One statement per chunk, never one per title.
+    _NOTE_TITLE_RESOLVE_CHUNK = 200
+
+    @staticmethod
+    def _resolve_note_titles(
+        cursor: sqlite3.Cursor, titles: Sequence[str], *, source_note_id: str
+    ) -> Dict[str, str]:
+        """Map each typed title to the ONE live note that carries it.
+
+        TASK-34000.11 (AC#2): a typed ``[[Title]]`` records an edge only when
+        exactly one live note has that title, case-insensitively (``COLLATE
+        NOCASE``) and whitespace-trimmed; a title no note has, or two live
+        notes share, resolves to nothing -- a backlink never points at a
+        guess. A soft-deleted twin does not count. One ``SELECT`` per chunk
+        of titles, whatever the body names.
+
+        Args:
+            cursor: The caller's open transaction cursor.
+            titles: The bare titles the body names (``bare_wikilink_titles``).
+            source_note_id: The note being written; it never resolves to
+                itself.
+
+        Returns:
+            ``{title.casefold(): note_id}`` for every title with exactly one
+            live match.
+        """
+        wanted = list(dict.fromkeys(title.strip() for title in titles if title.strip()))
+        if not wanted:
+            return {}
+        grouped: Dict[str, set] = {}
+        chunk_size = CharactersRAGDB._NOTE_TITLE_RESOLVE_CHUNK
+        for start in range(0, len(wanted), chunk_size):
+            chunk = wanted[start : start + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            cursor.execute(
+                "SELECT title, id FROM notes WHERE deleted = 0 AND id != ? "
+                f"AND title COLLATE NOCASE IN ({placeholders})",
+                (str(source_note_id), *chunk),
+            )
+            for row in cursor.fetchall():
+                key = str(row["title"]).strip().casefold()
+                grouped.setdefault(key, set()).add(str(row["id"]))
+        return {key: next(iter(ids)) for key, ids in grouped.items() if len(ids) == 1}
+
     @staticmethod
     def replace_note_links(cursor: sqlite3.Cursor, note_id: str, content: str) -> None:
         """Rewrite one note's outgoing links to match its body.
@@ -18558,13 +18605,36 @@ DELETE FROM keywords
         Both ChaChaNotes note writers do; so do the import target's two, which
         write their own SQL for version and client-id reasons.
 
+        TASK-34000.11 (AC#2): besides the ``(note://<id>)`` tails, a bare
+        ``[[Title]]``/``[[Title|alias]]`` outside a code span records an edge
+        when ``_resolve_note_titles`` finds exactly one live note with that
+        title. The body is NEVER modified here (ADR-027): identity is derived
+        at write time, the text stays as typed, and a note saved before this
+        rule picks its typed-link edges up on its next save. Import bodies
+        get the same rule through the executor's call, so a vault note that
+        names a pre-existing Library note by title now links to it.
+
         Args:
             cursor: The caller's open transaction cursor.
             note_id: The note whose body was written.
             content: The body as written.
         """
+        # Lazy on purpose: the models module is pure, but importing it at
+        # module scope here would make the DB module the first importer of
+        # the Notes package.
+        from tldw_chatbook.Notes.note_import_plan_models import bare_wikilink_titles  # noqa: PLC0415
+
         cursor.execute("DELETE FROM note_links WHERE source_note_id = ?", (note_id,))
         targets = extract_note_link_targets(content, source_note_id=note_id)
+        titles = bare_wikilink_titles(content)
+        if titles:
+            resolved = CharactersRAGDB._resolve_note_titles(
+                cursor, titles, source_note_id=note_id
+            )
+            for title in titles:
+                target = resolved.get(title.casefold())
+                if target and target not in targets:
+                    targets.append(target)
         if targets:
             cursor.executemany(
                 "INSERT INTO note_links(source_note_id, target_note_id) VALUES (?, ?)",
@@ -18601,6 +18671,64 @@ DELETE FROM keywords
             return []
         cursor = self.execute_query(
             self._BACKLINK_SOURCES_SQL, (str(note_id), max(0, int(limit)))
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    #: TASK-34000.11: the ``[[`` picker's rows for an empty query -- the most
+    #: recently modified live notes (``idx_notes_last_modified``), never the
+    #: open note itself.
+    _LINK_CANDIDATES_RECENT_SQL = """
+            SELECT id, title FROM notes
+            WHERE deleted = 0 AND id != ?
+            ORDER BY last_modified DESC, id
+            LIMIT ?
+        """
+    #: The typed-query form. The MATCH parameter is the FIXED ``title :
+    #: ( … )`` column filter around an expression ``build_notes_filter_match``
+    #: built (Task 3's rule: any word order, a partial last word, quotes for
+    #: a phrase); no user text is ever interpolated (TASK-19558).
+    _LINK_CANDIDATES_MATCH_SQL = """
+            SELECT n.id, n.title
+            FROM notes_fts
+            JOIN notes AS n ON n.rowid = notes_fts.rowid
+            WHERE notes_fts MATCH ?
+              AND n.deleted = 0
+              AND n.id != ?
+            ORDER BY notes_fts.rank, n.title COLLATE NOCASE
+            LIMIT ?
+        """
+
+    def list_note_link_candidates(
+        self, query: str, *, exclude_note_id: str, limit: int = 8
+    ) -> List[Dict[str, Any]]:
+        """List the notes a ``[[`` completion may link to (TASK-34000.11).
+
+        Args:
+            query: The text typed after ``[[``. Empty lists the most recently
+                modified notes; otherwise the titles matching it by Task 3's
+                filter rule, best match first.
+            exclude_note_id: The open note, which is never offered to itself.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows. A query the filter rule refuses (only
+            quotes, blank after trimming to nothing searchable) returns
+            ``[]`` without running any SQL.
+        """
+        bound_limit = max(0, int(limit))
+        excluded = str(exclude_note_id or "")
+        text = (query or "").strip()
+        if not text:
+            cursor = self.execute_query(
+                self._LINK_CANDIDATES_RECENT_SQL, (excluded, bound_limit)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        match = build_notes_filter_match(text)
+        if match is None:
+            return []
+        cursor = self.execute_query(
+            self._LINK_CANDIDATES_MATCH_SQL,
+            (f"title : ({match.fts_expression})", excluded, bound_limit),
         )
         return [dict(row) for row in cursor.fetchall()]
 

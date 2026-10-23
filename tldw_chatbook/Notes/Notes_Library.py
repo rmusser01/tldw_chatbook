@@ -509,6 +509,32 @@ class NotesInteropService:
         db = self._get_db(user_id)
         return db.get_notes_linking_to(note_id, limit=limit)
 
+    def list_note_link_candidates(
+        self,
+        user_id: str,
+        *,
+        query: str,
+        exclude_note_id: str,
+        limit: int = 8,
+    ) -> List[Dict[str, Any]]:
+        """List the notes the ``[[`` picker may link to (TASK-34000.11).
+
+        Args:
+            user_id: The user whose per-user database to read (resolves the
+                DB handle only; notes are not per-user-filtered).
+            query: The text typed after ``[[`` (may be empty).
+            exclude_note_id: The open note, never offered to itself.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows, per ``CharactersRAGDB.
+            list_note_link_candidates``.
+        """
+        db = self._get_db(user_id)
+        return db.list_note_link_candidates(
+            query, exclude_note_id=exclude_note_id, limit=limit
+        )
+
     # --- Library read seams (task-1337) ---
 
     def list_library_notes(
