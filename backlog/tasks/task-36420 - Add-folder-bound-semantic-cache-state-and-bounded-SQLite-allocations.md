@@ -1,11 +1,11 @@
 ---
 id: TASK-36420
 title: Add folder-bound semantic cache state and bounded SQLite allocations
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:26'
-updated_date: '2026-10-23 06:48'
+updated_date: '2026-10-23 15:44'
 labels: []
 dependencies:
   - TASK-36006
@@ -23,12 +23,12 @@ Prepare optional semantic storage without changing existing project access, keyw
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Fresh v4 and supported upgrade chains preserve keyword rows, policies, frontier, claims and authority; injected DDL failures leave the prior valid catalog intact.
-- [ ] #2 Semantic settings and consent have an independent revision; their changes preserve keyword epoch, readiness and Library policies/scopes, and status opens no embedding/model objects.
-- [ ] #3 Semantic-capable allocations and all competing new-version mutations use serialized binding-wide admission with a source-qualified pre-write main/journal/temp/control regular-file-length bound within1GiB; unsupported geometry, unretired ownership or observed mixed writers refuse before semantic mutation.
-- [ ] #4 Body, commit, rollback or native-close failure retains uncertain ownership and blocks reuse; read/status/search paths perform no hidden unreserved writes.
-- [ ] #5 Legacy cleanup v2/v3 and newv4 remain available without migration/allocation; existing v1 quarantine is preserved, and old compatible Ready storage is never discarded to fund staging.
-- [ ] #6 Pure keyword-only operation retains established behavior without embedding imports or semantic-specific runtime qualification; keyword search remains usable during real scanner waits outside finite SQL units, and missing/degraded semantics preserves saved Library choices.
+- [x] #1 Fresh v4 and supported upgrade chains preserve keyword rows, policies, frontier, claims and authority; injected DDL failures leave the prior valid catalog intact.
+- [x] #2 Semantic settings and consent have an independent revision; their changes preserve keyword epoch, readiness and Library policies/scopes, and status opens no embedding/model objects.
+- [x] #3 Semantic-capable allocations and all competing new-version mutations use serialized binding-wide admission with a source-qualified pre-write main/journal/temp/control regular-file-length bound within1GiB; unsupported geometry, unretired ownership or observed mixed writers refuse before semantic mutation.
+- [x] #4 Body, commit, rollback or native-close failure retains uncertain ownership and blocks reuse; read/status/search paths perform no hidden unreserved writes.
+- [x] #5 Legacy cleanup v2/v3 and newv4 remain available without migration/allocation; existing v1 quarantine is preserved, and old compatible Ready storage is never discarded to fund staging.
+- [x] #6 Pure keyword-only operation retains established behavior without embedding imports or semantic-specific runtime qualification; keyword search remains usable during real scanner waits outside finite SQL units, and missing/degraded semantics preserves saved Library choices.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,5 +54,7 @@ Missing allocation gate bootstrap: before first gate creation, a regular write-c
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added additive v4 semantic consent/settings and derived records with an independent revision, read-only Off projection and nonmigrating legacy cleanup. A binding-wide native gate now admits finite project SQLite units, source-qualified semantic page allowances and the prior aggregate keyword cap, with exact native close/inventory and quarantine on uncertain settlement. Status reads use a bounded same-service reader handoff; keyword lookup works while a real scanner waits outside SQL. Updated directly affected DB/service/native tests, migration fixture and architecture notes. ADR241 and the implementation plan record the control-owner borrowing and read-scheduling decisions. A known SQLite FULL during publication becomes Partial only after native close and a fresh admitted supervisor publication; unrelated SQL failures remain Error, and retroactively over-budget existing groups refuse mutation. The analytical bound is conditional on the pinned SQLite source/runtime and cooperating writers; the Task1 report records VFS and mixed-version limits. Semantic generation, embeddings, vector search and UI are outside this foundation. Targeted verification and receipt details: `.superpowers/sdd/2026-10-20-workspace-project-semantic-index/task-1-report.md`. AC and Done state remain for parent review.
+Implemented additive semantic cache v4 and immutable settings/state under the existing project owner, independent semantic revision/consent, and finite binding-wide SQLite allocation/native settlement. Keyword data, saved Library choices and optional-dependency behavior remain intact. All competing namespaces use semantic-qualified admission when the group retains enabled consent or semantic generation data. Status is read-only; existing-only legacy bootstrap and uncertain close retain fail-closed behavior. Persisted refs use versioned catalog keys and SHA256-v1 digests; actual resolver/embeddings come next. Existing ADR241 governs storage/native authority; the amended plan records the source-conditioned quota and cooperative-version limits. Supported incremental v2/v3/v4 cleanup remains nonmigrating; v1 quarantine stays.
+
+Source commits42a75186 and439f905f. Independent Task1 review found3Important, all fixed and independently re-reviewed with no new Critical/Important findings. Targeted real SQLite/native/schema/settings/keyword/scanner-wait/cleanup controls and scoped static checks cover the implementation. The unrelated raw-connection census site in unchanged app_service_wiring.py and six unchanged private_sqlite.py Ruff findings are documented baseline conditions, not absorbed or claimed green. The sampled12MiB capacity result is separate from the conditional analytical1GiB envelope. No full suite, embedding/model/provider execution or external integration. Relevant architecture docs/ADR/plan and testing-evidence lesson updated. Exact evidence/disposition: task-1-report.md, task-1-fix-round-1-review-report.md and controller-task1-cannot-verify-disposition.md under this plan's private SDD; retained raw children and source hashes remain. Actual provider-wait/semantic jobs belong to the separate generation/search task.
 <!-- SECTION:NOTES:END -->
