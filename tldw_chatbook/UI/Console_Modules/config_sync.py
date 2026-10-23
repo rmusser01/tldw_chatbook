@@ -548,6 +548,10 @@ def settle_stopped_poll(screen: Any, torn_down: Callable[[Any], bool]) -> None:
     if getattr(screen, "_console_sync_in_progress", False) or getattr(
         screen, "_console_control_bar_replay_whole_sync", False
     ):
+        if _cadence(screen).waiting_since is not None:
+            # TASK-33620.15.4: the running sync left its projection to a poll
+            # that is stopping; its re-armed sync (with no poll) projects.
+            screen._console_sync_requested = True
         return
     workspace = getattr(screen, "_workspace", None)
     scope = getattr(workspace, "tick_workspace_build_scope", nullcontext)

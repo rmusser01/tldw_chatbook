@@ -318,3 +318,27 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
             finally:
                 gateway.validation_release.set()
                 timer.resume()
+
+
+def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():
+    """AC#5: a request coalesced into a poll that then stops is still rendered.
+
+    The poll stops on a tick that skipped while another sync is running; that
+    sync left its projection to this poll. With no poll left, the running
+    sync's re-armed follow-up (requested here) projects at once.
+    """
+    from types import SimpleNamespace
+
+    screen = SimpleNamespace(
+        _console_sync_maintenance_paused=False,
+        _console_sync_in_progress=True,
+        _console_control_bar_replay_whole_sync=False,
+        _console_sync_requested=False,
+    )
+    cadence = config_sync._cadence(screen)
+    cadence.owed = True
+    cadence.waiting_since = 1000.0  # A request left to the poll.
+    config_sync.settle_stopped_poll(screen, lambda _screen: False)
+    assert screen._console_sync_requested, (
+        "the coalesced request was dropped when the poll stopped"
+    )
