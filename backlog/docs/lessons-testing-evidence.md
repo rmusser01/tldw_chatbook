@@ -6,6 +6,15 @@
 
 **What to do.** Before placing a negative control in a config writer, find the mutation the surface actually builds and put the injection there, or in the writer that mutation reaches. Then check that the red is on the assertion the test is designed for. A first try here also tripped an earlier assertion on the seeded list, which is not that red.
 
+## When dev fixes the same bug while your PR waits, resolve by dev's tests, not by side (TASK-33621.20, 2026-10-22)
+
+**Incident.** PR #3066 sat in the merge queue while dev merged TASK-35992 (9206d1d395, 146565efb7), an independent fix for two of the same bugs: a cold Library build eating the search budget, and the unsent-turn shelf not releasing a paused send. The rebase conflicted in 4 files. Taking the branch's side would have broken two dev contracts that no conflict marker showed: dev's `test_recovery_storage_failure_is_nonfatal_and_retains_inputs_in_worker` monkeypatches the private `ConsoleRuntime._release_retrieval_pause` and expects the recovery kept when it raises (the branch popped the entry first and swallowed the error), and dev's `test_console_library_initialization.py` doubles define `prewarm()`, not the branch's `warm_up()`, so they would have searched cold inside the 0.001 s budget. A third loss was silent: dev's "Console Library retrieval failed" warning lived in the try block the branch replaced, and only the diagnostic inventory rebuild (after resetting it to dev's copy) showed the call count drop.
+
+**What to do.**
+- Before resolving, `git log <old-base>..origin/dev -S'<symbol>'` for every symbol in the conflict; a hit means dev changed the same behaviour, not just the same lines.
+- Grep dev's tests for the private names in the conflict (`monkeypatch.setattr(runtime, "_...")`). Keep those names as seams and keep the ordering their tests assert.
+- Run dev's new tests for that area on the rebased head, and reset the diagnostic inventory to dev's copy before rebuilding it.
+
 ## New regression files need an explicit PR lane (TASK-32755.3, PR #3202)
 
 **Incident.** The full review of transcription readiness found that its new
@@ -65,6 +74,37 @@ last route removed it, and the first send kept most of its gain.
 depends on (an idle pass, a worker pool, a boot stagger), list what it now
 runs ahead of, and measure the first use of each of those at the earliest
 moment a user could reach it, not only the path you sped up.
+
+## Console send-harness tests skip the received-intent path that a real composer send takes (TASK-33621.20, 2026-10-20)
+
+**Incident.** Three defects in this task's Library-pause recovery passed every send-harness test (`Tests/UI/test_console_library_auto_outcome.py`, `test_console_library_pause_recovery.py`) and were found only in the live app:
+- Stop during "Searching Library…" cancelled the whole send instead of pausing it.
+- The unsent-turn shelf's Restore refused the paused send as an "ambiguous merge".
+- The card's Cancel send left a stale "Not sent" shelf entry, whose Restore would have sent the message a second time.
+
+A real composer send takes the received-intent path, which the harness never enters, and that path differs in two ways:
+- The composer keeps showing the sent text as the draft until the turn is accepted. On the harness path the composer is already empty when the card or the shelf acts, so every "is the composer/draft empty?" check passed there and failed live (Restore, Cancel).
+- The send stays in the runtime's intake custody for its whole preparation, and dev's Stop cancels custody first (Stop).
+
+Each defect went red only once a test drove `_received_console_case` (`Tests/UI/test_console_received_intent_feedback.py`), as `Tests/UI/test_console_library_stop_received_send.py` now does.
+
+**What to do.**
+- For any send recovery that reads the draft or the composer (refill, restore, merge refusal), or that Stop reaches during preparation, write one test on `_received_console_case`.
+- In that test, assert the precondition explicitly: the composer still shows the sent text.
+- Treat a harness-only green as unverified for draft-dependent behaviour.
+
+## A fix that swallows an exception can break dev's pin that the exception is raised (TASK-33621.20, 2026-10-20)
+
+**Incident.** A fix for a center-swap race (ea160fd859) guarded `ProviderContinuationTranscriptRegion.sync_recovery` twice. It returned while the region was being pruned, and it also swallowed `NoMatches` when a card was missing. The branch's own tests went green. Dev's `Tests/UI/test_console_trace_call_recovery.py` pins the opposite for a live region: it removes the card and expects `pytest.raises(NoMatches)`. Its 4 cases failed with "DID NOT RAISE".
+
+The branch's last head-vs-dev comparison had run before that commit, so it missed this. It also missed dev's `test_console_recovery_live_bindings.py` (4 cases, `AttributeError`): a later commit read `controller.store`, which that test's controller double does not have.
+
+Textual sets `_pruning` on every node of a removed subtree synchronously, inside `remove()`. The pruning check alone was the fix: with it removed, the swap test failed with `NoMatches`. The broad `except` was redundant.
+
+**What to do.**
+- Before swallowing an exception, grep the tests for `raises(<that exception>)` around the code.
+- Keep only the guards that a negative control shows are needed.
+- Re-run the head-vs-dev comparison on the final head, after the last fix commit, not just once after the rebase.
 
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 

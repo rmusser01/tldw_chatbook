@@ -259,14 +259,26 @@ class LibraryLocalRagSearchService:
 
     def __init__(self, app_instance: Any) -> None:
         self._app = app_instance
+        #: TASK-33621.20 review: the one shared-runtime build in flight, which
+        #: every caller joins (see `_shared_runtime_build`), with the shared
+        #: service generation it was started under.
+        self._runtime_build: tuple[int, asyncio.Future[tuple[Any, Any]]] | None = None
 
-    async def prewarm(self) -> Any:
-        """Resolve the shared runtime before spending a caller's search budget.
+    async def prewarm(self) -> bool:
+        """Build the shared RAG runtime now, ahead of a time-boxed search.
+
+        TASK-33621.20 / TASK-35992: `rag` mode builds the runtime inside its
+        first `search` call (embedding model, vector store: 4-5 s cached,
+        18 s uncached). The Console's automatic Library preparation awaits
+        this first, under its own bound, so that build no longer spends the
+        turn's short search budget. Cheap once the runtime is cached.
 
         Returns:
-            The shared runtime, or None when dependencies or setup are unavailable.
+            True when a usable runtime is available; False when it is not
+            (missing deps or a failed build), which the next `search`
+            reports through its usual recovery state.
         """
-        return await self._resolve_rag_runtime()
+        return await self._resolve_rag_runtime() is not None
 
     async def search(
         self,
@@ -1100,10 +1112,8 @@ class LibraryLocalRagSearchService:
             return cached
         if not embeddings_rag_deps_installed():
             return None
-        # Captured BEFORE the build -- see `cache_app_rag_service`.
-        generation = shared_rag_service_generation()
         try:
-            service = await asyncio.to_thread(get_shared_rag_service)
+            service, generation = await asyncio.shield(self._shared_runtime_build())
         except Exception:
             logger.opt(exception=True).error(
                 "Library RAG: shared RAG service initialization raised; "
@@ -1117,6 +1127,43 @@ class LibraryLocalRagSearchService:
         # later profile switch invalidates it.
         cache_app_rag_service(self._app, service, generation)
         return service
+
+    def _shared_runtime_build(self) -> asyncio.Future[tuple[Any, Any]]:
+        """Return the shared-runtime build in flight, starting one if none is.
+
+        TASK-33621.20 review: the Console's automatic preparation gives up on
+        a slow build (timeout, Stop) and may retry. A fresh
+        ``asyncio.to_thread`` per attempt left one more default-executor
+        thread blocked on the factory's build lock behind a hung build, so
+        repeated retries could exhaust the shared executor. Callers now
+        await this one build through ``asyncio.shield``: a caller that gives
+        up leaves it running, and the next caller joins it -- unless the
+        shared service generation has moved since it started (a RAG profile
+        switch): that build is discarded when it lands, so a new one starts.
+
+        Returns:
+            A future resolving to ``(service, generation)``; the generation is
+            captured when the build starts (see `cache_app_rag_service`).
+        """
+        # Captured BEFORE the build -- see `cache_app_rag_service`.
+        generation = shared_rag_service_generation()
+        started, build = getattr(self, "_runtime_build", None) or (None, None)
+        if (
+            build is None
+            or started != generation
+            or build.done()
+            or build.get_loop() is not (asyncio.get_running_loop())
+        ):
+            build = asyncio.ensure_future(self._build_shared_runtime(generation))
+            # Nobody may be waiting when it fails: retrieve the error here so
+            # it is not reported as "never retrieved".
+            build.add_done_callback(lambda done: done.cancelled() or done.exception())
+            self._runtime_build = (generation, build)
+        return build
+
+    @staticmethod
+    async def _build_shared_runtime(generation: int) -> tuple[Any, Any]:
+        return await asyncio.to_thread(get_shared_rag_service), generation
 
     async def _semantic_index_is_empty(self, rag_service: Any) -> bool:
         """True only when the runtime's vector store verifiably has 0 documents.

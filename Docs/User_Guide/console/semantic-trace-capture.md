@@ -53,6 +53,12 @@ composer as `Not sent: Last send is blocked; resolve it first` with
 **Restore** (back to the composer) and **Discard**. Chats with a system
 prompt, a character, or a `/generate-image` result capture and send normally.
 
+When the trace record fails *after* the message was saved, the callout stays
+until that send finishes. If **Send without capture** then finds the provider
+not ready, it says so on the callout and leaves the send paused with the same
+three choices; nothing is sent twice, and your Capture Off choice still
+applies when you choose it again once the provider is ready.
+
 If an interrupted tool run leaves a pending response after reopening the
 conversation, **Discard** retains the user message and earlier trace history.
 The next question can use Capture On again when that discarded response has an

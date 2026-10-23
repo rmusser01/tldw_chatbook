@@ -419,6 +419,7 @@ class _ConsoleTurnRefusedError(RuntimeError):
         super().__init__(message)
         #: The code-owned copy the unsent-turn shelf states; may be empty.
         self.reason = reason
+        #: TASK-33621.20: the paused preparation the refusal left, if any.
         self.preparation_id = preparation_id
 
 
@@ -435,6 +436,8 @@ class ConsoleTurnRecoveryEntry:
     #: strip can say so; empty when the turn ended for another reason.
     reason: str = field(default="", repr=False)
     source_claim: Any = field(default=None, repr=False)
+    #: TASK-33621.20: the Library preparation this turn's send paused, which
+    #: Restore/Discard release; None when the send did not pause one.
     preparation_id: str | None = None
 
 
@@ -1195,6 +1198,10 @@ class ConsoleRuntime:
         self._turn_custody: dict[str, _ConsoleTurnCustodyRecord] = {}
         self._turn_recoveries: dict[str, ConsoleTurnRecoveryEntry] = {}
         self._recovery_turns_by_session: dict[str, list[str]] = {}
+        #: TASK-33621.20 review: paused sends whose transcript card is acting
+        #: on them (Retry, Send once without Library, Cancel). Their unsent
+        #: turns are off the shelf, so one send is never offered twice.
+        self._card_held_preparations: set[str] = set()
         self._recovery_order = 0
         self._staged_evidence = _ConsoleStagedEvidenceState()
         self._prompt_history: Any | None = None
@@ -3065,29 +3072,38 @@ class ConsoleRuntime:
     def recoveries_for_session(
         self, session_id: str
     ) -> tuple[ConsoleTurnRecoveryEntry, ...]:
-        """Return exact recoveries in admission-failure order."""
+        """Return the offered recoveries in admission-failure order.
+
+        TASK-33621.20 review: an unsent turn whose paused send is being sent
+        again (by its card, or otherwise live and no longer paused) is not
+        offered: restoring it would send the message twice, and discarding it
+        would not stop it.
+        """
         return tuple(
-            self._turn_recoveries[turn_id]
+            entry
             for turn_id in self._recovery_turns_by_session.get(session_id, ())
-            if turn_id in self._turn_recoveries
+            if (entry := self._turn_recoveries.get(turn_id)) is not None
             and (
-                self._turn_recoveries[turn_id].source_claim is None
+                entry.source_claim is None
                 or (
                     self._chat_store is not None
                     and self._chat_store.received_turn_matches_session(
-                        self._turn_recoveries[turn_id].source_claim
+                        entry.source_claim
                     )
                 )
             )
+            and self._turn_recovery_offered(entry)
         )
 
     def _release_retrieval_pause(self, entry: ConsoleTurnRecoveryEntry) -> None:
-        """Cancel only this recovery's exact, still-paused retrieval owner."""
-        from .console_turn_preparation import (
-            ConsolePreparationPauseKind,
-            ConsoleTurnPreparationState,
-        )
+        """Cancel only this recovery's exact, still-paused send.
 
+        TASK-33621.20: a Library-paused send (or one that re-paused after its
+        card's Retry) stays in the store; until it is released, every later
+        send in the conversation is refused. Released by
+        `release_unsent_turn_preparation`, which keeps the composer's current
+        draft. A storage failure propagates, so the caller keeps the recovery.
+        """
         store, controller = self._chat_store, self._chat_controller
         if store is None or controller is None or entry.preparation_id is None:
             return
@@ -3095,25 +3111,45 @@ class ConsoleRuntime:
             entry.source_claim
         ):
             return
-        preparation = store.preparation_for_session(entry.session_id)
-        if (
-            preparation is not None
-            and preparation.preparation_id == entry.preparation_id
-            and preparation.state is ConsoleTurnPreparationState.PAUSED
-            and preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
-        ):
-            # Legacy preparations restore their old draft on cancellation.
-            # Shelf actions must preserve the composer's current contents.
-            live_draft = store.session_draft(entry.session_id)
-            try:
-                controller.cancel_library_preparation(preparation.preparation_id)
-            finally:
-                if store.session_draft(entry.session_id) != live_draft:
-                    store.set_session_draft(entry.session_id, live_draft)
+        from .console_unsent_turn import release_unsent_turn_preparation
+
+        release_unsent_turn_preparation(
+            controller, entry.session_id, entry.preparation_id
+        )
+
+    def _turn_recovery_offered(self, entry: ConsoleTurnRecoveryEntry) -> bool:
+        """Whether an unsent turn may be restored or discarded right now.
+
+        Not while its paused send's card is acting on it (held), and not once
+        that send has been accepted: either way Restore would send it twice.
+        Other states are not a signal: a durable-commit failure leaves its
+        preparation COMMITTING, and its turn must stay restorable.
+        """
+        preparation_id = entry.preparation_id
+        if preparation_id is None:
+            return True
+        if preparation_id in self._card_held_preparations:
+            return False
+        store = getattr(self._chat_controller, "store", None)
+        lookup = getattr(store, "preparation_by_id", None)
+        preparation = lookup(preparation_id) if callable(lookup) else None
+        if preparation is None:
+            return True
+        from tldw_chatbook.Chat.console_turn_preparation import (
+            ConsoleTurnPreparationState as State,
+        )
+
+        return preparation.state not in {
+            State.ACCEPTED,
+            State.DISPATCH_STARTED,
+            State.DISPATCHED,
+        }
 
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
         """Re-stage one exact recovery into its still-live owning session."""
         entry = self._turn_recoveries[turn_id]
+        if not self._turn_recovery_offered(entry):
+            raise RuntimeError("That unsent turn is being sent.")
         store = self._chat_store
         if store is None or entry.session_id not in {
             session.id for session in store.sessions()
@@ -3123,6 +3159,8 @@ class ConsoleRuntime:
             entry.source_claim
         ):
             raise RuntimeError("Recovery owner changed.")
+        # TASK-33621.20: a composer send keeps its own text as the draft until it
+        # is accepted, so a refused one's Restore finds exactly that: no merge.
         live_draft = store.session_draft(entry.session_id)
         if live_draft and live_draft != entry.draft:
             raise RuntimeError("Recovery live draft changed; refusing ambiguous merge.")
@@ -3134,19 +3172,98 @@ class ConsoleRuntime:
         self.discard_turn_recovery(turn_id)
         return entry
 
-    def discard_turn_recovery(self, turn_id: str) -> bool:
-        """Release one recovery's sensitive references."""
+    def discard_turn_recovery(self, turn_id: str, *, release: bool = True) -> bool:
+        """Release one recovery's sensitive references.
+
+        TASK-33621.20: a turn whose send paused a Library preparation also
+        releases that preparation, so the conversation accepts its next send
+        instead of refusing it behind the paused one. Teardown passes
+        ``release=False``: the controller's own close and shutdown abandon
+        every live preparation.
+        """
         entry = self._turn_recoveries.get(turn_id)
-        if entry is None:
+        if entry is None or (release and not self._turn_recovery_offered(entry)):
             return False
-        self._release_retrieval_pause(entry)
-        self._turn_recoveries.pop(turn_id)
+        if release:
+            self._release_retrieval_pause(entry)
+        del self._turn_recoveries[turn_id]
+        if entry.preparation_id is not None:
+            self._card_held_preparations.discard(entry.preparation_id)
         turns = self._recovery_turns_by_session.get(entry.session_id, [])
         if turn_id in turns:
             turns.remove(turn_id)
         if not turns:
             self._recovery_turns_by_session.pop(entry.session_id, None)
         return True
+
+    def hold_turn_recoveries_for_preparation(self, preparation_id: str) -> None:
+        """Take a paused send's unsent turn off the shelf while its card acts.
+
+        TASK-33621.20 review: the card's Retry or Send once without Library
+        sends that exact turn; until it settles, Restore would send it twice
+        and Discard would not stop it. A re-pause stays on the card.
+        """
+        if any(
+            entry.preparation_id == preparation_id
+            for entry in self._turn_recoveries.values()
+        ):
+            self._card_held_preparations.add(preparation_id)
+
+    def unhold_turn_recoveries_for_preparation(self, preparation_id: str) -> None:
+        """Offer a held unsent turn on the shelf again (its card is gone)."""
+        self._card_held_preparations.discard(preparation_id)
+
+    def forget_turn_recoveries_for_preparation(self, preparation_id: str) -> int:
+        """Drop the unsent turns whose paused send its card has settled.
+
+        TASK-33621.20: Retry or Send once without Library sent that exact
+        turn, or Cancel put it back in the composer, so its shelf entry goes
+        without restoring its draft or releasing the preparation.
+
+        Returns:
+            How many shelf entries were dropped.
+        """
+        self._card_held_preparations.discard(preparation_id)
+        turn_ids = [
+            turn_id
+            for turn_id, entry in self._turn_recoveries.items()
+            if entry.preparation_id == preparation_id
+        ]
+        for turn_id in turn_ids:
+            self.discard_turn_recovery(turn_id, release=False)
+        return len(turn_ids)
+
+    def return_turn_recovery_to_draft(
+        self, preparation_id: str
+    ) -> ConsoleTurnRecoveryEntry | None:
+        """Put a cancelled send's unsent turn back as the draft, attachments too.
+
+        TASK-33621.20 review: the card's Cancel used to refill the composer's
+        text only; the attachments the send had taken stayed with the dropped
+        shelf entry. The caller has checked that the composer (or, after a tab
+        switch, this session's stored draft) is empty or holds only the sent
+        text the cancel put back, so the draft is replaced rather than merged.
+
+        Returns:
+            The returned unsent turn, or None when the send had none.
+        """
+        entry = next(
+            (
+                entry
+                for entry in self._turn_recoveries.values()
+                if entry.preparation_id == preparation_id
+            ),
+            None,
+        )
+        store = self._chat_store
+        if entry is None or store is None:
+            return None
+        store.restore_transferred_pending_attachments(
+            entry.session_id, entry.attachments
+        )
+        store.set_session_draft(entry.session_id, entry.draft)
+        self.forget_turn_recoveries_for_preparation(preparation_id)
+        return entry
 
     def _record_turn_recovery(
         self,
@@ -3212,18 +3329,11 @@ class ConsoleRuntime:
                 and recover_before_acceptance
                 and not record.inputs.durable_accepted
             ):
+                refused = isinstance(exc, _ConsoleTurnRefusedError)
                 self._record_turn_recovery(
                     record,
-                    reason=(
-                        exc.reason
-                        if isinstance(exc, _ConsoleTurnRefusedError)
-                        else ""
-                    ),
-                    preparation_id=(
-                        exc.preparation_id
-                        if isinstance(exc, _ConsoleTurnRefusedError)
-                        else None
-                    ),
+                    reason=exc.reason if refused else "",
+                    preparation_id=exc.preparation_id if refused else None,
                 )
             logger.warning(
                 "Console runtime turn ended with exception_type={}",
@@ -5744,7 +5854,7 @@ class ConsoleRuntime:
         # The exact close ticket makes this owner's fence irreversible. Keep
         # recoveries on a refused/provisional close, but not through its drain.
         for turn_id in tuple(self._recovery_turns_by_session.get(session_id, ())):
-            self.discard_turn_recovery(turn_id)
+            self.discard_turn_recovery(turn_id, release=False)
 
         tasks: set[asyncio.Future[Any]] = {
             record.task
@@ -5935,7 +6045,7 @@ class ConsoleRuntime:
         if callable(begin_progress_close):
             begin_progress_close()
         for turn_id in tuple(self._turn_recoveries):
-            self.discard_turn_recovery(turn_id)
+            self.discard_turn_recovery(turn_id, release=False)
         begin_shutdown = getattr(controller, "begin_shutdown", None)
         if callable(begin_shutdown):
             try:
@@ -6069,7 +6179,7 @@ class ConsoleRuntime:
         if self._worktree_recovery is not None:
             await self._worktree_recovery.close()
         for turn_id in tuple(self._turn_recoveries):
-            self.discard_turn_recovery(turn_id)
+            self.discard_turn_recovery(turn_id, release=False)
         canvas_policy_watch_task = self._canvas_policy_watch_task
         self._canvas_policy_watch_task = None
         if canvas_policy_watch_task is not None and not canvas_policy_watch_task.done():

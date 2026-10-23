@@ -122,7 +122,12 @@ _BUDGETS: dict[str, int] = {
     # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
     # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.
     # TASK-35992: frozen Library preparation delegates to console_library_preparation.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29043,
+    # 2026-10-22 (TASK-33621.20, owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): +12. Rebased onto dev 7700c63a68
+    # (29,043), the Library-pause fixes measure 29,055: dev's TASK-35992
+    # extraction already moved out the Library preparation body that these
+    # fixes used to shrink here, so their stop/shelf/card wiring now shows.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29055,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,

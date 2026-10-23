@@ -6839,34 +6839,108 @@ class ConsoleSessionController:
     ) -> object:
         """Route a pre-dispatch card action; a cancelled hold refills the composer."""
 
+        from ...Chat.console_unsent_turn import (
+            card_action_finished,
+            card_action_started,
+            own_draft_takes_it_back,
+            shelf_releasable,
+        )
+
         controller = self._ensure_console_chat_controller()
         held = controller.trace_call_recovery_preparation()
+        # TASK-33621.20: a paused send the unsent-turn shelf also lists (a
+        # Library pause, or a send that re-paused): one surface at a time.
+        releasable = shelf_releasable(held, preparation_id)
+        runtime = self._console_runtime_accessor() if releasable else None
         # TASK-34350: read the held text BEFORE the action: the UI sync that
         # follows it mirrors the (empty) composer back into the session draft.
         held_text = (
             held.executed_draft
             if held is not None
             and held.preparation_id == preparation_id
-            and controller.context_compaction_hold(preparation_id) is not None
+            and (
+                releasable
+                or controller.context_compaction_hold(preparation_id) is not None
+            )
             else ""
         )
-        result = await self._read_trace_recovery_dispatch()(
-            controller,
-            action,
-            preparation_id,
-            on_started=self._read_trace_recovery_started(),
-            on_finished=self._read_trace_recovery_finished(),
-        )
+        sync_ui = self._read_trace_recovery_finished()
+        try:
+            if releasable:
+                # Inside the try: a failed or cancelled repaint still unholds.
+                card_action_started(runtime, preparation_id)
+                await sync_ui()  # the shelf stops offering the send right away
+            result = await self._read_trace_recovery_dispatch()(
+                controller,
+                action,
+                preparation_id,
+                on_started=self._read_trace_recovery_started(),
+                on_finished=self._read_trace_recovery_finished(),
+            )
+        except BaseException:
+            if releasable:
+                # TASK-33621.20: the card may be gone (a center swap cancels its
+                # worker), so the shelf offers the turn again, repainted from
+                # the screen rather than from this ending task (passed uncalled,
+                # so a worker a teardown never starts leaves no coroutine).
+                card_action_finished(
+                    runtime,
+                    controller,
+                    preparation_id,
+                    accepted=False,
+                    return_to_composer=False,
+                    interrupted=True,
+                )
+                self.run_worker(sync_ui, exclusive=False, group="console-sync")
+            raise
         composer = self._console_composer_or_none()
-        if (
-            action == "cancel"
-            and held_text
-            and controller.context_compaction_hold(preparation_id) is None
+        # By id: after a tab switch the active session's pause is another's.
+        now_held = controller.store.preparation_by_id(preparation_id)
+        settled = bool(held_text) and (
+            not shelf_releasable(now_held, preparation_id)
+            if releasable
+            else controller.context_compaction_hold(preparation_id) is None
+        )
+        # TASK-33621.20: a tab switch during the action leaves the composer on
+        # another conversation; the turn goes back to its own draft instead.
+        shown = (
+            held is not None
             and composer is not None
-            and not composer.draft_text().strip()
-        ):
+            and controller.store.active_session_id == held.session_id
+            and self._console_visible_draft_session_id == held.session_id
+        )
+        cancelled = action == "cancel" and settled
+        # A composer send keeps showing its own text until the turn is accepted;
+        # that is no follow-up to protect (as in `own_draft_takes_it_back`), so
+        # Cancel still takes the turn off the shelf with its attachments.
+        typed = composer.draft_text().strip() if shown else ""
+        refill = (
+            cancelled
+            and shown
+            and (not typed or (releasable and typed == held_text.strip()))
+        )
+        # Only a shelf-releasable pause has an unsent turn to send back there.
+        to_own_draft = (
+            releasable
+            and cancelled
+            and not shown
+            and own_draft_takes_it_back(controller.store, held.session_id, held_text)
+        )
+        if releasable:
+            returned = card_action_finished(
+                runtime,
+                controller,
+                preparation_id,
+                accepted=bool(getattr(result, "accepted", False)),
+                return_to_composer=refill or to_own_draft,
+            )
+            if returned is not None:
+                held_text = returned.draft  # with its attachments restaged
+        if refill:
             # Cancel puts the held message back where it came from.
             composer.load_draft(held_text)
+        if releasable:
+            await sync_ui()  # the shelf (and the staged attachments) settled
         return result
 
     def _console_trace_recovery_state(self) -> Any:
@@ -6877,11 +6951,26 @@ class ConsoleSessionController:
         which waits out any config rebuild.
         """
 
+        from ...Chat.console_turn_preparation import (
+            ConsolePreparationPauseKind,
+            library_pause_copy,
+        )
+
         controller = (
             self._current_chat_controller_accessor()
             or self._ensure_console_chat_controller()
         )
         preparation = controller.trace_call_recovery_preparation()
+        # TASK-33621.20: only a Library-paused send has a reason to look up
+        # and pass on (why its search stopped).
+        library: dict[str, str] = {}
+        if (
+            getattr(preparation, "pause_kind", None)
+            is ConsolePreparationPauseKind.RETRIEVAL
+        ):
+            outcome = controller.preparation_outcome(preparation.preparation_id)
+            code = getattr(outcome, "error_code", None)
+            library["library_reason"] = library_pause_copy(code)
         return self._read_trace_recovery_state()(
             preparation,
             context_hold=(
@@ -6889,6 +6978,7 @@ class ConsoleSessionController:
                 if preparation is not None
                 else None
             ),
+            **library,
         )
 
 
