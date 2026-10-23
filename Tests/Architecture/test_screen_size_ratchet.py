@@ -1009,7 +1009,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: -- the Reader target accessor, the order-based highlight hold, the
     #: dirty-form refusals at every Reader exit, the autosave resume hook and
     #: the veto-in-place status: 37277 -> 37559.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37559, 1354),
+    #: 2026-10-22, P1-A final review C-1 (same owner decision): 37559 -> 37560
+    #: (+1), the ``_library_media_selected_backing_id`` docstring says the
+    #: Reader target is the loaded item whatever the view. Methods 1354.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37560, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

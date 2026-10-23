@@ -440,17 +440,31 @@ def test_reader_action_target_is_the_loaded_item_in_the_viewer() -> None:
 
     loaded = _loaded_local(3, "Gamma")
 
-    assert reader_action_target(loaded, "local:media:1", "viewer") == "local:media:3"
+    assert reader_action_target(loaded, "local:media:1") == "local:media:3"
 
 
-def test_reader_action_target_is_the_selection_in_the_list_view() -> None:
+def test_reader_action_target_is_the_loaded_item_whatever_the_view() -> None:
+    """Final review C-1 (2026-10-22): the canvas view is not a condition. In
+    the three-pane shell the Reader keeps its live controls after Trash ›
+    "‹ Media" puts the canvas in the list view, where a type filter moves
+    the selection to row 0 (TASK-15457) while the Reader still shows the
+    opened item; the old viewer-only gate made Save write the Reader's form
+    onto row 0's record. The function takes no view at all now, so no
+    caller can reintroduce the gate by passing one."""
+    import inspect
+
     from tldw_chatbook.Library.library_media_reader_state import (
         reader_action_target,
     )
 
     loaded = _loaded_local(3, "Gamma")
 
-    assert reader_action_target(loaded, "local:media:1", "list") == "local:media:1"
+    assert reader_action_target(loaded, "local:media:1") == "local:media:3"
+    assert reader_action_target(loaded, "") == "local:media:3"
+    assert list(inspect.signature(reader_action_target).parameters) == [
+        "session",
+        "selected_id",
+    ]
 
 
 def test_reader_action_target_falls_back_to_the_selection_with_nothing_loaded() -> None:
@@ -461,8 +475,8 @@ def test_reader_action_target_falls_back_to_the_selection_with_nothing_loaded() 
     empty = LibraryMediaReaderSessionState()
     pending = begin_selection(empty, "local:media:2", 2, "Beta")
 
-    assert reader_action_target(empty, "local:media:1", "viewer") == "local:media:1"
-    assert reader_action_target(pending, "local:media:2", "viewer") == "local:media:2"
+    assert reader_action_target(empty, "local:media:1") == "local:media:1"
+    assert reader_action_target(pending, "local:media:2") == "local:media:2"
 
 
 def test_reader_action_target_counts_an_external_detail_as_loaded() -> None:
@@ -474,4 +488,4 @@ def test_reader_action_target_counts_an_external_detail_as_loaded() -> None:
         LibraryMediaReaderSessionState(), "9", "Server media 9"
     )
 
-    assert reader_action_target(external, "local:media:1", "viewer") == "server:media:9"
+    assert reader_action_target(external, "local:media:1") == "server:media:9"

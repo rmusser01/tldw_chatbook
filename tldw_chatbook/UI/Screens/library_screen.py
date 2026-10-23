@@ -16765,8 +16765,9 @@ class LibraryScreen(BaseAppScreen):
         persisted against the LIST selection wrote the Reader's transcript
         onto another record whenever the two diverged (a pending row
         click, an off-page open). So this reads
-        ``_library_media_reader_target_id()``: the loaded item while the
-        viewer is open, the selection otherwise. The canonical
+        ``_library_media_reader_target_id()``: the loaded item whenever one
+        is loaded (final review C-1: whatever the view), the selection
+        otherwise. The canonical
         ``"local:media:<id>"`` is resolved by ``_library_media_backing_id``
         (already used by every real mutation path in this screen); this
         just narrows its ``int | str`` result to "a usable id, or None".

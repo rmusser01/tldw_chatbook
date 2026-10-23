@@ -435,7 +435,7 @@ def leave_external_detail(
 
 
 def reader_action_target(
-    session: LibraryMediaReaderSessionState, selected_id: str, view: str
+    session: LibraryMediaReaderSessionState, selected_id: str
 ) -> str:
     """Return the one identity a Reader-scoped action acts on (TASK-34000.18).
 
@@ -447,16 +447,25 @@ def reader_action_target(
     while the Reader showed the item the user opened from an import
     receipt, a landing "Open" or a Search/RAG result.
 
+    Final review (2026-10-22, C-1): the view is NOT a condition. Every
+    caller is a Reader control or a Reader key, and the three-pane shell
+    keeps painting the Reader with live controls after Trash › "‹ Media"
+    puts the canvas in its list view -- where a type filter moves the
+    selection to row 0 (TASK-15457) while the Reader still shows the
+    opened item. Gating on the viewer view made Save write the Reader's
+    form onto row 0's record and the trash confirm name one item and
+    delete another. The Reader keys are gated to the viewer view at their
+    own seam; this function only answers "which item".
+
     Args:
         session: The current Reader session.
         selected_id: The list selection (``selected_media_id``).
-        view: The Media canvas view (``"viewer"``, ``"list"``, ``"trash"``).
 
     Returns:
-        ``session.loaded_id`` while the viewer is the active view and an item
-        is loaded (an external server detail's loaded id counts), otherwise
+        ``session.loaded_id`` whenever an item is loaded (an external server
+        detail's loaded id counts), whatever the canvas view; otherwise
         ``selected_id``. Never None: an empty selection stays "".
     """
-    if view == "viewer" and session.loaded_id:
+    if session.loaded_id:
         return session.loaded_id
     return selected_id

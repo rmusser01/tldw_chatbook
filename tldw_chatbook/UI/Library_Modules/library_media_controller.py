@@ -3247,9 +3247,10 @@ class LibraryMediaController:
         (owner Q2 (b)) that item is not on this page; the builder paints no
         cue for it. Once the user changes scope after the open (a type
         choice, a typed query, the filter Clear, a sort or page change) or
-        in the list view, the TASK-15457 contract stands: the selection
-        follows the canvas, "" included, so a filtered-out row is never
-        opened.
+        in the list view with no dirty form (final review C-1: a dirty
+        form keeps the hold in the list view too), the TASK-15457 contract
+        stands: the selection follows the canvas, "" included, so a
+        filtered-out row is never opened.
         """
         session = self._library_media_reader_session
         held = (
@@ -3280,12 +3281,18 @@ class LibraryMediaController:
         follows the canvas to row 0 (TASK-15457, its pin unchanged). The
         scope itself is never read -- round 1's scope-based guess failed
         under any sticky filter -- and the user's filter is never cleared
-        by an open. Only meaningful while the viewer is the active view.
+        by an open. Meaningful while the viewer is the active view -- or,
+        final review (2026-10-22, C-1), while an authoring form holds
+        unsaved text in ANY view: the TASK-34000.22 "Reader pinned while
+        dirty" rule keeps the flag set through a scope change, and in the
+        three-pane shell the list view (Trash › "‹ Media") still paints the
+        Reader and its form, so the selection must keep naming the pinned
+        item there too instead of falling back to row 0 under the form.
         """
         return (
             self._library_media_view == "viewer"
-            and bool(self._library_media_highlight_held_by_reader)
-        )
+            or bool(self._library_media_editor_dirty())
+        ) and bool(self._library_media_highlight_held_by_reader)
 
     def _library_media_reader_target_id(self) -> str:
         """The item a Reader-scoped action acts on (TASK-34000.18).
@@ -3293,13 +3300,14 @@ class LibraryMediaController:
         Read later, Move to trash, Edit metadata › Save, the analysis save
         and the highlight writes act on the item the Reader SHOWS
         (``reader_session.loaded_id``), never on the list highlight, which
-        can sit on row 0 after an open-by-link. See
+        can sit on row 0 after an open-by-link -- or, in the three-pane
+        shell's list view after Trash › "‹ Media", after a type filter
+        (final review C-1; the view is not a condition). See
         ``library_media_reader_state.reader_action_target``.
         """
         return reader_action_target(
             self._library_media_reader_session,
             self._selected_media_id,
-            self._library_media_view,
         )
 
     def _library_media_editor_baseline(self) -> tuple[Mapping[str, str], str]:
@@ -4229,8 +4237,16 @@ class LibraryMediaController:
         holds an item; "" (the "this item" fallback) when it holds none.
         Not ``reader_session.loaded_title``: an open-by-link seeds that
         slot with the bare record id, and an edit never updates it.
+
+        Final review (2026-10-22, C-1): derived from the SAME identity the
+        Delete press acts on (``_library_media_reader_target_id``), so the
+        confirm names exactly what Delete trashes. The title is the loaded
+        detail's, so it is offered only while that target IS the loaded
+        item; any other target gets the neutral fallback rather than a
+        name that belongs to a different record.
         """
-        if not self._library_media_reader_session.loaded_id:
+        target = self._library_media_reader_target_id()
+        if not target or target != self._library_media_reader_session.loaded_id:
             return ""
         return str(getattr(viewer_state, "title", "") or "")
 

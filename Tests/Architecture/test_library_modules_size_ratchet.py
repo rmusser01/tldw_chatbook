@@ -429,7 +429,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-21, TASK-34000.22 fix round 3 (same owner decision): 5254 ->
     # 5265 (+11): the reveal flips only from "list" (comment) and the
     # external-detail opener's one-line refusal.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5265,
+    # 2026-10-22, P1-A final review C-1 (same owner decision): 5265 -> 5281
+    # (+16): ``reader_action_target`` takes no view (the Reader's controls
+    # act on the loaded item in the list view too), the highlight hold also
+    # holds while a form is dirty in any view, and the trash confirm's title
+    # derives from the same target id as the Delete press. Exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5281,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -539,7 +544,13 @@ _BUDGETS: dict[str, int] = {
     # on the ungated mark grew by two lines; the status line keeps the veto
     # reason while a mark stands and a conflict or a landed save clears it
     # (nine lines). Exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6428,
+    # 2026-10-22, P1-A final review I-1 (same owner decision): 6428 -> 6473
+    # (+45): ``_library_notes_defer_focus_to_app_focus`` -- while the
+    # terminal is blurred a focus-identity restore focuses nothing and
+    # re-points Textual's ``_last_focused_on_app_blur`` at the live instance
+    # of the user's field, so AppFocus lands there (docstring included), plus
+    # the two-line call at the restore's ``set_focus``. Exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6473,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
