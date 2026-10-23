@@ -15,16 +15,21 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual import events
+from textual.screen import Screen
 from textual.widgets import Input
+from textual.worker import WorkerState
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 from Tests.UI.roleplay_frame_harness import (
+    StyledRoleplayMockApp,
     highlighted_item_id,
     item_at,
     open_styled_roleplay,
     open_volume_db,
     painted_rows,
+    roleplay_full_app,
     select_roleplay_item,
     settle,
     styled_tiers,
@@ -32,6 +37,7 @@ from Tests.UI.roleplay_frame_harness import (
     volume_db_path,
     wait_until,
 )
+from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
@@ -523,6 +529,334 @@ async def test_the_footer_advertises_space_where_it_toggles(
         assert await pilot.click("#personas-mode-characters")
         await settle(pilot)
         assert "space" not in footer.shortcut_text
+
+
+# ---- The visit-lifecycle hooks (spec 4.11, AC#11; Task 7) ----
+
+
+class _ReusedRoleplayApp(StyledRoleplayMockApp):
+    """Roleplay as an installed screen, so a switch suspends it (PERF-22's path)."""
+
+    def on_mount(self, event: events.Mount) -> None:
+        event.prevent_default()  # not the parent's push of a fresh screen
+        self.install_screen(PersonasScreen(self), name="roleplay")
+        self.install_screen(Screen(), name="elsewhere")
+        self.push_screen("roleplay")
+
+
+def _window_workers(app) -> list:
+    return [
+        worker
+        for worker in app.workers
+        if worker.group == "roleplay-list-window"
+        and worker.state in (WorkerState.PENDING, WorkerState.RUNNING)
+    ]
+
+
+async def test_a_modal_over_roleplay_keeps_the_marks(mock_app_instance, volume_348):
+    """A pushed modal suspends Roleplay, but it is no leave (spec R16)."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[:2])
+        await pilot.app.push_screen(ConfirmationDialog(title="t", message="m"))
+        await settle(pilot)
+        pilot.app.pop_screen()
+        await settle(pilot)
+        assert len(screen._marked_rows) == 2
+        assert _bar(screen)
+
+
+async def test_leaving_by_suspend_clears_the_marks_and_stops_the_window_worker(
+    mock_app_instance, volume_348, monkeypatch
+):
+    gate = threading.Event()
+    reading = threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("offset"):
+            reading.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[:3])
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+        screen.query_one(RoleplayItemList).focus()
+        await pilot.press("end")
+        await wait_until(pilot, reading.is_set, what="the window read")
+        assert _window_workers(app)
+        try:
+            await app.switch_screen("elsewhere")
+            await settle(pilot)
+            assert screen not in app.screen_stack and screen.is_attached
+            assert _window_workers(app) == []
+            assert screen._marked_rows == ()
+            assert not screen.query_one(RoleplayItemList).marked_rows("character")
+        finally:
+            gate.set()
+        await app.switch_screen("roleplay")
+        await settle(pilot)
+        assert _bar(screen) == ""
+        ids = visible_item_ids(screen)
+        assert len(ids) == 200 and len(ids) == len(set(ids))  # the late window dropped
+
+
+@pytest.mark.parametrize("trigger", ["end", "near_end"])
+async def test_a_list_loaded_before_a_leave_still_loads_through_after_the_return(
+    mock_app_instance, volume_348, trigger
+):
+    """The leave bumps the page generation; the loaded rows stay the list's rows."""
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        assert len(visible_item_ids(screen)) == 200
+        await app.switch_screen("elsewhere")
+        await settle(pilot)
+        await app.switch_screen("roleplay")
+        await settle(pilot)
+        item_list = screen.query_one(RoleplayItemList)
+        item_list.focus()
+        if trigger == "end":
+            await pilot.press("end")
+        else:
+            item_list.highlighted = 195
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) > 200,
+            what="the next window after the return",
+        )
+        if trigger == "end":
+            await wait_until(
+                pilot,
+                lambda: len(visible_item_ids(screen)) == 349,
+                what="the whole list",
+            )
+        await settle(pilot)
+        ids = list(visible_item_ids(screen))
+        assert len(ids) == len(set(ids))
+
+
+async def test_a_near_end_read_cancelled_by_a_leave_does_not_stall_the_list(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """The leave cancels an append in flight; the request latch must not stay set."""
+    gate = threading.Event()
+    reading = threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("offset") and not gate.is_set():
+            reading.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+        item_list.focus()
+        item_list.highlighted = 195
+        await wait_until(pilot, reading.is_set, what="the near-end read")
+        try:
+            await app.switch_screen("elsewhere")
+            await settle(pilot)
+        finally:
+            gate.set()
+        await app.switch_screen("roleplay")
+        await settle(pilot)
+        item_list.focus()
+        item_list.highlighted = 190
+        await settle(pilot)
+        item_list.highlighted = 198
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) > 200,
+            what="a near-end window after the return",
+        )
+
+
+async def test_a_replace_cancelled_by_a_leave_reloads_on_the_return(
+    mock_app_instance, volume_348, monkeypatch
+):
+    gate = threading.Event()
+    blocked = threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("search_term") and kwargs.get("offset") == 0:
+            blocked.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+        screen.state.search_query = "Character 03"
+        reload = asyncio.create_task(screen._reload_character_page())
+        await wait_until(pilot, blocked.is_set, what="the search's first window")
+        try:
+            await app.switch_screen("elsewhere")
+            await settle(pilot)
+        finally:
+            gate.set()
+        await asyncio.gather(reload, return_exceptions=True)
+        await app.switch_screen("roleplay")
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) == 48,
+            what="the search's results after the return",
+        )
+        assert [f"character:{row['id']}" for row in screen._characters] == list(
+            visible_item_ids(screen)
+        )
+
+
+async def test_a_modal_over_roleplay_starts_no_reload(mock_app_instance, volume_348):
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        screen = pilot.app.screen
+        reloads: list[int] = []
+        real = screen._reload_character_page
+
+        async def counted(**kwargs):
+            reloads.append(1)
+            await real(**kwargs)
+
+        screen._reload_character_page = counted
+        await pilot.app.push_screen(ConfirmationDialog(title="t", message="m"))
+        await settle(pilot)
+        pilot.app.pop_screen()
+        await settle(pilot)
+        assert reloads == []
+        assert len(visible_item_ids(screen)) == 200
+
+
+async def test_leaving_and_returning_clears_the_marks(volume_348, monkeypatch):
+    """The real routes: Roleplay unmounts on leave today, and the hook runs then."""
+    ended: list[PersonasScreen] = []
+    end_visit = PersonasScreen._end_visit
+
+    def record(self: PersonasScreen) -> None:
+        ended.append(self)
+        end_visit(self)
+
+    monkeypatch.setattr(PersonasScreen, "_end_visit", record)
+    async with roleplay_full_app(size=SIZE, character_db=volume_348) as pilot:
+        app = pilot.app
+        first = app.screen
+        await _mark_rows(pilot, first, visible_item_ids(first)[:2])
+        await pilot.press("ctrl+1")
+        await wait_until(
+            pilot,
+            lambda: not isinstance(app.screen, PersonasScreen),
+            what="Home",
+        )
+        await settle(pilot)
+        assert first in ended and first._marked_rows == ()
+        await pilot.press("ctrl+4")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, PersonasScreen)
+                and len(visible_item_ids(app.screen)) == 200
+            ),
+            what="Roleplay again",
+        )
+        await settle(pilot)
+        assert app.screen._marked_rows == ()
+        assert _bar(app.screen) == ""
+        assert _window_workers(app) == []
+
+
+async def test_quitting_from_roleplay_runs_the_leave_hook_on_unmount(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """The unmount call is the hook's net for a removal that sends no suspend.
+
+    Textual posts ``ScreenSuspend`` to every screen it replaces before
+    removing it, so a leave reaches the hook through ``on_screen_suspend``
+    first. Only the app's shutdown (``App._close_all``) prunes a screen with
+    no suspend: quitting with marks and a window read in flight still ends
+    the visit, and the window is fenced.
+    """
+    gate = threading.Event()
+    reading = threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+    suspended: list[PersonasScreen] = []
+    on_suspend = PersonasScreen.on_screen_suspend
+
+    def gated(db, **kwargs):
+        if kwargs.get("offset"):
+            reading.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    def record_suspend(self: PersonasScreen) -> None:
+        suspended.append(self)
+        on_suspend(self)
+
+    monkeypatch.setattr(PersonasScreen, "on_screen_suspend", record_suspend)
+    try:
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=volume_348
+        ) as pilot:
+            app = pilot.app
+            screen = app.screen
+            item_list = screen.query_one(RoleplayItemList)
+            await _mark_rows(pilot, screen, visible_item_ids(screen)[:3])
+            monkeypatch.setattr(
+                personas_screen_module, "get_character_page_for_ui", gated
+            )
+            item_list.focus()
+            await pilot.press("end")
+            await wait_until(pilot, reading.is_set, what="the window read")
+            assert _window_workers(app)
+            generation = screen._character_page_generation
+            assert len(screen._marked_rows) == 3
+    finally:
+        gate.set()
+    assert suspended == []
+    # The pane and its list are pruned before the screen's own unmount, so
+    # the screen's mark set is what the hook clears here.
+    assert screen._marked_rows == ()
+    assert screen._character_page_generation == generation + 1
+    assert _window_workers(app) == []
 
 
 async def test_escape_clears_the_marks(mock_app_instance, volume_348):

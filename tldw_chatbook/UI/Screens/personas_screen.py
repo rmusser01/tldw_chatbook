@@ -1419,6 +1419,8 @@ class PersonasScreen(BaseAppScreen):
         self._deferred_window_wanted: (
             tuple[frame_state.ListFence, str, str | None] | None
         ) = None
+        # A leave cancelled a replace; the return reloads the list from its anchor.
+        self._reload_on_return: bool = False
         self._count_cache_key: tuple | None = None
         self._character_tags: list[str] = []
         self._profiles: list[dict] = []
@@ -2300,6 +2302,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Invalidate deferred Personas work before releasing screen resources."""
+        self._end_visit()
         if self._console_readiness_poll_timer is not None:
             self._console_readiness_poll_timer.stop()
             self._console_readiness_poll_timer = None
@@ -2317,6 +2320,61 @@ class PersonasScreen(BaseAppScreen):
         self._cancel_search_debounce()
         self._cancel_conversation_search_debounce()
         await self.preview.close_gateway()
+
+    def on_screen_suspend(self) -> None:
+        """A suspend that leaves Roleplay runs the leave hook; a modal on top does not.
+
+        Textual suspends the covered screen on every ``push_screen``, so the
+        delete modal, the unsaved guard and the tag picker all suspend
+        Roleplay; it stays in the screen stack then. A leave by
+        ``switch_screen`` (PERF-22's reusable route) pops it from the stack
+        before the suspend is delivered. No ``super()``: the dispatcher calls
+        every handler along the MRO (TASK-31418).
+        """
+        if self.is_attached and self in self.app.screen_stack:
+            return
+        self._end_visit()
+
+    def _end_visit(self) -> None:
+        """The visit-lifecycle leave hook (spec 4.11), with B2a's first duties.
+
+        Clears the marks of every kind (they are never saved, R16) and
+        cancels the window worker; the generation bump fences a window whose
+        read is still running in its thread. Runs on unmount and on a
+        suspend that leaves Roleplay, and is safe to run twice. Later slices
+        extend it: B5b-2 closes More actions, B7 ends the work session and
+        flushes the pane preferences.
+        """
+        rows_current = self._character_rows_fence == self._list_fence()
+        self._character_page_generation += 1
+        self.workers.cancel_group(self, _LIST_WINDOW_GROUP)
+        if rows_current:
+            # The loaded rows still belong to this query, sort and tag: the
+            # bump only fences reads still in flight.
+            self._character_rows_fence = self._list_fence()
+            self._deferred_window_wanted = None
+        else:
+            # A replace was cancelled by the leave: reload on return.
+            self._reload_on_return = True
+        self._marked_rows = ()
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        library.end_visit()
+
+    async def on_screen_resume(self) -> None:
+        """Return from a leave: reload a list the leave cancelled mid-replace.
+
+        A modal pop also delivers ``ScreenResume``, but only a real leave sets
+        the flag. No ``super()``: the dispatcher calls every handler along the
+        MRO (TASK-31418).
+        """
+        if not self._reload_on_return:
+            return
+        self._reload_on_return = False
+        if self.state.active_mode == "characters" and self.is_attached:
+            await self.refresh_character_library_list(None)
 
     def on_resize(self, event: Any) -> None:
         """Refresh compact workbench classes after terminal size changes.

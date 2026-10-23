@@ -416,6 +416,10 @@ class RoleplayItemList(OptionList):
         self._more_available = more
         self._window_requested = False
 
+    def reset_window_request(self) -> None:
+        """Forget a window request whose read was cancelled (the visit ended)."""
+        self._window_requested = False
+
     def _request_window(self, reason: str, target_id: str | None = None) -> None:
         self._window_requested = True
         self.post_message(self.WindowWanted(self, reason=reason, target_id=target_id))
@@ -501,6 +505,14 @@ class RoleplayItemList(OptionList):
             return False
         self._refresh_rows(list(marks))
         return True
+
+    def clear_all_marks(self) -> bool:
+        """Drop the marks of every kind (the visit ended, spec R16); one batch."""
+        shown = self._marked.pop(self._kind, {})
+        had_marks = bool(shown) or any(self._marked.values())
+        self._marked.clear()
+        self._refresh_rows(list(shown))
+        return had_marks
 
     def drop_marks(self, option_ids: Sequence[str]) -> None:
         """Forget marks whose rows are gone (deleted, or pruned by a refresh)."""
@@ -1123,6 +1135,12 @@ class PersonasLibraryPane(Vertical):
     def clear_marks(self) -> None:
         """Drop every mark of the list's kind (Clear, Escape)."""
         if self.item_list.clear_marks():
+            self.marks_changed()
+
+    def end_visit(self) -> None:
+        """The visit ended (spec 4.11 leave hook): every kind's marks go."""
+        self.item_list.reset_window_request()
+        if self.item_list.clear_all_marks():
             self.marks_changed()
 
     def forget_marks(self, option_ids: Sequence[str]) -> None:
