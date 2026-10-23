@@ -9,6 +9,8 @@ picker and lands in the inserted link.
 from __future__ import annotations
 
 import pytest
+from textual import events
+from textual.geometry import Size
 from textual.widgets import Markdown, OptionList, TextArea
 
 from Tests.UI.library_note_links_support import (
@@ -855,3 +857,206 @@ async def test_the_follow_picker_sits_at_the_preview_top_left_after_a_resize(
             )
             assert INDEX in _painted(app, screen, "#library-note-link-picker")
         await pilot.resize_terminal(*SIZE)
+
+
+# ---------------------------------------------------------------------------
+# Fix round 4 pins
+# ---------------------------------------------------------------------------
+
+
+def _resize_without_a_pause(app, size: tuple[int, int]) -> None:
+    """Post the terminal resize the way ``pilot.resize_terminal`` does, but
+    WITHOUT its pause: a key sent right behind it lands before Textual's
+    1/120 s resize batching has even reached the screen (the reviewer's
+    delay-0 window, where the body's own resize has not been posted yet)."""
+    new = Size(*size)
+    app._driver._size = new
+    app.post_message(events.Resize(new, new))
+
+
+async def _picker_settled(pilot, screen, *, timeout: float = 10.0) -> None:
+    """Until no resize settle chain is pending and the picker's open state
+    and region have held still for 0.4 s."""
+    import asyncio
+
+    async with asyncio.timeout(timeout):
+        while True:
+            picker = _picker_or_none(screen)
+            before = (picker.resize_chains, bool(picker.display), tuple(picker.region))
+            await pilot.pause(0.4)
+            after = (picker.resize_chains, bool(picker.display), tuple(picker.region))
+            if before == after and after[0] == 0:
+                return
+
+
+async def _long_body_picker_at_the_end(app, screen, pilot, body) -> None:
+    """Caret on the long body's last row, ``[[Lis`` typed, rows painted."""
+    if body.text != LONG_BODY:
+        body.text = LONG_BODY
+        await pilot.pause(0.2)
+    await pilot.press("ctrl+end")
+    await pilot.pause(0.3)
+    await _type(pilot, "[[Lis")
+    await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+    await pilot.pause(0.3)
+
+
+async def test_enter_or_tab_during_a_resize_settle_never_inserts_from_an_unseen_picker(
+    tmp_path, monkeypatch
+) -> None:
+    """R4-1: round 3 judged the caret's visibility only once the resize had
+    settled, so Enter or Tab INSIDE the settle window still accepted from a
+    box the user could not see (measured 14/14 presses inserted, 9 of them
+    with the box painting nothing). Two windows, both pinned: the key right
+    behind the terminal resize, before the body's own resize has landed;
+    and the key inside the chain's first step. Neither inserts, neither
+    falls through (no newline, no focus move). Afterwards the box is back
+    beside the visible caret -- or closed -- and Enter works again."""
+    from tldw_chatbook.Notes.note_import_plan_models import stored_note_link
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import LibraryNotesController
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    note_id = profile.db.add_note("Long body", LONG_BODY)
+    armed = {"tab": False, "sent": 0}
+    real_settle = LibraryNotesController._settle_library_note_link_picker_after_resize
+
+    def _tab_from_inside_the_chain(self, body, *args, **kwargs):
+        # The chain's first step IS the settle window: the key is sent from
+        # inside it, so this pin does not depend on a wall-clock delay.
+        if armed["tab"] and armed["sent"] == 0:
+            armed["sent"] += 1
+            _send_key(app, "tab")
+        return real_settle(self, body, *args, **kwargs)
+
+    monkeypatch.setattr(
+        LibraryNotesController,
+        "_settle_library_note_link_picker_after_resize",
+        _tab_from_inside_the_chain,
+    )
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Long body", note_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        await _long_body_picker_at_the_end(app, screen, pilot, body)
+        # Window 1: Enter right behind the shrink.
+        _resize_without_a_pause(app, COMPACT)
+        _send_key(app, "enter")
+        await _picker_settled(pilot, screen)
+        assert "note://" not in body.text, "Enter inserted from a picker the user could not see"
+        assert body.document.line_count == 120, "Enter fell through to the editor's newline"
+        # Window 2: Tab from inside the chain's first step, growing back.
+        await _long_body_picker_at_the_end(app, screen, pilot, body)
+        armed["tab"] = True
+        _resize_without_a_pause(app, SIZE)
+        await _picker_settled(pilot, screen)
+        assert armed["sent"] == 1, "the chain never ran, so Tab was never sent inside it"
+        assert "note://" not in body.text, "Tab inserted from a picker the user could not see"
+        assert body.document.line_count == 120, "Tab fell through to the editor's newline"
+        assert screen.focused is body, "Tab moved the focus off the body"
+        geometry = _picker_geometry(app, screen)
+        assert geometry["caret_visible"], geometry
+        if geometry["open"]:
+            assert geometry["inside_screen"] and geometry["painted"] and not geometry["covers"], geometry
+            # The settled box takes Enter again: the highlighted row the
+            # user SEES ("Reading list" is row 0 for "Lis").
+            await pilot.press("enter")
+            expected_tail = stored_note_link("Reading list", profile.other_id)
+            await _until(
+                pilot,
+                lambda: body.document.get_line(body.document.line_count - 1).endswith(expected_tail),
+                "the settled picker to insert its highlighted row",
+            )
+        else:
+            await pilot.press("enter")
+            await _until(pilot, lambda: body.document.line_count == 121, "the newline")
+            assert "note://" not in body.text
+
+
+async def test_a_resize_storm_judges_once_and_lands_the_picker_beside_the_visible_caret(
+    tmp_path, monkeypatch
+) -> None:
+    """R4-2: round 3's chains stacked -- one shrink ran 3 chains and 3
+    judgements, a drag 5 chains and 13 -- and the 8-hop bound burnt out in
+    about 33 ms, before the compact restage had finished, so the picker
+    closed at random. One chain at a time: a new resize supersedes the
+    running one and restarts the settle; the single judgement comes once
+    the body has held still for two refreshes AND the wall-clock floor has
+    passed since the last resize. Five resizes in a quarter second: exactly
+    one judgement, the box back beside the visible caret, nothing while
+    idle."""
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import LibraryNotesController
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    note_id = profile.db.add_note("Long body", LONG_BODY)
+    judges = {"n": 0}
+    real_reanchor = LibraryNotesController._reanchor_library_note_link_picker
+
+    def _counted(self, body, *, scroll_caret_into_view):
+        if scroll_caret_into_view:
+            judges["n"] += 1
+        return real_reanchor(self, body, scroll_caret_into_view=scroll_caret_into_view)
+
+    monkeypatch.setattr(LibraryNotesController, "_reanchor_library_note_link_picker", _counted)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Long body", note_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        await _long_body_picker_at_the_end(app, screen, pilot, body)
+        judges["n"] = 0
+        for size in (COMPACT, (120, 40), COMPACT, (100, 30), COMPACT):
+            _resize_without_a_pause(app, size)
+            await pilot.pause(0.05)
+        await _picker_settled(pilot, screen)
+        assert judges["n"] == 1, f"{judges['n']} judgements for a storm of 5 resizes (expected exactly 1)"
+        geometry = _picker_geometry(app, screen)
+        assert geometry["open"] and geometry["caret_visible"], geometry
+        assert geometry["inside_screen"] and geometry["painted"] and geometry["attached"], geometry
+        assert not geometry["covers"], geometry
+        # Idle: no further judgement, and the box stays where it is.
+        await pilot.pause(1.0)
+        assert judges["n"] == 1
+        assert _picker_geometry(app, screen)["picker"] == geometry["picker"]
+        await pilot.resize_terminal(*SIZE)
+        await _picker_settled(pilot, screen)
+
+
+async def test_a_caret_lost_in_the_pickers_own_re_anchor_closes_through_the_controller(
+    tmp_path, monkeypatch
+) -> None:
+    """R4-3: the picker's own re-anchor pass (its ``on_resize``) hid the box
+    itself when the caret cell provider answered ``None`` -- no generation
+    bump, and the body kept routing keys to a closed picker. The close is
+    the controller's: the generation bumps, the body's routing flag resets,
+    and Enter is the editor's own newline again."""
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    note_id = profile.db.add_note("Long body", LONG_BODY)
+    async with app.run_test(size=COMPACT) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Long body", note_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        body.move_cursor((60, 0), center=True)
+        await pilot.pause(0.3)
+        await _type(pilot, "[[Lis")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        await pilot.pause(0.3)
+        controller = screen._notes_controller
+        before = controller._library_notes_link_picker_generation
+        picker = _picker_or_none(screen)
+        # The picker's own pass finds the caret gone: the state a picker
+        # Resize meets after a scroll has taken the caret off the body.
+        picker._anchor_cell_provider = lambda: None
+        picker.reanchor()
+        await pilot.pause(0.2)
+        assert not picker.is_open
+        assert body.link_picker_open is False, "the body still routes keys to a closed picker"
+        assert controller._library_notes_link_picker_generation == before + 1
+        lines = body.document.line_count
+        await pilot.press("enter")
+        await _until(pilot, lambda: body.document.line_count == lines + 1, "the editor's own newline")
+        assert "note://" not in body.text
