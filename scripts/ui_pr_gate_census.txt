@@ -1067,6 +1067,10 @@ Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_ans
 # these are the rest. They and the Phase 7 block were dealt together from
 # nine PR runs' shard logs, each entry at its slowest. Tests/CI pins that
 # every function (or case) of a split file stays listed.
+# Keep this block where it is: its order was dealt for the slot it starts in.
+# Resolve a tail conflict by putting the other PR's entries AFTER it. An entry
+# added above it rotates the whole deal onto other shards, so if one must go
+# above it, re-run scripts/ui_lane_shard_replay.py first.
 
 Tests/UI/test_settings_connect_rows.py::test_a_held_mouse_press_on_the_open_list_still_chooses
 Tests/UI/test_settings_default_model_picker.py::test_revert_puts_the_saved_default_back_in_the_picker

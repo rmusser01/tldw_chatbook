@@ -493,8 +493,10 @@ def test_dead_defines_test_is_gone():
 
 #: Census files listed by function (or, for a one-test file, by parametrize
 #: case) instead of whole, so no UI Fast Lane shard takes one whole
-#: (TASK-35834, TASK-36512). A function added to one of them runs in no lane
-#: until it is listed too, which is what the test below catches.
+#: (TASK-35834, TASK-36512). A test function or case added to one of them
+#: runs in no lane until it is listed too, which the test below catches. It
+#: counts top-level functions only, so it refuses a test class in a split file
+#: rather than let the class's methods go unlisted.
 SPLIT_CENSUS_FILES = (
     "Tests/UI/test_settings_model_defaults_rows.py",
     "Tests/UI/test_settings_connect_rows.py",
@@ -524,11 +526,19 @@ def _case_count(function: ast.AST) -> int:
 def test_a_split_census_file_keeps_every_test_gated_once(path):
     root = SCRIPT.parents[1]
     tree = ast.parse((root / path).read_text(encoding="utf-8"))
-    functions = {
+    classes = [
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test")
+    ]
+    assert not classes, (
+        f"{path} defines test classes {classes}: write them as functions"
+    )
+    functions = {  # pytest's default python_functions: the "test" prefix
         node.name: node
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name.startswith("test_")
+        and node.name.startswith("test")
     }
     entries = [
         line.strip()
@@ -539,6 +549,8 @@ def test_a_split_census_file_keeps_every_test_gated_once(path):
     ]
     selected = [entry for entry in entries if entry.split("::", 1)[0] == path]
     assert path not in selected, f"{path} is listed whole again"
+    twice = sorted({entry for entry in selected if selected.count(entry) > 1})
+    assert not twice, f"listed twice: {twice}"
     spec = importlib.util.spec_from_file_location("cen_split", SCRIPT)
     checker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(checker)

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-23 22:46
-updated_date: 2026-10-23 23:10
+updated_date: 2026-10-23 23:56
 labels:
 - follow-up
 - ci
@@ -39,7 +39,7 @@ The census has grown from 430 to 664 entries since TASK-35834 re-dealt it on 202
 <!-- AC:BEGIN -->
 - [x] #1 The files that make the at-cap shards heavy are dealt over several shards, re-ordered by measured times from recent PR runs' shard logs
 - [x] #2 Every test the lane ran before the change still runs on it
-- [ ] #3 Over at least three PR runs after the change, no UI Fast Lane job reaches its 20-minute cap; the 3 minutes of headroom a hung test's report needs is carried by TASK-36514 (owner ruling 2026-10-23)
+- [ ] #3 Over at least three PR runs after the change, no UI Fast Lane job reaches its 20-minute cap
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,9 +56,9 @@ The census has grown from 430 to 664 entries since TASK-35834 re-dealt it on 202
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Measured.** Shard logs of nine PR runs from 2026-10-23 (40024354185, 40007935895, 40007779176, 40003892794, 40000099679, 40018273828, 39995171485, 39994223628, 39993112363). Eight of them ran this branch's census unchanged. Replayed over each run's own census, the replay matched the measured shard pytest time to within 1 s on seven runs. Setup, from job start to pytest's `collected` line, took 62-117 s (median 85 s). With each entry scored at its slowest run, the heaviest shard carried 19.6 pytest minutes. The heavy whole-file entries on the at-cap shards were `test_settings_connect_rows.py` (235-367 s), `test_mcp_permissions_handoff.py` (172-243 s), `test_settings_connect_tab_budget.py` (188-323 s) and `test_settings_default_model_picker.py` (229-394 s).
+**Measured.** Shard logs of nine PR runs from 2026-10-23 (40024354185, 40007935895, 40007779176, 40003892794, 40000099679, 40018273828, 39995171485, 39994223628, 39993112363). Eight of them ran the base census unchanged. Replayed over each run's own census, the replay matched the measured shard pytest time to within 1 s on seven runs. Setup, from job start to pytest's `collected` line, took 62-117 s (median 85 s). With each entry scored at its slowest run, the heaviest shard carried 19.6 pytest minutes. The heavy whole-file entries on the at-cap shards were `test_settings_connect_rows.py` (235-367 s), `test_mcp_permissions_handoff.py` (172-243 s), `test_settings_connect_tab_budget.py` (188-323 s) and `test_settings_default_model_picker.py` (229-394 s).
 
-**Change.** Those four files are now listed by function, and the MCP handoff by its six parametrize cases, since it has one test. Each file keeps one selector in its old slot, and the other selectors are appended at the census tail. The tail selectors and the 92-entry Phase 7 block were then dealt together, by a swap search. The search minimised the heaviest shard with every entry at its slowest run; ties went to the lowest heaviest shard in the nine runs' own replays. Every entry outside the Phase 7 block and the tail keeps its slot.
+**Change.** Those four files are now listed by function, and the MCP handoff by its six parametrize cases, since it has one test. Each file keeps one selector in its old slot, and the other selectors are appended at the census tail. The tail selectors and the 92-entry Phase 7 block were then dealt together, by a swap search. The search minimised the heaviest shard with every entry at its slowest run; ties went to the lowest heaviest shard in the nine runs' own replays. Every entry outside the Phase 7 block and the tail keeps its slot. The tail block was dealt for the slot it starts in: in the replay, 1-12 entries added above it raise the worst case from 17.3 to 17.8-18.5. Its header therefore says to keep it in place and to put another PR's tail entries after it.
 
 The worst-case replay is now 17.2-17.3 pytest minutes on every shard, against 15.8-19.6 before. In the nine runs' own replays, the heaviest shard is 15.5-16.7 minutes, against 16.4-19.2.
 
@@ -66,14 +66,15 @@ The worst-case replay is now 17.2-17.3 pytest minutes on every shard, against 15
 
 **AC#2 evidence.** `pytest --collect-only -q` of each of the 13 old and 13 new shard lists, through run.sh, collects 3,101 node ids each, with no id twice. The sorted sets are byte-identical (sha256 bbc5c49d...). The census checker resolves every new case id.
 
-**Guard.** The model-defaults split guard in Tests/CI is now `test_a_split_census_file_keeps_every_test_gated_once`, parametrized over the five split files. A function must be listed, or else all of its literal parametrize cases. Red/green evidence:
+**Guard.** The model-defaults split guard in Tests/CI is now `test_a_split_census_file_keeps_every_test_gated_once`, parametrized over the five split files. A top-level test function must be listed, or else all of its literal parametrize cases. The guard refuses a `Test*` class in a split file, whose methods it does not count, and names a selector listed twice. Red/green evidence:
 - Red on the old census: 4 failed, 1 passed, on the "listed whole" assertion.
-- Two negative controls on the new census both fired: a dropped connect-rows function ("is not in the census") and a dropped MCP case ("misses a case", 5 == 6).
-- Green after the change.
+- The review's control trees, rebuilt from this head: c0 (no change) passes. c1-c9 each fail on their own message: dropped function, duplicate function, duplicate case, new function, new case, new test class, function beside its cases, file whole again, bogus case id.
+- The new-class control (c6) passed under the previous guard at 23e53bc69e (5 passed) and fails now ("defines test classes").
+- Green on the new census.
 
-**AC#3 is open, and not expected to pass at thirteen shards.** No ordering beats the sum of every entry's slowest time divided by the shard count: 223.6 / 13 = 17.2 pytest minutes. With up to 1.9 minutes of setup, the worst case projects to 18.6-19.2 minutes a job, not 17. Even averages fall short. The runs averaged 13.8-15.1 pytest minutes a shard, so a perfectly balanced shard still takes about 15.3-16.6 minutes a job with setup. The lightest shard of the slowest run then needs every job within about 0.4 minutes of that average to stay at 17. The floor is 16.0 minutes at 14 shards and 14.9 at 15, so the 3-minute target needs about 15 shards with a full re-deal, or less work per shard. The change removes the at-cap shards. It does not provide that headroom.
+**AC#3 waits on three post-change PR runs.** The replayed worst case is about 19.2 minutes a job, under the 20-minute cap: 17.3 pytest minutes plus up to 2.0 of setup. No order does better at this shard count. Every entry at its slowest run sums to 223.6 pytest minutes, a floor of 17.2 a shard. That leaves no room for the 3 minutes a hung test's report needs. By the owner's ruling (2026-10-23), that headroom moved to TASK-36514, which adds shards and a full re-deal, and AC#3 here was amended to "no job reaches the cap".
 
-**Checks.** Census checker OK. `Tests/CI` with `-n 4`: 1029 passed, 1 skipped. Preflight passed. Ruff check and format pass on the changed test file; the checker's two ruff findings predate this change.
+**Checks.** Census checker OK. `Tests/CI` with `-n 4`: 1029 passed, 1 skipped. Preflight passed. Ruff check and format pass on the changed test file; the checker's two ruff findings predate this change. After review round 1 these all pass again with the same counts, and the shard-by-shard collection still gives the same 3,101 node ids.
 
 Files: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py` (floor), `Tests/CI/test_ui_pr_gate_census_checker.py`, `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
