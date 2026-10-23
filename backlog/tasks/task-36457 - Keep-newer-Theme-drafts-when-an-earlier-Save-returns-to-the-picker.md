@@ -27,7 +27,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 19:40
+updated_date: 2026-10-23 20:37
 ---
 
 ## Description
@@ -45,9 +45,8 @@ Related tasks: [TASK-32948](task-32948%20-%20Settings-Theme-picker-first-redesig
 
 ADR check: no new ADR expected for a bounded repair within existing owners and contracts. Applicable decisions: [011-chatbook-workbench-ui-system](../decisions/011-chatbook-workbench-ui-system.md), [033-application-session-state-ownership](../decisions/033-application-session-state-ownership.md), [033-settings-commit-models-three-honestly-labeled](../decisions/033-settings-commit-models-three-honestly-labeled.md), [150-design-token-system-and-design-language](../decisions/150-design-token-system-and-design-language.md), [161-component-pattern-library](../decisions/161-component-pattern-library.md). Re-evaluate if implementation changes a boundary.
 
-[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). This task does not claim the repair is implemented.
+[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). The audit records the pre-fix behavior; implementation evidence is recorded below.
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Palette, name and dark-mode edits accepted while a Save is pending remain recoverable and honestly dirty after completion; only the submitted theme is written.
@@ -74,11 +73,7 @@ Reason: bounded asynchronous completion repair within existing editor/picker own
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Save now retains later raw palette/name/dark edits visibly dirty and keeps the actual saved-file identity separate from a newer draft name. Save-as retargets only an unchanged Name box; next Save preserves existing file-resolution and overwrite rules. The existing Saved message carries session/raw-snapshot fencing through the actual picker handoff, including queued Changed input.
+Theme Save keeps later raw palette/name/dark edits visibly dirty and tracks the actual saved file separately from a newer draft name. Save-as changes only an unchanged Name box; the next Save preserves existing file-resolution and overwrite rules. Session/raw-snapshot checks protect the posted Saved handoff before the picker returns, including queued Changed input. The theme-system architecture document records the behavior.
 
-Added Tests/UI/test_theme_pending_save_drafts.py (13 mounted real-TOML cases) and a narrow Editor Save completion section in Docs/Architecture/theme-system.md. All 13 new regressions pass on final code. Existing controls: 17 of 18 pass; 5 Reset controls pass. The fixed-pause Save-as highlight failure also reproduces on pristine HEAD while its catalog scan is pending; a final bounded scan witness preserves every original assertion and passes. Existing test file remains unchanged. Full RED/GREEN counts, excluded/qualified failures, source identities and exact receipts: .test-tmp/task-36454-36458/theme-report.md.
-
-Ruff check passes for both production modules/new test; ruff format --check new test and scoped git diff --check pass. Targeted tests only. Task stays In Progress for parent review/integration; no full sweep, commit, push or Done change.
-
-ADR required: no. Existing decisions: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/033-settings-commit-models-three-honestly-labeled.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md. Repair preserves existing owners and file/leave contracts; no new boundary, storage model, dependency or token.
+All13 mounted real-TOML regressions pass. Existing controls:17 of18 pass directly and five Reset controls pass. The fixed-pause Save-as highlight test also fails on pristine HEAD before its catalog scan completes; the bounded final-source scan witness preserves every assertion and passes. Existing test source is unchanged. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for exact receipts and qualification. Existing ADR-011, both applicable ADR-033 records and ADR-150/161 apply; no new ADR. Independent Superpowers review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -20,7 +20,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 19:09
+updated_date: 2026-10-23 20:37
 ---
 
 ## Description
@@ -40,13 +40,12 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 
 [Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). The audit records the pre-fix behavior; implementation evidence is recorded below.
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Basic System and User input accepted while their first block mounts survives the earlier reconciliation, including a later clear and edits across either lane.
-- [ ] #2 Canonical blocks and Basic/Advanced projections agree with the newest live text while preserving block identity, metadata and order, with no duplicate block.
-- [ ] #3 Ordinary first and subsequent edits continue to work without replacing the full stateful editor or changing persistence/provider boundaries.
-- [ ] #4 Mounted controls cover no-later-input and queued later-key interleavings around the original structural reconciliation, witnessing delivery to the live child before releasing the earlier handler.
+- [x] #1 Basic System and User input accepted while their first block mounts survives the earlier reconciliation, including a later clear and edits across either lane.
+- [x] #2 Canonical blocks and Basic/Advanced projections agree with the newest live text while preserving block identity, metadata and order, with no duplicate block.
+- [x] #3 Ordinary first and subsequent edits continue to work without replacing the full stateful editor or changing persistence/provider boundaries.
+- [x] #4 Mounted controls cover no-later-input and queued later-key interleavings around the original structural reconciliation, witnessing delivery to the live child before releasing the earlier handler.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,8 +64,8 @@ Reason: bounded stale projection repair inside the existing Prompt canvas; no st
 <!-- DOD:END -->
 
 ## Implementation Notes
-<!-- SECTION:NOTES:BEGIN -->
-Basic first-block reconciliation now reads both live TextAreas after structural awaits and reconciles the newest accepted text on the existing block identities. Later keys, clear and cross-lane input remain consistent in canonical and Advanced state; the full stateful editor is retained.
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Basic first-block reconciliation re-reads both enabled TextAreas after structural waits and updates every captured Advanced card on the existing block identities. Later keys, clears and cross-lane input stay coherent across raw Basic controls, canonical blocks and actual Advanced children, including an already populated other lane. The editor remains mounted with stable metadata/order and no duplicate block; persistence/provider boundaries are unchanged.
 
-Eight mounted controls first produced two ordinary passes and six exact loss failures, then all eight passed after the repair and on the final relevant source. Subsequent editing preserves child/block identity, metadata and order. See Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md. Existing ADR-033 application state and ADR-040/076 govern this bounded repair; no new ADR. Independent review and hosted CI remain pending.
-<!-- SECTION:NOTES:END -->
+All10 first-mount cases pass across the final targeted selections, including both populated-other-lane variants added after Superpowers review exposed the one-card projection gap. Those cases switch to Advanced and persist the retained text through real SQLite. The shared Save structural-mount regression also passes;11 neighboring Prompt controls pass. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for original RED/GREEN evidence and excluded fixture attempts. Existing ADR-033 application state and ADR-040/076 apply; no new ADR. Independent review approved the fix; required current-head PR #3228 CI is pending, so the task stays In Progress.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
