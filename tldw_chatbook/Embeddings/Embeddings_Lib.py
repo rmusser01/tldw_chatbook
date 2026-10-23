@@ -898,9 +898,9 @@ class EmbeddingFactory:
                     logger.debug(
                         f"embed: Idle evicting model {mid} (unused for {now - rec['last']:.1f}s)"
                     )
-                    self._cache.pop(mid)
                     if rec["close"]:
                         rec["close"]()
+                    self._cache.pop(mid)
 
             # Now, get the model, building it if it doesn't exist.
             rec = self._cache.get(model_id_to_use)
@@ -924,12 +924,13 @@ class EmbeddingFactory:
                             f"building {model_id_to_use} past max_cached"
                         )
                         break
-                    lru_rec = self._cache.pop(lru_mid)
+                    lru_rec = self._cache[lru_mid]
                     logger.debug(
                         f"embed: LRU evicting model {lru_mid} to make space for {model_id_to_use}"
                     )
                     if lru_rec["close"]:
                         lru_rec["close"]()
+                    self._cache.pop(lru_mid)
                 logger.debug(f"embed: Building model {model_id_to_use}")
                 rec = self._build(model_id_to_use)
                 self._cache[model_id_to_use] = rec
