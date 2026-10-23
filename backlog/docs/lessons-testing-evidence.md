@@ -21661,3 +21661,8 @@ attributes they touch. Do not list them from the domain model. Read mutable
 inputs by value at read time, because a held reference compares equal to
 itself after an in-place write. Give each input a test that changes it alone
 and ticks through the real gate.
+## Retain parent and child runtime bootstrap for offline qualification
+
+**Incident (TASK-36421, 2026-10-23).** Cached MiniLM qualification repeatedly stopped before model assertions with missing `pywintypes`: adding shared packages to `PYTHONPATH` did not process their `.pth`, and parent-only `site.addsitedir` did not configure the private child. One attempt also selected the worktree venv instead of the main checkout shared site. The preserved fix1-offline-final-01/02/03 runs are setup failures; fix1-offline-final-04 and the reusable runner composition then passed with the same source/backend and offline cache.
+
+**What to do.** Preserve and reuse the exact qualified parent and child bootstrap, interpreter, shared-site provenance, selectors and before-launch hashes. Read-only shared-site `.pth` processing and inherited child paths are distinct requirements. Keep this model-capable runner separate from the normal missing-optional-dependency keyword control; neither setup failure nor presence of a cached model certifies product behavior.
