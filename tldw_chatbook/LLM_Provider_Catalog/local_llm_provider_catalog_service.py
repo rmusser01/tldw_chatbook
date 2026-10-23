@@ -646,8 +646,8 @@ class LocalLLMProviderCatalogService:
         if not supports_openai_compatible_model_discovery(
             provider_key, endpoint
         ) or not validate_url(models_url):
-            # TASK-36380: koboldcpp names the endpoint contract's reason and a
-            # fix that keeps its native send route.
+            # TASK-36380: koboldcpp names the endpoint contract's reason and
+            # points at the native /api/v1/generate route its sends need.
             reason = contract_refusal_reason(provider_key, endpoint)
             return ModelDiscoveryResult(
                 provider=provider,

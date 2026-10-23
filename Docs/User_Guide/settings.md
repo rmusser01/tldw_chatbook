@@ -327,8 +327,8 @@ over 2,000 characters or one with a request path in the middle
 discovered either, and the line beside **Discover models** gives the reason and
 a fix. For an API path before `/api/v1/generate` (such as
 `/v1/api/v1/generate`) it reads "Endpoint path has ambiguous API suffixes. Use
-the server's address, such as http://localhost:5001, or its /api/v1/generate
-route."
+the server's /api/v1/generate route, such as
+http://localhost:5001/api/v1/generate."
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
