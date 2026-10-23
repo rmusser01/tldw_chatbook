@@ -3431,7 +3431,7 @@ async def test_note_create_refreshes_unfiled_and_every_exact_active_placement_pa
         FolderPlacementId.unfiled("created")
     )
     # TASK-34000.14: the root FOLDERS slice was never loaded here, so the
-    # create owes it -- requested through its own slice worker, before the
+    # create owes it -- requested through its own slice worker, after the
     # locate, while the fresh root placements slice above is left alone.
     root_folders = fake._notes_state.tree_branches[NotesBranchKey(None, "folders")]
     assert root_folders.loading is True
