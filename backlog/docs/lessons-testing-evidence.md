@@ -67,6 +67,12 @@ completion while stubbing only the separately tested package/model check.
 
 **What to do.** Retain every progress occurrence, all duration phases and each run's exact census. Top-25 reports do not fully time parameterized functions; label the unmeasured remainder and measure hosted job setup separately. Bind evidence hashes to canonical Git blob bytes (LF/UTF8), since Windows checkout newlines and upstream-only comments can change file hashes without changing the selected tests.
 
+## A census tail cannot take work off a heavy shard, and no deal beats the floor (TASK-36512, 2026-10-23)
+
+**Incident.** UI Fast Lane shards timed out at their 20-minute cap. The plan was to split the heavy files by function, keep one selector in each file's slot, and append the rest at the tail. Replayed over nine PR runs, each entry at its slowest, that moved the worst shard from 19.6 only to 18.3 pytest minutes. Round-robin gives every shard an equal share of the tail, and each selector costs at least one app boot (~15 s), so shards that were already average gained 1-2 minutes. Re-dealing the Phase 7 block together with the tail reached 17.2 on every shard. That is also the floor: 223.6 minutes of worst-case work over 13 shards. With 1.4-1.9 minutes of setup, the brief's 17-minute target could not be met by any order.
+
+**What to do.** Before planning a re-deal, compute the floor: the sum of the worst-case entry costs divided by the shard count, plus the measured setup. If that is over the target, say so first: no order meets it, and only more shards or less work per shard can. To move work off a heavy shard, re-deal a fixed-length block that holds heavy entries, so every entry outside it keeps its slot. A tail-only append only adds work to every shard.
+
 
 ## A returned frame address cannot identify a later invocation (TASK-35713, PR #3189, 2026-10-21)
 

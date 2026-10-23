@@ -491,12 +491,41 @@ def test_dead_defines_test_is_gone():
     assert not hasattr(module, "defines_test")
 
 
-def test_split_model_defaults_keeps_every_test_function_gated_once():
+#: Census files listed by function (or, for a one-test file, by parametrize
+#: case) instead of whole, so no UI Fast Lane shard takes one whole
+#: (TASK-35834, TASK-36512). A function added to one of them runs in no lane
+#: until it is listed too, which is what the test below catches.
+SPLIT_CENSUS_FILES = (
+    "Tests/UI/test_settings_model_defaults_rows.py",
+    "Tests/UI/test_settings_connect_rows.py",
+    "Tests/UI/test_settings_connect_tab_budget.py",
+    "Tests/UI/test_settings_default_model_picker.py",
+    "Tests/UI/test_mcp_permissions_handoff.py",
+)
+
+
+def _case_count(function: ast.AST) -> int:
+    """How many cases pytest makes of a test's literal parametrize lists."""
+    count = 1
+    for decorator in function.decorator_list:
+        if (
+            isinstance(decorator, ast.Call)
+            and getattr(decorator.func, "attr", "") == "parametrize"
+        ):
+            values = decorator.args[1]
+            assert isinstance(values, (ast.List, ast.Tuple)), (
+                f"{function.name}: list it by function, its cases are not a literal list"
+            )
+            count *= len(values.elts)
+    return count
+
+
+@pytest.mark.parametrize("path", SPLIT_CENSUS_FILES)
+def test_a_split_census_file_keeps_every_test_gated_once(path):
     root = SCRIPT.parents[1]
-    path = "Tests/UI/test_settings_model_defaults_rows.py"
     tree = ast.parse((root / path).read_text(encoding="utf-8"))
-    expected = {
-        path + "::" + node.name
+    functions = {
+        node.name: node
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and node.name.startswith("test_")
@@ -509,10 +538,29 @@ def test_split_model_defaults_keeps_every_test_function_gated_once():
         if line.strip() and not line.lstrip().startswith("#")
     ]
     selected = [entry for entry in entries if entry.split("::", 1)[0] == path]
-    assert len(selected) == len(expected)
-    assert set(selected) == expected  # function selectors retain all parameter cases
-    # Reading the actual matrix prevents a split that still deals every row
-    # function back into one job, even though the census has no duplicates.
+    assert path not in selected, f"{path} is listed whole again"
+    spec = importlib.util.spec_from_file_location("cen_split", SCRIPT)
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    listed = 0
+    for name, function in functions.items():
+        selector = f"{path}::{name}"
+        cases = [entry for entry in selected if entry.startswith(selector + "[")]
+        if selector in selected:
+            listed += 1  # a function selector runs every parameter case
+            assert not cases, f"{selector} is listed beside its own cases"
+            continue
+        # Listed by case: each id must be one pytest makes, and all of them listed.
+        assert cases, f"{selector} is not in the census, so no lane runs it"
+        for case in cases:
+            assert checker.resolve_node(root / path, case.split("::", 1)[1]) is None, (
+                case
+            )
+        assert len(set(cases)) == _case_count(function), f"{selector} misses a case"
+        listed += len(set(cases))
+    assert listed == len(selected), "a selector names no test this file defines"
+    # Reading the actual matrix prevents a split that still deals every
+    # selector back into one job, even though the census has no duplicates.
     import yaml
 
     jobs = yaml.safe_load(
@@ -520,6 +568,6 @@ def test_split_model_defaults_keeps_every_test_function_gated_once():
     )["jobs"]
     total = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
     assert (
-        len({index % total for index, entry in enumerate(entries) if entry in expected})
+        len({index % total for index, entry in enumerate(entries) if entry in selected})
         > 1
     )
