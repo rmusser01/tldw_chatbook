@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:27'
-updated_date: '2026-10-23 16:27'
+updated_date: '2026-10-23 17:08'
 labels: []
 dependencies:
   - TASK-36420
@@ -45,4 +45,14 @@ Reason: direct implementation of accepted folder-bound semantic projection and d
 
 Demonstrated Windows offline-loader correction: actual qualified factory reached model_recovery._closure and failed because that owner imports stdlib os while pinned_directory returns the existing platform filesystem descriptor. Python Windows stdlib os.listdir(fd) is unsupported. Reuse tldw_chatbook.Utils.platform_files.os in model_recovery.py, as native_files already does, so listdir/open/fstat use the existing handle-relative no-follow Windows implementation and unchanged stdlib POSIX behavior. This is a narrow import/adapter correction under existing ADR126 and ADR241, not a new storage/source permission or Windows backend. Do not add path-based enumeration fallback, weaken alias/single-link/identity/manifest/closure limits, change the generic platform shim or bypass model/recovery gates. Retain the actual offline13/16/17 failures and run native closure success/refusal tests plus directly affected model-reference/recovery controls and actual blocked-network offline factory. Report any additional owner need before edits.
 ADR path also applies: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct reuse of existing Windows-native filesystem contract; no new ADR.
+
+### Task2 review correction: retained project model close failure
+
+Ruling: Use only the existing ProjectIndexService operation owner to strongly retain failed project model retirement. Add a private projection_close_pending token-to-actual-wrapper map to _Operation and narrow private mark/settle/check helpers under the service lock. Register the actual project wrapper before factory/model close; keep its actual factory/cache record and carrier/retained parent on any failure, raise/log only classified project_embedding_close_failed without raw cause, and remove only its token after positively successful retry. Carrier close and wrapper use/rebind refuse while its retirement is pending; the service-rooted operation -> wrapper -> carrier -> actual parent chain must survive caller reference loss and GC. A self-contained wrapper/carrier cycle alone is insufficient. Default Library close behavior is unchanged.
+
+Keep projection-close pending separate from generic retirement_unproven. It must not blanket-deny registry_connection_scope or keyword reads merely because a model close failed; new semantic use on the affected binding refuses, while actual keyword lookup remains usable. During explicit service shutdown, detect/report a known unresolved projection close before waiting forever on its not-done operation; retain its real owner and permit positive same-wrapper cleanup retry. Never clear an unrelated native/store/capability uncertainty, claim cleanup success, or release the parent because an exception was swallowed. Serialize close/rebind and prevent embed reuse after partial closure. No SQLite handle/gate/fence spans model close, joins or waits.
+
+Authorized additional exact product path is tldw_chatbook/Workspaces/project_index/service.py, limited to this existing operation-owner retention/reporting seam. Existing Task2 projection_scope.py, embeddings_wrapper.py and actual factory paths may consume it; no generic recovery framework, new persistence owner, source grant or Library behavior change. Test actual factory record retention after injected close failure, sanitized logs/errors, caller-reference loss/GC, carrier and affected-semantic admission refusal, actual keyword lookup availability, explicit shutdown unresolved result, and successful physical retry followed by parent retirement. Root inspected actual factory close (cache.clear only after all record closes), service operation roots/admission and shutdown waits before this amendment.
+
+ADR required: yes, amend existing ADR241 before the cross-module owner change. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: narrow completion of accepted physical retirement and keyword independence, reusing existing project operation owner; no duplicate ADR.
 <!-- SECTION:PLAN:END -->

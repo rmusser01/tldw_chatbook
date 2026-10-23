@@ -63,7 +63,6 @@ from tldw_chatbook.RAG_Search.model_recovery import (  # noqa: E402
 from pydantic import (  # noqa: E402
     BaseModel,
     Field,
-    field_validator,
     model_validator,
     HttpUrl,
     ValidationError,
@@ -269,32 +268,15 @@ class OpenAICfg(BaseModel):
     )  # CHANGED: Added base_url, made it HttpUrl for validation
     dimension: Optional[int] = None
 
-    @field_validator("api_key", mode="before")
-    def _default_api_key(
-        cls, v: Optional[str], values: Any
-    ) -> Optional[str]:  # Ensure values is available if needed
-        # If a base_url is provided (likely for a local/custom OpenAI-compatible API),
-        # an API key might not be required or might be a placeholder.
-        # This validator makes the API key truly optional if base_url is set.
-        if values.data.get(
-            "base_url"
-        ):  # Check if base_url is present in the input data
-            return v  # Return the provided value (None or actual key)
-
-        # Original logic: API key is required if no base_url pointing to a local server
-        if v:
-            return v
-        from os import getenv
-
-        env = getenv("OPENAI_API_KEY")
-        if not env:
-            # Only raise ValueError if it's for the actual OpenAI API (no base_url)
-            # and no key is provided and no env var is set.
-            if not values.data.get("base_url"):
-                raise ValueError(
-                    "OPENAI_API_KEY env-var missing and api_key not set for OpenAI provider (and no base_url specified)."
-                )
-        return env
+    @model_validator(mode="after")
+    def _default_api_key(self) -> "OpenAICfg":
+        # base_url is validated only after the whole model has been parsed.
+        if self.api_key:
+            return self
+        self.api_key = os.environ.get("OPENAI_API_KEY") or None
+        # Catalog entries remain candidates without a credential. The actual
+        # OpenAI endpoint is refused at construction/use until one is supplied.
+        return self
 
 
 # A discriminated union lets Pydantic and type checkers infer the correct model type
@@ -346,9 +328,9 @@ def existing_local_hf_snapshot(cfg: HFModelCfg) -> Path:
             raise FileNotFoundError("local_embedding_snapshot_required")
         from huggingface_hub.constants import HF_HUB_CACHE
 
-        model = Path(os.environ.get("HF_HUB_CACHE", HF_HUB_CACHE)) / (
-            "models--" + "--".join(parts)
-        )
+        model = Path(
+            cfg.cache_dir or os.environ.get("HF_HUB_CACHE", HF_HUB_CACHE)
+        ).expanduser() / ("models--" + "--".join(parts))
         snapshots = model / "snapshots"
         if cfg.revision:
             revision = cfg.revision
@@ -596,6 +578,8 @@ _BACKOFF: tuple[float, ...] = (1, 2, 4, 8)
 def _openai_embedder(
     cfg: OpenAICfg,
 ) -> Callable[[list[str], Any, bool], Any]:  # CHANGED: Takes OpenAICfg
+    if not cfg.api_key and cfg.base_url is None:
+        raise ValueError("embedding_provider_setup_required")
     session = requests.Session()
 
     # CHANGED: Use cfg.api_key and handle its potential None value if base_url is set

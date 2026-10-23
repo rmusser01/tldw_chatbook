@@ -199,6 +199,9 @@ class EmbeddingsServiceWrapper:
         """
         self._projection_execution_scope = None
         self._project_rebind_lock = threading.Lock()
+        self._project_close_token = object()
+        self._project_close_started = False
+        self._project_close_complete = False
         if execution_scope is not None:
             from ..projection_scope import ProjectionExecutionScope
 
@@ -331,6 +334,8 @@ class EmbeddingsServiceWrapper:
         Credential or resolved-target changes require a new wrapper.
         """
         with self._project_rebind_lock:
+            if self._project_close_started:
+                raise ProjectProjectionRequired("project_embedding_close_pending")
             previous = self._projection_execution_scope
             if previous is None:
                 raise ProjectProjectionRequired()
@@ -349,6 +354,8 @@ class EmbeddingsServiceWrapper:
     @activation_guarded
     def _ensure_initialized(self):
         """Ensure the factory is initialized when first needed."""
+        if self._projection_execution_scope is not None and self._project_close_started:
+            raise ProjectProjectionRequired("project_embedding_close_pending")
         recovered = None
         if not self._use_mock_backend and not self.model_name.startswith("openai/"):
             from tldw_chatbook.Embeddings.Embeddings_Lib import HFModelCfg
@@ -1165,6 +1172,8 @@ class EmbeddingsServiceWrapper:
 
         This is useful when switching models or freeing memory.
         """
+        if self._projection_execution_scope is not None:
+            raise ProjectProjectionRequired("project_embedding_cache_change_unsupported")
         try:
             if self.factory is not None:
                 self.factory.close()
@@ -1183,6 +1192,30 @@ class EmbeddingsServiceWrapper:
 
         Should be called when the service is no longer needed.
         """
+        if self._projection_execution_scope is not None:
+            with self._project_rebind_lock:
+                if self._project_close_complete:
+                    return
+                carrier = self._projection_execution_scope
+                operation = carrier._parent.operation
+                owner = carrier._service
+                owner._mark_projection_close_pending(
+                    operation, carrier.scope.key, self._project_close_token, self
+                )
+                self._project_close_started = True
+                try:
+                    if self.factory is not None:
+                        self.factory.close()
+                except BaseException:
+                    logger.error("Project embedding close failed")
+                    raise RuntimeError("project_embedding_close_failed") from None
+                owner._settle_projection_close_pending(
+                    operation, self._project_close_token, self
+                )
+                self.factory = None
+                self._project_close_complete = True
+            logger.info("Closed project embeddings service")
+            return
         try:
             # Close the factory first
             if hasattr(self, "factory") and self.factory is not None:

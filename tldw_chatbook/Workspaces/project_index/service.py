@@ -69,6 +69,9 @@ class _Operation:
     done: threading.Event
     retirement_unproven: bool = False
     retained: list[object] = field(default_factory=list)
+    projection_close_pending: dict[object, tuple[ProjectIndexKey, object]] = field(
+        default_factory=dict
+    )
 
 
 def binding_bytes(directory: Path) -> int:
@@ -162,6 +165,47 @@ class ProjectIndexService:
                 if not operation.retirement_unproven:
                     self._operations.discard(operation)
             operation.done.set()
+
+    def _require_projection_open(self, key: ProjectIndexKey) -> None:
+        """Refuse new semantic use of a binding with unresolved model close."""
+        with self._lock:
+            pending = any(
+                selected == key
+                for operation in self._operations
+                for selected, _ in operation.projection_close_pending.values()
+            )
+        if pending:
+            from tldw_chatbook.RAG_Search.projection_scope import (
+                ProjectProjectionRequired,
+            )
+
+            raise ProjectProjectionRequired("project_embedding_close_pending")
+
+    def _mark_projection_close_pending(
+        self, operation: _Operation, key: ProjectIndexKey, token: object, wrapper: object
+    ) -> None:
+        """Root the actual wrapper/factory under its accepted operation before close."""
+        with self._lock:
+            if operation not in self._operations or operation.done.is_set():
+                raise RuntimeError("project_embedding_close_parent_unavailable")
+            existing = operation.projection_close_pending.get(token)
+            if existing is not None and existing != (key, wrapper):
+                raise RuntimeError("project_embedding_close_parent_unavailable")
+            operation.projection_close_pending[token] = (key, wrapper)
+
+    def _settle_projection_close_pending(
+        self, operation: _Operation, token: object, wrapper: object
+    ) -> None:
+        """Release only the matching actual owner after a positive factory close."""
+        with self._lock:
+            existing = operation.projection_close_pending.get(token)
+            if existing is None or existing[1] is not wrapper:
+                raise RuntimeError("project_embedding_close_parent_unavailable")
+            del operation.projection_close_pending[token]
+
+    def _projection_close_pending(self, operation: _Operation) -> bool:
+        with self._lock:
+            return bool(operation.projection_close_pending)
 
     def _admission_closed(self):
         return (
@@ -1412,10 +1456,21 @@ class ProjectIndexService:
 
         async def drain():
             _, _, operations = await asyncio.to_thread(stop_and_snapshot)
+            if any(self._projection_close_pending(operation) for operation in operations):
+                raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
             if self._cleanup_thread is not None:
                 await asyncio.to_thread(self._cleanup_thread.join)
             for operation in operations:
-                await asyncio.to_thread(operation.done.wait)
+                while not operation.done.is_set():
+                    if self._projection_close_pending(operation):
+                        raise ProjectIndexRetirementUnproven(
+                            "project_embedding_close_pending"
+                        )
+                    await asyncio.to_thread(operation.done.wait, 0.1)
+                if self._projection_close_pending(operation):
+                    raise ProjectIndexRetirementUnproven(
+                        "project_embedding_close_pending"
+                    )
             # An already-admitted start may have dispatched while close waited.
             # Its operation retires before this final writer/search snapshot.
             runs, searches, _ = await asyncio.to_thread(stop_and_snapshot)

@@ -95,6 +95,7 @@ class ProjectionExecutionScope:
             or self._parent.operation not in self._service._operations
         ):
             raise ProjectProjectionRequired()
+        self._service._require_projection_open(self.scope.key)
 
     def validate_constructor(
         self,
@@ -139,6 +140,12 @@ class ProjectionExecutionScope:
                     != self.settings.destination_fingerprint
                 ):
                     raise ProjectProjectionRequired()
+        # The finite store/fence above has closed before current catalog access.
+        from tldw_chatbook.Workspaces.project_index.semantic import (
+            _require_current_catalog,
+        )
+
+        _require_current_catalog(self.settings)
 
     @contextmanager
     def execution(self, *, transfer=None):

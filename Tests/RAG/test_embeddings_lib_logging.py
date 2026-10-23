@@ -60,6 +60,32 @@ def test_openai_embedder_failure_does_not_expose_endpoint_or_cause(
     assert "127.0.0.1" not in rendered + str(failure.value)
 
 
+def test_actual_openai_factory_without_key_refuses_before_provider_session(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(embeddings_lib, "_embeddings_rag_available", lambda: True)
+    monkeypatch.setattr(
+        embeddings_lib.requests,
+        "Session",
+        lambda: pytest.fail("provider session opened without a key"),
+    )
+    factory = embeddings_lib.EmbeddingFactory(
+        {
+            "default_model_id": "default",
+            "models": {
+                "default": {
+                    "provider": "openai",
+                    "model_name_or_path": "text-embedding-3-small",
+                }
+            },
+        }
+    )
+    try:
+        with pytest.raises(ValueError, match="embedding_provider_setup_required"):
+            factory.embed(["synthetic text"])
+    finally:
+        factory.close()
+
+
 def test_common_model_catalog_pins_a_revision_for_remote_code_models():
     """A catalog entry that executes Hub code must pin the commit it runs.
 
