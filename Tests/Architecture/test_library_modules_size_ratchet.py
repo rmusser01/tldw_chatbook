@@ -580,7 +580,13 @@ _BUDGETS: dict[str, int] = {
     # resize settle chain that waits for the compact restage to finish
     # before it judges, and the follow-row click freed from insert mode's
     # stale-row guard.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7109,
+    # 2026-10-23, TASK-34000.11 fix round 4 (same owner decision): 7109 ->
+    # 7229 (+120) -- ONE superseding resize settle chain (token, wall-clock
+    # floor past the newest resize, hard cap) that veils the box until its
+    # single judgement, Enter/Tab refused while it settles or while the box
+    # is off the terminal as it is now, and the picker's own caret-lost
+    # close routed through the controller's dismiss path.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7229,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
