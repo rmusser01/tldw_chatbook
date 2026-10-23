@@ -319,6 +319,7 @@ jobs:
             Tests/UI/test_roleplay_header.py \
             Tests/UI/test_roleplay_hostile_names.py \
             Tests/UI/test_roleplay_journeys.py \
+            Tests/UI/test_roleplay_item_list_app.py \
             Tests/UI/test_app_factory_cleanup.py \
             Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out \
             Tests/Wizards/test_first_run_setup_wizard.py::test_model_status_is_plain_text_that_space_and_enter_cannot_pick \
