@@ -147,6 +147,12 @@ competing lock immediately inside the replacement call, proving the original
 lock remains held, and independently refuses a late target-inode substitution.
 Releasing the lock to make rename succeed would discard the guarantee under test.
 
+## A WorkerFailed from `run_test`'s exit means the body left work running; to reproduce it, hold the producer's result (TASK-36383, 2026-10-23)
+
+**Incident.** Two of three flaky File Notes tests failed at teardown, not at an assertion: `run_test` re-raised `MountError("Can't mount widget(s) before ListView(id='file-notes-git-rows') is mounted")` and `NoMatches('#file-notes-path-label')` from workers. The ListView was mounted. `TldwCli._shutdown` sets `app._exit = True` as a mount fence before it drains app-owned lifecycles. Textual's `is_attached` is False whenever `app._exit` is set, so any mount during that drain raises, while handlers keep running. The tests had ended too early. One stopped on a proxy, the restored file existing on disk, while the Restore handler was still rescanning. The other stopped after one `pilot.pause()` with the init worker still in its thread. The first negative controls only delayed the producer's start, and the old forms never failed: Textual cancels a node's workers at its Unmount, so a late start gets cancelled rather than resumed. Two controls each reproduced the recorded error 4 of 5 times. One ran the real producer, then held its result until teardown had removed the label. The other held the result until `app._exit` and also slowed one shutdown drain.
+
+**What to do.** When `run_test`'s exit raises a WorkerFailed, wait for the handler's last effect (here the reopened path and the cleared `_replacing_rows`), not its first. To reproduce a teardown race, let the real producer finish, then hold its return until teardown reaches the step the traceback names.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
