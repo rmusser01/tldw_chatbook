@@ -29868,6 +29868,19 @@ class LibraryScreen(BaseAppScreen):
                 active_duplicate_consent, confirmed_consent,
             )
             return
+        if captured_backend == "local" and audio_options.get(
+            "transcription_provider"
+        ) in (None, "default"):
+            # Freeze Auto to the displayed model; queued jobs must not reread a
+            # newer config default. Copy only the submission, leaving the form intact.
+            model = getattr(self, "_transcription_default_model", "base") or "base"
+            audio_options = dict(
+                audio_options,
+                transcription_provider="faster-whisper",
+                transcription_model=model,
+                model=model,
+            )
+            submit_kwargs["ingest_options"] = dict(snapshot, audio_video=audio_options)
         external_directory = str(
             audio_options.get("transcription_model_dir") or ""
         ).strip()
@@ -29909,7 +29922,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if getattr(self, "_library_external_submit_scope_id", None):
             self._invalidate_library_external_submission()
-        self._enqueue_library_ingest_snapshot(submit_kwargs)
+        self._enqueue_library_ingest_snapshot(submit_kwargs, preference_options=snapshot)
 
     @work(
         thread=True,
@@ -29951,7 +29964,7 @@ class LibraryScreen(BaseAppScreen):
                     service = self.app_instance._ensure_parakeet_source_service()
                 check_transcription_readiness(
                     options,
-                    default_model=get_cli_setting("transcription.default_model", "base")
+                    default_model=getattr(self, "_transcription_default_model", "base")
                     or "base",
                     transcribe_cpp_model_path=get_cli_setting(
                         "transcription.transcribe_cpp.model_path"
@@ -30378,6 +30391,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         submit_kwargs: dict[str, Any],
         *,
+        preference_options: dict[str, dict[str, Any]] | None = None,
         generation: int | None = None,
         scope_id: str | None = None,
     ) -> None:
@@ -30505,7 +30519,8 @@ class LibraryScreen(BaseAppScreen):
         # option -- roughly six full reload cycles for a single submitted file,
         # growing with every option and every submission.
         option_settings: dict[str, dict[str, Any]] = {}
-        for group, values in snapshot.items():
+        saved_options = snapshot if preference_options is None else preference_options
+        for group, values in saved_options.items():
             persisted = dict(values)
             if group == "audio_video":
                 persisted.pop("transcription_model_dir", None)

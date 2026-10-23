@@ -285,6 +285,9 @@ transcription backend and effective model. **Auto** uses
 choices, including `distil-large-v3`, are preserved. Choosing **Faster Whisper**
 explicitly uses the **Transcription model** selection instead. Custom model paths
 are shown as “custom model” in the summary; server imports use server settings.
+Each local Auto submission keeps the model shown when Library was opened,
+including while queued. Restart Chatbook after editing `default_model` externally
+to load the new choice; saved settings and the Auto selection stay unchanged.
 
 **Parakeet setup:** Installing the Python package adds the transcription runtime;
 it does not download the model files. In the Audio & video options, select

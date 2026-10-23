@@ -27,3 +27,13 @@ Reason: Routine bug fix within the existing config and routing boundaries, with 
 - [x] Capture the configured default in UI/Screens/library_screen.py's existing options payload and pass it to Library/library_ingest_state.py without extra config reads during render.
 - [x] Run the two targeted files, related routing/state/cache checks, lint/format and UI governance. Record any unchanged baseline failures.
 - [x] Update import documentation and TASK-32755.4 notes; self-review the diff and independently review the final change.
+
+## Full-review follow-up (TASK-32755.5)
+
+External config edits can be detected while Library remains mounted. Bind local
+Auto readiness and the execution snapshot to the already displayed model, so
+neither an external edit nor time spent queued silently changes it. Persist the
+original preference snapshot separately; the form and saved Auto choice must
+survive. No render-time config I/O or new ADR is needed (ADR-025 still applies).
+The targeted regression traverses actual enqueue, preference persistence and
+queue option resolution, including saved/custom defaults and server bypass.

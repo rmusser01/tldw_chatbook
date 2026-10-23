@@ -30,7 +30,9 @@ def _screen(backend="local"):
         _ingest_state=SimpleNamespace(form=form),
         _build_ingest_options_snapshot=lambda: snapshot,
         _safe_text=lambda value, **kwargs: value,
-        _enqueue_library_ingest_snapshot=lambda kwargs: queued.append(kwargs),
+        _enqueue_library_ingest_snapshot=lambda kwargs, **_options: queued.append(
+            kwargs
+        ),
         _notify_library_ingest_warning=lambda message: notices.append(message),
         _library_external_submit_scope_id=None,
         _library_external_submit_generation=0,
@@ -367,3 +369,118 @@ async def test_effective_model_stays_visible_and_updates_before_start(size):
             await pilot.pause()
             assert "Faster Whisper · distil-large-v3 (Auto)" in str(summary.render())
             assert "small.en" not in str(summary.render())
+
+
+@pytest.mark.parametrize("provider", [None, "default", "faster-whisper"])
+@pytest.mark.parametrize(
+    "displayed_model", ["base", "distil-large-v3", "org/custom-whisper"]
+)
+def test_submission_keeps_displayed_model_after_config_default_changes(
+    monkeypatch, provider, displayed_model
+):
+    from copy import deepcopy
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        resolve_batch_stt_model,
+        resolve_batch_stt_route,
+    )
+    from tldw_chatbook.UI.Screens import library_screen as module
+    from tldw_chatbook.Library import transcription_readiness as readiness
+    from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+    from tldw_chatbook.app_ingest_queue import LibraryIngestQueueMixin
+
+    screen, queued, checks, _ = _screen()
+    options = {"transcription_provider": provider, "transcription_model": "small.en"}
+    # The alias must not override Auto's captured model either.
+    if provider != "faster-whisper":
+        options["model"] = "large-v3"
+    snapshot = {"audio_video": options}
+    original = deepcopy(snapshot)
+    screen._build_ingest_options_snapshot = lambda: snapshot
+    screen._transcription_default_model = displayed_model
+    # Exercise the real enqueue/persistence boundary, not just its queue payload.
+    persisted = []
+    screen._ingest_state.form.type_options = snapshot
+    screen._library_ingest_registry = lambda: None
+    screen._save_library_ingest_options = lambda settings: persisted.append(settings)
+    screen._invalidate_library_ingest_preflight = lambda: None
+    screen.refresh = lambda **kwargs: None
+    screen.call_after_refresh = lambda callback: None
+    screen._scroll_library_ingest_queue_into_view = lambda: None
+    screen._enqueue_library_ingest_snapshot = lambda *args, **kwargs: (
+        LibraryScreen._enqueue_library_ingest_snapshot(screen, *args, **kwargs)
+    )
+    screen.app = SimpleNamespace(
+        call_from_thread=lambda callback, *args: callback(*args)
+    )
+    screen._apply_library_transcription_readiness = (
+        lambda *args: LibraryScreen._apply_library_transcription_readiness(
+            screen, *args
+        )
+    )
+    monkeypatch.setattr(
+        module, "get_current_worker", lambda: SimpleNamespace(is_cancelled=False)
+    )
+    # Simulate a config edit after the open screen captured its preview model.
+    monkeypatch.setattr(
+        module,
+        "get_cli_setting",
+        lambda key, default=None: (
+            "large-v3" if key == "transcription.default_model" else default
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "analyze_path",
+        lambda *args, **kwargs: SimpleNamespace(
+            type_groups={"audio_video": ["clip.mp4"]}
+        ),
+    )
+    admitted = []
+    monkeypatch.setattr(
+        readiness,
+        "check_transcription_readiness",
+        lambda options, **kwargs: (
+            admitted.append(
+                resolve_batch_stt_model(
+                    resolve_batch_stt_route(
+                        provider=options.get("transcription_provider"), language="en"
+                    ),
+                    selected_model=options.get("model")
+                    or options.get("transcription_model"),
+                    default_model=kwargs["default_model"],
+                )
+            )
+        ),
+    )
+    screen._do_submit_ingest("clip.mp4")
+    LibraryScreen._check_library_transcription_submission.__wrapped__(
+        screen, *checks[0]
+    )
+    assert len(queued) == 1
+    job = LibraryIngestJobRegistry().submit(
+        source_path="clip.mp4",
+        detected_type="video",
+        chunk_enabled=False,
+        perform_analysis=False,
+        ingest_options=queued[0]["ingest_options"],
+    )
+    actual = LibraryIngestQueueMixin._ingest_job_options(
+        SimpleNamespace(media_db=None), job
+    )
+    expected = "small.en" if provider == "faster-whisper" else displayed_model
+    assert admitted == [expected]
+    assert actual["transcription_model"] == expected
+    assert snapshot == original
+    assert persisted == [
+        {"library.ingest_options.audio_video": original["audio_video"]}
+    ]
+
+
+def test_server_auto_submission_keeps_server_owned_model_selection():
+    screen, queued, checks, _ = _screen("server")
+    snapshot = {"audio_video": {"transcription_provider": "default"}}
+    screen._build_ingest_options_snapshot = lambda: snapshot
+    screen._transcription_default_model = "base"
+    screen._do_submit_ingest("clip.mp4")
+    assert queued[0]["ingest_options"] == snapshot
+    assert not checks
