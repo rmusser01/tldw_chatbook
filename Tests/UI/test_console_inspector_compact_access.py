@@ -517,7 +517,7 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
             )
 
             # TASK-36385: copying a source record is saved once; a seed with no
-            # source only latches in memory, since absent reads as defaults.
+            # source is held in memory until the next rail save writes it.
             expected_writes = (
                 [(selected_key.value, expected, False)] if source_snapshot else []
             )

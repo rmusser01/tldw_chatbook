@@ -291,6 +291,45 @@ def build_console_rail_preference_key(
     )
 
 
+def take_console_rail_seed_flush(
+    rail_state_config: dict[str, Any],
+    unsaved: dict[str, dict[str, bool]],
+    saving_key: str,
+) -> list[tuple[str, dict[str, bool]]]:
+    """Return the unsaved seed defaults to write ahead of saving one record.
+
+    TASK-36385: Console holds a defaults seed in memory instead of saving it
+    at mount. A record saved later could become that scope's seed source at
+    the next launch (a workspace record seeds a missing shared layout; the
+    shared layout seeds a missing workspace), so seeding would re-derive
+    instead of happening once. Before any rail record is saved, the defaults
+    seeded this session are written first, and so are the shared layout's
+    when a workspace record is saved while the shared layout is absent.
+
+    Args:
+        rail_state_config: The live in-memory rail-state table; a missing
+            shared layout is filled with defaults here.
+        unsaved: Records the seed set to defaults without saving, by key;
+            emptied here.
+        saving_key: The record about to be saved.
+
+    Returns:
+        ``(key, defaults)`` pairs still held as seeded (a record the user
+        edited, or a reload replaced, is not the seeded object any more).
+    """
+    shared_key = build_console_rail_preference_key(layout_scope="global").value
+    if saving_key != shared_key and shared_key not in rail_state_config:
+        defaults = serialize_console_rail_stored_preferences(None)
+        rail_state_config[shared_key] = unsaved[shared_key] = defaults
+    pending = dict(unsaved)
+    unsaved.clear()
+    return [
+        (key, latched)
+        for key, latched in pending.items()
+        if key != saving_key and rail_state_config.get(key) is latched
+    ]
+
+
 def collect_prunable_console_rail_keys(
     stored_keys: Any,
     *,
