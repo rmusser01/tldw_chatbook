@@ -87,7 +87,7 @@ panes (handle → Library → centre → Inspector → handle).
 
 | Control | What it does | Shown in |
 |---|---|---|
-| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter puts the first match under the cursor in the list; if the search takes longer than 2 seconds (a slow server), Enter stops waiting and the cursor goes to the first row shown then. | every mode |
+| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter puts the first match under the cursor in the list. If the search takes longer than 2 seconds (a slow server), Enter stops waiting and moves into the list before the results arrive. A server search shows an empty list until the server answers, so no row is under the cursor and a second Enter opens nothing; once the results appear, move to one with the arrow keys. (A local search that slow keeps the previous results on screen until it finishes, and the cursor goes to their first row.) | every mode |
 | **New** | Creates a new item in the current mode. ("Create a new item in this mode.") | every mode |
 | **Import** | Opens a file picker; the tooltip names the accepted formats per mode — "Import a character card (PNG or JSON).", "Import a dictionary (JSON or Markdown).", "Import a world book (JSON)." | Characters, Dictionaries, Lore — **hidden in Personas** |
 | **Duplicate** | Copies the selected item. ("Duplicate the selected item.") | Characters, Dictionaries, Lore — **hidden in Personas** |
