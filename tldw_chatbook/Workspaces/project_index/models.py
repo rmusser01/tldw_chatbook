@@ -186,6 +186,90 @@ class ProjectIndexStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectSemanticSettings:
+    """Secret-free, restart-safe embedding destination selection."""
+
+    provider_id: str
+    model_id: str
+    destination_fingerprint: str
+    config_fingerprint: str
+    approved_destination_fingerprint: str | None
+    provider_ref: str
+    config_ref: str
+
+    def __post_init__(self):
+        for value in (
+            self.provider_id,
+            self.model_id,
+            self.destination_fingerprint,
+            self.config_fingerprint,
+            self.provider_ref,
+            self.config_ref,
+        ):
+            if not isinstance(value, str) or not 0 < len(value) <= 256:
+                raise ValueError("invalid_semantic_setting")
+            if "://" in value or "@" in value or any(ord(ch) < 32 for ch in value):
+                raise ValueError("credential_bearing_semantic_setting")
+        approved = self.approved_destination_fingerprint
+        if approved is not None and (
+            not isinstance(approved, str)
+            or not 0 < len(approved) <= 256
+            or "://" in approved
+            or "@" in approved
+        ):
+            raise ValueError("invalid_approved_destination")
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSemanticState:
+    """Independent semantic consent, revision and safe readiness projection."""
+
+    scope: ProjectIndexScope
+    semantic_revision: int
+    enabled: bool
+    settings: ProjectSemanticSettings | None
+    state: str
+    reason: str | None = None
+    ready_generation_id: str | None = None
+    coverage: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSemanticGeneration:
+    """Immutable identity and durable build progress for one generation."""
+
+    generation_id: str
+    scope: ProjectIndexScope
+    semantic_revision: int
+    provider_id: str
+    model_id: str
+    destination_fingerprint: str
+    config_fingerprint: str
+    artifact_fingerprint: str
+    format_id: str
+    dimension: int
+    manifest_revision: int
+    claim_token: str | None
+    checkpoint_chunk_id: int | None
+    state: str
+    chunk_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSemanticMember:
+    """Generation-owned live-validation metadata and float32 vector bytes."""
+
+    generation_id: str
+    ordinal: int
+    relative_path: str
+    identity: str
+    content_sha256: str
+    line_start: int
+    line_end: int
+    vector: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ScanEntry:
     relative_path: str
     kind: str

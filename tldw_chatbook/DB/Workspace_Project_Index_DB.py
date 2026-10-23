@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from functools import wraps
 import hashlib
@@ -13,7 +13,19 @@ import sqlite3
 from uuid import uuid4
 
 from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.timestamps import utc_now_iso
+from tldw_chatbook.Workspaces.project_index.allocation import (
+    admit_connection,
+    admit_keyword_connection,
+    allocation_gate,
+    allocation_store,
+    retain_uncertain,
+    verify_legacy_pre_open,
+    verify_legacy_settlement,
+    verify_pre_open,
+    verify_settlement,
+)
 from tldw_chatbook.Workspaces.project_index.models import (
     MAX_CACHE_BYTES,
     MAX_ENTRIES,
@@ -31,6 +43,8 @@ from tldw_chatbook.Workspaces.project_index.models import (
     ProjectIndexScope,
     ProjectIndexSearchAuthority,
     ProjectIndexStatus,
+    ProjectSemanticSettings,
+    ProjectSemanticState,
     ScanPage,
 )
 
@@ -51,7 +65,7 @@ _SCHEMA_V2 = (
 )
 
 
-_SCHEMA = tuple(
+_SCHEMA_V3 = tuple(
     statement.replace("CHECK(version=2)", "CHECK(version=3)")
     .replace(
         "complete INTEGER NOT NULL)",
@@ -61,6 +75,17 @@ _SCHEMA = tuple(
     for statement in _SCHEMA_V2
 ) + (
     "CREATE INDEX directories_eligible ON directories(complete,attempt_revision,path)",
+)
+
+
+_SCHEMA = tuple(
+    statement.replace("CHECK(version=3)", "CHECK(version=4)")
+    for statement in _SCHEMA_V3
+) + (
+    "CREATE TABLE semantic_control(singleton INTEGER PRIMARY KEY CHECK(singleton=1), namespace TEXT NOT NULL, epoch INTEGER NOT NULL, semantic_revision INTEGER NOT NULL, enabled INTEGER NOT NULL, settings_json TEXT, state TEXT NOT NULL, reason TEXT, ready_generation_id TEXT)",
+    "CREATE TABLE semantic_generations(generation_id TEXT PRIMARY KEY, namespace TEXT NOT NULL, epoch INTEGER NOT NULL, processing_revision INTEGER NOT NULL, semantic_revision INTEGER NOT NULL, provider_id TEXT NOT NULL, model_id TEXT NOT NULL, destination_fingerprint TEXT NOT NULL, config_fingerprint TEXT NOT NULL, artifact_fingerprint TEXT NOT NULL, format_id TEXT NOT NULL, dimension INTEGER NOT NULL, manifest_revision INTEGER NOT NULL, claim_token TEXT, checkpoint_chunk_id INTEGER, state TEXT NOT NULL, chunk_count INTEGER NOT NULL)",
+    "CREATE TABLE semantic_members(generation_id TEXT NOT NULL REFERENCES semantic_generations(generation_id) ON DELETE CASCADE, ordinal INTEGER NOT NULL, relative_path TEXT NOT NULL, identity TEXT NOT NULL, content_sha256 TEXT NOT NULL, line_start INTEGER NOT NULL, line_end INTEGER NOT NULL, vector BLOB NOT NULL, PRIMARY KEY(generation_id,ordinal))",
+    "CREATE INDEX semantic_members_path ON semantic_members(generation_id,relative_path,ordinal)",
 )
 
 
@@ -164,6 +189,25 @@ def _path_allowed(path: str, exclusions) -> bool:
     return True
 
 
+_MUTATING_METHODS = frozenset(
+    {
+        "reconcile_authority",
+        "suspend_job",
+        "configure",
+        "configure_semantic",
+        "claim_job",
+        "admit_job",
+        "replace_retired_job",
+        "retire_job",
+        "_commit_prepared",
+        "revoke",
+        "clear_revoked",
+        "clear_owned_namespace",
+        "reclaim_free_pages",
+    }
+)
+
+
 def _activated(function):
     @wraps(function)
     def run(store, *args, **kwargs):
@@ -175,11 +219,12 @@ def _activated(function):
         # The registry fence may already own a different repository operation.
         # Enter this installed owner's independent provenance before acquiring its
         # activation lease; never borrow the registry's path authority.
-        with _core_operation(store):
-            with execution_scope((OWNER_ID,), store.db_path) as allowed:
-                if not allowed:
-                    raise RecoveryRequired("project_index_activation_required")
-                return function(store, *args, **kwargs)
+        with store.sql_unit(write=function.__name__ in _MUTATING_METHODS):
+            with _core_operation(store):
+                with execution_scope((OWNER_ID,), store.db_path) as allowed:
+                    if not allowed:
+                        raise RecoveryRequired("project_index_activation_required")
+                    return function(store, *args, **kwargs)
 
     return run
 
@@ -187,94 +232,260 @@ def _activated(function):
 class WorkspaceProjectIndexDB(SQLiteStoreKernel):
     """One key per namespace. Every writer is an explicit durable job claim.
 
-    Lock order: caller's registry fence, then this store's transaction. This
-    class never calls the registry. Prepared pages contain no deferred work.
+    Lock order: binding allocation gate, then caller's registry fence, then
+    this store's transaction. This class never calls the registry. Prepared
+    pages contain no deferred work.
     close() retires only the calling thread's actual held native connection.
     """
 
     _kernel_sqlite_owner = OWNER_ID
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
 
     def __init__(
-        self, path: Path, *, cleanup_only: bool = False, migration_context=None
+        self,
+        path: Path,
+        *,
+        cleanup_only: bool = False,
+        migration_context=None,
     ) -> None:
         self.db_path = Path(path).absolute()
         self.db_path_str = str(self.db_path)
         self.is_memory_db = False
         self._claims: dict[str, str] = {}
+        self._owned_lifetime = None
         self.publication_cache_bytes: int | None = None
         self.status_cache_bytes: int | None = None
         self.schema_version = 0
+        self._allocation_group = (
+            self.db_path.parent.parent
+            if re.fullmatch(r"[0-9a-f]{64}", self.db_path.parent.name)
+            and re.fullmatch(r"[0-9a-f]{64}", self.db_path.parent.parent.name)
+            else None
+        )
         self._init_store_kernel()
-        try:
-            # Native ownership acquisition and disk accounting never happen in a
-            # SQL transaction. Recheck the version after the migration capability.
-            with self.connection() as conn:
-                exists = conn.execute(
-                    "SELECT 1 FROM sqlite_schema WHERE type='table'"
-                ).fetchone()
-                versions = (
-                    [r[0] for r in conn.execute("SELECT version FROM schema_version")]
-                    if exists
-                    else []
-                )
-            needs_migration = (
-                bool(exists) and versions in ([1], [2]) and not cleanup_only
-            )
-            if needs_migration and migration_context is None:
+        with self.sql_unit(write=not self.db_path.exists() and not cleanup_only):
+            try:
+                # Native ownership acquisition and disk accounting never happen in a
+                # SQL transaction. Recheck the version after the migration capability.
                 with self.connection() as conn:
-                    page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-                    pages = (MAX_CACHE_BYTES - 1024**2) // (2 * page_size)
-                    if conn.execute("PRAGMA page_count").fetchone()[0] > pages:
-                        raise ValueError("index_cache_limit")
-            context = (
-                migration_context(self)
-                if needs_migration and migration_context is not None
-                else nullcontext()
-            )
-            with context:
+                    exists = conn.execute(
+                        "SELECT 1 FROM sqlite_schema WHERE type='table'"
+                    ).fetchone()
+                    versions = (
+                        [
+                            r[0]
+                            for r in conn.execute("SELECT version FROM schema_version")
+                        ]
+                        if exists
+                        else []
+                    )
+                needs_migration = (
+                    bool(exists) and versions in ([1], [2], [3]) and not cleanup_only
+                )
+                if (
+                    self._allocation_group is not None
+                    and versions == [4]
+                    and not (self._allocation_group / "allocation-v1.lock").exists()
+                ):
+                    raise ValueError("index_allocation_control_missing")
+                if needs_migration and migration_context is None:
+                    with self.connection() as conn:
+                        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+                        pages = (MAX_CACHE_BYTES - 1024**2) // (2 * page_size)
+                        if conn.execute("PRAGMA page_count").fetchone()[0] > pages:
+                            raise ValueError("index_cache_limit")
+                context = (
+                    migration_context(self)
+                    if needs_migration and migration_context is not None
+                    else nullcontext()
+                )
+                with context:
+                    try:
+                        unit = (
+                            self.transaction()
+                            if not exists
+                            or (versions in ([1], [2], [3]) and not cleanup_only)
+                            else self.connection()
+                        )
+                        with unit as conn:
+                            exists = conn.execute(
+                                "SELECT 1 FROM sqlite_schema WHERE type='table'"
+                            ).fetchone()
+                            if not exists:
+                                if cleanup_only:
+                                    raise ValueError("index_cleanup_namespace_unknown")
+                                for statement in _SCHEMA:
+                                    conn.execute(statement)
+                                conn.execute("INSERT INTO schema_version VALUES(4)")
+                                self.schema_version = 4
+                            else:
+                                versions = [
+                                    r[0]
+                                    for r in conn.execute(
+                                        "SELECT version FROM schema_version"
+                                    )
+                                ]
+                                if versions == [1]:
+                                    if cleanup_only:
+                                        raise ValueError(
+                                            "index_cleanup_rebuild_required"
+                                        )
+                                    self._migrate(conn, "002")
+                                    versions = [2]
+                                if versions == [2]:
+                                    _validate_catalog(conn, _SCHEMA_V2, 2)
+                                    if cleanup_only:
+                                        self.schema_version = 2
+                                        return
+                                    self._migrate(conn, "003")
+                                    versions = [3]
+                                if versions == [3]:
+                                    _validate_catalog(conn, _SCHEMA_V3, 3)
+                                    if cleanup_only:
+                                        self.schema_version = 3
+                                        return
+                                    self._migrate(conn, "004")
+                                _validate_catalog(conn, _SCHEMA, 4)
+                                self.schema_version = 4
+                    except BaseException:
+                        # The migration capability remains held until this positive
+                        # close finishes; a strict callback retains it on failure.
+                        self.close_native()
+                        raise
+            except ProjectIndexRetirementUnproven:
+                raise
+            except BaseException:
+                self.close_native()
+                raise
+
+    @contextmanager
+    def sql_unit(self, *, write: bool = False):
+        """Own one finite native SQLite unit under the binding allocation gate."""
+        group = self._allocation_group
+        if group is None:
+            # Historical standalone keyword fixtures have no binding owner.
+            yield
+            return
+        depth = getattr(self._thread_local, "allocation_depth", 0)
+        if depth:
+            with allocation_store(group, self):
+                self._thread_local.allocation_depth = depth + 1
                 try:
-                    with self.transaction() as conn:
-                        exists = conn.execute(
-                            "SELECT 1 FROM sqlite_schema WHERE type='table'"
-                        ).fetchone()
-                        if not exists:
-                            if cleanup_only:
-                                raise ValueError("index_cleanup_namespace_unknown")
-                            for statement in _SCHEMA:
-                                conn.execute(statement)
-                            conn.execute("INSERT INTO schema_version VALUES(3)")
-                            self.schema_version = 3
-                        else:
-                            versions = [
-                                r[0]
-                                for r in conn.execute(
-                                    "SELECT version FROM schema_version"
-                                )
-                            ]
-                            if versions == [1]:
-                                if cleanup_only:
-                                    raise ValueError("index_cleanup_rebuild_required")
-                                self._migrate(conn, "002")
-                                versions = [2]
-                            if versions == [2]:
-                                _validate_catalog(conn, _SCHEMA_V2, 2)
-                                if cleanup_only:
-                                    self.schema_version = 2
-                                    return
-                                self._migrate(conn, "003")
-                            _validate_catalog(conn, _SCHEMA, 3)
-                            self.schema_version = 3
+                    yield
+                finally:
+                    self._thread_local.allocation_depth -= 1
+            return
+        gate_path = group / "allocation-v1.lock"
+        if not write and not gate_path.exists():
+            # Validated legacy keyword reads remain available before opt-in.
+            verify_legacy_pre_open(self.db_path, group)
+            try:
+                yield
+            finally:
+                conn = getattr(self._thread_local, "conn", None)
+                if conn is not None and conn.in_transaction:
+                    raise ProjectIndexRetirementUnproven(
+                        "index_transaction_settlement_unproven"
+                    )
+                self.close_native()
+                verify_legacy_settlement(self.db_path, group)
+            return
+        with allocation_gate(group, existing_only=not write) as lease:
+            with allocation_store(group, self):
+                verify_pre_open(self.db_path, group)
+                self._thread_local.allocation_depth = 1
+                try:
+                    yield
+                finally:
+                    try:
+                        conn = getattr(self._thread_local, "conn", None)
+                        if conn is not None and conn.in_transaction:
+                            raise ProjectIndexRetirementUnproven(
+                                "index_transaction_settlement_unproven"
+                            )
+                        self.close_native()
+                        verify_settlement(self.db_path, group)
+                    except BaseException:
+                        retain_uncertain(group, lease)
+                        raise
+                    finally:
+                        self._thread_local.allocation_depth = 0
+
+    @contextmanager
+    def connection(self):
+        """A read or standalone SQL unit closes before releasing its gate."""
+        if self._allocation_group is None:
+            with super().connection() as conn:
+                yield conn
+            return
+        with self.sql_unit():
+            with super().connection() as conn:
+                yield conn
+
+    @contextmanager
+    def transaction(self, *, immediate: bool | None = None, semantic: bool = False):
+        """Settle body and COMMIT errors before native close and gate release."""
+        if self._allocation_group is None:
+            if semantic:
+                raise ValueError("index_semantic_binding_required")
+            with super().transaction(immediate=immediate) as conn:
+                yield conn
+            return
+        with self.sql_unit(write=True):
+            conn = self._held_connection()
+            if semantic or self._semantic_enabled(conn):
+                admit_connection(
+                    conn,
+                    self.db_path,
+                    self._allocation_group,
+                    budget=MAX_CACHE_BYTES,
+                    owned_lifetime=self._owned_lifetime,
+                )
+            else:
+                admit_keyword_connection(
+                    conn, self.db_path, self._allocation_group, budget=MAX_CACHE_BYTES
+                )
+            if immediate is None:
+                immediate = self._transaction_immediate_default
+            conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            try:
+                yield conn
+            except BaseException:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
+            else:
+                try:
+                    conn.commit()
                 except BaseException:
-                    # The migration capability remains held until this positive
-                    # close finishes; a strict callback retains it on failure.
-                    self.close_native()
+                    if conn.in_transaction:
+                        conn.rollback()
                     raise
-        except ProjectIndexRetirementUnproven:
-            raise
-        except BaseException:
-            self.close_native()
-            raise
+
+    @staticmethod
+    def _semantic_enabled(conn) -> bool:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='semantic_control'"
+        ).fetchone():
+            return False
+        row = conn.execute(
+            "SELECT enabled FROM semantic_control WHERE singleton=1"
+        ).fetchone()
+        return bool(row and row[0])
+
+    def bind_native_lifetime(self, lease) -> None:
+        """Supply this operation's exact live binding capability for admission."""
+        from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime
+
+        if (
+            self._allocation_group is None
+            or not isinstance(lease, BindingLifetime)
+            or lease.path.parent.absolute() != self._allocation_group
+            or not re.fullmatch(r"[0-9a-f]{64}\.lifetime\.lock", lease.path.name)
+        ):
+            raise ValueError("index_allocation_owner_refused")
+        lease.assert_live()
+        self._owned_lifetime = lease
 
     @staticmethod
     def _migrate(conn, suffix):
@@ -304,7 +515,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     @_activated
     def _open_connection(self):
-        return super()._open_connection()
+        return connect_private_sqlite(OWNER_ID, self.db_path_str, timeout=0)
 
     def _configure_connection(self, conn):
         super()._configure_connection(conn)
@@ -313,6 +524,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA secure_delete=ON")
+        conn.execute("PRAGMA busy_timeout=0")
+        conn.execute("PRAGMA cache_spill=OFF")
         page_size = conn.execute("PRAGMA page_size").fetchone()[0]
         # DELETE journaling can retain one old page for every database page.
         # Reserve both physical copies plus journal headers inside the 1-GiB cap.
@@ -321,11 +534,23 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         )
         return conn
 
-    def _control(self, conn, key: ProjectIndexKey):
+    def _control(self, conn, key: ProjectIndexKey, *, create: bool = True):
         if type(key) is not ProjectIndexKey:
             raise TypeError("index_key_required")
         row = conn.execute("SELECT * FROM control WHERE singleton=1").fetchone()
         if row is None:
+            if not create:
+                return {
+                    "namespace": key.namespace,
+                    "epoch": 0,
+                    "processing_revision": 0,
+                    "policy": "[[],[]]",
+                    "enabled": 0,
+                    "state": "Off",
+                    "job_revision": 0,
+                    "manifest_revision": 0,
+                    "last_scan_at": None,
+                }
             conn.execute(
                 "INSERT INTO control VALUES(1,?,0,0,'[[],[]]',0,'Off',0,0,NULL)",
                 (key.namespace,),
@@ -339,10 +564,10 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
     def _scope(key, row):
         return ProjectIndexScope(key, row["epoch"], row["processing_revision"])
 
-    def _current(self, conn, scope):
+    def _current(self, conn, scope, *, create: bool = False):
         if type(scope) is not ProjectIndexScope:
             raise TypeError("index_scope_required")
-        row = self._control(conn, scope.key)
+        row = self._control(conn, scope.key, create=create)
         return row if self._scope(scope.key, row) == scope else None
 
     def _cache_bytes(self) -> int:
@@ -357,8 +582,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     def load_status(self, key: ProjectIndexKey) -> ProjectIndexStatus:
         """Read control state; a fresh key is Off and starts no background work."""
-        with self.transaction() as conn:
-            row = self._control(conn, key)
+        with self.connection() as conn:
+            row = self._control(conn, key, create=False)
             job = conn.execute("SELECT job_id FROM active_job").fetchone()
             counts = [
                 conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -397,9 +622,102 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             manifest_revision,
         )
 
+    def load_semantic_state(self, scope: ProjectIndexScope) -> ProjectSemanticState:
+        """Read consent and readiness without constructing an embedding backend."""
+        with self.connection() as conn:
+            if self._current(conn, scope) is None:
+                raise ValueError("stale_scope")
+            if self.schema_version < 4:
+                return ProjectSemanticState(scope, 0, False, None, "Off")
+            row = conn.execute(
+                "SELECT * FROM semantic_control WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                return ProjectSemanticState(scope, 0, False, None, "Off")
+            if row["namespace"] != scope.key.namespace:
+                raise ValueError("key_mismatch")
+            settings = (
+                ProjectSemanticSettings(**json.loads(row["settings_json"]))
+                if row["settings_json"] is not None
+                else None
+            )
+            state = row["state"] if row["epoch"] == scope.epoch else "Paused"
+            reason = (
+                row["reason"]
+                if row["epoch"] == scope.epoch
+                else "keyword_scope_changed"
+            )
+            return ProjectSemanticState(
+                scope,
+                row["semantic_revision"],
+                bool(row["enabled"]),
+                settings,
+                state,
+                reason,
+                row["ready_generation_id"] if row["epoch"] == scope.epoch else None,
+            )
+
+    @_activated
+    def configure_semantic(
+        self,
+        scope: ProjectIndexScope,
+        settings: ProjectSemanticSettings | None,
+        *,
+        enabled: bool,
+        expected_semantic_revision: int,
+    ) -> ProjectSemanticState:
+        """CAS only the binding's semantic consent and setting revision."""
+        if (
+            type(scope) is not ProjectIndexScope
+            or (settings is not None and type(settings) is not ProjectSemanticSettings)
+            or type(enabled) is not bool  # noqa: E721 - reject bool/int subclasses
+            or type(expected_semantic_revision) is not int  # noqa: E721 - reject bool
+            or expected_semantic_revision < 0
+            or (enabled and settings is None)
+        ):
+            raise ValueError("invalid_semantic_configuration")
+        with self.transaction(semantic=True) as conn:
+            if self._current(conn, scope, create=True) is None:
+                raise ValueError("stale_scope")
+            prior = conn.execute(
+                "SELECT namespace,semantic_revision FROM semantic_control WHERE singleton=1"
+            ).fetchone()
+            if prior is not None and prior["namespace"] != scope.key.namespace:
+                raise ValueError("key_mismatch")
+            revision = prior["semantic_revision"] if prior is not None else 0
+            if revision != expected_semantic_revision:
+                raise ValueError("stale_semantic_revision")
+            approved = (
+                settings is not None
+                and settings.destination_fingerprint
+                == settings.approved_destination_fingerprint
+            )
+            state = "Off" if not enabled else "Pending" if approved else "Paused"
+            reason = (
+                "destination_approval_required" if enabled and not approved else None
+            )
+            encoded = (
+                json.dumps(asdict(settings), sort_keys=True, separators=(",", ":"))
+                if settings is not None
+                else None
+            )
+            conn.execute(
+                "INSERT INTO semantic_control(singleton,namespace,epoch,semantic_revision,enabled,settings_json,state,reason,ready_generation_id) VALUES(1,?,?,?,?,?,?,?,NULL) ON CONFLICT(singleton) DO UPDATE SET epoch=excluded.epoch,semantic_revision=excluded.semantic_revision,enabled=excluded.enabled,settings_json=excluded.settings_json,state=excluded.state,reason=excluded.reason,ready_generation_id=NULL",
+                (
+                    scope.key.namespace,
+                    scope.epoch,
+                    revision + 1,
+                    int(enabled),
+                    encoded,
+                    state,
+                    reason,
+                ),
+            )
+        return self.load_semantic_state(scope)
+
     def assert_native_lifetime(self) -> None:
         """Refuse unknown historical owners even after durable revocation."""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             if conn.execute("SELECT 1 FROM legacy_retirement").fetchone():
                 raise ValueError("legacy_retirement_unproven")
 
@@ -411,7 +729,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     def policy(self, scope: ProjectIndexScope) -> ProjectIndexPolicy:
         """Read the immutable exact-scope processing policy."""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             row = self._current(conn, scope)
             if row is None:
                 raise ValueError("stale_scope")
@@ -477,7 +795,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             raise ValueError("invalid_configuration")
         encoded = json.dumps((policy.include_prefixes, policy.text_suffixes))
         with self.transaction() as conn:
-            row = self._current(conn, expected_scope)
+            row = self._current(conn, expected_scope, create=True)
             if row is None:
                 raise ValueError("stale_scope")
             changed = encoded != row["policy"]
@@ -536,7 +854,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         """Project a bounded durable frontier; complete pages never requeue on Resume."""
         if type(limit) is not int or not 1 <= limit <= 256:  # noqa: E721 - bool is not a limit
             raise ValueError("invalid_frontier_limit")
-        with self.transaction() as conn:
+        with self.connection() as conn:
             if self._current(conn, scope) is None:
                 return ()
             return tuple(
@@ -549,7 +867,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     def eligible_directories(self, claim: ProjectIndexJobClaim) -> tuple[str, ...]:
         """Read one indexed bounded page; terminal failures retry on a later run."""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             row = self._current(conn, claim.scope)
             if row is None or row["job_revision"] != claim.job_revision:
                 return ()
@@ -564,7 +882,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
     @_activated
     def admit_job(self, claim: ProjectIndexJobClaim) -> bool:
         """Admit one scanner unit at the exact live claim under a registry fence."""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             row = self._current(conn, claim.scope)
             if (
                 row is None
@@ -588,7 +906,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     def read_claim(self, scope: ProjectIndexScope) -> ProjectIndexJobClaim | None:
         """Read the exact internal claim needed for explicit restart recovery."""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             if self._current(conn, scope) is None:
                 return None
             row = conn.execute("SELECT * FROM active_job").fetchone()
@@ -714,13 +1032,29 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         """Singleton compatibility adapter retaining the original replay digest."""
         if type(page) is not PreparedScanPage:
             raise TypeError("prepared_scan_page_required")
-        return self._commit_prepared(
-            scope,
-            job_id,
-            page,
-            expected_job_revision=expected_job_revision,
-            authority_revision=authority_revision,
-        )
+        try:
+            return self._commit_prepared(
+                scope,
+                job_id,
+                page,
+                expected_job_revision=expected_job_revision,
+                authority_revision=authority_revision,
+            )
+        except sqlite3.OperationalError as error:
+            if (
+                self._allocation_group is not None
+                or getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_FULL
+            ):
+                raise
+            # Retain the historical standalone keyword fixture contract only.
+            with self.transaction() as conn:
+                if self._current(conn, scope) is not None:
+                    conn.execute(
+                        "UPDATE control SET state='Partial' WHERE EXISTS("
+                        "SELECT 1 FROM active_job WHERE job_id=? AND job_revision=?)",
+                        (job_id, expected_job_revision),
+                    )
+            return False
 
     def commit_scan_unit(
         self,
@@ -746,22 +1080,9 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
     def _commit_prepared(
         self, scope, job_id, page, *, expected_job_revision, authority_revision
     ):
-        try:
-            return self._publish_page(
-                scope, job_id, page, expected_job_revision, authority_revision
-            )
-        except sqlite3.OperationalError as error:
-            if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_FULL:
-                raise
-            # SQLite has rolled back the entire page. Preserve the exact claim
-            # while making the exhausted coverage explicit.
-            with self.transaction() as conn:
-                if self._current(conn, scope) is not None:
-                    conn.execute(
-                        "UPDATE control SET state='Partial' WHERE EXISTS(SELECT 1 FROM active_job WHERE job_id=? AND job_revision=?)",
-                        (job_id, expected_job_revision),
-                    )
-            return False
+        return self._publish_page(
+            scope, job_id, page, expected_job_revision, authority_revision
+        )
 
     def _publish_page(
         self, scope, job_id, page, expected_job_revision, authority_revision
@@ -987,7 +1308,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
     @_activated
     def has_compatible_files(self, scope, exclusions) -> bool:
         """Read only the existence of metadata under this exact enabled scope."""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             row = self._current(conn, scope)
             if row is None or not row["enabled"]:
                 return False
@@ -1024,7 +1345,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         if not terms:
             return ()
         match = " AND ".join('"' + term + '"' for term in terms)
-        with self.transaction() as conn:
+        with self.connection() as conn:
             row = self._current(conn, authority.scope)
             if row is None or not row["enabled"]:
                 return ()
@@ -1070,6 +1391,11 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             )
             self._remember_legacy(conn)
             conn.execute("DELETE FROM active_job")
+            if self.schema_version >= 4:
+                conn.execute(
+                    "UPDATE semantic_control SET enabled=0,state='Off',reason=NULL,"
+                    "ready_generation_id=NULL,epoch=epoch+1,semantic_revision=semantic_revision+1"
+                )
             revoked = self._scope(key, self._control(conn, key))
         if clear:
             self.clear_revoked(revoked)
@@ -1090,7 +1416,11 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "SELECT 1 FROM cleanup_receipts WHERE epoch=?", (scope.epoch,)
             ).fetchone():
                 return True
-            for table in (
+            tables = (
+                ("semantic_members", "semantic_generations")
+                if self.schema_version >= 4
+                else ()
+            ) + (
                 "chunks",
                 "files",
                 "chunk_fts",
@@ -1098,7 +1428,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "directories",
                 "scan_pages",
                 "scan_seen",
-            ):
+            )
+            for table in tables:
                 conn.execute(f"DELETE FROM {table}")
             conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
             conn.execute(
@@ -1109,7 +1440,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     def cleanup_eligible(self, namespace: str, binding_namespace: str) -> None:
         """Validate only owned cleanup metadata; this never grants query authority."""
-        with self.transaction() as conn:
+        with self.connection() as conn:
             if (
                 conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 2
                 or conn.execute("PRAGMA journal_mode").fetchone()[0] != "delete"
@@ -1140,7 +1471,11 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "UPDATE control SET epoch=epoch+1,enabled=0,state='Off',job_revision=job_revision+1,manifest_revision=manifest_revision+1"
             )
             conn.execute("DELETE FROM active_job")
-            for table in (
+            tables = (
+                ("semantic_members", "semantic_generations")
+                if self.schema_version >= 4
+                else ()
+            ) + (
                 "chunks",
                 "files",
                 "chunk_fts",
@@ -1148,7 +1483,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "directories",
                 "scan_pages",
                 "scan_seen",
-            ):
+            )
+            for table in tables:
                 conn.execute(f"DELETE FROM {table}")
             conn.execute(
                 "INSERT INTO cleanup_receipts SELECT epoch,? FROM control",

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:26'
-updated_date: '2026-10-23 03:52'
+updated_date: '2026-10-23 05:27'
 labels: []
 dependencies:
   - TASK-36006
@@ -28,7 +28,7 @@ Prepare optional semantic storage without changing existing project access, keyw
 - [ ] #3 Semantic-capable allocations and all competing new-version mutations use serialized binding-wide admission with a source-qualified pre-write main/journal/temp/control regular-file-length bound within1GiB; unsupported geometry, unretired ownership or observed mixed writers refuse before semantic mutation.
 - [ ] #4 Body, commit, rollback or native-close failure retains uncertain ownership and blocks reuse; read/status/search paths perform no hidden unreserved writes.
 - [ ] #5 Legacy cleanup v2/v3 and newv4 remain available without migration/allocation; existing v1 quarantine is preserved, and old compatible Ready storage is never discarded to fund staging.
-- [ ] #6 Pure keyword-only operation retains established behavior without embedding imports or semantic-specific runtime qualification; keyword search remains usable during scanner/provider waits outside finite SQL units, and missing/degraded semantics preserves saved Library choices.
+- [ ] #6 Pure keyword-only operation retains established behavior without embedding imports or semantic-specific runtime qualification; keyword search remains usable during real scanner waits outside finite SQL units, and missing/degraded semantics preserves saved Library choices.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,3 +44,9 @@ ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index
 Reason: direct implementation of accepted folder-bound semantic storage/native allocation contract; amendment written before code. No new Library owner, dependency or generic runtime boundary.
 6. Final pre-code consistency correction: actual project SQLite timeout/busy_timeout0; no allocation gate/store/cursor across scanner IPC, provider wait, Capture, joins or retry sleep. Positively close each native store and inventory before releasing its gate; every gate-held lifetime/receipt acquisition is try-only and unwinds on busy. Verify keyword lookup while the real scanner is waiting. This supersedes the draft allocation-first whole-job order; source-backed proposal found finite units feasible.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added additive v4 semantic consent/settings and derived records with an independent revision, read-only Off projection and nonmigrating legacy cleanup. A binding-wide native gate now admits finite project SQLite units, source-qualified semantic page allowances and the prior aggregate keyword cap, with exact native close/inventory and quarantine on uncertain settlement. Status reads use a bounded same-service reader handoff; keyword lookup works while a real scanner waits outside SQL. Updated directly affected DB/service/native tests, migration fixture and architecture notes. ADR241 and the implementation plan record the control-owner borrowing and read-scheduling decisions. A known SQLite FULL during publication becomes Partial only after native close and a fresh admitted supervisor publication; unrelated SQL failures remain Error, and retroactively over-budget existing groups refuse mutation. The analytical bound is conditional on the pinned SQLite source/runtime and cooperating writers; the Task1 report records VFS and mixed-version limits. Semantic generation, embeddings, vector search and UI are outside this foundation. Targeted verification and receipt details: `.superpowers/sdd/2026-10-20-workspace-project-semantic-index/task-1-report.md`. AC and Done state remain for parent review.
+<!-- SECTION:NOTES:END -->

@@ -4,6 +4,7 @@ import asyncio
 from contextlib import contextmanager
 from dataclasses import replace
 import importlib
+import sqlite3
 import threading
 import time
 
@@ -308,6 +309,7 @@ async def test_shutdown_retains_lifetime_through_native_db_closure_and_repeated_
     def held_close(store):
         if (
             threading.current_thread().name == "project-index-writer"
+            and rig.service._scanner.retired
             and not entered.is_set()
         ):
             connection = getattr(store._thread_local, "conn", None)
@@ -799,7 +801,7 @@ async def test_production_runtime_pin_drains_idle_and_spans_writer_retirement(
 
 
 @private_profile_test
-async def test_obsolete_namespace_bytes_force_partial_without_publication(
+async def test_obsolete_namespace_bytes_refuse_refresh_before_publication(
     tmp_path, request, monkeypatch
 ):
     import tldw_chatbook.DB.Workspace_Project_Index_DB as db_module
@@ -807,18 +809,28 @@ async def test_obsolete_namespace_bytes_force_partial_without_publication(
 
     rig = Rig(tmp_path)
     try:
-        rig.enable()
+        enabled = rig.enable()
+        current_path = index_store_path(rig.data, rig.key)
+        before = current_path.read_bytes()
         obsolete = index_store_path(
             rig.data, replace(rig.key, data_authority_id="retired-generation")
         )
         obsolete.parent.mkdir(parents=True)
-        (obsolete.parent / "old.db-journal").write_bytes(b"x" * (256 * 1024))
+        sidecar = obsolete.parent / (obsolete.name + "-journal")
+        sidecar.write_bytes(b"x" * (256 * 1024))
         monkeypatch.setattr(db_module, "MAX_CACHE_BYTES", 256 * 1024)
         monkeypatch.setattr(service_module, "MAX_CACHE_BYTES", 256 * 1024)
         (rig.root / "a.txt").write_text("quota marker")
-        rig.refresh()
-        status = rig.settle("Partial")
-        assert status.indexed == 0 and status.cache_bytes > 256 * 1024
+        with pytest.raises(
+            ValueError, match="index_(cache_limit|allocation_settlement_over_budget)"
+        ):
+            rig.refresh()
+        assert current_path.read_bytes() == before
+        assert sidecar.read_bytes() == b"x" * (256 * 1024)
+        sidecar.unlink()
+        status = rig.service.status(rig.key)
+        assert status.scope == enabled.scope
+        assert status.state == enabled.state and status.indexed == 0
     finally:
         await rig.close()
 
@@ -907,6 +919,15 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
     limit = 12 * 1024**2
     monkeypatch.setattr(db_module, "MAX_CACHE_BYTES", limit)
     monkeypatch.setattr(service_module, "MAX_CACHE_BYTES", limit)
+    original_admit = db_module.admit_keyword_connection
+    admitted_budgets = []
+
+    def observed_admission(conn, path, group, *, budget):
+        admitted_budgets.append(budget)
+        assert budget == limit
+        return original_admit(conn, path, group, budget=budget)
+
+    monkeypatch.setattr(db_module, "admit_keyword_connection", observed_admission)
     rig = Rig(tmp_path)
     original_key = rig.key
     samples = []
@@ -966,6 +987,7 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         (rig.root / "after.txt").write_text("rebuilt marker")
         rig.refresh()
         assert rig.settle().indexed == 1
+        assert admitted_budgets
         assert samples and max(samples) <= limit
         (tmp_path / "capacity-receipt.txt").write_text(
             f"capacity={limit} old_database={old_size} before_clear={before} after_clear={after} sampled_highwater={max(samples)}",
@@ -978,6 +1000,29 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         end.set()
         if sampler.ident is not None:
             sampler.join()
+        await rig.close()
+
+
+@private_profile_test
+async def test_non_full_sqlite_scanner_error_stays_error_after_native_retirement(
+    tmp_path, request
+):
+    class FailingScanner(ProjectScanner):
+        def scan(self, *args, **kwargs):
+            with sqlite3.connect(":memory:") as conn:
+                conn.execute("SELECT * FROM missing_table")
+
+    rig = Rig(tmp_path, FailingScanner())
+    try:
+        (rig.root / "a.txt").write_text("known marker")
+        rig.enable()
+        rig.refresh()
+        rig.settle("Error")
+        for run in rig.service._runs.values():
+            run.supervisor.join()
+            assert run.native_retired and run.db_closed and run.registry_closed
+        assert rig.service.status(rig.key).state == "Error"
+    finally:
         await rig.close()
 
 
@@ -1295,6 +1340,7 @@ async def test_two_held_searches_refuse_refresh_until_readers_retire(
     rig = Rig(tmp_path)
     release = threading.Event()
     entered = threading.Event()
+    first_entered = threading.Event()
     counter_lock = threading.Lock()
     active = peak = 0
     tasks = []
@@ -1304,6 +1350,8 @@ async def test_two_held_searches_refuse_refresh_until_readers_retire(
         with counter_lock:
             active += 1
             peak = max(peak, active)
+            if active == 1:
+                first_entered.set()
             if active == 2:
                 entered.set()
 
@@ -1343,8 +1391,11 @@ async def test_two_held_searches_refuse_refresh_until_readers_retire(
         )
         tasks = [
             asyncio.create_task(asyncio.to_thread(rig.service.search, auth, "marker"))
-            for _ in range(2)
         ]
+        assert await asyncio.to_thread(first_entered.wait, 10)
+        tasks.append(
+            asyncio.create_task(asyncio.to_thread(rig.service.search, auth, "marker"))
+        )
         assert await asyncio.to_thread(entered.wait, 10)
         with pytest.raises(LifetimeBusy):
             rig.refresh()
