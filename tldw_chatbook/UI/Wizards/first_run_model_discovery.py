@@ -174,6 +174,33 @@ def classify_render(step: Any, state: str, category: str) -> tuple[str, str]:
     )
 
 
+def show_provider_line(step: Any, models: object = (), state: str = "") -> None:
+    """Paint the Model step's subtitle: whose models these are and, while the
+    rows came from a server's listing, that a pick is not added to the saved
+    model list (TASK-35578). "saved" marks the one source that is not a
+    listing, the saved ``[providers]`` list; rows a Test listed can come with
+    any other state ("empty", "connection_failed"). Setup never offers a
+    named custom endpoint, so the note is always the saved list's."""
+
+    try:
+        from textual.widgets import Static
+
+        from tldw_chatbook.Chat.provider_catalog import (
+            listed_pick_note,
+            provider_display_name,
+        )
+
+        # TASK-1503: display-case the provider; raw keys are not UI language.
+        provider_key = step._current_provider()[0]
+        display = provider_display_name(provider_key) if provider_key else ""
+        line = f"Models for {display or 'your provider'}."
+        if models and state != "saved":
+            line = f"{line} {listed_pick_note()}"
+        step.query_one("#setup-model-provider-line", Static).update(line)
+    except Exception:
+        pass
+
+
 def subscription_cannot_list(
     step: Any, provider_draft: object, state: str, category: str
 ) -> bool:

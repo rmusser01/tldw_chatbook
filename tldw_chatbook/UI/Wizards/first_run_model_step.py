@@ -274,25 +274,16 @@ class ModelStep(SetupStep):
                 self.query_one("#setup-model-custom", Input).value = prefill_model_id
             except Exception:
                 pass
-        try:
-            # TASK-1503: display-case the provider in user copy — raw keys
-            # like "anthropic"/"llama_cpp" are internals, not UI language.
-            from tldw_chatbook.Chat.provider_catalog import provider_display_name
-
-            display = provider_display_name(provider_key) if provider_key else ""
-            self.query_one("#setup-model-provider-line", Static).update(
-                f"Models for {display or 'your provider'}."
-            )
-        except Exception:
-            pass
         live_radios = tuple(self.query("#setup-model-choice RadioButton"))
         rendered_is_current = (
             discovery_key is not None
             and discovery_key == self._rendered_discovery_key
             and any(getattr(button, "_model_id", "") for button in live_radios)
         )
-        if rendered_is_current:
+        if rendered_is_current:  # its render painted the subtitle (TASK-35578)
             self._restore_model_radio_selection(discovery_key)
+        else:
+            model_discovery.show_provider_line(self)
         if provider_key and not rendered_is_current:
             if visit_starts:  # review round 3: back to a failure asks again
                 model_discovery.ask_again_on_return(self, discovery_key)
@@ -490,6 +481,7 @@ class ModelStep(SetupStep):
         if not models and discovery_state == "available":
             from tldw_chatbook.config import get_cli_providers_and_models
 
+            discovery_state = "saved"  # the [providers] list, not a listing
             models = wizard_state.curated_models_for_provider(
                 get_cli_providers_and_models(), provider_value
             )
@@ -547,6 +539,7 @@ class ModelStep(SetupStep):
         discovery_state, probe_failure = model_discovery.classify_render(
             self, discovery_state, failure_category
         )
+        model_discovery.show_provider_line(self, models, discovery_state)
         radio_set.set_class(not models, "-status")  # the box hugs a status line
         # A status is no Tab stop (06a drew it focused); loading keeps the stop.
         radio_set.can_focus = bool(models) or discovery_state == "loading"

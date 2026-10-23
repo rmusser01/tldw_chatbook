@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
+
+**Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.
+
+**What to do.** Before placing a negative control in a config writer, find the mutation the surface actually builds and put the injection there, or in the writer that mutation reaches. Then check that the red is on the assertion the test is designed for. A first try here also tripped an earlier assertion on the seeded list, which is not that red.
+
 ## New regression files need an explicit PR lane (TASK-32755.3, PR #3202)
 
 **Incident.** The full review of transcription readiness found that its new
