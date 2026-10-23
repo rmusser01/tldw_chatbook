@@ -38,6 +38,27 @@ launch-name prefix, so two drivers can never share a tmux server or a
 profile. When an app disappears mid-round, look for another launch of its
 name before suspecting a crash.
 
+## A probe that wraps an identity-checked method measures its fallback (TASK-33620.15.4, 2026-10-23)
+
+**Incident.** A live `sitecustomize` probe timed the Console's settings
+summary by replacing `ConsoleChatController.context_control_inputs` on the
+class with a timing wrapper. `read_context_presentation_inputs` checks that
+method by identity (`_CONTEXT_DISPLAY_CALLBACKS`, captured when the module
+loads). It found a non-original binding and took its fallback: the
+synchronous `context_control_inputs`, run inside the eager start of a
+Textual worker, on the UI loop. The first sampled round showed the global
+context-policy read and storage admission in 31% of the projection's
+samples. The unprobed app does not do this: with the wrapper removed, the
+same read ran on a worker thread. `ChatScreen._build_console_inspector_state`
+is checked the same way (the pending display's readers).
+
+**What to do.** Before a probe replaces a method, search for its name in
+the code's identity tables (`__code__ is`, `_CALLBACKS`, `_methods_current`,
+`_READERS`). Leave those methods alone and time their callers instead, or
+observe them with `threading.setprofile_all_threads` and a code-object
+match, as the suite's tests do. If a profile shows work that the code
+review says runs elsewhere, suspect the probe first.
+
 ## A profile reused across launches can carry one arm's history into the next round (TASK-33620.15.14, 2026-10-20)
 
 **Incident.** Paired rounds typed a 29-character prompt 0.5 s after the

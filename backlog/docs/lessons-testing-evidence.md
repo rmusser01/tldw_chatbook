@@ -26,6 +26,28 @@ Separately, a diagnostic wrapper on `ChatScreen._sync_native_console_chat_ui` ma
 
 **What to do.** In a mounted Console test, focus the bar itself and wait on the state you need with a bounded condition, not a fixed sleep. To leave the bar unfocused, blur it again inside the wait until it stays blurred: nothing focused is not a resting state while the activation restore is pending. Once the wait returns, do your loads and assertions without awaiting, so no restore can land between them. Before trusting `widget.focus()`, check that the widget can take focus (`focusable`).
 
+## Fewer syncs do not mean fewer renders, and a deferral's gap can be what the critical path relied on (TASK-33620.15.4, 2026-10-23)
+
+**Incident.** The task was filed against a 2026-10-10 profile in which the
+Console's run projection cost 131 ms per send, ~85% of it storage admission
+and DB reads. Re-measured on the 2026-10-23 base, the projection cost
+57-65 ms and the reads ~9 ms: other merges had already moved most of them.
+The branch removed the remaining reads, the native config operation and a
+deferral cascade (a whole-sync replay plus its follow-up per send); explicit
+syncs' projection time fell from 29 to 5 ms. The total fell only 14%: the
+poll ticks now painted what the replays had painted (33 -> 50 ms), because
+each state change of a run start still has to be painted once. And warm
+sends reached the provider 31 ms later: the base's deferral had left the UI
+loop idle for 200 ms during the durable commit, by accident, and the branch
+painted inside that window (loop callbacks during the commit 86 -> 102 ms).
+
+**What to do.** Before promising a fraction of a measured cost, re-measure
+the attribution on the base you will be paired against. When you remove
+redundant syncs, count the paints a window needs, not the syncs, to bound
+what is left. And when you remove a deferral or a stall, time the critical
+path that ran beside it (here Enter to the provider call, split warm and
+first sends): the gap may have been shielding it.
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.
