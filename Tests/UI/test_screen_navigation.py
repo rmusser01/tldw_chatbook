@@ -2506,7 +2506,11 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     screen._media_state.confirming_delete = True
     screen._register_footer_shortcuts()
     _source, delete_shortcuts = screen._footer_shortcut_registration
-    assert dict(delete_shortcuts)["esc"] == "close"
+    # TASK-34000.22 (fix round 2, R2-5): Escape over an armed delete
+    # CANCELS the confirm (it is checked before the dirty-form refusal), so
+    # the chip says what Escape does -- still not "back to list".
+    assert dict(delete_shortcuts)["esc"] == "cancel"
+    assert delete_shortcuts != plain_shortcuts
 
     screen._media_state.confirming_delete = False
     screen._media_state.editing_analysis = True
@@ -3208,13 +3212,12 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
 def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
     sub_state_flag: str,
 ):
-    """task-2856 AC2 review round 2: the media edit/delete-confirm/
-    analysis-edit sub-states have no dirty-tracking field to veto on (
-    unlike the note/prompt editors), so Escape instead mirrors each
-    sub-state's OWN existing Cancel button -- one step back to the plain
-    viewer, NOT straight through to the list. This is strictly less
-    aggressive than jumping to the list mid-edit would be, and requires no
-    new dirty-state invention."""
+    """task-2856 AC2 review round 2: with a CLEAN sub-state, Escape mirrors
+    each sub-state's OWN Cancel button -- one step back to the plain viewer,
+    NOT straight through to the list. TASK-34000.22 added the dirty veto in
+    front of this ladder (``_library_media_editor_dirty``; pinned in
+    ``test_library_media_editor_dirty_escape.py``); here it reads "" so the
+    clean one-step close is what is under test."""
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -3225,6 +3228,9 @@ def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
     screen._media_state.editing = False
     screen._media_state.confirming_delete = False
     screen._media_state.editing_analysis = False
+    screen._media_state.edit_draft = None
+    screen._media_state.analysis_draft = None
+    screen._library_media_editor_dirty = lambda: ""
     setattr(screen._media_state, sub_state_flag, True)
 
     refresh_calls = []

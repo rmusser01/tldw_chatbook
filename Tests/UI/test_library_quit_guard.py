@@ -123,7 +123,7 @@ async def test_ctrl_q_on_a_new_note_keeps_its_typed_title_and_body(
 async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
     tmp_path, monkeypatch
 ):
-    """A title the save refuses (a trailing space) vetoes every save.
+    """A title the save refuses (over the length limit) vetoes every save.
 
     The steady typing runs past the scaled max wait, so autosaves fire, and
     are vetoed, while the user is still typing (review N-07). If a veto moved
@@ -131,6 +131,11 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
     would store them as the title. The final veto is awaited on the status
     (bounded), so a run where no autosave was vetoed fails loudly instead of
     passing.
+
+    TASK-34000.10: this arm used a trailing space. Leaving the title now
+    tidies that space as a visible draft edit (AC#4), so the veto that has to
+    survive the move into the body is the one the tidy cannot remove -- a
+    title over 300 characters. The guard under test is the same.
 
     Then Ctrl+Q cannot save the draft either, so it asks: Keep editing is
     focused and returns with the text intact, and only Discard and quit exits,
@@ -141,14 +146,13 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
     app, profile = _library_app(
         tmp_path, monkeypatch, events, lambda notes: notes.note(notes.note_id)
     )
+    long_title = _TITLE + "x" * (301 - len(_TITLE))
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
             body = await _open_note(screen, pilot, _TITLE, profile.note_id)
             title = screen.query_one("#library-note-title", Input)
-            title.focus()
-            title.cursor_position = len(title.value)
-            await _type(pilot, " ")  # the save refuses a trailing space
+            title.value = long_title  # the save refuses it; Changed drives the draft
             body.focus()
             body.move_cursor(body.document.end)
             await pilot.pause()
@@ -164,7 +168,7 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
                 lambda: (
                     screen._notes_state.autosave_state == "validation"
                     or screen.focused is not body
-                    or title.value != _TITLE + " "
+                    or title.value != long_title
                 ),
                 "a vetoed autosave, or focus leaving the body",
                 timeout=_DEBOUNCE + _MAX_WAIT + 5.0,
@@ -175,19 +179,19 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
                 "a vetoed autosave moved focus to "
                 f"{getattr(screen.focused, 'id', None)!r}"
             )
-            assert title.value == _TITLE + " ", (
+            assert title.value == long_title, (
                 f"keys typed into the body landed in the title: {title.value!r}"
             )
             assert screen._notes_state.autosave_state == "validation", (
                 "no autosave was vetoed: the focus guard was never exercised"
             )
             status = screen._library_note_session.snapshot.status_message
-            assert "whitespace" in status, status
+            assert "shorten it to save" in status, status
             await _type(pilot, "xyz")
             assert body.text == _BODY + burst + "xyz", (
                 "keys typed during the burst landed outside the body"
             )
-            assert title.value == _TITLE + " "
+            assert title.value == long_title
             row = profile.note(profile.note_id)
             assert (row["title"], row["content"]) == (_TITLE, _BODY)
 
@@ -195,13 +199,15 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
 
             assert prompt is not None, "a vetoed save quit silently"
             assert events == []
-            assert _prompt_title(prompt) == (
-                f'Quit and discard unsaved changes to "{_TITLE}"?'
-            )
+            # The prompt names the draft's (ellipsized) title, not the stored one.
+            assert _prompt_title(prompt).startswith(
+                f'Quit and discard unsaved changes to "{_TITLE}'
+            ), _prompt_title(prompt)
+            assert _prompt_title(prompt).endswith('"?'), _prompt_title(prompt)
             await _keep_editing(pilot, app, screen, prompt)
             assert events == []
             assert body.text == _BODY + burst + "xyz"
-            assert title.value == _TITLE + " "
+            assert title.value == long_title
             assert screen._library_note_session.snapshot.dirty
 
             prompt = await _ctrl_q(pilot, app, events)

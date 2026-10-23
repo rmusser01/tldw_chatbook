@@ -1380,6 +1380,10 @@ def _escape_fake(
             editing=False,
             confirming_delete=False,
             editing_analysis=False,
+            # TASK-34000.22: the authoring drafts; None = clean, so the
+            # ladder below is never vetoed in these fakes.
+            edit_draft=None,
+            analysis_draft=None,
             # task-31271 seam (a): the escape label reads the bar's STATE, not
             # its DOM presence (the DOM is one refresh behind). The viewer
             # mounts the bar for exactly ``find_open or content_query``, so the
@@ -1396,6 +1400,9 @@ def _escape_fake(
         _focus_library_media_items_pane=lambda: calls.append(("items-pane",)),
         _focus_library_rail_action=lambda selector: calls.append(("rail", selector)),
         _exit_library_media_viewer=lambda: calls.append("back"),
+        # TASK-34000.22: Escape and its chip both ask this first; "" = no
+        # authoring form holds unsaved text.
+        _library_media_editor_dirty=lambda: "",
         # task-31272 review: the Items pane's type/sort strips open over
         # the three-pane Reader, so Escape closes one first (and its chip
         # names that close); no strip is open in these fakes.
@@ -2312,6 +2319,8 @@ def test_t_key_arms_delete_confirmation():
     fake._sync_library_media_viewer_or_recompose = lambda: setattr(
         fake, "_synced", fake._synced + 1
     )
+    # TASK-34000.22: `t` refuses while a Media form is dirty; a clean one.
+    fake._library_media_editor_dirty = lambda: ""
     LibraryScreen.action_library_media_move_to_trash(fake)
     assert fake._media_state.confirming_delete is True
     assert fake._media_state.delete_receipt_ids == ()

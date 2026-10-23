@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  meeting-notes                                            │
+│ │ Navigation                     │  a  │ Media (5)      Sets                                  │  t  file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook │
+│ │     Import…                    │  v  │ Media · 5 of 5 · all types · sort: Newest            │  e  /.worktrees/.nlrev-harness/fixtures/import-docs/meeting- │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  notes.txt                                                │
+│ │ ▊ Search Library…        ▎▊x▎  │     │  ▊  Title/keyword…                  ▎                │  s    Find  Note  Read later  Use in Console  More           │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │       Read (selected)  Analysis  Highlights  Info            │
+│ │                                │     │    type: All types    sort: Newest                   │     ┌──────────────────────────────────────────────────────┐ │
+│ │ ─────────────────────────────  │     │                                                      │     │ Meeting notes - weekly sync                          │ │
+│ │ Browse                    ▾    │     │    Export…     Trash     Select                      │     │                                                      │ │
+│ │  ▸ Media (5) — your files      │     │    Review these                                      │     │ Attendees: the whole team.                           │ │
+│ │    Conversations (0)           │     │    paper-retrieval-practice                          │     │                                                      │ │
+│ │    Notes (0)                   │     │      plaintext · updated 1m                          │     │ We reviewed the import queue work and agreed that    │ │
+│ │    Prompts (0) — reuse         │     │  ▸ meeting-notes                                     │     │ the receipt should open the                          │ │
+│ │    Skills (1) — AI add-ons     │<--- │      plaintext · updated 1m · loaded                 │     │ item it names. Two people reported that Read later   │ │
+│ │    Collections (0)             │     │    reading-list                                      │     │ had saved a different                                │ │
+│ │    Search / RAG — find all     │     │      plaintext · updated 1m                          │     │ document than the one they were reading; this is now │ │
+│ │ ─────────────────────────────  │     │    glossary                                          │     │ tracked.                                             │ │
+│ │ Artifacts                 ▾    │     │      plaintext · updated 1m                          │     │                                                      │ │
+│ │    All artifacts               │     │    team-handbook                                     │<--- │ Next steps: verify the fix with a five-item import   │ │
+│ │    Chatbooks                   │     │      plaintext · updated 1m                          │     │ and capture the result.                              │ │
+│ │    Reports                     │     │                                                      │     │                                                      │ │
+│ │    Dreams                      │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Create                    ▾    │     │                                                      │     │                                                      │ │
+│ │    New note                    │<--- │                                                      │     │                                                      │ │
+│ │    New prompt                  │     │                                                      │     │                                                      │ │
+│ │    New skill                   │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Study                     ▾    │     │                                                      │     │                                                      │ │
+│ │    Study decks (0)             │     │                                                      │     │                                                      │ │
+│ │    Flashcards due: 0           │     │                                                      │     │                                                      │ │
+│ │    Quizzes (0)                 │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Import / Export           ▾    │     │                                                      │     │                                                      │ │
+│ │    Import…                     │     │                                                      │     │                                                      │ │
+│ │    Export                      │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────▇ │     │                       1-5 of 5                       │     └──────────────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | [ prev item | ctrl+f find | n note | l read later | c use in Console | t trash | F1 · Ctrl+P · Ctrl+Q

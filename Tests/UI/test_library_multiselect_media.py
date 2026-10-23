@@ -2177,6 +2177,9 @@ def _single_delete_confirm_fake(
         ),
         _delete_library_media_item=_noop_delete_item,
         refresh=lambda **k: None,
+        # TASK-34000.18: the confirm reads the Reader's target, not the list
+        # selection; this fake has no Reader, so the two coincide.
+        _library_media_reader_target_id=lambda: selected_media_id,
     )
     return _bind_media_mutation_seams(fake)
 
@@ -3349,3 +3352,48 @@ async def test_bulk_action_labels_hold_their_column_across_the_first_selection(s
             _label_column(host, export, "Export"),
         )
         assert after == before, (before, after)
+
+
+def _noop_coroutine_factory(recorded):
+    async def _coro():
+        return None
+
+    def _factory(media_id, **_kwargs):
+        recorded.append(media_id)
+        return _coro()
+
+    return _factory
+
+
+def test_analysis_generate_targets_the_reader_item_not_the_selection(monkeypatch):
+    """TASK-34000.18 fix round 1, I-3: Generate reads the loaded detail's
+    content, so its save must target the Reader's item -- the selection can
+    name another row during a pending window or an off-page open."""
+    from tldw_chatbook.UI.Screens import library_screen as module
+
+    monkeypatch.setattr(module, "resolve_ingest_analysis_provider", lambda _cfg: object())
+    monkeypatch.setattr(module, "analysis_unavailable_reason", lambda _res: "")
+    recorded: list[str] = []
+    workers: list[object] = []
+    fake = SimpleNamespace(
+        _media_state=SimpleNamespace(
+            generating_analysis=False,
+            selected_media_id="local:media:1",
+            detail={"content": "the loaded item's body"},
+        ),
+        app_instance=SimpleNamespace(app_config={}),
+        _library_media_reader_target_id=lambda: "local:media:3",
+        _notify_library_media_analysis_warning=lambda message: None,
+        _sync_library_media_viewer_or_recompose=lambda: None,
+        _generate_library_media_analysis=_noop_coroutine_factory(recorded),
+        run_worker=lambda coro, **k: workers.append(coro),
+    )
+
+    LibraryScreen.handle_library_media_analysis_generate(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert recorded == ["local:media:3"], recorded
+    assert fake._media_state.generating_analysis is True
+    for coro in workers:
+        coro.close()

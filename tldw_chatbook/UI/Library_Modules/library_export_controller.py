@@ -767,6 +767,14 @@ class LibraryExportController:
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        # TASK-34000.22 fix round 1 (C-1): the Media reader's authoring forms
+        # refuse this exit too, beside the note flush -- the row used to move
+        # to Export while the dirty form stayed set behind it, and every way
+        # back was then refused for a form nobody could see. The user stays
+        # on Media with one toast and the form on screen.
+        if self._screen._library_media_editor_dirty():
+            self._screen._notify_media_editor_dirty_veto()
+            return
         # task-4023 AC#7: remember which canvas opened Export so Escape
         # (action_library_export_back) can return there. Recorded AFTER the
         # flush admits the switch, BEFORE the row id moves; a repeat press

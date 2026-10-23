@@ -124,3 +124,79 @@ def test_the_formerly_silent_vetoes_say_something_honest():
     assert library_prompt_mutation_veto_notice(destination="").startswith(
         "Can't leave yet — "
     )
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.22: Ctrl+Q's prompt names a dirty Media form
+# ---------------------------------------------------------------------------
+
+
+def _screen_with_only_a_media_draft(dirty_form: str):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        _notes_state=SimpleNamespace(file_notes_workspace=None),
+        _library_note_session=SimpleNamespace(snapshot=None),
+        _prompts_state=SimpleNamespace(dirty=False, original_name=""),
+        _skills_state=SimpleNamespace(dirty=False, original_name=""),
+        _library_media_editor_dirty=lambda: dirty_form,
+    )
+
+
+@pytest.mark.parametrize(
+    ("dirty_form", "expected"),
+    [
+        # Fix round 1 (M-8 ruling): the prompt's title already says "unsaved
+        # changes to", so the names do not repeat the word.
+        ("analysis", ["analysis"]),
+        ("edit", ["media details"]),
+        ("", []),
+    ],
+)
+def test_unsaved_names_name_a_dirty_media_form(dirty_form, expected):
+    """``confirm_library_quit`` titles its prompt from these names, so a dirty
+    analysis or metadata form is named there exactly as a dirty prompt is."""
+    from tldw_chatbook.UI.Library_Modules.library_pending_work import _unsaved_names
+
+    assert _unsaved_names(_screen_with_only_a_media_draft(dirty_form)) == expected
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.22 fix round 3: the navigation-sources barrier carries the veto
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_navigation_sources_flush_refuses_a_dirty_media_form_out_loud():
+    """``_flush_library_navigation_sources`` -- the barrier every navigation
+    INTO Library crosses -- refuses while a Media authoring form holds unsaved
+    text, and says so once, after the note/prompt/skill barriers all admit."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Library_Modules.library_inspection_admission import (
+        _flush_library_navigation_sources,
+    )
+
+    spoken: list[str] = []
+
+    async def permitted():
+        return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED, "")
+
+    async def allowed():
+        return True
+
+    screen = SimpleNamespace(
+        _prompts_state=SimpleNamespace(mutation_in_flight=False),
+        _flush_library_note_save=permitted,
+        _flush_library_prompt_save=allowed,
+        _flush_library_skill_save=allowed,
+        _library_media_editor_dirty=lambda: "analysis",
+        _notify_media_editor_dirty_veto=lambda: spoken.append("media"),
+    )
+
+    assert await _flush_library_navigation_sources(screen, is_current=lambda: True) is False
+    assert spoken == ["media"]
+
+    screen._library_media_editor_dirty = lambda: ""
+    assert await _flush_library_navigation_sources(screen, is_current=lambda: True) is True
+    assert spoken == ["media"]

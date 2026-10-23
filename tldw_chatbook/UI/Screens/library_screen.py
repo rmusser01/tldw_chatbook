@@ -837,6 +837,7 @@ from ..Library_Modules.screen_support_types import (
 )
 from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
 from ..Library_Modules.canvas_sync import (
+    _adjacent_library_list_row,
     _move_library_list_row_focus,
     _patch_library_disabled_marker_label,
     _apply_library_row_toggle,
@@ -1324,8 +1325,12 @@ class LibraryScreen(BaseAppScreen):
     #: generic, honest label rather than three sub-state-specific ones --
     #: one word is accurate for all three without tripling the constant
     #: count for a wording-only difference. task-31272: that word is
-    #: "close", the same one the find bar and the More menu use, so the
-    #: Reader's whole Escape vocabulary is four words (see
+    #: "close", the same one the find bar and the More menu use.
+    #: TASK-34000.22 (fix round 2): two readings are spliced over it by
+    #: ``_library_route_shortcuts_for_current_state`` -- "cancel" over an
+    #: armed delete confirm (Escape cancels it first) and "save or discard
+    #: first" while an authoring form holds unsaved text -- so the Reader's
+    #: whole Escape vocabulary is six words (see
     #: ``_library_media_escape_label``).
     LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS = (
         ("/", "focus search"),
@@ -4353,7 +4358,18 @@ class LibraryScreen(BaseAppScreen):
             )
             return tuple(shortcuts)
         if self._library_media_viewer_substate_active():
-            return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
+            # TASK-34000.22: the esc pair is whatever the key will do, read
+            # from the same seam as the key (``_library_media_escape_label``:
+            # "close", or the dirty chip while a form refuses). Spliced,
+            # never re-literalled -- the constant stays the one definition
+            # of the keys this set shares (the Trash branch's rule, F2).
+            escape_label = self._library_media_escape_label()
+            if escape_label == "close":
+                return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
+            return tuple(
+                ("esc", escape_label) if pair[0] == "esc" else pair
+                for pair in self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
+            )
         if (
             (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
@@ -9057,6 +9073,24 @@ class LibraryScreen(BaseAppScreen):
                 return
         if isinstance(self.focused, (Input, TextArea)):
             return
+        if (
+            event.key in ("up", "down")
+            and self.focused is not None
+            and self.focused.has_class("library-media-row")
+            and not self._media_state.select_mode
+            and self._library_media_row_walk_leaves_dirty_form(event.key)
+        ):
+            # TASK-34000.22: the keyboard twin of a row click -- an Up/Down
+            # walk onto ANOTHER item would select it under a dirty authoring
+            # form. Refuse before focus moves, out loud, so the key is not
+            # dead. Fix round 1 (M-6): only when the walk's target is a
+            # different item than the Reader's -- walking onto the Reader's
+            # own row, a list-end press, or a select-mode walk (no select)
+            # is left alone.
+            self._notify_media_editor_dirty_veto()
+            event.stop()
+            event.prevent_default()
+            return
         if event.key in ("up", "down") and _move_library_list_row_focus(
             self.focused, event.key
         ):
@@ -9426,13 +9460,20 @@ class LibraryScreen(BaseAppScreen):
         the hidden screen (three of them relied entirely on the
         real-unmount auto-cancel and had no explicit stop anywhere).
 
-        Deliberately NOT done here: cache wipes, generation bumps, or
-        authority-flag flips. Those exist in ``on_unmount`` because a
-        FRESH instance must not trust a dead visit's state; a suspended
-        instance is live, and a background result landing on it while
-        hidden simply means fresher data at resume. Rejecting in-flight
-        work at suspend would re-create the stranded-"Loading" class this
-        design avoids.
+        Deliberately NOT done here: cache wipes or authority-flag flips.
+        Those exist in ``on_unmount`` because a FRESH instance must not
+        trust a dead visit's state; a suspended instance is live, and a
+        background result landing on it while hidden simply means fresher
+        data at resume. Rejecting in-flight work at suspend would
+        re-create the stranded-"Loading" class this design avoids.
+
+        One generation IS bumped here (TASK-34000.9): the Notes autosave
+        generation, through ``_invalidate_library_note_autosave``. That
+        generation is checked only BEFORE a save starts
+        (``library_note_autosave.note_save_starts``), so it fences off a
+        save a just-fired timer had queued but not begun -- which would
+        otherwise write behind the covering dialog -- while a save already
+        in flight still lands. The resume re-arms whatever is still dirty.
 
         No super() call -- Textual's dispatcher invokes every handler
         along the MRO separately for this event (the on_mount contract).
@@ -9466,12 +9507,11 @@ class LibraryScreen(BaseAppScreen):
             prompts_timer.stop()
             self._prompts_state.debounce_timer = None
         # (wave-8 task 3) The notes autosave timer moved to ``_notes_state``
-        # for the same reason, and left the string loop above for the same
-        # explicit block the ingest and prompts timers already use.
-        notes_timer = self._notes_state.autosave_timer
-        if notes_timer is not None:
-            notes_timer.stop()
-            self._notes_state.autosave_timer = None
+        # for the same reason, and left the string loop above. TASK-34000.9
+        # fix round 1: the invalidate stops and clears it as before AND bumps
+        # the generation, so a save a just-fired timer had queued but not yet
+        # started is fenced off too; the resume re-arms what is still dirty.
+        self._invalidate_library_note_autosave()
 
     def on_screen_resume(self) -> None:
         """Refresh every visible surface for this visit (initial and repeat).
@@ -9483,6 +9523,12 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
+        from ..Library_Modules import library_note_autosave as autosave
+
+        # TASK-34000.9 (N-06): suspend stopped the autosave timer; a dirty
+        # editor note gets it back here, and only here, when the screen is
+        # visible again (F1 help, Move note, the palette all suspend).
+        autosave.resume_library_note_autosave(self)
         self._artifacts_share_controller.resume()
         self.call_after_refresh(self._artifacts_navigation.resume)
         if self._artifacts_controller is not None:
@@ -9776,6 +9822,9 @@ class LibraryScreen(BaseAppScreen):
                         self._media_state.selected_media_id,
                         immediate=True,
                     )
+                    # TASK-34000.18 fix round 2: a restored selection is
+                    # the Reader's item too.
+                    self._media_state.highlight_held_by_reader = True
             self.run_worker(
                 self._refresh_library_media_detail(
                     self._media_state.selected_media_id,
@@ -10926,6 +10975,10 @@ class LibraryScreen(BaseAppScreen):
         ):
             media_id = str(getattr(focused, "media_id", "") or "")
             title = str(getattr(focused, "_library_media_title", "") or media_id)
+            # TASK-34000.22 fix round 2 (R2-2): a focus move onto another
+            # row (a click's queued bubble, Tab) under a dirty authoring
+            # form is refused by the select seam's own guard -- the one
+            # guard every route shares -- not by a clause here.
             if media_id and media_id != self._media_state.selected_media_id:
                 self._select_library_media_reader_row(media_id, title, immediate=False)
         if self.is_mounted:
@@ -11359,6 +11412,9 @@ class LibraryScreen(BaseAppScreen):
         )
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
+        # TASK-34000.22: the Media reader's authoring forms (explicit-Save
+        # only, like Prompts and Skills: nothing to flush, only to veto on).
+        media_flush_allowed = not self._library_media_editor_dirty()
         # task-449 / TASK-34000.27: the app-level navigation veto only logs
         # and rolls the nav bar back, so every refusing draft says why the
         # tab switch was refused -- the same toasts as the in-screen Back /
@@ -11372,12 +11428,17 @@ class LibraryScreen(BaseAppScreen):
             spoken.append("prompt")
             self._notify_prompt_dirty_veto()
         if not skill_flush_allowed and not quitting and not spoken:
+            spoken.append("skill")
             self._notify_skill_dirty_veto()
+        if not media_flush_allowed and not quitting and not spoken:
+            spoken.append("media")
+            self._notify_media_editor_dirty_veto()
         return (
             file_notes_flush_allowed
             and note_flush.kind is NoteFlushOutcomeKind.PERMITTED
             and prompt_flush_allowed
             and skill_flush_allowed
+            and media_flush_allowed
         )
 
     async def confirm_quit(self) -> bool:
@@ -15852,7 +15913,7 @@ class LibraryScreen(BaseAppScreen):
                         )
                     elif shell.canvas_kind == "media":
                         media_state = self._build_library_media_state()
-                        self._media_state.selected_media_id = media_state.selected_id
+                        self._adopt_library_media_highlight(media_state)
                         yield LibraryMediaCanvas(
                             media_state,
                             actions=self._media_controller,
@@ -16694,15 +16755,24 @@ class LibraryScreen(BaseAppScreen):
         return can_rename
 
     def _library_media_selected_backing_id(self) -> int | None:
-        """Resolve the selected Media list identity to its positive int id.
+        """Resolve the Reader's target identity to its positive int id.
 
-        ``self._media_state.selected_media_id`` is the canonical ``"local:media:<id>"``
-        list identity, not a bare id -- ``_library_media_backing_id``
-        (already used by every real mutation path in this screen) does the
-        actual resolution; this just narrows its ``int | str`` result to
-        "a usable id, or None".
+        TASK-34000.18 fix round 1 (I-3): every caller is Reader-scoped -- the
+        Reader's speaker-rename id, the rename result's identity check and
+        the Reader's legend rows (the LIST canvas's own presentation,
+        ``_library_media_canvas_presentation``, resolves the list selection
+        itself; its preview is off, so that value is inert) -- and a rename
+        persisted against the LIST selection wrote the Reader's transcript
+        onto another record whenever the two diverged (a pending row
+        click, an off-page open). So this reads
+        ``_library_media_reader_target_id()``: the loaded item whenever one
+        is loaded (final review C-1: whatever the view), the selection
+        otherwise. The canonical
+        ``"local:media:<id>"`` is resolved by ``_library_media_backing_id``
+        (already used by every real mutation path in this screen); this
+        just narrows its ``int | str`` result to "a usable id, or None".
         """
-        media_id = self._media_state.selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return None
         backing_id = self._library_media_backing_id(media_id)
@@ -16916,6 +16986,9 @@ class LibraryScreen(BaseAppScreen):
 
         return LibraryMediaController._restore_library_media_scope(state)
 
+    def _adopt_library_media_highlight(self, media_state: Any) -> None:
+        return self._media_controller._adopt_library_media_highlight(media_state)
+
     def _reset_library_media_reader_to_no_selection(self) -> None:
         """Clear the Reader to its no-selection placeholder (task-32043).
 
@@ -16934,6 +17007,8 @@ class LibraryScreen(BaseAppScreen):
             request_generation=session.request_generation + 1,
             mode=session.mode,
         )
+        # TASK-34000.18 fix round 2: nothing held, nothing to hold for.
+        self._media_state.highlight_held_by_reader = False
         self._media_state.selected_media_id = ""
         self._media_state.view = "list"
         self._media_state.detail = None
@@ -16941,6 +17016,11 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.highlights = []
         self._media_state.editing = False
         self._media_state.editing_analysis = False
+        # TASK-34000.22 fix round 1 (I-2): the forms go with the item they
+        # were typed for -- a reset that cleared the flags but left the
+        # drafts kept the dirty predicate true for a form nobody could see.
+        self._media_state.edit_draft = None
+        self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
@@ -16963,25 +17043,35 @@ class LibraryScreen(BaseAppScreen):
             and applied == controller.requested_scope
         ):
             page_ids = {str(item["id"]) for item in controller.retained_items}
+            # TASK-34000.22 fix round 1 (I-2): while an authoring form holds
+            # unsaved text the Reader's item is PINNED -- the list filters
+            # as usual, but neither the typed query's select-first nor the
+            # Clear's restore moves the Reader (the selection stays the
+            # Reader's item; Task 1's hold paints no row when it is off the
+            # page), and a 0-result page keeps the form instead of
+            # resetting the Reader under it.
+            reader_pinned = bool(self._library_media_editor_dirty())
             if applied.query and self._media_state.filter_select_first:
-                self._media_state.selected_media_id = (
-                    str(controller.retained_items[0]["id"])
-                    if controller.retained_items
-                    else ""
-                )
-                applied_selection_id = self._media_state.selected_media_id
-                self._media_state.filter_select_first = False
-            elif not applied.query:
-                self._media_state.unfiltered_scope = applied
-                if self._media_state.filter_restore_id:
+                if not reader_pinned:
                     self._media_state.selected_media_id = (
-                        self._media_state.filter_restore_id
-                        if self._media_state.filter_restore_id in page_ids
-                        else str(controller.retained_items[0]["id"])
+                        str(controller.retained_items[0]["id"])
                         if controller.retained_items
                         else ""
                     )
                     applied_selection_id = self._media_state.selected_media_id
+                self._media_state.filter_select_first = False
+            elif not applied.query:
+                self._media_state.unfiltered_scope = applied
+                if self._media_state.filter_restore_id:
+                    if not reader_pinned:
+                        self._media_state.selected_media_id = (
+                            self._media_state.filter_restore_id
+                            if self._media_state.filter_restore_id in page_ids
+                            else str(controller.retained_items[0]["id"])
+                            if controller.retained_items
+                            else ""
+                        )
+                        applied_selection_id = self._media_state.selected_media_id
                     self._media_state.filter_restore_id = ""
             # task-32043: a settled page with NO visible rows -- a 0-result
             # filter -- must stop the Reader painting the item it still holds
@@ -16990,6 +17080,7 @@ class LibraryScreen(BaseAppScreen):
             # the loaded item merely isn't on is a page turn, not a removal).
             if (
                 not applied_selection_id
+                and not reader_pinned
                 and not controller.retained_items
                 and not self._media_state.reader_session.external_detail
                 and (
@@ -17039,7 +17130,7 @@ class LibraryScreen(BaseAppScreen):
                 sync_surfaces=False,
             )
         media_state = self._build_library_media_state()
-        self._media_state.selected_media_id = media_state.selected_id
+        self._adopt_library_media_highlight(media_state)
         focused = self.focused
         focused_id = getattr(focused, "id", None)
         pager_focus_ids = {
@@ -17197,6 +17288,17 @@ class LibraryScreen(BaseAppScreen):
 
     def _clear_library_media_selection_for_scope_change(self) -> None:
         """End page-local selection before changing the exact Media scope."""
+        # TASK-34000.18 fix round 2: every user scope change -- a type
+        # choice, a typed query, the filter Clear, a sort or page change --
+        # comes through here, and it is the one place the Reader's hold on
+        # the list highlight is released: from now on the list has moved
+        # on and the selection follows the canvas (TASK-15457).
+        # TASK-34000.22 fix round 1 (I-2): unless an authoring form holds
+        # unsaved text -- then the Reader's item is pinned, the hold stays,
+        # the selection keeps naming that item (so its keys stay live) and
+        # Task 1's rule paints no row when it is off the filtered page.
+        if not self._library_media_editor_dirty():
+            self._media_state.highlight_held_by_reader = False
         changed = (
             self._media_state.select_mode
             or self._media_state.row_selection.count > 0
@@ -21269,6 +21371,32 @@ class LibraryScreen(BaseAppScreen):
             event
         )
 
+    # TASK-34000.10 (N-07): leaving Title or Keywords tidies the edge
+    # whitespace or the case-insensitive duplicate the save would refuse, as a
+    # visible draft edit through the field's own Changed handler (ADR-027:
+    # nothing is rewritten at save). The policy and its guards live in
+    # ``Library/library_note_field_tidy.py``; imported lazily, like the
+    # autosave policy, to stay off the Library preimport census.
+    @on(Input.Blurred, "#library-note-title")
+    def handle_library_note_title_blurred(self, event: Input.Blurred) -> None:
+        from ...Library.library_note_field_tidy import tidy_library_note_field_on_blur
+
+        tidy_library_note_field_on_blur(self, event)
+
+    @on(Input.Blurred, "#library-note-keywords")
+    def handle_library_note_keywords_blurred(self, event: Input.Blurred) -> None:
+        from ...Library.library_note_field_tidy import tidy_library_note_field_on_blur
+
+        tidy_library_note_field_on_blur(self, event)
+
+    @on(Input.Blurred, "#library-note-context-keywords")
+    def handle_library_note_context_keywords_blurred(
+        self, event: Input.Blurred
+    ) -> None:
+        from ...Library.library_note_field_tidy import tidy_library_note_field_on_blur
+
+        tidy_library_note_field_on_blur(self, event)
+
     @on(Button.Pressed, "#library-note-save")
     def handle_library_note_save(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_save(event)
@@ -21507,8 +21635,11 @@ class LibraryScreen(BaseAppScreen):
             else "error"
         )
         validation_field = ""
+        validation_message = ""
         if outcome.save_outcome is not None and outcome.save_outcome.veto is not None:
             validation_field = outcome.save_outcome.veto.field
+            validation_message = outcome.save_outcome.veto.message
+        self._notes_state.mark_vetoed_field(validation_field, validation_message)  # TASK-34000.10
         if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO:
             self._route_library_note_validation_field(validation_field)
         self._update_library_note_meta_static(content=snapshot.body)
@@ -22803,6 +22934,18 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
             return
+        # TASK-34000.22: the Media reader's authoring forms are explicit-
+        # Save only, like Skills -- nothing to flush, only to veto on. A
+        # clean form still lets the settled Reader ride the switch
+        # (TASK-34000.25) and closes below exactly as before. Fix round 1
+        # (C-1): NEVER refuse the switch that shows the Reader holding the
+        # draft -- a dirty form behind another destination must always be
+        # reachable again, so a Media press lands on Media with the form
+        # and its draft intact (the keep/reset block below honours it).
+        media_form_dirty = self._library_media_editor_dirty()
+        if media_form_dirty and row_id != LIBRARY_ROW_BROWSE_MEDIA:
+            self._notify_media_editor_dirty_veto()
+            return
         self._artifacts_share_controller.invalidate_pending_presentation()
         if row_id != "artifacts-chatbooks":
             self._artifacts_navigation.invalidate()
@@ -22902,22 +23045,36 @@ class LibraryScreen(BaseAppScreen):
         # list. Transient sub-states (edit, delete confirm, analysis edit,
         # Find) still close here, and anything short of a settled local item
         # (pending request, server detail, no detail) resets as before.
-        keep_media_reader = self._rail_switch_keeps_media_reader()
+        # TASK-34000.22 fix round 1 (C-1): a dirty authoring form PINS the
+        # Reader (I-2) -- the only switch that reaches here with one is the
+        # Media press that brings the user back to it, and that press keeps
+        # the Reader, the form and the draft exactly as they were.
+        keep_media_reader = self._rail_switch_keeps_media_reader() or bool(
+            media_form_dirty
+        )
         if keep_media_reader:
             # The reading position is captured on row selection and on a
             # tab change; a rail press is the third way to leave the body.
             # The same ONE writer as those two (TASK-22210's coalesced,
             # deduplicated progress write) -- no new data work in this seam.
             self._capture_library_media_loaded_progress()
+            if media_form_dirty:
+                # Fix round 2 (R2-4): the form must be ON SCREEN -- a
+                # Trash round trip leaves the view at "list", and below 64
+                # columns the list then fills the stage over the form.
+                self._reveal_library_media_dirty_form()
         else:
             self._media_state.view = "list"
             self._media_state.detail = None
             self._media_state.composed_detail = None
             self._media_state.highlights = []
             self._media_state.content_mode = "raw"
-        self._media_state.editing = False
+        if not media_form_dirty:
+            self._media_state.editing = False
+            self._media_state.edit_draft = None
+            self._media_state.editing_analysis = False
+            self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
-        self._media_state.editing_analysis = False
         self._close_library_media_find()
         self._notes_state.filter = ""
         self._notes_state.filter_records = None
@@ -23484,6 +23641,14 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._media_state.row_selection.toggle(media_id)
             _apply_library_row_toggle(self, "media", event.button, media_id)
+            return
+        # TASK-34000.22: opening a row (this one included) resets both
+        # authoring forms, so a form holding unsaved text refuses the press
+        # and says why. The click already moved focus onto the row; the
+        # queued ``DescendantFocus`` that follows reaches the select seam,
+        # whose own guard refuses it quietly, so this one click speaks once.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
             return
         # task-31273: an explicit row open wins over a pending auto-resume.
         self._cancel_pending_review_set_resume()
@@ -24626,6 +24791,9 @@ class LibraryScreen(BaseAppScreen):
         self, media_id: str
     ) -> tuple[str, int | str] | None:
         return self._media_controller._library_media_reader_identity(media_id)
+
+    def _library_media_reader_target_id(self) -> str:
+        return self._media_controller._library_media_reader_target_id()
 
     def _required_library_media_backing_id(self, media_id: str) -> int:
         """Return one positive local mutation id or fail before persistence."""
@@ -31939,18 +32107,27 @@ class LibraryScreen(BaseAppScreen):
         binding (``action_library_media_viewer_back``, task-2856 AC2) so
         both exits run the identical reset sequence -- one seam, not a
         parallel key-driven path that could drift from the button's. Runs
-        unconditionally regardless of the viewer's editing/confirming-
-        delete sub-state, mirroring the "‹ Back to list" button itself,
-        which renders (and is reachable) in every one of those sub-states.
+        regardless of the viewer's confirming-delete sub-state, mirroring
+        the "‹ Back to list" button itself, which renders (and is
+        reachable) in every sub-state -- except (TASK-34000.22, ADR-055
+        Pattern D) that an authoring form holding unsaved text refuses it,
+        out loud, like every other exit from that form.
         """
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self._cancel_library_media_selection_settlement()
         self._media_state.reader_session = leave_external_detail(
             self._media_state.reader_session
         )
         self._media_state.view = "list"
+        # TASK-34000.18 fix round 2: the list is the stage again.
+        self._media_state.highlight_held_by_reader = False
         self._media_state.editing = False
+        self._media_state.edit_draft = None
         self._media_state.confirming_delete = False
         self._media_state.editing_analysis = False
+        self._media_state.analysis_draft = None
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
         self._load_library_media_list_if_needed()
@@ -31975,37 +32152,41 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to the media canvas genuinely showing
         its viewer sub-view, so it only ever fires there.
 
-        Review round 2: the media edit/delete-confirm/analysis-edit forms
-        have no ``_library_*_dirty`` field to guard the way the note/
-        prompt editors do (nothing marks them dirty; there is no
-        equivalent of ``_flush_library_note_save``/``_flush_library_
-        prompt_save`` to call here). Rather than inventing one, Escape
-        instead mirrors each sub-state's OWN existing Cancel affordance --
-        ``#library-media-edit-cancel`` / ``#library-media-delete-cancel``
-        / ``#library-media-analysis-cancel`` -- all three ALREADY discard
-        that one sub-state's in-progress edit unconditionally (a
-        pre-existing, pre-task-2856 UX decision) and land back on the
-        plain read-only viewer, never past it. Jumping straight to the
-        list -- ``_exit_library_media_viewer()`` -- only happens from
-        that plain viewer, with no sub-state active to discard. This
-        makes a mid-edit Escape strictly LESS aggressive than before (one
-        step, matching Cancel) rather than skipping past the sub-state
-        straight to the list the way the always-visible "‹ Back to list"
-        button does (that button's own behavior is unchanged; widening
-        ITS guard is outside this task).
+        Review round 2: Escape mirrors each sub-state's OWN Cancel
+        affordance -- ``#library-media-edit-cancel`` / ``#library-media-
+        delete-cancel`` / ``#library-media-analysis-cancel`` -- and lands
+        back on the plain read-only viewer, never past it. Jumping straight
+        to the list -- ``_exit_library_media_viewer()`` -- only happens from
+        that plain viewer, with no sub-state active to discard.
+
+        TASK-34000.22 (ADR-055 Pattern D): the two authoring forms now carry
+        a draft (``edit_draft`` / ``analysis_draft``), so a form whose typed
+        text differs from the saved value REFUSES this key -- the toast
+        names the unsaved work and the footer chip already read "esc save
+        or discard first" (``_library_media_escape_label``). Only the form's
+        own "Discard changes" press (the relabelled Cancel) drops the text.
+        A clean form closes in one step exactly as before; the delete
+        confirm has nothing typed and is never vetoed -- fix round 1 (M-5):
+        it is cancelled FIRST, so an armed confirm over a dirty form steps
+        back to the form rather than answering with the unsaved copy.
         """
         if self._media_state.bulk_delete_in_flight:
-            return
-        if self._media_state.editing:
-            self._media_state.editing = False
-            self._sync_library_media_viewer_or_recompose()
             return
         if self._media_state.confirming_delete:
             self._media_state.confirming_delete = False
             self._sync_library_media_viewer_or_recompose()
             return
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
+        if self._media_state.editing:
+            self._media_state.editing = False
+            self._media_state.edit_draft = None
+            self._sync_library_media_viewer_or_recompose()
+            return
         if self._media_state.editing_analysis:
             self._media_state.editing_analysis = False
+            self._media_state.analysis_draft = None
             self._sync_library_media_viewer_or_recompose()
             return
         focused = self.focused
@@ -33098,6 +33279,11 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
                 or self._media_state.view != "list"
                 or not getattr(self, "is_current", False)
+                # TASK-34000.22 fix round 2 (R2-1): an ambient resume never
+                # opens over an authoring form holding unsaved text (the
+                # opener would refuse anyway; this keeps the ambient path
+                # quiet, as the storage warning's severity rule wants).
+                or self._library_media_editor_dirty()
             ):
                 return
             # task-31234 (supersedes task-28245's once-per-set gate, user
@@ -33232,6 +33418,17 @@ class LibraryScreen(BaseAppScreen):
             or self._media_state.confirming_delete
             or self._media_state.editing_analysis
         ):
+            # TASK-34000.22 fix round 2 (R2-5): the key cancels an armed
+            # delete confirm FIRST (``action_library_media_viewer_back``),
+            # so over one the chip says that, dirty form or not.
+            if self._media_state.confirming_delete:
+                return "cancel"
+            # TASK-34000.22: while an authoring form holds unsaved text the
+            # key refuses (``action_library_media_viewer_back``), so the
+            # chip names the blocker in the Prompts editor's own words
+            # rather than promising a close it will not make (task-32393).
+            if self._library_media_editor_dirty():
+                return LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP
             return "close"
         if session.more_open:
             return "close"
@@ -33288,6 +33485,41 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_edit_cancel(event)
 
+    @on(Input.Changed, "#library-media-edit-title")
+    @on(Input.Changed, "#library-media-edit-author")
+    @on(Input.Changed, "#library-media-edit-url")
+    @on(Input.Changed, "#library-media-edit-keywords")
+    def handle_library_media_edit_field_changed(self, event: Input.Changed) -> None:
+        return self._media_controller.handle_library_media_edit_field_changed(event)
+
+    @on(TextArea.Changed, "#library-media-analysis-edit-text")
+    def handle_library_media_analysis_text_changed(
+        self, event: TextArea.Changed
+    ) -> None:
+        return self._media_controller.handle_library_media_analysis_text_changed(event)
+
+    def _library_media_editor_dirty(self) -> str:
+        return self._media_controller._library_media_editor_dirty()
+
+    def _notify_media_editor_dirty_veto(self) -> None:
+        return self._media_controller._notify_media_editor_dirty_veto()
+
+    def _reveal_library_media_dirty_form(self) -> None:
+        return self._media_controller._reveal_library_media_dirty_form()
+
+    def _library_media_row_walk_leaves_dirty_form(self, key: str) -> bool:
+        """Whether an Up/Down press from the focused media row would select
+        another item than the Reader's while an authoring form is dirty
+        (TASK-34000.22 fix round 1, M-6)."""
+        target = _adjacent_library_list_row(self.focused, key)
+        if target is None:
+            return False
+        if str(getattr(target, "media_id", "") or "") == str(
+            self._media_state.selected_media_id or ""
+        ):
+            return False
+        return bool(self._library_media_editor_dirty())
+
     @on(Button.Pressed, "#library-media-edit-save")
     def handle_library_media_edit_save(self, event: Button.Pressed) -> None:
         """Read the edit form's field values and hand the write off to a worker.
@@ -33304,9 +33536,12 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._media_state.bulk_delete_in_flight:
             return
-        media_id = self._media_state.selected_media_id
+        # TASK-34000.18: the form is prefilled from the Reader's item, so the
+        # write targets that same item, not the list highlight.
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             self._media_state.editing = False
+            self._media_state.edit_draft = None
             self.refresh(recompose=True)
             return
         try:
@@ -33316,6 +33551,7 @@ class LibraryScreen(BaseAppScreen):
             keywords_raw = self.query_one("#library-media-edit-keywords", Input).value
         except (NoMatches, QueryError):
             self._media_state.editing = False
+            self._media_state.edit_draft = None
             self.refresh(recompose=True)
             return
         # Validate/sanitize each user-entered field at the UI boundary before
@@ -33424,6 +33660,9 @@ class LibraryScreen(BaseAppScreen):
             else:
                 self._notify_library_media_edit_warning("Media editing is unavailable.")
             self._media_state.editing = False
+            # TASK-34000.22: the form closes on every outcome (the re-fetch
+            # shows what is saved), so the draft goes with it.
+            self._media_state.edit_draft = None
             await self._refresh_library_media_detail(media_id)
         finally:
             self._complete_library_media_mutation(
@@ -33466,6 +33705,12 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the viewer's "Delete" action.
         """
         event.stop()
+        # TASK-34000.22 fix round 2 (R2-5): a destructive action on the item
+        # being edited -- refused out loud while a form holds unsaved text
+        # (a confirm armed over a dirty metadata form never even renders).
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self._media_state.confirming_delete = True
         self._media_state.delete_receipt_ids = ()
         self._sync_library_media_viewer_or_recompose()
@@ -33502,7 +33747,8 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._media_state.bulk_delete_in_flight:
             return
-        media_id = self._media_state.selected_media_id
+        # TASK-34000.18: the item the Reader shows, not the list highlight.
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             self._media_state.confirming_delete = False
             self.refresh(recompose=True)
@@ -33606,6 +33852,7 @@ class LibraryScreen(BaseAppScreen):
                 self._media_state.composed_detail = None
                 self._media_state.highlights = []
                 self._media_state.editing_analysis = False
+                self._media_state.analysis_draft = None
                 self._close_library_media_find()
                 self._media_state.content_mode = "raw"
                 if adjacent is None:
@@ -34457,6 +34704,10 @@ class LibraryScreen(BaseAppScreen):
         Mirrors ``handle_library_media_delete`` -- arming only; the actual
         trash write still needs the confirm affordance.
         """
+        # TASK-34000.22 fix round 2 (R2-5): same refusal as the button.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self._media_state.confirming_delete = True
         self._media_state.delete_receipt_ids = ()
         self._sync_library_media_viewer_or_recompose()
@@ -34542,6 +34793,8 @@ class LibraryScreen(BaseAppScreen):
             await self._reproject_library_media_analysis_row(media_id)
         if viewer_owned:
             self._media_state.editing_analysis = False
+            # TASK-34000.22: the Reader's form closes on every outcome.
+            self._media_state.analysis_draft = None
         if viewer_owned or media_id == self._media_state.selected_media_id:
             # A bulk item nobody is reading needs no detail re-fetch (that
             # call pulls the whole document and then discards it for any id
@@ -34643,7 +34896,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._media_state.generating_analysis:
             return
-        media_id = self._media_state.selected_media_id
+        # TASK-34000.18 fix round 1 (I-3): the content below is the loaded
+        # detail's, so the result is saved to the Reader's item.
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return
         resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
@@ -35958,6 +36213,12 @@ class LibraryScreen(BaseAppScreen):
             note_flush = await self._flush_library_note_save()
             if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
                 return None
+            # TASK-34000.22 fix round 2 (R2-1): this door begins the
+            # selection itself and clears both forms below, so it carries
+            # the same refusal as ``_open_library_media_viewer``.
+            if self._library_media_editor_dirty():
+                self._notify_media_editor_dirty_veto()
+                return None
             if not entry_is_current():
                 return LibraryEntryReconcileResult.SUPERSEDED
             if not entry_origin:
@@ -35970,11 +36231,24 @@ class LibraryScreen(BaseAppScreen):
                 self._media_state.reader_session = leave_external_detail(
                     self._media_state.reader_session
                 )
-            self._media_state.selected_media_id = record_id
+            # TASK-34000.18: canonicalise at the door. Every by-link route
+            # (the import receipt's "Open in Library", the landing hub's
+            # recent "Open", the deep-link entry) hands this branch a BARE
+            # id; page rows are always ``local:media:N``, so a bare
+            # selection was never on the page and the browse builder fell
+            # back to row 0 while the Reader showed the opened item --
+            # and Read later / trash / Edit Save then acted on row 0.
+            reader_identity = self._library_media_reader_identity(record_id)
+            self._media_state.selected_media_id = (
+                reader_identity[0] if reader_identity is not None else record_id
+            )
+            # Fix round 2: opened for the Reader -- it holds the highlight
+            # until the user's next scope change (the user's filter is
+            # left exactly as it is).
+            self._media_state.highlight_held_by_reader = True
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._cancel_pending_review_set_resume()
             self._media_state.view = "viewer"
-            reader_identity = self._library_media_reader_identity(record_id)
             if reader_identity is not None:
                 canonical_id, backing_id = reader_identity
                 self._media_state.reader_session = begin_selection(
@@ -35985,9 +36259,11 @@ class LibraryScreen(BaseAppScreen):
                     immediate=True,
                 )
             self._media_state.editing = False
+            self._media_state.edit_draft = None
             self._media_state.confirming_delete = False
             self._media_state.highlights = []
             self._media_state.editing_analysis = False
+            self._media_state.analysis_draft = None
             self._close_library_media_find()
             self._media_state.content_mode = "raw"
             # task-32065: the row path reclaims the Reader's width the moment
@@ -36754,6 +37030,13 @@ class LibraryScreen(BaseAppScreen):
         ``open_chat_with_handoff`` now reports (fix round 1, M-1), so the
         receipt never claims "staged" for a refused stage.
         """
+        # TASK-34000.22 fix round 2 (R2-3): refused BEFORE any link or
+        # stage -- the navigation veto alone came after the membership row
+        # and the "staged in Console" receipt had been written, and the
+        # stale hand-off then applied on the next Console visit.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_media_handoff_payload()
         notify = getattr(self.app_instance, "notify", None)

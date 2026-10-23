@@ -982,3 +982,11 @@ Tests/UI/test_console_idle_heap_refreeze.py
 # TASK-33620.15.1.3: a closed Inspect rail never asks the Environment panel
 # for its workspace root (50 tests, ~4 s serial).
 Tests/UI/test_console_environment_controller.py
+Tests/UI/test_library_media_actions_target_opened_item.py
+Tests/UI/test_library_media_actions_target_opened_item_extended.py
+Tests/UI/test_library_media_editor_dirty_escape.py
+Tests/UI/test_library_media_editor_dirty_escape_extended.py
+Tests/UI/test_library_media_editor_dirty_escape_openers.py
+Tests/UI/test_library_note_autosave_after_dialog.py
+Tests/UI/test_library_note_autosave_veto_in_place.py
+Tests/UI/test_library_media_reader_controls_in_list_view.py

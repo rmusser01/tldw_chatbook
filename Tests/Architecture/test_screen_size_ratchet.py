@@ -1003,7 +1003,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-22, rebased onto dev 7700c63a68 (same owner decision): dev's own
     #: file is 37062 there (+133 since the last base); this branch's net
     #: +215 is unchanged: 37144 -> 37277.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37277, 1344),
+    #: 2026-10-22, TASK-34000 P1-A (.18/.22/.9/.10/.19), owner decision ("expand
+    #: the limits, don't modify other code to make it fit", 2026-10-04): rebased
+    #: onto dev after #3184, whose row is 37277; this batch nets +282 (+355/-73)
+    #: -- the Reader target accessor, the order-based highlight hold, the
+    #: dirty-form refusals at every Reader exit, the autosave resume hook and
+    #: the veto-in-place status: 37277 -> 37559.
+    #: 2026-10-22, P1-A final review C-1 (same owner decision): 37559 -> 37560
+    #: (+1), the ``_library_media_selected_backing_id`` docstring says the
+    #: Reader target is the loaded item whatever the view. Methods 1354.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37560, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

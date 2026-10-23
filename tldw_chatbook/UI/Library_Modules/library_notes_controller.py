@@ -1440,6 +1440,16 @@ class LibraryNotesController:
         # note will not survive being abandoned.
         if self._library_note_is_pending_blank():
             return "Empty note — type to keep it"
+        # TASK-34000.10 fix round 1 (M-5): while a field is marked, the next
+        # save is refused again by the same rule (only editing that field
+        # clears the mark), so the veto's reason stays the status through
+        # keys typed elsewhere -- the authority line keeps its height and
+        # the hint row under the field does not shift. Fix round 2: checked
+        # BEFORE "Saving…" too -- a refused autosave painted that one-row
+        # status for a frame and the body moved for it (y 27 -> 26 at
+        # 160x45). A conflict still outranks the mark (it clears it).
+        if self._notes_state.validation_field and not snapshot.in_conflict:
+            return self._notes_state.validation_message
         if self._library_note_autosave_state == "saving" or snapshot.saving:
             return "Saving…"
         if snapshot.in_conflict:
@@ -1471,6 +1481,12 @@ class LibraryNotesController:
             ("Words", word_copy),
         )
         operation = self._library_notes_operation_for_active_region()
+        # A standing mark counts as vetoed for the same reason (M-5).
+        vetoed = self._library_note_autosave_state == "validation" or bool(
+            self._notes_state.validation_field
+        )
+        from .library_note_autosave import autosave_is_scheduled  # noqa: PLC0415 -- lazy: keeps the autosave policy module off the preimport census
+
         status_channels = resolve_database_note_status_channels(
             conflict=snapshot.in_conflict,
             read_only=self._library_notes_select_mode,
@@ -1492,6 +1508,10 @@ class LibraryNotesController:
             status_channels = dataclasses.replace(
                 status_channels,
                 content_recovery=status_line,
+                # TASK-34000.10 fix round 1 (M-4): while a veto stands the
+                # authority line names the fix; a second "Next: Retry Save."
+                # on the meta row contradicted it. One instruction.
+                safe_next_action=None if vetoed else status_channels.safe_next_action,
             )
         return LibraryNotePresentationState(
             snapshot=snapshot,
@@ -1505,7 +1525,15 @@ class LibraryNotesController:
             region="context" if self._library_note_context else "editor",
             presentation="preview" if self._library_note_preview else "edit",
             compact=self._library_notes_compact,
-            validation=self._library_note_autosave_state == "validation",
+            validation=vetoed,
+            # TASK-34000.10 (N-07): the vetoed field and the coordinator's own
+            # reason, for the mark and the hint under the field. Not gated on
+            # ``vetoed`` (fix round 1, M-5): a key typed into another field
+            # sets ``autosave_state`` idle, and the hint row must stay put;
+            # the state clears the mark when the vetoed field itself changes.
+            validation_field=self._notes_state.validation_field,
+            validation_message=self._notes_state.validation_message,
+            autosave_scheduled=autosave_is_scheduled(self._notes_state, snapshot),
             conflict=snapshot.in_conflict,
             conflict_running=self._library_note_session.conflict_resolution_running,
             confirming_delete=self._library_note_confirming_delete,
@@ -2108,7 +2136,9 @@ class LibraryNotesController:
                 body.move_cursor(end, select=start != end)
         self._library_notes_restoring_focus = True
         try:
-            if self.focused is not target:
+            if self.focused is not target and not (
+                self._library_notes_defer_focus_to_app_focus(target)
+            ):
                 exact_scroll = identity.scroll_offset is not None
                 self._library_notes_programmatic_focus_target = target
                 self.set_focus(target, scroll_visible=not exact_scroll)
@@ -2125,6 +2155,60 @@ class LibraryNotesController:
             self._library_notes_pending_focus_identity = None
             self._library_notes_pending_focus_generation = None
         return restored_exact_target
+    def _library_notes_defer_focus_to_app_focus(self, target: Widget) -> bool:
+        """Hand a focus restore made while the TERMINAL is blurred to AppFocus.
+
+        TASK-34000.10 final review (2026-10-22, I-1). Textual clears focus on
+        ``AppBlur`` (``App._watch_app_focus(False)``: ``set_focus(None)``,
+        remembering the widget in ``app._last_focused_on_app_blur``) and on
+        ``AppFocus`` puts it back ONLY while ``screen.focused is None``. A
+        blank note's first save can land inside that window: it recomposes
+        the canvas, which replaces the Inputs, and this restore -- built
+        from an identity captured with nothing focused -- used to land on
+        the body fallback. That left ``focused`` set, so AppFocus did
+        nothing, and a user who typed keywords, switched away for a few
+        seconds and kept typing found the keys in the body.
+
+        While ``app.app_focus`` is False the restore therefore focuses
+        nothing (Textual's invariant for a blurred terminal) and instead
+        points ``_last_focused_on_app_blur`` at the LIVE instance of the
+        widget the user was in -- resolved by id, since the recompose
+        replaced it -- so AppFocus lands there. When that widget cannot be
+        found (nothing was focused, or its id is gone), ``target`` takes
+        the slot, which is where this restore would have put focus anyway.
+
+        Args:
+            target: The widget this restore resolved for the identity.
+
+        Returns:
+            True when the terminal is blurred and the restore was deferred
+            (the caller must not focus); False when the app has focus.
+        """
+        app = getattr(self, "app", None)
+        if app is None or getattr(app, "app_focus", True):
+            return False
+        previous = getattr(app, "_last_focused_on_app_blur", None)
+        # Never hijack another screen's or a modal's own restore slot: when
+        # the remembered widget is still mounted on a DIFFERENT screen, defer
+        # (do not focus) but leave the slot to its owner. A detached widget
+        # (the Input this recompose just replaced) is ours to repoint.
+        if previous is not None and getattr(previous, "is_attached", False):
+            try:
+                foreign = previous.screen is not target.screen
+            except Exception:  # noqa: BLE001 - NoScreen while unmounting
+                foreign = False
+            if foreign:
+                return True
+        live: Widget | None = None
+        previous_id = getattr(previous, "id", None)
+        if previous_id:
+            try:
+                live = self.query_one(f"#{previous_id}", Widget)
+            except (NoMatches, QueryError):
+                live = None
+        app._last_focused_on_app_blur = live if live is not None else target
+        return True
+
     def _restore_library_notes_after_targeted_sync(
         self, identity: LibraryNotesFocusIdentity
     ) -> None:
@@ -3439,6 +3523,7 @@ class LibraryNotesController:
         self._clear_finished_library_notes_operation()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
+        self._notes_state.clear_vetoed_field()  # TASK-34000.10 fix round 1 (M-6): a mark never crosses notes
         self._library_note_load_state = "loading"
         self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
@@ -3639,6 +3724,7 @@ class LibraryNotesController:
         self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
         self._library_note_shortcut_status = ""
+        self._notes_state.clear_vetoed_field()  # TASK-34000.10 fix round 1 (M-6)
         self._library_note_confirming_delete = False
         self._library_note_preview = False
         self._library_note_context = False
@@ -3709,6 +3795,7 @@ class LibraryNotesController:
         if self._library_note_session.mutate(title=event.value):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("title")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     @on(TextArea.Changed, "#library-note-body")
@@ -3726,6 +3813,7 @@ class LibraryNotesController:
         if self._library_note_session.mutate(body=event.text_area.text):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("body")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     @on(Input.Changed, "#library-note-keywords")
@@ -3743,6 +3831,7 @@ class LibraryNotesController:
         if self._library_note_session.mutate(keywords_text=event.value):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("keywords")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     @on(Input.Changed, "#library-note-context-keywords")
@@ -3763,6 +3852,7 @@ class LibraryNotesController:
             # yet" (``_library_note_is_pending_blank`` stayed true).
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
+            self._notes_state.clear_vetoed_field("keywords")  # TASK-34000.10 fix round 1 (M-5)
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
     def _fire_library_note_autosave(self, generation: int) -> None:
@@ -3919,6 +4009,7 @@ class LibraryNotesController:
                     exclusive=True,
                     group="library_note_location",
                 )
+        self._notes_state.clear_vetoed_field()  # TASK-34000.10: a landed save ends any mark
         is_current_clean_revision = (
             not snapshot.dirty
             and outcome.revision is not None
@@ -3943,6 +4034,7 @@ class LibraryNotesController:
             return
         if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
             self._library_note_autosave_state = "conflict"
+            self._notes_state.clear_vetoed_field()  # TASK-34000.10: a conflict replaces the veto
             self._library_note_preview = False
             self._library_note_context = False
             self._invalidate_library_note_autosave()
@@ -3956,6 +4048,9 @@ class LibraryNotesController:
             else "error"
         )
         validation_field = outcome.veto.field if outcome.veto is not None else ""
+        self._notes_state.mark_vetoed_field(  # TASK-34000.10: the mark
+            validation_field, outcome.veto.message if outcome.veto is not None else ""
+        )
         if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO:
             self._route_library_note_validation_field(validation_field)
         elif self._library_note_preview:
@@ -4121,6 +4216,9 @@ class LibraryNotesController:
                 and outcome.save_outcome.veto is not None
             ):
                 validation_field = outcome.save_outcome.veto.field
+                self._notes_state.mark_vetoed_field(  # TASK-34000.10
+                    validation_field, outcome.save_outcome.veto.message
+                )
         self._library_note_preview = False
         self._library_note_context = False
         if outcome.kind is ConflictOutcomeKind.VALIDATION_VETO:

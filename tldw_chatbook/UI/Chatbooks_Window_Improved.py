@@ -831,14 +831,28 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
             await self._refresh_chatbooks()
 
     async def action_import_chatbook(self, execution_mode: str = "local") -> None:
-        """Launch the chatbook import wizard."""
+        """Launch the chatbook import wizard.
+
+        TASK-34000.19 fix round 1 (found live, 2026-10-22): this used to
+        ``await push_screen(wizard, wait_for_dismiss=True)``. Textual 8
+        pushes the screen and THEN raises ``NoActiveWorker`` when the wait
+        is requested outside a worker, and an action runs on the message
+        pump, not a worker -- so ``i`` showed the wizard for one frame and
+        ended the app. The wizard's result now arrives through the push
+        callback, which Textual runs on this widget's pump
+        (``ResultCallback`` -> ``call_next``), async or not.
+        """
         from .Wizards.ChatbookImportWizard import ChatbookImportWizard
 
         wizard = ChatbookImportWizard(
             self.app_instance, initial_execution_mode=execution_mode
         )
-        result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
+        await self.app_instance.push_screen(
+            wizard, callback=self._on_import_wizard_dismissed
+        )
 
+    async def _on_import_wizard_dismissed(self, result: Dict[str, Any] | None) -> None:
+        """Toast and rescan after a successful wizard run; nothing otherwise."""
         if result and result.get("success"):
             self.app_instance.notify(
                 "Chatbook imported successfully!", severity="success"

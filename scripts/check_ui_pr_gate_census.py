@@ -475,8 +475,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.1.3 (2026-10-20) appends the Environment controller file,
 # whose closed-rail test pins the rail guard before the root read. Rebased
 # onto dev after the TASK-34000 clarify batch (588): 589.
-MINIMUM_FILES = 605
-MINIMUM_FILES = 604
+# TASK-34000 P1-A batch (2026-10-22, rebased onto dev 28d7ab2c9a after a
+# second queue conflict) appends 8 files at the census tail so no existing
+# entry changes shard: .18's opened-item actions (+ _extended, + Reader
+# controls in the list view), .22's dirty-editor Escape (+ _extended exits,
+# + Reader-opener refusals), .9's autosave-after-dialog and .10's
+# veto-in-place. Dev carried two assignments here (605, then 604; the last
+# won) over 605 entries; collapsed to one: 605 + 8 = 613.
+MINIMUM_FILES = 613
 
 
 def read_census(path: Path) -> list[str]:

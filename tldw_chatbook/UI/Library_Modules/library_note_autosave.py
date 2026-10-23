@@ -13,9 +13,21 @@ duplicate keyword) used to route to the offending field and focus it. That
 was harmless only while autosaves waited for a pause. Mid-burst, the next
 body keys landed in the title, and the next autosave saved them as the title
 (review N-07). ``keep_autosave_veto_in_place`` is that guard: a vetoed or
-failed *autosave* never moves focus or switches the pane while an editor
-field has focus. It reports the reason in the save status instead. An
-explicit Save still routes to the field.
+failed *autosave* never moves focus or switches the pane. It reports the
+reason in the save status instead, and records the vetoed field so the
+editor can outline it with the reason under it (TASK-34000.10: the guard
+first covered only an editor field with focus; a veto landing while the
+user read Info, or sat on a toolbar button, still routed and focused, and
+the max wait makes that reachable mid-task). An explicit Save, and leaving
+the note, still route to the field.
+
+TASK-34000.9 (review N-06): the Library route is reusable (TASK-31521), so
+pushing any modal -- F1 help, Move note, the command palette -- suspends the
+screen, and ``on_screen_suspend`` stops the timer so nothing fires against a
+hidden screen. Nothing armed it again at resume, and the status line kept
+promising "changes save automatically" over a row that never changed.
+``resume_library_note_autosave`` re-arms a dirty editor note when the screen
+comes back; ``autosave_is_scheduled`` is what the promise now reads.
 
 Kept out of ``library_screen.py`` (over its size ratchet) and
 ``library_notes_controller.py`` (at its ratchet). The screen imports this
@@ -28,22 +40,16 @@ import time
 from typing import TYPE_CHECKING
 
 from ...Library.library_notes_session import NoteSaveOutcome, NoteSaveOutcomeKind
+from ...Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_CREATE_NOTE,
+)
 
 if TYPE_CHECKING:
     from ...Library.library_notes_state import LibraryNoteSessionSnapshot
     from ..Screens.library_screen import LibraryScreen
     from .library_notes_state import LibraryNotesState
 
-#: The note editor's fields. While one of them has focus the user is typing,
-#: and an autosave must not move them.
-_EDITOR_FIELD_IDS = frozenset(
-    {
-        "library-note-title",
-        "library-note-body",
-        "library-note-keywords",
-        "library-note-context-keywords",
-    }
-)
 #: Autosave outcomes that used to route to a field and focus it.
 _REFUSED = frozenset({NoteSaveOutcomeKind.VALIDATION_VETO, NoteSaveOutcomeKind.FAILED})
 #: The shortest delay an autosave timer is ever armed with (final review C1).
@@ -52,6 +58,12 @@ _REFUSED = frozenset({NoteSaveOutcomeKind.VALIDATION_VETO, NoteSaveOutcomeKind.F
 #: and the app then raises that error when it shuts down. A burst whose max
 #: wait has already run out therefore saves "almost at once", never "at once".
 AUTOSAVE_MIN_DELAY_SECONDS = 0.05
+#: The rail rows on which the note editor is the visible surface: Notes, and
+#: Create ▸ New note while the just-created note's editor shows
+#: (TASK-34000.25). A resume on any other row leaves a parked note parked.
+_NOTES_EDITOR_ROWS = frozenset({LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE})
+#: Autosave states a resume never re-arms: the next keystroke or Save does.
+_NOT_RESUMED = frozenset({"validation", "error"})
 
 
 def library_note_autosave_delay(
@@ -156,31 +168,111 @@ def arm_library_note_autosave(
     state.autosave_timer = screen.set_timer(delay, _fire)
 
 
+def autosave_is_scheduled(
+    state: LibraryNotesState, snapshot: LibraryNoteSessionSnapshot
+) -> bool:
+    """Whether a save of the open note is armed or already running.
+
+    The status line's "changes save automatically" reads this, not
+    ``dirty`` (review N-06): a dirty note whose timer a modal stopped has
+    nothing scheduled, and the promise would be false.
+
+    Args:
+        state: The screen's Notes state, which holds the timer.
+        snapshot: The note session snapshot.
+
+    Returns:
+        True while the debounce timer is armed or a save is in flight.
+    """
+    return (
+        state.autosave_timer is not None
+        or state.autosave_state == "saving"
+        or bool(snapshot.saving)
+    )
+
+
+def resume_library_note_autosave(screen: LibraryScreen) -> bool:
+    """Arm the autosave again when the screen resumes with a dirty editor note.
+
+    ``on_screen_suspend`` stops and clears the timer for every pushed modal
+    (TASK-31521: no timer fires against a hidden screen) and leaves the
+    burst clock running, so a save that was due fires almost at once
+    (``AUTOSAVE_MIN_DELAY_SECONDS``) and a fresh burst waits its normal
+    debounce. ``_schedule_library_note_autosave`` invalidates first, so the
+    re-armed timer is the only one; the status is repainted so the promise
+    it shows is true again.
+
+    Args:
+        screen: The Library screen that just resumed.
+
+    Returns:
+        True when a timer was armed. False when nothing needed one, or when
+        arming would save behind the user's back: another screen still
+        covers this one (a chained dialog); the visible rail row is not
+        Notes (a note parked by a switch to Media or another reader row is
+        saved only on the return to Notes, the rail-switch precedent -- a
+        hidden save could flip the parked state and a veto could route to a
+        field that is not on screen); no editor, no session, another note
+        selected; a clean, saving or conflicted note; a timer already armed;
+        or a draft the last autosave refused or failed to write
+        (``autosave_state`` in ``validation`` / ``error``: a veto cannot
+        succeed without an edit, and a failed write keeps its "Save failed"
+        status until Save or the next keystroke -- a retry here could also
+        write a draft that "Discard and quit" had just discarded).
+    """
+    state = screen._notes_state
+    snapshot = screen._library_note_session.snapshot
+    if (
+        screen.app.screen is not screen
+        or screen._library_selected_row_id not in _NOTES_EDITOR_ROWS
+        or state.view != "editor"
+        or snapshot is None
+        or snapshot.note_id != state.selected_note_id
+        or not snapshot.dirty
+        or snapshot.saving
+        or snapshot.in_conflict
+        or state.autosave_timer is not None
+        or state.autosave_state in _NOT_RESUMED
+    ):
+        return False
+    screen._schedule_library_note_autosave()
+    screen._update_library_note_meta_static(content=snapshot.body)
+    return True
+
+
 def keep_autosave_veto_in_place(
     screen: LibraryScreen, outcome: NoteSaveOutcome
 ) -> bool:
-    """Present a refused autosave without moving a typing user (review N-07).
+    """Present a refused autosave without moving the user (review N-07).
+
+    Wherever focus is when the veto lands -- an editor field, the Info or
+    Preview region, a toolbar button, the list -- nothing moves and no pane
+    switches (TASK-34000.10). The vetoed field is recorded on the state so
+    the editor outlines it and shows the reason under it; the status line
+    names the way out. The explicit paths (Save, leaving the note) are not
+    this function's and still route to the field.
 
     Args:
         screen: The Library screen whose autosave finished.
         outcome: The autosave's typed outcome.
 
     Returns:
-        True when the outcome was a vetoed or failed autosave of the open note
-        while an editor field has focus, and its status is now shown in place.
-        The caller must then skip the presentation that routes and focuses.
-        False for anything else, which the caller presents as before.
+        True when the outcome was a vetoed or failed autosave of the open
+        note, and its status is now shown in place. The caller must then
+        skip the presentation that routes and focuses. False for anything
+        else, which the caller presents as before.
     """
     if outcome.kind not in _REFUSED:
-        return False
-    focused = screen.focused
-    if focused is None or focused.id not in _EDITOR_FIELD_IDS:
         return False
     snapshot = screen._library_note_session.snapshot
     if snapshot is None or snapshot.note_id != screen._notes_state.selected_note_id:
         return False
     screen._notes_state.autosave_state = (
         "validation" if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO else "error"
+    )
+    veto = outcome.veto
+    screen._notes_state.mark_vetoed_field(
+        veto.field if veto is not None else "", veto.message if veto is not None else ""
     )
     screen._update_library_note_meta_static(content=snapshot.body)
     return True

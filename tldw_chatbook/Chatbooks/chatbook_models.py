@@ -474,6 +474,21 @@ class ContentType(Enum):
     KEPT_BRIEFING = "kept_briefing"
 
 
+def _normalize_tags(raw: Any) -> list[str]:
+    """Read a manifest item's ``tags`` as a list of keyword strings.
+
+    A list or tuple is kept as given; a string splits on commas (the same
+    rule ``media_keywords`` has always had); ``null`` and anything else --
+    a number, a mapping -- reads as no tags (TASK-34000.19, fix round 1 M-2:
+    ``list("alpha,beta")`` used to yield its characters).
+    """
+    if isinstance(raw, (list, tuple)):
+        return list(raw)
+    if isinstance(raw, str):
+        return [tag.strip() for tag in raw.split(",") if tag.strip()]
+    return []
+
+
 @dataclass
 class ContentItem:
     """Individual content item in a chatbook."""
@@ -504,7 +519,13 @@ class ContentItem:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ContentItem":
-        """Create ContentItem from dictionary."""
+        """Create ContentItem from dictionary.
+
+        ``tags`` is normalized by ``_normalize_tags``: the importer iterates
+        it to restore keyword membership (TASK-34000.19), so a ``null``, a
+        comma-separated string or junk from a hand-edited bundle must read
+        as a list, never as ``None`` or a string's characters.
+        """
         return cls(
             id=data["id"],
             type=ContentType(data["type"]),
@@ -516,7 +537,7 @@ class ContentItem:
             updated_at=datetime.fromisoformat(data["updated_at"])
             if data.get("updated_at")
             else None,
-            tags=data.get("tags", []),
+            tags=_normalize_tags(data.get("tags")),
             metadata=data.get("metadata", {}),
             file_path=data.get("file_path"),
         )

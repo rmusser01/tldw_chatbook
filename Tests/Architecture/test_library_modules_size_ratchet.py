@@ -165,7 +165,12 @@ _BUDGETS: dict[str, int] = {
     # recheck_settled_load, so a load a list read found in flight is re-checked.
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1453,
+    # 2026-10-21, TASK-34000.22 fix round 1 (owner decision 2026-10-04: raise
+    # the row to the measured value): 1453 -> 1492. Dev itself was already
+    # over this row at 1484 (one of dev's own pre-existing ratchet reds);
+    # this task adds 8 lines -- the Media authoring forms' dirty refusal
+    # beside the Export… opener's note flush (C-1).
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1492,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -385,7 +390,51 @@ _BUDGETS: dict[str, int] = {
     # withheld (other item / registry unavailable / workspace inactive), so
     # the Undo handler can tell an unreadable registry from a moved
     # workspace; the visibility rule now reads it.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4898,
+    # 2026-10-20, TASK-34000.18 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value): 4898 -> 4933 (+35).
+    # origin/dev 4de437a5c5 was ALREADY at 4812 against the old 4769 row
+    # (one of dev's own pre-existing ratchet reds); the clarify batch
+    # measured 4898 on 32caa91c1a. This task added `_library_media_reader_
+    # target_id` -- the one identity every Reader-scoped action reads
+    # (+14, docstring included), the trash confirm's `delete_target_title`
+    # threaded through the Reader build and the unchanged-compare (+5) and
+    # its resolver `_library_media_delete_target_title` (+13), plus the
+    # import and three one-line reads. No code was moved or reflowed to fit.
+    # 2026-10-20, TASK-34000.18 fix round 1 (same owner decision): 4933 ->
+    # 4989 (+56). `_adopt_library_media_highlight` moved onto the controller
+    # (+32 with its docstring; the screen keeps a one-line delegator) so
+    # `_build_library_media_active_child` routes through it too, and the
+    # one predicate `_library_media_reader_holds_highlight` (+22) decides
+    # whether the Reader holds the highlight (viewer view AND unfiltered
+    # scope), read by the builder input (+2) and the adopter.
+    # 2026-10-20, TASK-34000.18 fix round 2 (same owner decision): 4989 ->
+    # 5006 (+17). The hold is ORDER-based now: the predicate reads the
+    # `highlight_held_by_reader` state field instead of the scope (docstring
+    # +4), the row-select seam sets it (+3), and the list canvas's own
+    # presentation resolves the list selection itself (+10) rather than the
+    # Reader's target.
+    # 2026-10-20, TASK-34000.22 (same owner decision; dev was already at
+    # 4812 before this batch, Task 1 took it to 5006): 5006 -> 5185 (+179).
+    # The two authoring forms' draft seams: the baseline reader, the one
+    # dirty predicate every exit reads, the veto toast, the transition-only
+    # resync helper and the five ``Changed`` recorders (+~150 with their
+    # docstrings), the draft seeding/clearing beside every flag write, and
+    # the per-item drop at the reader-row select seam.
+    # 2026-10-21, TASK-34000.22 fix round 1 (same owner decision): 5185 ->
+    # 5227 (+42): the central guard at the reader-row select seam, the
+    # refusal's tab reveal, and the three review-set openers' refusals.
+    # 2026-10-21, TASK-34000.22 fix round 2 (same owner decision): 5227 ->
+    # 5254 (+27): the viewer opener's refusal, the central guard moved ahead
+    # of the select preamble, and ``_reveal_library_media_dirty_form``.
+    # 2026-10-21, TASK-34000.22 fix round 3 (same owner decision): 5254 ->
+    # 5265 (+11): the reveal flips only from "list" (comment) and the
+    # external-detail opener's one-line refusal.
+    # 2026-10-22, P1-A final review C-1 (same owner decision): 5265 -> 5281
+    # (+16): ``reader_action_target`` takes no view (the Reader's controls
+    # act on the loaded item in the list view too), the highlight hold also
+    # holds while a form is dirty in any view, and the trash confirm's title
+    # derives from the same target id as the Delete press. Exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5281,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -467,7 +516,44 @@ _BUDGETS: dict[str, int] = {
     # consecutive method definitions (`_focus_library_note_caret_for_create`,
     # `_start_library_note_from_media_source`, `_focus_library_note_control`)
     # that the adapt batch left out. Re-set to the exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6386,
+    #
+    # 2026-10-21, TASK-34000.9: 6386 -> 6389 (+3), owner decision (same
+    # 2026-10-04 ruling). ``_library_note_presentation_state`` carries the
+    # new ``autosave_scheduled`` flag (one kwarg line) read through a lazy
+    # import of the autosave policy module (one line plus its blank); the
+    # predicate itself is in ``library_note_autosave.py``. Re-set to the
+    # exact measurement.
+    #
+    # 2026-10-21, TASK-34000.10: 6389 -> 6397 (+8), owner decision (same
+    # 2026-10-04 ruling). ``_library_note_presentation_state`` carries the
+    # vetoed field and its reason (``validation_field`` /
+    # ``validation_message``: one ``vetoed`` line, two kwargs, a three-line
+    # comment), and the two explicit veto presenters (Save, conflict
+    # Overwrite) each record the field in one line; the focus-independent
+    # guard itself is in ``library_note_autosave.py``, the tidy in
+    # ``Library/library_note_field_tidy.py``. Re-set to the exact measurement.
+    # Fix round 1 (2026-10-22): 6397 -> 6425 (+28), same ruling; fix round 2:
+    # 6425 -> 6428 (+3), the mark checked before "Saving…" (three comment
+    # lines; the check itself moved). The mark
+    # clears only when the vetoed field itself changes (M-5): one
+    # ``clear_vetoed_field`` line in each of the four field handlers, one in
+    # ``_begin_library_note_load`` and one in ``_reset_library_note_editor_
+    # state`` (M-6); the two explicit veto presenters pass the veto's message
+    # (two lines each); ``safe_next_action`` is suppressed while a veto
+    # stands (M-4: one kwarg, three comment lines); the presentation comment
+    # on the ungated mark grew by two lines; the status line keeps the veto
+    # reason while a mark stands and a conflict or a landed save clears it
+    # (nine lines). Exact measurement.
+    # 2026-10-22, P1-A final review I-1 (same owner decision): 6428 -> 6473
+    # (+45): ``_library_notes_defer_focus_to_app_focus`` -- while the
+    # terminal is blurred a focus-identity restore focuses nothing and
+    # re-points Textual's ``_last_focused_on_app_blur`` at the live instance
+    # of the user's field, so AppFocus lands there (docstring included), plus
+    # the two-line call at the restore's ``set_focus``. Exact measurement.
+    # 2026-10-22, TASK-34000.10 final-review re-review (owner decision, same
+    # rule): 6473 -> 6484 -- the blurred-terminal restore leaves another
+    # screen's or a modal's own focus slot alone.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6484,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N  Media (5)      Sets                           I       ‹ Back
+  a  Media · 5 of 5 · all types · sort: Newest     t  meeting-notes
+  v   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter    e  file:///Users/macbook-dev/Documents/GitHub/tld
+      ▊  Title/keyword…          ▎                 m  w_chatbook/.worktrees/.nlrev-harness/fixtures/
+      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                 s  import-docs/meeting-notes.txt
+        type: All types    sort: Newest                 Find  Note  Read later
+                                                        Use in Console  More ▴
+        Export…     Trash     Select                    Edit metadata    Open original
+--->    Review these                                    Open manager       Move to trash
+        paper-retrieval-practice                        Read (selected)  Analysis  Highlights  Info
+          plaintext · updated 2m                      Move "meeting-notes" to Trash? You can undo
+      ▸ meeting-notes                                 right away, or restore later from Trash.
+          plaintext · updated 2m · loaded        <---       Delete          Cancel
+        reading-list                                  ┌────────────────────────────────────────────┐
+          plaintext · updated 2m                      │ Meeting notes - weekly sync                │
+        glossary                                      │                                            │
+--->      plaintext · updated 2m                      │ Attendees: the whole team.                 │
+        team-handbook                                 │                                            │
+          plaintext · updated 2m                      │ We reviewed the import queue work and      │
+                                                      │ agreed that the receipt should open the    │
+                                                      │ item it names. Two people reported that ▆▆ │
+                                                      │ Read later had saved a different           │
+                                                      │ document than the one they were reading;   │
+                                                      └────────────────────────────────────────────┘
+                       1-5 of 5
+  / focus search | F6 next pane | esc close | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -262,7 +262,11 @@ see its own row below) is a second bulk action next to "Export selected".
 Pressing it swaps the strip for a confirmation naming the count — "Delete N
 selected items? You can undo right away, or restore later from Trash." —
 with "Delete" / "Cancel", the same in-place armed-button pattern
-as the media viewer's own single-item "Delete" (never a popup modal).
+as the media viewer's own single-item "Delete" (never a popup modal). The
+viewer's confirmation names the one item it will move — "Move
+"team-handbook" to Trash? You can undo right away, or restore later from
+Trash." — so you can tell which document is about to go even when the
+Items list has another row highlighted.
 Confirming moves every checked item to trash (the same soft-delete the
 viewer's Delete uses) and updates the list and the rail's "Media N" count
 immediately; if any item fails, the rest of the batch still completes and a
@@ -568,7 +572,14 @@ still spans the pane.
 | "Use in Console" | Stages this item as context for your next Console message, linking it to the active workspace on the way if it is not a member yet — the same one-press link that notes and conversations do. A receipt under the toolbar says which workspace by name ("Linked to Local Default · staged in Console", or "Already linked to …" when it was a member already) with an **Undo link** beside it that removes the membership a press in this reader session added (a link made by Search ▸ evidence ▸ `u` has no Undo there; remove it from the workspace's own sources). An Undo pressed after the active workspace changed says so instead of removing anything. The receipt stands only while that workspace is the active one; after a switch it is withheld and the next press links into the new workspace. `c` does the same from the keyboard. If the link itself fails, nothing is staged and the message names the workspace and the next step; a raw workspace id is never shown. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line, never off the fold. The button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
-| "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+| "Move to trash" | Two-step, title-specific confirmation: the armed copy reads "Move "team-handbook" to Trash? You can undo right away, or restore later from Trash.", naming the item the Reader shows. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+Read later, Edit metadata › Save, Move to trash and Use in Console all act on
+the item the Reader shows, whichever row the Items list has highlighted. That
+matters after opening an item by link — an import receipt's "Open in
+Library", a landing "Open", or a Search/RAG result: the list cursor lands on
+that item (and on no row at all if it is not on the current page), and the
+actions never fall back to the first row.
 
 The primary row holds five actions (Find, Note, Read later, Use in Console,
 More). On a Reader too narrow to fit all five side by side — counting
@@ -830,14 +841,36 @@ loads immediately.
 **Escape** closes transient Reader state first — the Find bar, then the More
 strip — and then steps out of the Reader to the Items list; the footer chip
 always names the next step it will take. The chip is the authority, and it
-has four readings: **`esc close`** over anything transient (the Find bar, the
-More strip, an open type/sort strip, an armed delete or edit),
-**`esc focus Items`** from the open document, **`esc focus Library`** from the
+has five readings: **`esc close`** over anything transient (the Find bar, the
+More strip, an open type/sort strip, an open edit form), **`esc cancel`** over
+an armed "Move to trash" confirm, **`esc focus Items`** from the open document,
+**`esc focus Library`** from the
 Items row, and **`esc back`** wherever the next pane out is collapsed rather
 than on screen — the Items row at 100x30 and narrower, and the rail row in any
 layout the Reader still has a real exit from. In the three-pane layout the rail
 row is the last stop, and the footer drops the `esc` chip there rather than
 advertise a key that does nothing. No step lands in a text box.
+
+**Unsaved text is never dropped by a key.** While the Analysis form or the
+Edit metadata form holds text that differs from what is saved, Escape keeps
+the form and says so ("Unsaved analysis — Save or Discard changes first." /
+"Unsaved media details — Save or Discard changes first."), and the footer
+reads `esc save or discard first` instead of `esc close`. Save keeps the
+text; the form's Cancel reads **Discard changes** and is the one way to drop
+it while keeping the item (Ctrl+Q's "Discard and quit" and deleting the item
+from the Items list -- Select ▸ Delete selected -- drop it too, each after its
+own question). Switching Reader tabs keeps what
+you typed, and "‹ Back", another Items row (clicked, or reached with
+Up/Down), a rail row, Export…, a review set, Use in Console, Move to trash
+and the nav bar all refuse the same way until you save or discard; Ctrl+Q
+asks before it quits. Every refusal brings the form back on screen, on its
+own tab, with Save and Discard changes. The Items filter still filters the
+list, but it never moves the Reader off the form: the item you are editing
+stays, even when the filter hides its row or matches nothing, and Clear
+brings the list back around it. An untouched form still closes on one
+Escape or Cancel, and over an armed "Move to trash" confirm the chip reads
+`esc cancel` and Escape cancels the confirm first.
+
 Stepping out of the Reader moves focus, not the document: in the three-pane
 layout (verified at 235x52) the Items pane is already showing the list, so
 the item keeps painting beside it and `]`/`[` keep working from the row.

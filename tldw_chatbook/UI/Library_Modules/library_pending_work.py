@@ -352,6 +352,15 @@ def _unsaved_names(screen: LibraryScreen) -> list[str]:
         names.append(screen._prompts_state.original_name.strip() or "new prompt")
     if screen._skills_state.dirty:
         names.append(screen._skills_state.original_name.strip() or "new skill")
+    # TASK-34000.22: the Media reader's two authoring forms (explicit-Save
+    # only, like Prompts and Skills); named by the form, not the item, since
+    # the draft is what the quit would drop. The title already says
+    # "unsaved changes to", so the names do not (fix round 1, M-8 ruling).
+    media_form = screen._library_media_editor_dirty()
+    if media_form == "edit":
+        names.append("media details")
+    elif media_form == "analysis":
+        names.append("analysis")
     return names
 
 
