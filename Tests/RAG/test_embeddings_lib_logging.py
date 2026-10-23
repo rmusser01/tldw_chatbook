@@ -221,3 +221,71 @@ def test_default_factory_retains_openai_session_after_close_failure(monkeypatch)
     factory.close()
     assert sessions[0].close_calls == 2
     assert not factory._cache
+
+
+@pytest.mark.parametrize("eviction", ["idle", "lru"])
+def test_factory_eviction_retains_failed_openai_session(monkeypatch, eviction):
+    monkeypatch.setattr(embeddings_lib, "_embeddings_rag_available", lambda: True)
+    sessions = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"embedding": [1.0, 2.0]}]}
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.model = None
+            self.close_calls = 0
+            sessions.append(self)
+
+        def post(self, *args, **kwargs):
+            self.model = kwargs["json"]["model"]
+            return Response()
+
+        def close(self):
+            self.close_calls += 1
+            if self.model == "first" and self.close_calls == 1:
+                raise RuntimeError("injected_eviction_close_failure")
+
+    monkeypatch.setattr(embeddings_lib.requests, "Session", Session)
+    factory = embeddings_lib.EmbeddingFactory(
+        {
+            "default_model_id": "first",
+            "models": {
+                model: {
+                    "provider": "openai",
+                    "model_name_or_path": model,
+                    "base_url": "http://127.0.0.1:1/v1",
+                }
+                for model in ("first", "second")
+            },
+        },
+        max_cached=2 if eviction == "idle" else 1,
+        idle_seconds=0 if eviction == "idle" else 900,
+        allow_dynamic_hf=False,
+    )
+    try:
+        assert factory.embed(["one"], model_id="first").shape == (1, 2)
+        first_record = factory._cache["first"]
+        assert first_record["close"].__self__ is sessions[0]
+        if eviction == "idle":
+            first_record["last"] = embeddings_lib.time.monotonic() - 1
+        with pytest.raises(RuntimeError, match="injected_eviction_close_failure"):
+            factory.embed(["two"], model_id="second")
+        assert factory._cache.get("first") is first_record
+        assert sessions[0].close_calls == 1
+        assert len(sessions) == 1  # No replacement is built after failed close.
+        assert factory.embed(["two"], model_id="second").shape == (1, 2)
+        assert sessions[0].close_calls == 2
+        assert sessions[1].model == "second"
+        assert "first" not in factory._cache
+    finally:
+        try:
+            factory.close()
+        except RuntimeError:
+            factory.close()  # Bounded cleanup of the deliberately failed fake.
+    assert sessions[1].close_calls == 1
