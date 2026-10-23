@@ -1565,6 +1565,31 @@ class TestDictionaryToggleDelete:
             await pilot.pause()
             assert 1 in fake_dict_service.records
 
+    async def test_space_turning_a_dictionary_off_toasts_the_undo_string(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
+        """R33's one undo string; turning one back on toasts nothing."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            notices: list[str] = []
+            monkeypatch.setattr(
+                screen, "_notify", lambda message, *a, **k: notices.append(message)
+            )
+            screen.query_one("#personas-library-rows").focus()
+            await select_roleplay_item(pilot, screen, index=0, load=False)
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert notices == ["Medical Abbrev turned off · space to undo"]
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["enabled"] is True
+            assert notices == ["Medical Abbrev turned off · space to undo"]
+
     async def test_space_toggle_keeps_cursor_on_unselected_row(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):

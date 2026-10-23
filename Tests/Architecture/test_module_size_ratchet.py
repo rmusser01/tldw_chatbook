@@ -146,8 +146,8 @@ _BUDGETS: dict[str, int] = {
     # grew personas_screen.py from 16,528 to 16,567 lines; B1 brings it to
     # 16,564.
     # TASK-36097 extracts Persona completion without raising the ceiling.
-    # 2026-10-22 owner decision (TASK-33910.3, Roleplay frame B2a; "expand the limits, don't contort code"): B2a grows personas_screen.py from 16,561 lines (dev 7700c63a68) to 16,710; the row rises in each commit that grows it.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16710,
+    # 2026-10-22 owner decision (TASK-33910.3, Roleplay frame B2a; "expand the limits, don't contort code"): B2a grows personas_screen.py from 16,561 lines (dev 7700c63a68) to 16,786; the row rises in each commit that grows it.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16786,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

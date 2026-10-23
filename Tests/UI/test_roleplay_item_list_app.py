@@ -32,6 +32,7 @@ from Tests.UI.roleplay_frame_harness import (
     volume_db_path,
     wait_until,
 )
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
     RoleplayItemList,
@@ -302,6 +303,19 @@ async def test_enter_in_the_search_box_lands_on_the_first_match_before_the_debou
 # ---- Marks by id, the marks bar and the one delete modal (AC#5, R32; Task 5) ----
 
 
+def _record_notices(monkeypatch, screen) -> list[str]:
+    """Every message the screen notifies, in order (toasts are ``_notify``)."""
+    seen: list[str] = []
+    original = screen._notify
+
+    def record(message, severity="warning", **kwargs):
+        seen.append(message)
+        return original(message, severity, **kwargs)
+
+    monkeypatch.setattr(screen, "_notify", record)
+    return seen
+
+
 def _option_id(db, name: str) -> str:
     return f"character:{db.get_character_card_by_name(name)['id']}"
 
@@ -453,6 +467,62 @@ async def test_the_inspector_delete_acts_on_the_open_item_only(
         await settle(pilot)
         assert len(screen._marked_rows) == 2
         assert item_at(screen, opened).active
+
+
+async def test_space_turns_a_lore_book_off_with_the_undo_toast_and_on_again(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Spec 4.6 / R33: on dev Space toggled only dictionary rows, untoasted."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    manager = WorldBookManager(volume_348)
+    book = f"lore:{manager.create_world_book('Codex Arcana')}"
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+        assert await pilot.click("#personas-mode-lore")
+        await wait_until(
+            pilot, lambda: book in visible_item_ids(screen), what="the lore list"
+        )
+        screen.query_one(RoleplayItemList).focus()
+        await select_roleplay_item(pilot, screen, book, load=False)
+        await pilot.press("space")
+        await wait_until(
+            pilot, lambda: item_at(screen, book).state == "off", what="the off word"
+        )
+        assert not manager.get_world_book(int(book.split(":")[1]))["enabled"]
+        assert notices == ["Codex Arcana turned off · space to undo"]
+        await pilot.press("space")
+        await wait_until(
+            pilot, lambda: item_at(screen, book).state == "on", what="the on word"
+        )
+        assert highlighted_item_id(screen) == book
+        assert notices == ["Codex Arcana turned off · space to undo"]
+
+
+async def test_the_footer_advertises_space_where_it_toggles(
+    mock_app_instance, volume_348
+):
+    """Spec 4.6, survey R-040: Space toggles dictionaries and lore books.
+
+    On dev the footer advertised ``space toggle`` in dictionaries mode only,
+    the one mode where Space acted. Lore books toggle too since this slice, so
+    the hint follows them; characters never advertise it.
+    """
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        footer = screen.query_one(AppFooterStatus)
+        assert "space" not in footer.shortcut_text
+        assert await pilot.click("#personas-mode-lore")
+        await settle(pilot)
+        assert "space toggle" in footer.shortcut_text
+        assert await pilot.click("#personas-mode-characters")
+        await settle(pilot)
+        assert "space" not in footer.shortcut_text
 
 
 async def test_escape_clears_the_marks(mock_app_instance, volume_348):

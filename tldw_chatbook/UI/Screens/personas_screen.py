@@ -7735,6 +7735,8 @@ class PersonasScreen(BaseAppScreen):
         elif message.action == "toggle_enabled":
             if self.state.active_mode == "dictionaries" and message.entity_id:
                 await self._toggle_dictionary_enabled(message.entity_id)
+            elif self.state.active_mode == "lore" and message.entity_id:
+                await self._toggle_lore_enabled(message.entity_id)
         elif message.action == "delete_marked":
             # The marks bar's Delete… (spec 1.5.5, R32): one modal that names
             # the marked items; the unsaved guard first, as for every delete.
@@ -8511,7 +8513,10 @@ class PersonasScreen(BaseAppScreen):
         await self._select_lore_entry(str(new_id), name)
 
     async def _toggle_dictionary_enabled(self, entity_id: str) -> None:
-        """Flip a dictionary's enabled flag from the rail (space on the row)."""
+        """Flip a dictionary's enabled flag from the list (space on the row).
+
+        Turning one off toasts R33's undo string; Space again turns it back on.
+        """
         service = self._dictionary_scope_service()
         if service is None:
             return
@@ -8535,6 +8540,11 @@ class PersonasScreen(BaseAppScreen):
             )
             self._notify(f"Toggle failed: {exc}", "error")
             return
+        if not target:
+            self._notify(
+                frame_state.turned_off_toast(str(record.get("name") or "Unnamed")),
+                "information",
+            )
         is_selected = str(self.state.selected_entity_id) == str(entity_id)
         if is_selected:
             raw_version = updated.get("version")
@@ -8552,6 +8562,71 @@ class PersonasScreen(BaseAppScreen):
             # The user was browsing an unselected row; keep the cursor there
             # instead of letting the selected-row re-mark above steal it.
             library.highlight_row("dictionary", entity_id)
+
+    async def _toggle_lore_enabled(self, entity_id: str) -> None:
+        """Flip a lore book's enabled flag from the list (space on the row).
+
+        Frame slice B2a (spec 4.6): on dev Space toggled only dictionary rows.
+        Turning one off toasts R33's undo string; Space again turns it back
+        on. An open book's detail switch and tracked version follow, as
+        ``_handle_lore_enable_toggled`` does for the switch itself.
+        """
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        record = next(
+            (r for r in self._lore_books_cache if str(r.get("id")) == str(entity_id)),
+            None,
+        )
+        if record is None:
+            return
+        target = not bool(record.get("enabled", True))
+        try:
+            await asyncio.to_thread(
+                manager.update_world_book, int(entity_id), enabled=target
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not toggle lore book {entity_id}."
+            )
+            self._notify(f"Toggle failed: {exc}", "error")
+            return
+        if not target:
+            self._notify(
+                frame_state.turned_off_toast(str(record.get("name") or "Unnamed")),
+                "information",
+            )
+        is_selected = self.state.selected_entity_kind == "lore" and str(
+            self.state.selected_entity_id
+        ) == str(entity_id)
+        if is_selected:
+            try:
+                fresh = await asyncio.to_thread(manager.get_world_book, int(entity_id))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not reload lore book {entity_id} after toggle."
+                )
+                fresh = None
+            if fresh is not None:
+                raw_version = fresh.get("version")
+                self._selected_lore_book_version = (
+                    int(raw_version) if raw_version is not None else None
+                )
+                self._selected_lore_book = fresh
+            try:  # resumed after an await: the detail may have left
+                detail = self.query_one(PersonasLoreDetailWidget)
+            except QueryError:
+                return
+            detail.apply_enabled(target)
+        await self._render_lore_rows(query=self.state.search_query)
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        if self.state.selected_entity_kind == "lore" and self.state.selected_entity_id:
+            library.mark_active_row("lore", self.state.selected_entity_id)
+        if not is_selected:
+            library.highlight_row("lore", entity_id)
 
     @on(EditPersonaProfileRequested)
     async def _handle_persona_edit_requested(
@@ -16670,13 +16745,14 @@ class PersonasScreen(BaseAppScreen):
                     "sort",
                     available=self.state.active_mode in ("characters", "personas"),
                 ),
-                # The library pane's space binding only acts on dictionary
-                # rows, so it is advertised only in that mode (never claim a
-                # key that does nothing in context).
+                # The items list's space binding turns dictionary and lore
+                # book rows on and off (Roleplay frame B2a added lore), so it
+                # is advertised in those two modes only (never claim a key
+                # that does nothing in context).
                 ShortcutAction(
                     "space",
                     "toggle",
-                    available=self.state.active_mode == "dictionaries",
+                    available=self.state.active_mode in ("dictionaries", "lore"),
                 ),
             ),
         )

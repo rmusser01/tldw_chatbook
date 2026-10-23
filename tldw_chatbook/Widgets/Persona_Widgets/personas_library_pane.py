@@ -1136,9 +1136,9 @@ class PersonasLibraryPane(Vertical):
             self.post_message(PersonaSortCycleRequested())
 
     def request_toggle(self, option_id: str | None) -> None:
-        """space on a book row asks the screen to turn it on or off."""
+        """space on a book row (lore book or chat dictionary) asks the screen to turn it on or off."""
         row = self.item_list.row(option_id) if option_id else None
-        if row is None or row.kind != "dictionary":
+        if row is None or row.kind not in ("dictionary", "lore"):
             return
         self.post_message(
             PersonaActionRequested(
