@@ -147,9 +147,10 @@ PCM output, partial silence and external player clock limitations. The review us
 stdlib calculations to reproduce the two release delays and underrun frame counts;
 these demonstrate spec ambiguity, not a measured defect in unimplemented code.
 
-Verdict: The six corrections above are incorporated; the revised design is suitable
-for implementation planning after acknowledgement. No separate implementation plan
-exists yet. The task remains In Progress while that acknowledgement is pending.
+Verdict: The six corrections above are incorporated. The user acknowledged the
+revised design on 2026-10-23 and requested the [implementation plan](../plans/2026-10-23-console-radio-portraits-implementation.md),
+which records nine atomic Backlog tasks. This acknowledgement closes the design
+review, not product implementation or live qualification.
 
 Not checked: No image-edit provider, generated-frame consistency, real audio device,
 audible timing, app launch or product test suite was exercised. Those remain future

@@ -158,7 +158,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-193](193-native-v2-profile-compatibility-and-admission.md) | Accepted (design only) | Require current profile-wide consumer qualification and exact native atomic admission before V2 use. |
 
 | [ADR-232](232-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules, assess permitted execution evidence, and admit bounded correction through current Console custody; preserves source ADR-219 provenance. |
-| [ADR-242](242-console-radio-portrait-performance.md) | Proposed | Add reviewed local six-pose character performances and output-timed TTS presentation within the existing Console rail; preserve moods, motion preferences and portable artwork formats. |
+| [ADR-242](242-console-radio-portrait-performance.md) | Accepted (design only) | Add reviewed local six-pose character performances and output-timed TTS presentation within the existing Console rail; preserve moods, motion preferences and portable artwork formats. |
 
 ## Historical Decision Material
 

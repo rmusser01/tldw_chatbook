@@ -1,10 +1,11 @@
 # Console radio portraits and audio-reactive character performance
 
 Date: 2026-10-23
-Status: Revised after source review; awaiting acknowledgement before planning
+Status: Accepted design; revised spec acknowledged 2026-10-23
 Revision: 2026-10-23 source-anchored review corrections; see the [review](../reviews/2026-10-23-console-radio-portraits-design-review.md)
 Task: [TASK-36509](../../../backlog/tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
 Decision: [ADR-242](../../../backlog/decisions/242-console-radio-portrait-performance.md)
+Implementation: [Plan and nine atomic Backlog tasks](../plans/2026-10-23-console-radio-portraits-implementation.md)
 
 ## Purpose and first-version scope
 
@@ -443,12 +444,9 @@ reviewed the written spec and requested a source-anchored issue review before
 continuing. The linked review records the original gaps and the targeted
 corrections now incorporated here. Local-only performance storage, ordinary
 portable exports, six roles and the agreed user-facing feature scope are retained.
-Revised authority, preview ownership, cache invalidation, hands-free lifecycle,
-output timing and silence-gate details are presented for acknowledgement before
-planning. No product code, migrations, generation requests, audio runs or
-implementation plan have been produced for this feature.
-
-After the user reviews this spec, use the writing-plans skill to create the
-implementation plan and atomic Backlog work. Every plan must link ADR-242 and
-carry the repository's ADR-required/path/reason fields. Do not treat this design
-task as an implementation-complete feature task.
+The user acknowledged the revised authority, preview ownership, cache invalidation,
+hands-free lifecycle, output timing and silence-gate details on 2026-10-23 and
+requested implementation planning. The linked plan defines nine atomic Backlog
+tasks with explicit interfaces, targeted verification and the ADR check. No product
+code, migrations, generation requests or audio runs have been performed for this
+feature. Planning and design completion do not mark the feature implemented.

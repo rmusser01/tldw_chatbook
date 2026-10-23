@@ -1,10 +1,11 @@
 # ADR-242: Console radio portraits and character performance attachments
 
-Status: Proposed; written design awaiting user review
+Status: Accepted (design only; revised spec acknowledged 2026-10-23)
 Date: 2026-10-23
 Related Task: [TASK-36509](../tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
 Spec: [Console radio portraits](../../Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md)
 Review: [Source-anchored design review](../../Docs/superpowers/reviews/2026-10-23-console-radio-portraits-design-review.md)
+Plan: [Implementation and atomic tasks](../../Docs/superpowers/plans/2026-10-23-console-radio-portraits-implementation.md)
 Supersedes: N/A
 
 ## Context
