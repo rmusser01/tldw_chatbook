@@ -1347,3 +1347,6 @@ Tests/UI/test_console_run_start_yields.py::test_the_fingerprint_reads_its_first_
 # TASK-33620.15.7: run-tick layout-request pins (ten widget pins, ~3 s, and one
 # private-profile held-run journey, ~12 s locally).
 Tests/UI/test_console_run_tick_layout_requests.py
+Tests/UI/test_console_library_activity_off_loop.py
+Tests/UI/test_console_workspace_display_reads_off_loop.py
+Tests/UI/test_console_projection_reads_off_loop.py
