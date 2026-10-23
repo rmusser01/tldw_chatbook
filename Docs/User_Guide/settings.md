@@ -1495,6 +1495,9 @@ and toggle again to retry. Pending writes keep your latest choice when you leave
 Settings. **Saved. Reload settings to refresh.** means the file was saved but
 live settings could not refresh; use **Diagnostics → Reload Config** or restart.
 
+While a reply is running, a setting you change in the app can take a moment
+to show in Console's status chips, settings summary and Inspector.
+
 Permission-summary results appear inside their group. **Changes not saved** keeps
 your edits when you switch categories or reopen Settings; correct the config-file
 problem and choose **Retry**. The previously saved choice remains active until a

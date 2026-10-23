@@ -21579,3 +21579,79 @@ field of a snapshot builder costs the builder. Pin the fix structurally (spy
 every entry point into the builder on the live controller, inner ones too, and
 assert no call with the panel's module on the stack), not with a wall-clock
 threshold.
+
+## A UI-ready census red at zero headroom can be dev's own race: diff the module lists before moving code
+
+**TASK-33620.15.1, 2026-10-19.** After a rebase the census read 1032 against
+its 1031 limit, and its "NEW modules" list named `UI.Console_Modules.config_sync`,
+which the branch imports. That list is a diff against the pinned snapshot, not
+against dev. The branch's import was moved into an already-resident module,
+and the census still read 1032. A scratch boot that dumped the warm
+`_ui_ready` module list for both arms then showed three things:
+- `config_sync` was resident on dev too, imported by `context_spend` while
+  composing the Console.
+- The sets were identical except for `Chat.console_change_review_read`.
+- That module is imported by the first sync's transcript step, which races
+  `_ui_ready` by seconds under load. Dev itself read 1032 in 4 of 10 boots
+  at load 80-100, and the branch in 7 of 9. Boots took 27-56 s to
+  `_ui_ready`, so that skew cannot be told apart from load.
+The move was reverted. (The import did end up module-level in
+`chat_screen.py`, for the second trap's reason below; the census cannot see
+that, because dev already holds `config_sync` resident.) A second trap
+surfaced in the same round. A
+function-local relative import at the top of
+`ChatScreen._sync_native_console_chat_ui` broke
+`Tests/Performance/test_console_tab_sync_source_ownership.py`, which compiles
+that method from source into a namespace with no `__name__` (`KeyError:
+"'__name__' not in globals"`).
+
+**What to do.**
+- Before changing code for a census red, dump the flag-time module list on
+  both arms and diff them. Two boots per arm are enough to see a race.
+- A one-module difference that flips between boots of the same arm is
+  timing, not your import.
+- Methods of `chat_screen.py` are compiled from source by several tests.
+  Give a hook a module-level name, not a function-local relative import.
+
+
+## A rebase can auto-merge a function-local import that shadows your module-level name
+
+**TASK-33620.15.1, 2026-10-20.** The branch imported `config_sync` at
+`chat_screen.py`'s module level and called `config_sync.begin_console_sync`
+on the first line of `_sync_native_console_chat_ui`. Dev's PR #3175 added
+`from ..Console_Modules import config_sync` about twenty lines further down the
+same method. That line merged without a conflict marker (the conflict was
+in a different hunk), and the file still compiled. But any import inside a
+function makes the name local to the whole function, so the first line
+would have raised `UnboundLocalError` on every sync. It was caught by
+grepping the resolved file for every import of the name, not by the
+conflict or by `py_compile`.
+
+**What to do.** After resolving a rebase, grep the resolved files for every
+import of each module-level name your branch adds or calls
+(`grep -n 'import <name>'`). If dev added a function-local import of the
+same name in a function where your code reads it earlier, drop dev's local
+import.
+
+
+## A skip-when-unchanged gate's inputs are what its readers read, fallback branches included
+
+**TASK-33620.15.1, 2026-10-22.** The config-sync cadence skips the poll's
+projection unless one of its inputs moved. Two review rounds built the input
+list from the controller's counters: every chat's pending rounds of every
+kind. Re-checking the list while rebasing (after CI ran the legacy-approval
+journey) found one more read: `ChatScreen._console_pending_approval_count`
+falls back to the resume state's approval for a legacy unscoped tool round,
+which mounts its card with no kind-registry entry. No counter moved, so that
+round's arrival, finishing phase and clearing waited for the 1 s backstop
+instead of the next 0.2 s tick. The CI failure itself was dev's setup race,
+and the mounted journeys call the projection directly, so no existing test
+could see the gap. A mounted test arming a real legacy round on a held poll
+went red ("a legacy approval waited") until the resume state was an input.
+
+**What to do.** For a skip gate, list the inputs by reading every function
+the skipped work calls, down to each fallback branch, and grep for the
+attributes they touch. Do not list them from the domain model. Read mutable
+inputs by value at read time, because a held reference compares equal to
+itself after an in-place write. Give each input a test that changes it alone
+and ticks through the real gate.

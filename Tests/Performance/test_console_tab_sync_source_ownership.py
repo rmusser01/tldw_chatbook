@@ -59,6 +59,10 @@ namespace = {
     "Any": Any,
     "QueryError": LookupError,
     "ConsoleSessionSurface": object,
+    # The sync's entry classifies itself for the config-sync cadence
+    # (TASK-33620.15.1) before any refusal; these cases pin the refusals,
+    # not the cadence, and importing the real module would import Textual.
+    "config_sync": SimpleNamespace(begin_console_sync=lambda owner: None),
 }
 exec(compile(minimal, str(source), "exec", dont_inherit=True), namespace)  # noqa: S102 - compile only this fixed source fixture to test defining-body provenance.
 SourceScreen = namespace["CompiledSourceScreen"]

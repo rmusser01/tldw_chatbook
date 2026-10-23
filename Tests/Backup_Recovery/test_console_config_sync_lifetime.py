@@ -436,6 +436,9 @@ async def no_async():pass
 def no_sync(*args,**kwargs):pass
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
 screen._console_chat_store=None
+# The real screen's property answers None with no chat controller; the
+# sync's cadence reads it (TASK-33620.15.1).
+screen._console_chat_controller=None
 screen._message=SimpleNamespace(reconcile_console_speech_context=no_sync)
 screen._session=SimpleNamespace(_sync_console_session_draft=no_sync,schedule_manual_read_acknowledgement=no_sync)
 screen._retrieval=SimpleNamespace(

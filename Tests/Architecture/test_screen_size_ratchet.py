@@ -120,7 +120,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the transcript poll's stop edge) and their import. Rebased 2026-10-22
     #: onto dev 7700c63a68 (24335/736, the TASK-34720 row above): 24341/736,
     #: the exact measurement, never above it.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24341, 736),
+    #: Raised 2026-10-20 by TASK-33620.15.1 (owner rule: a fix over a size
+    #: ratchet raises the row with a dated comment rather than contorting
+    #: code): dev 2d071d6d71 measures 24329; the config-sync cadence's hooks
+    #: add 3 (the sync's entry mark, the poll's mark, the stop render and the
+    #: module's import, net of the function-local import it replaces), whose
+    #: logic lives in Console_Modules/config_sync.py. Rebased 2026-10-22 onto
+    #: dev 7700c63a68, which measures 24335 (TASK-34720's row above): 24338,
+    #: the row's new exact measurement.
+    #: Rebased 2026-10-23 onto dev, which measures 24341 (TASK-33620.15.3's row
+    #: above): +3 for the cadence hooks; the row is the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24344, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

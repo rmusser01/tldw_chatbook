@@ -395,6 +395,14 @@ class _LocalPause:
             _changed.notify_all()
 
 
+def local_pause_active() -> bool:
+    """Whether this process holds a local storage pause (lock-free read).
+
+    Read-only; a pause requested by another process is not seen here.
+    """
+    return _pause is not None
+
+
 def _begin_local_pause() -> _LocalPause:
     global _pause
     with _changed:
