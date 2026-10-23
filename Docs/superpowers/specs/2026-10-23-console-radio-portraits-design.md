@@ -1,0 +1,355 @@
+# Console radio portraits and audio-reactive character performance
+
+Date: 2026-10-23
+Status: Agreed in conversation; written spec awaiting user review
+Task: [TASK-36509](../../../backlog/tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
+Decision: [ADR-242](../../../backlog/decisions/242-console-radio-portrait-performance.md)
+
+## Purpose and first-version scope
+
+Make the Console's left-sidebar character feel present through a living portrait
+and restrained radio-screen presentation, inspired by the Metal Gear Solid Codec.
+Combine audio-reactive mouth movement with pauses, blinking, subtle idle motion,
+and the existing emotional expressions. Support both generating artwork from an
+existing portrait and importing ready-made frames.
+
+This is a character portrait feature in the existing Character section, not a new
+destination. The first version includes the editor preparation workflow, durable
+local artwork, TTS integration, radio framing, and verification of the complete
+editor-to-Console path. Implementation may be split into independently testable
+tasks during planning; the complete feature includes all these outcomes.
+
+Excluded: phoneme/viseme alignment, facial landmarks or rigs, arbitrary-image
+warping, 3D/video avatars, microphone-driven animation, realtime voice engines,
+contact/call menus, paired user portraits, sound effects, and new image providers.
+No copyrighted game artwork or audio is bundled.
+
+## Existing foundations and boundaries
+
+The source inspection for this design used local dev HEAD `b07fc04252`. These are
+existing seams, not claims that the new behavior has been implemented:
+
+| Concern | Existing owner |
+| --- | --- |
+| Expression/manual/historical precedence | `tldw_chatbook/Chat/console_expression_state.py`, `UI/Console_Modules/character.py` |
+| Disposable portrait playback and bounded preparation | `Widgets/Console/character_expression_avatar.py`, `Chat/character_expression_playback.py` |
+| Verified expression assets and immutable pack versions | `Character_Chat/visual_identity.py` |
+| Character editing and expression generation | `UI/Screens/personas_screen.py`, `Widgets/Persona_Widgets/personas_character_editor_widget.py`, `Character_Chat/expression_generation.py` |
+| Image-reference capability and request validation | `Image_Generation/capabilities.py`, `Image_Generation/worker.py` |
+| Speech ownership and start/stop/failure | `Event_Handlers/TTS_Events/tts_events.py`, `Chat/console_speech.py` |
+| Streaming output and format eligibility | `Audio/streaming_sink.py`, `TTS/pcm_stream.py` |
+| External file playback | `TTS/audio_player.py` |
+| Character rail geometry and full-size viewer | `UI/Screens/chat_screen.py`, `Widgets/Console/console_image_viewer_modal.py` |
+
+`speaking` currently follows text-stream status in the expression resolver. That
+can remain a legacy expression-selection input, but it must not open the new
+audio-reactive mouth. Only playback belonging to the displayed character does so.
+Do not add a second sentiment classifier, conversation store, speech player, or
+floating Buddy runtime.
+
+Relevant existing decisions are ADR-074 (visual identities and actor packs),
+ADR-083 (rail ownership), ADR-144 (expression playback), ADR-150 (design tokens),
+and ADR-161 (component patterns). Their full paths are linked in ADR-242.
+
+## Radio-screen presentation
+
+Keep the existing Character section and its controls. Within its measured image
+budget, present a stable recessed portrait frame, character identification, a
+compact voice-status label, and one small horizontal audio-level meter. The
+identification/status and meter rows reserve their space even at rest; speech must
+not resize the panel, shift controls, or move the outer rail.
+
+Use theme-derived surfaces, borders and status colors. Preserve the portrait's
+authored colors; do not force a green tint. Transmitting may illuminate the
+existing frame without changing its dimensions. A single brief, low-contrast
+transmission effect may mark playback start or interruption, using the existing
+fast motion token. Do not use continuous static, flashing, fake reception bars,
+decorative frequencies, or a connection label implying an unobserved network state.
+
+The meter represents the same measured audio envelope as the mouth. It is empty
+when silent and suppressed when timing is unavailable. Text status remains the
+accessible source of meaning; color and animation are supplemental. Compact
+layouts may omit the meter before sacrificing portrait controls. Preserve the
+existing aspect-preserving contain fit, rail scrolling, and full-size-on-click
+viewer. The viewer snapshots the currently displayed frame without owning another
+animation or speech clock.
+
+All geometry, color, state and motion values compose from the design language and
+component patterns. Add any missing `$ds-*` values centrally before use, edit only
+source stylesheets, and rebuild the generated TCSS bundle. New controls remain
+keyboard accessible and follow the existing keybinding contract.
+
+## Artwork: six poses for each expression
+
+Mood selection and speech motion are independent. A performance set attaches to
+one character, one resolved expression and the exact source-image digest; its six
+full-canvas still frames are:
+
+| Role | Eyes | Mouth |
+| --- | --- | --- |
+| `rest` | Open | Closed |
+| `small` | Open | Slightly open |
+| `open` | Open | Open |
+| `blink_rest` | Closed | Closed |
+| `blink_small` | Closed | Slightly open |
+| `blink_open` | Closed | Open |
+
+The frames share pixel dimensions, framing, background and pose. Full-frame
+selection keeps the first version usable without a layering or landmark editor.
+Equal dimensions are validated automatically; facial alignment and identity
+consistency must be assessed in the animated preview.
+
+Prepare only the selected expression, not an automatic batch of every mood.
+Legacy plain portraits use the neutral expression identity. Legacy expression
+images and Shared Visual Identity expressions are both eligible. A mood without a
+matching performance set retains its existing artwork/playback; do not substitute
+an unrelated neutral talking face. Radio status and a trustworthy meter can still
+work. A matching performance set replaces that expression's encoded animation
+only while this new performance is effectively enabled.
+
+During owned speech, an expression without a usable set displays its existing
+static poster rather than running an uncontrolled encoded talking loop. Such
+artwork can itself depict an open mouth; without prepared frames no synthetic
+mouth closure is promised. Silence/closure rules below describe prepared sets.
+
+## Prepare portrait performance
+
+Expose the action beside artwork controls in the existing character editor. A
+saved character is required before applying a performance. The preparation view
+shows the captured source image and expression, six named pose slots, a live
+preview, and Generate, Import/Replace, Regenerate selected, Apply and Cancel
+actions using existing component conventions.
+
+1. Capture the character/editor identity, resolved expression, source bytes/hash,
+   active visual binding/version where present, and current performance revision.
+2. Generate six poses from the captured portrait, or assign individual ready-made
+   images to the six slots. Both paths populate the same disposable draft.
+3. Inspect the individual frames and the looping idle/blink preview. An explicit
+   Play TTS sample action speaks a short fixed preview phrase through the selected
+   character's existing TTS resolution and playback owner. It does not create a
+   conversation message or trigger automatic replies. It does not speak on opening
+   the view, and unavailable TTS does not prevent importing or applying artwork.
+4. Apply validates and atomically publishes all six frames. The existing artwork
+   stays active throughout preparation. Cancel discards the draft.
+
+Generate uses the configured image-generation service with image-reference/edit
+capability. Show the chosen provider/model and that the source portrait will be
+sent there before the explicit Generate action. Do not fall back to unrelated
+text-only generation or silently select another provider. Reuse engine request,
+output, size, path and secret-handling validation. No API keys, source bytes or
+reference paths enter routine logs.
+
+Each request references the captured source and asks to preserve identity,
+framing, pose, background and lighting, changing only mouth and eyelids for the
+named role. Dispatch sequentially and retain successful draft slots when another
+fails. Regeneration replaces only the chosen draft slot; it never publishes early.
+Check the editor/source identity after every asynchronous completion. Switching
+characters or closing the draft cancels remaining submissions and discards late
+results, even if an already submitted provider job cannot be cancelled remotely.
+
+Imports accept six individually assigned still PNG, WebP or JPEG images through
+the existing file picker/path validation. No new ZIP/sprite-sheet format is needed.
+Reject animated slot inputs, missing/duplicate roles, incompatible dimensions,
+malformed images and decompression bombs. Normalize accepted draft frames to still
+lossless PNG before preview and Apply, and validate the normalized output too.
+Do not silently crop or independently stretch images to hide a mismatch.
+
+A complete set has exactly six roles, at most 1,048,576 pixels per frame, at most
+4 MiB encoded per frame, and at most 16 MiB encoded in total. Stricter applicable
+existing validator/configuration limits win. Image work runs off the UI thread
+and participates in bounded preparation accounting. Failed conversion releases
+decoded buffers. Apply is unavailable until the entire set validates.
+
+Changing the source image or binding during review makes the draft stale. Apply
+must revalidate captured identity and expected revisions; it cannot retarget the
+draft to the new source or overwrite a newer edit. The user explicitly starts a
+new preparation against the new source.
+
+## Durable ownership and compatibility
+
+Store performance attachments locally in the main character SQLite database,
+using a small parent record plus six frame records. The parent owns character ID,
+normalized expression identity, source SHA-256, schema version and optimistic
+revision. Each child owns one unique role, validated PNG bytes, dimensions and
+digest. One active set per character/expression is sufficient. Replacing it checks
+the expected revision and publishes the parent and all six frames in one existing
+database transaction. Do not write frame files beside immutable pack assets.
+
+This is a schema change: allocate the next live schema version during
+implementation, increment `_CURRENT_SCHEMA_VERSION`, and add an executed SQL
+migration under `DB/migrations/`. Do not reserve a migration number in this spec.
+Source/hash mismatch disables the attachment and falls back to the selected
+ordinary expression; it never activates stale performance for another portrait.
+Removal of a performance returns to existing artwork. Character soft deletion
+preserves its performance for restoration; permanent deletion removes its rows.
+
+First-version performance data is local to this character/profile. The preparation
+view says so. Existing character-card, Actor Pack and Chatbook exports retain their
+ordinary artwork and formats; they do not silently gain a new portable extension.
+Importing or copying a character creates no cross-character performance binding.
+Full-profile backup/restore must preserve the new SQLite data and safely invalidate
+old in-memory playback owners after restore. Cross-device export of performance
+sets is outside this version; neither UI nor documentation may imply otherwise.
+
+This local attachment avoids changing the existing visual-pack manifest schema,
+canonical mood catalog or immutable content digest. Reuse source resolution,
+validation, optimistic locking and backup admission rather than creating another
+asset authority or permission model.
+
+## Playback state and expression precedence
+
+| Observed state | Portrait | Radio status |
+| --- | --- | --- |
+| No owned speech | Mouth closed; blink and idle motion when enabled | Ready |
+| Text streaming without a speech request | Existing expression selection; no audio-driven mouth | Ready |
+| Owned TTS generating/queued | Current expression, closed mouth | Preparing voice |
+| Owned audio actually playing | Mouth follows output envelope; blink/idle continue | Transmitting |
+| Silence within playback | Mouth closed; no invented activity | Transmitting; empty meter |
+| Output underrun | Mouth closed until real samples resume | Transmitting; empty meter |
+| Confirmed pause | Mouth closed | Paused |
+| Natural finish or deliberate stop | Immediately close mouth; retain selected mood | Ready |
+| Generation/playback failure | Close mouth; retain selected mood | Voice unavailable, with existing error detail access |
+| Playing without trustworthy timing | Existing portrait; no audio-driven mouth or meter | Transmitting, plus concise timing-unavailable explanation |
+
+An empty audio buffer is not by itself an end-of-utterance signal. Terminal events
+override smoothing; closing does not wait for another text chunk or a release ramp.
+Only confirmed player pause/resume events change Paused status. Never offer resume
+semantics more precise than the actual player supports.
+
+Manual Speak, automatic reply speech, and hands-free TTS use the same presentation
+contract. A hands-free reply has request ownership plus sequential utterance
+identity, so one sentence's late terminal signal cannot stop the next sentence's
+portrait. Preparing the next sentence cannot hide an already audible sentence.
+
+Preserve current manual and explicit/historical expression precedence. A manual
+reaction changes the mood without stopping audio; use its matching performance if
+available, otherwise ordinary artwork. Replaying an older message temporarily uses
+its existing durable expression identity when valid and from the displayed
+character, then restores the current mood. A current manual reaction still takes
+precedence. Unknown historical actor provenance does not establish a past mood;
+use the current resolved expression instead. Missing historical assets use
+existing resolver fallback; playback must not resurrect a removed pack or invent
+history.
+
+Bind presentation updates to the existing speech request/message, session and
+epoch, character identity, utterance identity where needed, and playback generation.
+The portrait subscribes to the current owner; it does not own audio. Session or
+character changes discard the previous visual subscription immediately. Old audio
+may continue or stop according to existing speech policy, but it cannot animate
+the new character. Replay of a message attributable to another character is
+status-only. Preview playback is scoped to its preparation view and cannot animate
+an unrelated Console portrait. Supersession, hide/show and unmount reject stale
+updates and release visual resources without adding an independent audio-stop rule.
+
+## Audio timing and mouth selection
+
+Derive the mouth from the audio being played, not text, estimated text duration,
+network chunk arrival or time since synthesis started. Extend the existing playback
+boundary with an ephemeral, coalesced presentation snapshot: owner identity,
+playback generation, confirmed state, monotonic output position, envelope level,
+and whether that level/timing is trustworthy. PCM buffers and audio contents do not
+cross into widgets, message metadata, logs or the database.
+
+For the existing PCM sink, prepare bounded energy windows alongside queued audio
+outside the realtime callback. The callback exposes only minimal consumed-frame
+and output-timing state; it does no image, database, UI, blocking queue or provider
+work. Presentation follows output consumption and accounts for inserted underrun
+silence and available device timing. Do not fire a UI event for every sample.
+
+For supported PCM16 WAV artifacts, reuse `sink_plan` and the existing PCM sink
+when available so complete-file speech can also have an observed sample clock.
+Preserve format validation, existing stop/one-voice ownership and fallback policy;
+never launch sink and external player concurrently for the same audio. External
+player paths qualify only if a validated audio envelope can be aligned to a
+trustworthy output position. The current elapsed-wall-time `get_position()` alone
+does not qualify. If the sink/decoder/position capability is absent, retain working
+audio with the explicitly described visual fallback. Do not install a dependency
+or change a user's speech provider to obtain animation.
+
+Initial internal tuning uses 20 ms RMS windows in normalized dBFS, attack/release
+smoothing of 40/100 ms, closed below -45 dBFS, small from -45 to -24 dBFS, and open
+above -24 dBFS, with 3 dB hysteresis on downward changes. Digital silence always
+selects closed. Missing trustworthy progress for more than 100 ms also closes the
+mouth and empties the meter. These are initial signal-processing constants, not
+user controls; calibrate them against quiet, loud and pause-heavy real samples and
+record any adjustment in implementation notes and deterministic tests.
+
+The presentation ceiling remains 30 paints/second. Target visible onset and
+silence response within 100 ms of the observed output timeline on a qualified
+local path, reporting measured device latency separately. A simulated clock proves
+selection behavior; it does not establish audible hardware synchronization.
+
+## Blinking, idle motion and lifecycle
+
+Mouth pose, blink phase and idle offset have independent clocks. A blink swaps
+to the closed-eye counterpart of the current mouth pose; changing mouth level
+does not restart blinking or idle motion. Initial blink spacing is irregular
+between 3 and 7 seconds, with a closed-eye hold using `$ds-duration-fast`. Idle
+movement is a smooth 6-second cycle with no more than one rendered-image pixel of
+offset inside a fixed canvas. Avoid moving the frame, controls or portrait fit.
+Declare missing interval/cycle/amplitude design tokens centrally; the audio
+processing constants above are not stylesheet values.
+
+Do not add a per-frame image decode or rail remount. Prepare frames off-thread,
+reuse the avatar's disposable presentation timer and existing generation fencing,
+and retain only bounded active frames/current renderables. Preserve ADR-144's
+64 MiB active/in-flight preparation budget and existing independent shared-decode
+caps. Editor preview and Console preparation must not each assume the whole shared
+budget is free. Do not add an unbounded per-expression cache.
+
+Hidden avatars pause visual work. On reveal, sample the current speech owner and
+resume from its present state without replaying hidden time. Unmount, source
+change, geometry change, session change or motion-preference change invalidates
+outstanding preparation. Resizing may rebuild fitted renderables; it cannot restart
+audio, change the selected expression or cause rail geometry oscillation.
+
+Respect existing Dynamic/Static, animations-enabled, Reduce motion, automatic
+reaction and show-avatar preferences; no separate motion settings page is added.
+Static or Reduce motion suppresses performance movement, dynamic meter and
+transmission effects, preserving current static-expression rules and text status.
+Automatic reactions off with no manual override retains ADR-144's neutral/static
+behavior. Explicit manual selection retains its existing effective-motion rules.
+Hiding avatars removes portrait presentation without changing the speech owner.
+
+## Failures and verification
+
+Generation failure, incompatible providers or absent TTS leave imports and existing
+artwork usable. Partial drafts cannot publish. Invalid or over-budget stored sets
+fall back to ordinary artwork with one concise reason, without repeated per-frame
+notifications. Presentation failure never fails an otherwise valid chat or voice
+request. Validation and optimistic concurrency remain mandatory at every Apply.
+
+Implementation verification must cover:
+
+| Area | Required evidence |
+| --- | --- |
+| Artwork and migration | Six-role validation, normalized-size caps, transaction rollback, stale-source/revision rejection, legacy data unchanged, soft-delete/restore and permanent purge |
+| Draft workflow | Generate/import use the same draft; partial failure and per-slot retry; explicit TTS preview; Cancel; successful Apply; character switch during generation; fresh editor reopen |
+| Motion logic | Known waveform with silence, quiet/loud speech, hysteresis, exact zero, underrun, stale progress, independent blinking and immediate terminal closure |
+| Ownership | Manual Speak, automatic replies, hands-free sentence handoff, older-message replay/restore, preview isolation, cross-character replay, session switching and late events |
+| Output capability | Actual sink-consumption timeline, supported WAV artifact path, external-player timing refusal, sink failure/fallback without double audio, confirmed pause/resume |
+| Mounted UI | Actual changed portrait pixels, mood retention, reduced/static motion, hide/show, resize, focus and narrow/tall rail stability with production CSS |
+| Persistence | Restart retains applied sets; remove restores original; full-profile backup/restore retains frames and retires stale presentation; portable formats unchanged |
+| Static checks | Targeted lint/format/type checks as applicable, token governance, CSS bundle sync, migration packaging and Backlog guards |
+
+Live qualification uses an isolated profile, one real image-edit backend, imported
+reference artwork, and real TTS output. Capture the source, staged six-frame preview,
+applied Console portrait, audible start/pause/silence/end/interruption, and a second
+conversation switch during speech. Verify the file path and streaming path
+separately; list platforms/players not exercised. A screenshot, mocked provider or
+passing parser test alone cannot qualify animation quality or audible timing.
+Run only tests relevant to changed functionality unless a full sweep is explicitly
+requested.
+
+## Review status and next step
+
+The user approved the artwork workflow, radio framing and playback behavior in
+conversation and requested this written design. The local-storage choice, explicit
+portability limit, numerical tuning and concrete timing contract are now presented
+for review as part of the written spec. No product code, migrations, generation
+requests, audio runs or implementation plan have been produced for this feature.
+
+After the user reviews this spec, use the writing-plans skill to create the
+implementation plan and atomic Backlog work. Every plan must link ADR-242 and
+carry the repository's ADR-required/path/reason fields. Do not treat this design
+task as an implementation-complete feature task.
