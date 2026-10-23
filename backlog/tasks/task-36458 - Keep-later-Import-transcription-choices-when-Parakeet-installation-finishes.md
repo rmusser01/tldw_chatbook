@@ -1,7 +1,7 @@
 ---
 id: TASK-36458
 title: Keep later Import transcription choices when Parakeet installation finishes
-status: In Progress
+status: Done
 created_date: 2026-10-23 16:40
 labels:
 - textual
@@ -31,7 +31,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 20:37
+updated_date: 2026-10-23 21:47
 ---
 
 ## Description
@@ -71,6 +71,12 @@ ADR path: backlog/decisions/014-library-ingest-service-authority-and-recovery.md
 Reason: Bounded callback ownership repair within existing screen, consent, artifact and preference contracts; no storage, routing or service-boundary change.
 <!-- SECTION:PLAN:END -->
 
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented and independently reviewed in PR #3228; targeted acceptance evidence complete. Final hosted CI is followed in the PR. Existing task/ADR links retained; no new ADR.
+<!-- SECTION:FINAL_SUMMARY:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
@@ -78,7 +84,9 @@ Reason: Bounded callback ownership repair within existing screen, consent, artif
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Managed Parakeet completion retains its requesting form identity, accepted-edit generation, source and raw transcription controls. Automatic INT8 selection applies only while that request context is current. Obsolete completion keeps later choices and reports that honestly, while consented installation/preference can finish. The original button, consent, worker and UI-thread callback remain. The narrow parakeet_install_selection helper loads only on request/completion; LibraryScreen stays at37,525 lines with its lowered ceiling unchanged.
+Managed Parakeet completion retains its requesting form identity, accepted-edit generation, source and raw transcription controls. Automatic INT8 selection applies only while that request context is current. Obsolete completion keeps later choices and reports that honestly, while consented installation/preference can finish. The original button, consent, worker and UI-thread callback remain. The narrow parakeet_install_selection helper loads only on request/completion; LibraryScreen stays at 37,525 lines with its lowered ceiling unchanged.
 
-All nine new selection cases and25 existing contracts pass across the recorded targeted runs. After import deferral, ordinary/provider-change mounted controls and both exact size guards pass (4/4). Perf Guard exposed559/558 preload modules; the existing native guard reproduced it, then scoped imports restored558/558 without raising a limit. Rebased preimport/warmup controls pass (2/2,558/558 and93/94). External acquisition/preference seams are bounded; no download, package install or inference proof is claimed. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for evidence and limits. Existing ADR-014/025/050/033 application state/011 govern selection and [ADR-097](../decisions/097-boot-budget-ratchets.md) governs import timing; no new ADR. Independent Superpowers review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
+All nine new selection cases and 25 existing contracts pass across the recorded targeted runs. After import deferral, ordinary/provider-change mounted controls and both exact size guards pass (4/4). Perf Guard exposed 559/558 preload modules; the existing native guard reproduced it, then scoped imports restored 558/558 without raising a limit. Rebased preimport/warmup controls pass (2/2,558/558 and93/94). External acquisition/preference seams are bounded; no download, package install or inference proof is claimed. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for evidence and limits. Existing ADR-014/025/050/033 application state/011 govern selection and [ADR-097](../decisions/097-boot-budget-ratchets.md) governs import timing; no new ADR. Independent Superpowers review approved the implementation.
+
+Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -1,7 +1,7 @@
 ---
 id: TASK-36454
 title: Keep newer Library Prompt drafts when an earlier Save completes
-status: In Progress
+status: Done
 created_date: 2026-10-23 16:33
 labels:
 - textual
@@ -27,7 +27,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 20:36
+updated_date: 2026-10-23 21:46
 ---
 
 ## Description
@@ -55,6 +55,12 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 - [x] #4 Mounted real-store regressions distinguish ordinary create/update, later accepted input, queued notification, definite failure, next Save and guarded exit; actual child input delivery and committed rows are witnessed.
 <!-- AC:END -->
 
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented and independently reviewed in PR #3228; targeted acceptance evidence complete. Final hosted CI is followed in the PR. Existing task/ADR links retained; no new ADR.
+<!-- SECTION:FINAL_SUMMARY:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
@@ -72,7 +78,9 @@ Reason: bounded acknowledgement repair inside existing editor/persistence/histor
 
 ## Implementation Notes
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Prompt Save now captures raw live metadata and Basic/Advanced blocks, acknowledges only submitted input, and adopts the committed identity/version. Newer edits stay visible and dirty, obsolete semantic messages cannot replay old blocks, and the next Save updates the same row with the current version. The existing create-success action refresh is retained. Completion moved to UI/Library_Modules/prompt_save_ack.py; the controller ceiling drops from5,199 to5,100. Stateful children, history, services and exit guards remain with their existing owners.
+Prompt Save now captures raw live metadata and Basic/Advanced blocks, acknowledges only submitted input, and adopts the committed identity/version. Newer edits stay visible and dirty, obsolete semantic messages cannot replay old blocks, and the next Save updates the same row with the current version. The existing create-success action refresh is retained. Completion moved to UI/Library_Modules/prompt_save_ack.py; the controller ceiling drops from 5,199 to 5,100. Stateful children, history, services and exit guards remain with their existing owners.
 
-Mounted real-SQLite controls cover create/update, later and queued body/metadata input, definite failure, guarded exit, next Save and old semantic publication. Superpowers review caught a stale other-lane Advanced projection; both convergence loops now synchronize all captured cards. Three new review regressions pass, plus11 neighboring Prompt controls. The combined Prompt module contains22 exact census cases. Full counts, RED/GREEN and fixture qualifications are in the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md). Existing ADR-033 application state and ADR-040/049/076/086 apply; no new ADR. Independent review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
+Mounted real-SQLite controls cover create/update, later and queued body/metadata input, definite failure, guarded exit, next Save and old semantic publication. Superpowers review caught a stale other-lane Advanced projection; both convergence loops now synchronize all captured cards. Three new review regressions pass, plus 11 neighboring Prompt controls. The combined Prompt module contains22 exact census cases. Full counts, RED/GREEN and fixture qualifications are in the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md). Existing ADR-033 application state and ADR-040/049/076/086 apply; no new ADR. Independent review approved the implementation.
+
+Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

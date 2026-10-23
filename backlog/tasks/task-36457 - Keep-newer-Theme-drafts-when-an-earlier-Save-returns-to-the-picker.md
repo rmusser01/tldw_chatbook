@@ -1,7 +1,7 @@
 ---
 id: TASK-36457
 title: Keep newer Theme drafts when an earlier Save returns to the picker
-status: In Progress
+status: Done
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -27,7 +27,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 20:37
+updated_date: 2026-10-23 21:47
 ---
 
 ## Description
@@ -66,6 +66,12 @@ ADR path: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisio
 Reason: bounded asynchronous completion repair within existing editor/picker ownership and file/leave contracts; no new boundary, storage model, dependency or visual token.
 <!-- SECTION:PLAN:END -->
 
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented and independently reviewed in PR #3228; targeted acceptance evidence complete. Final hosted CI is followed in the PR. Existing task/ADR links retained; no new ADR.
+<!-- SECTION:FINAL_SUMMARY:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
@@ -75,5 +81,7 @@ Reason: bounded asynchronous completion repair within existing editor/picker own
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Theme Save keeps later raw palette/name/dark edits visibly dirty and tracks the actual saved file separately from a newer draft name. Save-as changes only an unchanged Name box; the next Save preserves existing file-resolution and overwrite rules. Session/raw-snapshot checks protect the posted Saved handoff before the picker returns, including queued Changed input. The theme-system architecture document records the behavior.
 
-All13 mounted real-TOML regressions pass. Existing controls:17 of18 pass directly and five Reset controls pass. The fixed-pause Save-as highlight test also fails on pristine HEAD before its catalog scan completes; the bounded final-source scan witness preserves every assertion and passes. Existing test source is unchanged. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for exact receipts and qualification. Existing ADR-011, both applicable ADR-033 records and ADR-150/161 apply; no new ADR. Independent Superpowers review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
+All 13 mounted real-TOML regressions pass. Existing controls: 17 of 18 pass directly and five Reset controls pass. The fixed-pause Save-as highlight test also fails on pristine HEAD before its catalog scan completes; the bounded final-source scan witness preserves every assertion and passes. Existing test source is unchanged. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for exact receipts and qualification. Existing ADR-011, both applicable ADR-033 records and ADR-150/161 apply; no new ADR. Independent Superpowers review approved the implementation.
+
+Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

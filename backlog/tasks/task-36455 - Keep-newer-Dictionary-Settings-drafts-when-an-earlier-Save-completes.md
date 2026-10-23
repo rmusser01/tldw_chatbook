@@ -1,7 +1,7 @@
 ---
 id: TASK-36455
 title: Keep newer Dictionary Settings drafts when an earlier Save completes
-status: In Progress
+status: Done
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -26,7 +26,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 20:36
+updated_date: 2026-10-23 21:46
 ---
 
 ## Description
@@ -66,6 +66,12 @@ ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/
 Reason: bounded acknowledgement bug fix within existing dictionary form, screen, persistence and guard owners; no schema, boundary, policy or architecture change.
 <!-- SECTION:PLAN:END -->
 
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented and independently reviewed in PR #3228; targeted acceptance evidence complete. Final hosted CI is followed in the PR. Existing task/ADR links retained; no new ADR.
+<!-- SECTION:FINAL_SUMMARY:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
@@ -73,7 +79,9 @@ Reason: bounded acknowledgement bug fix within existing dictionary form, screen,
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Dictionary Settings Save acknowledges the submitted raw controls without reloading over newer input, adopts the actual optimistic-lock version, and recomputes dirty state when older notifications arrive. Name/description, strategy, enabled and unfinished budget edits remain visible for the next Save to the same dictionary. Existing Persona completion is unchanged; its shared completion helper hosts the Dictionary tail. PersonasScreen drops to16,554 lines. Entry and transition ownership and existing New/leave/quit guards stay in place.
+Dictionary Settings Save acknowledges the submitted raw controls without reloading over newer input, adopts the actual optimistic-lock version, and recomputes dirty state when older notifications arrive. Name/description, strategy, enabled and unfinished budget edits remain visible for the next Save to the same dictionary. Existing Persona completion is unchanged; its shared completion helper hosts the Dictionary tail. PersonasScreen drops to 16,554 lines. Entry and transition ownership and existing New/leave/quit guards stay in place.
 
-Twelve mounted real-service/SQLite regression cases pass, with next-Save/version, queued notification, failure and Stay controls; eight existing widget and17 screen contracts pass with the documented bootstrap qualification. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for exact evidence and limits. Character-chat architecture documentation is updated. Existing ADR-033 application state and ADR-046/079/115 apply; no new ADR. Independent Superpowers review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
+Twelve mounted real-service/SQLite regression cases pass, with next-Save/version, queued notification, failure and Stay controls; eight existing widget and 17 screen contracts pass with the documented bootstrap qualification. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for exact evidence and limits. Hosted UI3 exposed a fixture selecting a stale Character row before Dictionary list replacement. It now waits for the exact kind-qualified Dictionary row and selected kind/ID/detail. All 12 case bodies/IDs stay unchanged; four native readiness/Save/guard controls pass (4/4). Character-chat architecture documentation is updated. Existing ADR-033 application state and ADR-046/079/115 apply; no new ADR. Independent Superpowers review approved the implementation.
+
+Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
