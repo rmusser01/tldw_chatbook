@@ -592,9 +592,7 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
             f"The task row shrank from {width_with_discard} to "
             f"{task_actions.region.width} when Discard new note disappeared."
         )
-        assert discard.display is True, (
-            "Discard must keep its cells (visibility, not display)"
-        )
+        assert discard.display is True, "Discard must keep its cells (visibility, not display)"
         assert discard not in screen.focus_chain, "a hidden Discard is Tab-reachable"
         assert discard not in screen._compositor.visible_widgets
 
