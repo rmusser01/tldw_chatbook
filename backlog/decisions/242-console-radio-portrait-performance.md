@@ -4,6 +4,7 @@ Status: Proposed; written design awaiting user review
 Date: 2026-10-23
 Related Task: [TASK-36509](../tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
 Spec: [Console radio portraits](../../Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md)
+Review: [Source-anchored design review](../../Docs/superpowers/reviews/2026-10-23-console-radio-portraits-design-review.md)
 Supersedes: N/A
 
 ## Context
@@ -25,27 +26,42 @@ elapsed-time estimates cannot establish accurate mouth timing.
    a character's resolved expression and exact source-image digest. Three mouth
    poses each have open-eye and closed-eye variants. These are rendering roles,
    not new mood keys, a second emotion model, or another Buddy runtime.
-2. Generate and import into the same disposable character-editor draft. Use only
-   configured reference-image-capable image-generation backends. Show provider
-   destination before explicit submission. Validate and preview all six frames;
-   Apply alone activates them, with stale-source and revision checks. Existing
-   images are never overwritten by partial generation or cancelled review.
+2. Generate and import into the same disposable character-editor draft, admitted
+   only for saved local characters and persisted active artwork. Capture and
+   revalidate exact profile/service/database authority; server-owned IDs are not
+   local authority. Require source Save/Apply before preparation when artwork is
+   dirty, without implicitly saving unrelated edits. Use only configured
+   reference-image-capable image-generation backends. Show provider destination
+   and six-request batch size before explicit submission. Preview all six frames
+   offline at Console size; Apply alone activates them, with stale-source and
+   revision checks. Existing images survive partial generation or cancelled review.
 3. Store bounded normalized PNG frames in new local character-database parent and
    child records, atomically published through existing transactions. Add a real
    SQL migration at the next available schema version. Keep original portraits,
-   legacy expression images and immutable visual-pack assets unchanged.
+   legacy expression images and immutable visual-pack assets unchanged. Publish
+   committed Apply/Remove invalidation and include performance revision/absence
+   plus exact local authority in all request/preparation cache identities.
 4. Treat first-version performances as character/profile-local attachments.
    Full-profile backup/restore includes them. Existing portable character cards,
    Actor Packs and Chatbooks retain their ordinary artwork/formats and omit the
    new data. Disclose that limit; do not introduce a native pack-format extension
    or cross-character binding implicitly.
 5. Extend the existing speech boundary with transient owner-fenced presentation
-   state: confirmed playback state, output position, audio envelope and timing
-   capability. No audio content or envelope history is persisted in messages or
-   exported. The portrait follows speech; hiding or destroying it does not create
-   a separate audio-control policy.
+   state: confirmed transport state, output-timed audio envelope and timing
+   capability. Hands-free gets an optional owner/observer without changing its
+   existing voice selection or exactly-once completion. Editor TTS samples reuse
+   guarded app-owned utterance/destination admission and exact-owner cancellation,
+   never fabricated message snapshots or global Stop. Confirmed transport pause
+   does not add unsupported states to the existing speech-admission lifecycle.
+   No audio content or envelope history is persisted in messages or exported.
+   The portrait follows speech; hiding the Console avatar does not change audio
+   policy, while closing a disposable editor preview stops only that preview.
 6. Follow PCM output consumption and underrun silence, with energy preparation
-   outside the realtime callback. Reuse the existing PCM sink for eligible WAV
+   outside the realtime callback. Distinguish consumed source frames from device
+   frames, including partial zero padding, and align to validated output-DAC time.
+   Bound envelope metadata by queued audio and coalesce reader snapshots; a slow
+   observer cannot block or fail audio. A raw silence gate closes the mouth
+   independently of release smoothing. Reuse the existing PCM sink for eligible WAV
    artifacts. External playback gets mouth animation only with a trustworthy
    envelope/position pairing; otherwise retain working voice and show truthful
    status with the original portrait. Never simulate sync from text or network
