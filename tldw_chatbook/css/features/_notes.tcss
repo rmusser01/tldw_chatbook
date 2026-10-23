@@ -16,3 +16,55 @@
  * pre-workbench legacy Notes tab as above). */
 
 /* --- End of Notes Tab Window --- */
+
+/* TASK-36386 / ADR-097: the File Notes revision-history dialog is a rarely
+   opened Library modal, so its rules do NOT ride the boot parse:
+   build_css.py splits every `file-notes-history*` block out of this module
+   into screen_modal_file_notes_history.tcss, which FileNotesHistoryDialog's
+   own CSS_PATH loads on first open (TASK-33628.2's pattern). The screen is
+   centered through its own id, because a bare type selector carries no
+   owner token and would stay on the boot bundle. */
+#file-notes-history-dialog-screen {
+    align: center middle;
+}
+
+#file-notes-history-dialog {
+    width: $ds-size-90;
+    max-width: $ds-percent-95;
+    height: auto;
+    max-height: $ds-percent-85;
+    border: round $primary;
+    background: $surface;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#file-notes-history-title {
+    height: $ds-size-1;
+    text-style: bold;
+}
+
+#file-notes-history-list {
+    height: auto;
+    max-height: $ds-size-10;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
+}
+
+#file-notes-history-destination-label {
+    height: $ds-size-1;
+    margin-top: $ds-space-1;
+}
+
+#file-notes-history-destination {
+    height: $ds-size-1;
+}
+
+#file-notes-history-actions {
+    height: $ds-size-1;
+    margin-top: $ds-space-1;
+}
+
+#file-notes-history-status {
+    height: $ds-size-1;
+    margin-top: $ds-space-1;
+}

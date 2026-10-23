@@ -10,73 +10,73 @@
 
 /* ===== WIDGET: StudyScreen (UI/Screens/study_screen.py) ===== */
 
-    StudyScreen #study-section-bar {
-        height: auto;
-    }
+StudyScreen #study-section-bar {
+    height: auto;
+}
 
 /* ===== WIDGET: TraceFiltersDialog (UI/Widgets/trace_filter_bar.py) ===== */
 
-    TraceFiltersDialog { align: center middle; background: $background 70%; }
+TraceFiltersDialog { align: center middle; background: $background 70%; }
 
 
 
-    TraceFiltersDialog #trace-filter-dialog Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
+TraceFiltersDialog #trace-filter-dialog Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
 
 /* ===== WIDGET: ConsoleCapturePolicyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
 
-    ConsoleCapturePolicyDialog { align: center middle; }
+ConsoleCapturePolicyDialog { align: center middle; }
 
 /* ===== WIDGET: ConsoleExchangeExportDialog (Widgets/Console/console_exchange_export_dialog.py) ===== */
 
-    ConsoleExchangeExportDialog { align: center middle; }
+ConsoleExchangeExportDialog { align: center middle; }
 
 /* ===== WIDGET: ConsolePromptComparisonModal (Widgets/Console/console_prompt_comparison_modal.py) ===== */
 
-    ConsolePromptComparisonModal {
-        align: center middle;
-    }
+ConsolePromptComparisonModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: TraceExportDialog (Widgets/Console/trace_export_dialog.py) ===== */
 
-    TraceExportDialog {
-        align: center middle;
-    }
+TraceExportDialog {
+    align: center middle;
+}
 
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
-    NoteSelectionDialog {
-        align: center middle;
-    }
+NoteSelectionDialog {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConversationSelectionDialog (Widgets/conversation_selection_dialog.py) ===== */
 
-    ConversationSelectionDialog {
-        align: center middle;
-    }
+ConversationSelectionDialog {
+    align: center middle;
+}
 
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
 
-    EmojiPickerScreen { align: center middle; }
+EmojiPickerScreen { align: center middle; }
 
 /* ===== WIDGET: FileExtractionDialog (Widgets/file_extraction_dialog.py) ===== */
 
-    FileExtractionDialog {
-        align: center middle;
-    }
+FileExtractionDialog {
+    align: center middle;
+}
 
-    FileExtractionDialog > Vertical {
-        width: 80%;
-        height: 80%;
-        max-width: 100;
-        max-height: 40;
-        border: thick $background;
-        background: $surface;
-        padding: 1;
-    }
+FileExtractionDialog > Vertical {
+    width: 80%;
+    height: 80%;
+    max-width: 100;
+    max-height: 40;
+    border: thick $background;
+    background: $surface;
+    padding: 1;
+}
 
 /* ===== WIDGET: VoiceBlendDialog (Widgets/voice_blend_dialog.py) ===== */
 
-    VoiceBlendDialog {
-        align: center middle;
-    }
+VoiceBlendDialog {
+    align: center middle;
+}
