@@ -86,6 +86,27 @@ async def pump_runs(pump, seconds: float = 2.0) -> bool:
     return True
 
 
+async def console_attach_ended(console, seconds: float = 5.0) -> bool:
+    """True once ``console``'s attach reconcile has ENDED and its queue drained.
+
+    TASK-35833/TASK-36389. A reopened cached Console's reconcile skips the view
+    start, and what it arms can still be queued when the flag flips (the wake
+    hook's ``call_later`` poll arm). The reconcile also runs on the Console's
+    own pump, so events queued behind it (a modal's suspend) land late. Wait
+    for the reconcile to end, then for one callback posted after it: the
+    screen's queue is FIFO. A ``set_timer`` or ``call_after_refresh`` it
+    queued may still be pending.
+    """
+    ended = await until(
+        lambda: (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+        ),
+        seconds,
+    )
+    return ended and await pump_runs(console, seconds)
+
+
 def await_chain(task: asyncio.Task) -> list[str]:
     """The functions a suspended task is waiting inside, outermost first.
 

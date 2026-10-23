@@ -28,6 +28,7 @@ from textual.events import AppFocus
 from textual.screen import Screen
 from textual.widgets import Button
 
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_fleet_panel import _FleetBridge
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_right_rail import make_console_pilot
@@ -131,6 +132,10 @@ async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
         screen._set_console_rail_preference(right_open=True)
         await _until(pilot, lambda: dispatches)
         assert dispatches
+        # TASK-36389: cover a Console whose first attach has ended. Covered
+        # sooner, its first return runs as the mount's resume, which does
+        # not refresh the environment.
+        assert await console_attach_ended(screen), "the attach reconcile never ended"
         await pilot.app.push_screen(Screen())
         await pilot.pause()
         assert screen.is_mounted and _right_rail_open(screen)

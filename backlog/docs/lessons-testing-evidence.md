@@ -386,6 +386,14 @@ label made this visible: every Textual timer callback profiles as
 `task:Timer._run_timer` until the probe names the timer's callback, which also
 separates the poll from Textual's `screen_update` repaint.
 
+## A `-p` probe plugin never runs inside a `@private_profile_test` test (TASK-36389, 2026-10-23)
+
+**Incident.** The audit's first sweep loaded a logging probe with `-p`, the way an earlier review round loaded its one-window-idle probe. It logged the two known plain tests and no `@private_profile_test` test at all, although the switcher test, run alone, does reopen a cached Console. `Tests/private_profile.py` runs each such test in a child pytest. The child sets `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, drops `PYTEST_ADDOPTS` and passes its own fixed `-p` list, so the parent's plugin and its patches are not in the process that runs the test. The child does inherit `PYTHONPATH` and the environment. A `sitecustomize.py` on `PYTHONPATH`, inert unless an env var is set, does reach it.
+
+A second trap in the same audit: a probe that slept 1 s inside the cached Console's reconcile left a racy test green. Every `pilot.pause()` starts by waiting for each pump of the current screen to run a posted `call_later`, so it waits for work that is running on the screen's pump. The real race is a reconcile that has not started yet. A probe that defers its start with `set_timer`, leaving the pump free, turned the same test red 5 of 5.
+
+**What to do.** Before trusting a probe's green on a private-profile test, show that the probe ran in the child, for example with a log line written from it. To probe a reconcile race, delay the start of the reconcile. Delaying the reconcile while it runs only makes the next pause wait for it.
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.

@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from Tests.UI.console_controller_stubs import context_spend_for_test
+from Tests.UI.pump_probe import console_attach_ended
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
 
 
@@ -148,6 +149,9 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
 
         monkeypatch.setattr(controller, "in_flight_run_count", lambda: 1)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
+        # TASK-36389: the reused Console re-arms the poll in its attach
+        # reconcile's resume, which a reached screen does not imply.
+        assert await console_attach_ended(console), "the attach reconcile never ended"
         assert console._console_transcript_sync_timer is not None, (
             "resume must restart the transcript-sync poll while a run is "
             "in flight -- no other path restarts it"
@@ -157,6 +161,7 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
         console._stop_console_transcript_sync_timer()
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
+        assert await console_attach_ended(console), "the attach reconcile never ended"
         assert console._console_transcript_sync_timer is None
 
 
