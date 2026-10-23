@@ -230,7 +230,7 @@ async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_ti
             assert getattr(cadence, "published", 0) == published + 1
             _objects, after = config_sync._projection_inputs(console)
             assert after != before, "the publication is not a cadence input"
-            assert console._console_transcript_poll_asked
+            assert cadence.owed, "a poll stopping now would not render it"
 
             # Freshness: the next tick (or a sync before it) projects it.
             await until(lambda: not console._console_sync_in_progress, timeout=30)

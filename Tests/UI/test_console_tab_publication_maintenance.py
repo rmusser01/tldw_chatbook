@@ -319,6 +319,30 @@ async def test_original_maintenance_waits_for_actual_tabs_with_idle_whole_pass(r
         assert entry.restored
 
 
+async def _quiet(pilot, console, projection) -> bool:
+    """Wait out the screen's own mount and resume syncs, not just a gap.
+
+    The resume schedules a whole sync for after the next refresh; a test that
+    takes the session lock between two such syncs blocks the queued one, and
+    with it the screen's messages (``WaitForScreenTimeout``: 1 of 4 runs on
+    dev 5b5920b8e2, every run once a Library-activity read hops to a worker,
+    TASK-33620.15.4). Quiet means idle across three drained pauses.
+    """
+
+    def idle() -> bool:
+        return (
+            not projection.pending
+            and not console._console_sync_in_progress
+            and not console._console_control_bar_replay_whole_sync
+        )
+
+    for _ in range(3):
+        if not await _settle(pilot, idle):
+            return False
+        await pilot.pause()
+    return await _settle(pilot, idle)
+
+
 @pytest.mark.asyncio
 @pytest.mark.ui
 @pytest.mark.timeout(180)
@@ -342,9 +366,7 @@ async def test_admitted_real_tab_publication_rechecks_replaced_controller(reques
         session_id = store.active_session_id
         await _show_tabs(console, pilot, {session_id})
         projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-        assert await _settle(pilot, lambda: not projection.pending
-            and not console._console_sync_in_progress
-            and not console._console_control_bar_replay_whole_sync)
+        assert await _quiet(pilot, console, projection)
         surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
         entry = _OriginalSurfaceEntry(console, surface)
         entry.start()

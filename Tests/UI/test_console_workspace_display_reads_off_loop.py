@@ -80,15 +80,18 @@ class _Statements:
 
 
 class _RunScreen(_AsyncWorkerScreen):
-    """A screen whose run poll ticks (its timer exists) and records asks."""
+    """A screen whose run poll ticks (its timer exists)."""
 
     def __init__(self) -> None:
         super().__init__()
         self._console_transcript_sync_timer = object()
-        self.poll_asks = 0
 
-    def _start_console_transcript_sync_timer(self) -> None:
-        self.poll_asks += 1
+    @property
+    def poll_asks(self) -> int:
+        """Publications handed to the poll's next tick (a cadence input)."""
+        from tldw_chatbook.UI.Console_Modules import config_sync
+
+        return getattr(config_sync._cadence(self), "published", 0)
 
     async def _sync_native_console_chat_ui(self) -> None:
         raise AssertionError("a landing started a whole sync while the poll ran")

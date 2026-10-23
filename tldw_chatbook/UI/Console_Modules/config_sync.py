@@ -265,8 +265,9 @@ def publish_console_presentation(screen: Any, group: str) -> None:
     which projected again however recently another sync had (one to three
     times in a send's run start). While the run poll ticks, a publication
     is a cadence input instead: the next tick, within one poll interval,
-    projects it together with whatever else that interval asked for, and
-    asking the poll for that tick keeps it from stopping first. With no
+    projects it together with whatever else that interval asked for. One
+    landing after the tick's projection, on the tick that stops the poll,
+    is owed, so the stop renders it (``settle_stopped_poll``). With no
     poll, a whole sync renders it at once, as before.
 
     Args:
@@ -274,8 +275,9 @@ def publish_console_presentation(screen: Any, group: str) -> None:
         group: The worker group of the whole sync started without a poll.
     """
     if getattr(screen, "_console_transcript_sync_timer", None) is not None:
-        _cadence(screen).published += 1
-        screen._start_console_transcript_sync_timer()  # Keeps the poll ticking.
+        cadence = _cadence(screen)
+        cadence.published += 1
+        cadence.owed = True
         return
     screen.run_worker(
         screen._sync_native_console_chat_ui(), exclusive=False, group=group
