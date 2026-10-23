@@ -979,3 +979,6 @@ Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_onc
 # Rebased onto dev e2cffbed60 (2026-10-22): appended at the tail, so no dev
 # entry changes shard.
 Tests/UI/test_console_idle_heap_refreeze.py
+# TASK-33620.15.1.3: a closed Inspect rail never asks the Environment panel
+# for its workspace root (50 tests, ~4 s serial).
+Tests/UI/test_console_environment_controller.py

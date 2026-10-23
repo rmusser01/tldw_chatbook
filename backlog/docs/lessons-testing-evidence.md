@@ -21477,3 +21477,27 @@ Serialize baseline reversals and shared scans. Private test profiles isolate sto
 **Incident.** PR #3190 was evicted from the merge queue after "required check failed twice". The Derived Artifacts gate's log says only "The required UI fast lane did not succeed", which reads like a red test in the PR. There was none. In both attempts, UI Fast Lane job 2 of 10 was cancelled at 97% with every test that ran passing. Its check-run annotation said "The job has exceeded the maximum execution time of 20m0s" (20m19s from start), and the gate job started only after that. The job held none of the PR's changed census entries, so the overrun was dev's own load, which TASK-35834's 13-shard deal later fixed. The day before, PR #3188's identical eviction had been filed as the gate cancelling in-flight shards (TASK-35920). That job's durations (20m01s-20m19s, all ending before the gate started) show the same cap.
 
 **What to do.** Before reproducing a test, read the cancelled job's annotations (`gh api repos/<owner>/<repo>/check-runs/<job id>/annotations`) and compare its `started_at`/`completed_at` with the gate job's start. An attempt's annotations can later be missing; the durations still show the cap. A cap overrun is a shard-load question. Check whether the PR adds entries to that job (`scripts/check_ui_pr_gate_census.py --shard <i> <n>`), and replay its minutes (`scripts/ui_lane_shard_replay.py`). Do not treat it as a test to fix in the PR.
+
+## A one-field accessor can cost the whole builder behind it (TASK-33620.15.1.3, 2026-10-20)
+
+**Incident.** The Console Environment panel held the UI loop 590-1359 ms on
+every Inspect-rail open and 53-516 ms at each run completion (live, haiku,
+isolated profiles). The completion nudge's docstring
+(`ChatScreen._run_coalesced_console_agent_fleet_sync`) named the work "git
+status plus a cached backlog scan" and said a closed rail "costs nothing".
+The first was true and irrelevant, the second false: sampled stacks put 611 of
+620 samples in the panel's ROOT ACCESSOR, which asked
+`resolve_turn_execution_context` for a whole turn configuration (RAG profile
+depth through storage admission, the MCP definition maximum, skills, project
+authority) and kept only `.workspace_roots` -- one 1-12 ms consent read. The
+controller asked that accessor 2-3 times per refresh, and before its rail-open
+guard, so a closed rail still paid up to 1.0 s per 10 s tick.
+
+**What to do.** When a UI-loop path is slow, time the accessors and guards it
+calls before the work it is named for: a nested-wrapper probe (each seam timed
+on the main thread, outermost call sampled every 1 ms) found this in one live
+round. Read what an accessor *computes*, not what it returns; a getter for one
+field of a snapshot builder costs the builder. Pin the fix structurally (spy
+every entry point into the builder on the live controller, inner ones too, and
+assert no call with the panel's module on the stack), not with a wall-clock
+threshold.

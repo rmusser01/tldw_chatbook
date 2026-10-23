@@ -320,10 +320,15 @@ class ConsoleEnvironmentController:
         out to do nothing (``UNKNOWN_ROOT``, rail closed, both tiers
         backed off) simply never touches it, and the screen's post-call
         check of ``pending_ack_tiers`` correctly finds nothing to wait for.
+
+        TASK-33620.15.1.3: the rail guard runs BEFORE the root is asked for.
+        A closed rail discards the root, and asking cost a whole turn
+        configuration build (0.1-1.0 s on the UI loop) at every run
+        completion and poll tick after the rail had once been open.
         """
-        root = self._workspace_root_accessor()
         if not self._rail_open_accessor():
             return
+        root = self._workspace_root_accessor()
         if root is UNKNOWN_ROOT:
             # "Cannot tell" is not an answer: skip silently, exactly as this
             # method did for every falsy root before TASK-31660. Landing
@@ -395,10 +400,13 @@ class ConsoleEnvironmentController:
         must wipe the previous repository's paint within one tick, AC #3)
         and ``None -> root`` (which must retire the old root's ``gh`` TTL
         and re-fetch both tiers).
+
+        The rail guard runs first, as in ``request_refresh``: a closed rail
+        never needs the root (TASK-33620.15.1.3).
         """
-        root = self._workspace_root_accessor()
         if not self._rail_open_accessor():
             return
+        root = self._workspace_root_accessor()
         if root is UNKNOWN_ROOT:
             # See `request_refresh`: an undetermined root must not be
             # mistaken for a root CHANGE either, or a transient accessor

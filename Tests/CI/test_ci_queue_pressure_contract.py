@@ -263,6 +263,9 @@ FAST_LANE_TARGETS = (
     # Its review in turn: the draining wake's claim keeps a second wake turn out
     # of its session.
     "Tests/Chat/test_console_fleet_wake.py::test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session",
+    # TASK-33620.15.1.3: the Environment panel's root is the session's
+    # consent-admitted roots, read without building a turn snapshot (pure).
+    "Tests/Chat/test_console_session_workspace_roots.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -468,6 +471,10 @@ ADMISSION_2_TARGETS = (
     "Tests/UI/test_library_ingest_readiness.py",
     "Tests/UI/test_library_ingest_canvas.py::test_external_preparation_status_and_cancel_are_stable_and_path_free",
     "Tests/UI/test_library_ingest_canvas.py::test_physical_external_cancel_releases_scope_and_preserves_form",
+    # TASK-33620.15.1.3: opening the Inspect rail, a run completion and a poll
+    # tick build no turn configuration for the Environment panel (the mounted
+    # Console; bootstrap_profile, ~8 s).
+    "Tests/UI/test_console_environment_refresh_off_loop.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
