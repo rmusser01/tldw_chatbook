@@ -343,7 +343,12 @@ async def test_enter_after_the_debounce_fired_waits_for_its_window_and_lands_on_
     the screen waits for that render, so the cursor lands on the new first
     match. Never on dev (where Enter used the previous result); B2a's window
     path had it until this test: the cursor stayed on rows the render then
-    replaced, and ``set_options`` cleared it, so a second Enter opened nothing."""
+    replaced, and ``set_options`` cleared it, so a second Enter opened nothing.
+
+    The read returns 1 s after Enter, inside the 2 s Enter waits at most
+    (B2a's final review, I2). ``pilot.press`` returns only once the screen
+    has handled Enter, so the read cannot be released after it: until then
+    this test held the read for its whole 10 s timeout."""
     target = volume_348.get_character_card_by_name("Character 0042")
     page = personas_screen_module.get_character_page_for_ui
     release = threading.Event()
@@ -363,14 +368,86 @@ async def test_enter_after_the_debounce_fired_waits_for_its_window_and_lands_on_
         await pilot.press("ctrl+f", *"Character 0042")
         await wait_until(pilot, reading.is_set, what="the debounced search's read")
         assert screen._search_debounce_timer is None
-        await pilot.press("enter")
-        release.set()
+        returns = threading.Timer(1.0, release.set)
+        returns.start()
+        try:
+            await pilot.press("enter")
+        finally:
+            returns.cancel()
+            release.set()
         await wait_until(
             pilot,
             lambda: highlighted_item_id(screen) == f"character:{target['id']}",
             what="the first match under the cursor",
         )
         assert screen.focused is screen.query_one(RoleplayItemList)
+
+
+@pytest.mark.parametrize("debounce", ["pending", "fired"])
+async def test_enter_stops_waiting_for_a_slow_render_at_the_cap_and_keys_flow_meanwhile(
+    mock_app_instance, volume_348, monkeypatch, debounce
+):
+    """B2a's final review (I2): Enter waits for its search's render inside the
+    screen's message handler, and that holds every non-priority key (on a
+    server source, for the server's round trip). New with B2a; bounded here:
+    after ``_SEARCH_SUBMIT_WAIT_SECONDS`` Enter does what dev did (the cursor
+    goes to the first row shown now), the screen takes keys again while the
+    read is still held, and the slow render still lands its rows.
+
+    ``pilot.press`` returns once the screen has handled the key, so its
+    duration is how long Enter held the screen."""
+    target = volume_348.get_character_card_by_name("Character 0042")
+    cap = personas_screen_module._SEARCH_SUBMIT_WAIT_SECONDS
+    page = personas_screen_module.get_character_page_for_ui
+    release = threading.Event()
+    reading = threading.Event()
+    escapes: list[bool] = []
+
+    def held(db, **kwargs):
+        if "0042" in str(kwargs.get("search_term") or ""):
+            reading.set()
+            release.wait(15)
+        return page(db, **kwargs)
+
+    escape = PersonasScreen.action_personas_escape
+
+    def record_escape(self) -> None:
+        escapes.append(release.is_set())
+        escape(self)
+
+    monkeypatch.setattr(PersonasScreen, "action_personas_escape", record_escape)
+    if debounce == "pending":
+        # The search is still waiting on its timer when Enter arrives.
+        monkeypatch.setattr(
+            personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
+        )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", held)
+        try:
+            await pilot.press("ctrl+f", *"Character 0042")
+            if debounce == "fired":
+                await wait_until(pilot, reading.is_set, what="the debounced read")
+            else:
+                assert screen._search_debounce_timer is not None
+            started = time.monotonic()
+            await pilot.press("enter")
+            held_for = time.monotonic() - started
+            assert reading.is_set() and not release.is_set()
+            assert cap - 0.25 <= held_for < cap + 3.0
+            assert screen.focused is item_list
+            await pilot.press("escape")
+            assert escapes == [False]
+        finally:
+            release.set()
+        await wait_until(
+            pilot,
+            lambda: visible_item_ids(screen) == (f"character:{target['id']}",),
+            what="the slow search's rows",
+        )
 
 
 # ---- Marks by id, the marks bar and the one delete modal (AC#5, R32; Task 5) ----
@@ -598,6 +675,61 @@ async def test_the_footer_advertises_space_where_it_toggles(
         assert await pilot.click("#personas-mode-characters")
         await settle(pilot)
         assert "space" not in footer.shortcut_text
+
+
+def _dictionary_service(*books: tuple[str, object]) -> SimpleNamespace:
+    """A dictionaries scope service listing ``(name, entry_count)`` books (all on)."""
+    records = [
+        {"id": number, "name": name, "entry_count": count, "enabled": True}
+        for number, (name, count) in enumerate(books, start=1)
+    ]
+    return SimpleNamespace(
+        list_dictionaries=AsyncMock(return_value={"dictionaries": records})
+    )
+
+
+@pytest.mark.parametrize("mode", ["lore", "dictionaries"])
+async def test_end_reaches_the_last_book_after_a_partial_character_list(
+    mock_app_instance, volume_348, mode
+):
+    """B2a's final review (I1): with 348 characters the first window leaves
+    rows past its end, and End in Lore books or Chat dictionaries then asked
+    for a character window the screen drops there, so the cursor never moved.
+    New with B2a (dev's list had no End); fixed here. Each book render also
+    says itself that no rows lie past its end."""
+    names = [f"Book {letter}" for letter in "ABCDE"]
+    if mode == "lore":
+        from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+        manager = WorldBookManager(volume_348)
+        for name in names:
+            manager.create_world_book(name)
+    else:
+        mock_app_instance.chat_dictionary_scope_service = _dictionary_service(
+            *((name, 2) for name in names)
+        )
+    kind = frame_state.KIND_FOR_MODE[mode]
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        assert item_list.more_available
+        assert await pilot.click(f"#personas-mode-{mode}")
+        await wait_until(
+            pilot,
+            lambda: [item_list.row(i).name for i in visible_item_ids(screen)] == names,
+            what=f"the {mode} list",
+        )
+        assert all(i.startswith(f"{kind}:") for i in visible_item_ids(screen))
+        item_list.focus()
+        await select_roleplay_item(pilot, screen, index=0, load=False)
+        await pilot.press("end")
+        await settle(pilot)
+        assert highlighted_item_id(screen) == visible_item_ids(screen)[-1]
+        item_list.set_more_available(True)
+        await screen._render_search_query(query="", mode=mode)
+        assert not item_list.more_available
 
 
 # ---- CI counts per settled keystroke, 348 and 5,000 (AC#8, AC#10; Task 8) ----

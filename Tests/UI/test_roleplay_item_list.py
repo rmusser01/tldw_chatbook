@@ -868,6 +868,33 @@ async def test_a_row_past_the_loaded_end_loads_through_then_shows_as_loaded():
         assert item_at(pilot.app.screen, "character:300").active
 
 
+async def test_a_kind_switch_forgets_the_window_state():
+    """B2a's final review (I1): Characters' partial window left "more rows"
+    set, so End in Lore books asked for a window the screen drops there and
+    never moved. New with B2a (dev's list had no End); fixed here. The
+    pending load-through goes too, so it cannot move the cursor later."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 200), total=348)
+        item_list.set_more_available(True)
+        assert pane.mark_active_row("character", "300") is False
+        pane.set_mode("lore")
+        await pane.update_rows(_rows(1, 5, kind="lore"), total=5, noun="lore books")
+        await pilot.pause()
+        assert not item_list.more_available
+        item_list.focus()
+        await select_roleplay_item(pilot, pilot.app.screen, "lore:1", load=False)
+        pilot.app.wanted.clear()
+        await pilot.press("end")
+        await pilot.pause()
+        assert highlighted_item_id(pilot.app.screen) == "lore:5"
+        assert pilot.app.wanted == []
+        pane.set_mode("characters")
+        await pane.update_rows(_rows(1, 200), total=348, noun="characters")
+        item_list.append_rows(_rows(201, 348))
+        await pilot.pause()
+        assert highlighted_item_id(pilot.app.screen) != "character:300"
+
+
 async def test_prompts_are_rebuilt_once_per_settled_width_and_only_where_changed(
     monkeypatch,
 ):

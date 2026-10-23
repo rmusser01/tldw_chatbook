@@ -203,7 +203,17 @@ class RoleplayItemList(OptionList):
     # ---- rows ----
 
     def set_kind(self, kind: str) -> None:
-        """Switch the kind the list shows; marks of other kinds are kept."""
+        """Switch the kind the list shows; marks of other kinds are kept.
+
+        A new kind starts with no window state: rows past the loaded end, an
+        asked-for window and a row waiting to load belong to the old kind's
+        list (B2a's final review, I1: End did nothing in Lore books after a
+        partial Characters window).
+        """
+        if kind != self._kind:
+            self._more_available = False
+            self._window_requested = False
+            self._pending_active = None
         self._kind = kind
 
     def _measured_width(self) -> int | None:

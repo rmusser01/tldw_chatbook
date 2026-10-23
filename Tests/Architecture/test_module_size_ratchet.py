@@ -146,8 +146,11 @@ _BUDGETS: dict[str, int] = {
     # grew personas_screen.py from 16,528 to 16,567 lines; B1 brings it to
     # 16,564.
     # TASK-36097 extracts Persona completion without raising the ceiling.
-    # 2026-10-22 owner decision (TASK-33910.3, Roleplay frame B2a; "expand the limits, don't contort code"): B2a grows personas_screen.py from 16,561 lines (dev 7700c63a68) to 16,852; the row rises in each commit that grows it.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16852,
+    # Roleplay frame B2a (TASK-33910.3), owner decision 2026-10-19 ("expand
+    # limits, never contort code"), applied 2026-10-22 and 2026-10-23: B2a
+    # grows personas_screen.py from 16,561 lines (dev 7700c63a68) to 16,872;
+    # the row rises in each commit that grows it.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16872,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -167,7 +170,8 @@ _BUDGETS: dict[str, int] = {
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision
     # 2026-10-19, "expand limits, never contort code"; applied 2026-10-23).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1223,
+    # The final review's fixes (same decision and day) raise it to 1,233.
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1233,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

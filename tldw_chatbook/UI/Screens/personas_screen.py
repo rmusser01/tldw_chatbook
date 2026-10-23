@@ -474,6 +474,10 @@ _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it he
 #: export/delete) while browsing server-owned characters.
 _SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
+#: Enter in the library search waits at most this long for its search to
+#: render. The wait runs in the screen's message handler, so every
+#: non-priority key waits with it (on a server source, for the round trip).
+_SEARCH_SUBMIT_WAIT_SECONDS = 2.0
 #: Debounce for the inspector's conversations search (F14): the same 0.2 s
 #: window as the library search above, so a typing burst runs one Keyword
 #: generation (via the conversations controller) instead of one per keystroke.
@@ -565,6 +569,20 @@ class _CharacterTTSMixedSnapshot(RuntimeError):
 # personas_character_editor_widget.py - change one, change both.
 AVATAR_THUMB_COLS = 24
 AVATAR_THUMB_LINES = 10
+
+
+async def _wait_at_most(worker: Worker, seconds: float) -> None:
+    """Wait for ``worker`` to finish, for at most ``seconds``, and never cancel it.
+
+    ``asyncio.wait_for(worker.wait(), ...)`` would cancel ``Worker.wait()`` at
+    the deadline, and that cancels the worker's own task, which it awaits
+    directly, so a slow render would never land. ``asyncio.wait`` leaves the
+    waiter running; its outcome is read when it ends, so a failed or
+    cancelled worker never leaves an unretrieved task exception behind.
+    """
+    waiter = asyncio.ensure_future(worker.wait())
+    waiter.add_done_callback(lambda done: done.cancelled() or done.exception())
+    await asyncio.wait({waiter}, timeout=seconds)
 
 
 def _character_import_filters() -> Any:
@@ -3786,31 +3804,31 @@ class PersonasScreen(BaseAppScreen):
 
     @on(PersonaSearchSubmitted)
     async def _handle_search_submitted(self, message: PersonaSearchSubmitted) -> None:
-        """Enter in the search box: render a still-pending search now, then the first match.
+        """Enter in the search box: start a still-pending search now, wait for it, then the first match.
 
         On dev, Enter within the 0.2 s debounce of the last keystroke put the
         cursor on the previous result's first row, so ``ctrl+f isolde ⏎ ⏎``
         could open the wrong card (spec 1.6's 4-key find); B2a renders first.
+        The wait holds every non-priority key on this screen, so it ends after
+        ``_SEARCH_SUBMIT_WAIT_SECONDS`` (B2a's final review, I2): a slower
+        render (a server round trip) keeps running and its rows still land,
+        and the cursor goes to the first row shown now, as on dev.
         """
         message.stop()
         if self._search_debounce_timer is not None:
             self._cancel_search_debounce()
-            await self._render_search_query(
+            self._start_debounced_search_render(
                 query=self.state.search_query, mode=self.state.active_mode
             )
-        else:
-            # The debounce already fired; its render may still be reading. Wait
-            # for it, or the cursor lands on rows it is about to replace.
-            for worker in list(self.workers):
-                if (
-                    worker.node is self
-                    and worker.group == "personas-library-search"
-                    and not worker.is_finished
-                ):
-                    try:
-                        await worker.wait()
-                    except (WorkerCancelled, WorkerFailed):
-                        pass
+        # The search's render may still be reading. Wait for it, or the cursor
+        # lands on rows it is about to replace.
+        for worker in list(self.workers):
+            if (
+                worker.node is self
+                and worker.group == "personas-library-search"
+                and not worker.is_finished
+            ):
+                await _wait_at_most(worker, _SEARCH_SUBMIT_WAIT_SECONDS)
         try:
             library = self.query_one(PersonasLibraryPane)
         except QueryError:
@@ -4513,6 +4531,7 @@ class PersonasScreen(BaseAppScreen):
                 ),
                 recovery_copy=recovery_copy,
             )
+            library.item_list.set_more_available(False)
 
     def _lore_manager(self) -> Any:
         """A ``WorldBookManager`` bound to the app's local DB, or None when absent."""
@@ -4612,6 +4631,7 @@ class PersonasScreen(BaseAppScreen):
                 ),
                 recovery_copy=recovery_copy,
             )
+            library.item_list.set_more_available(False)
 
     # ===== Mode switching =====
 
