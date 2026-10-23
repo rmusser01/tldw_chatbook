@@ -25,6 +25,8 @@ pytestmark = pytest.mark.bootstrap_profile
         "console-subagent-counts",
         "console-subagent-count-publication",
         "console-citation-counts",
+        "console-library-activity",
+        "console-workspace-display-reads",
         "console-context-publication",
         "console-hook-refresh",
         "console-manual-unread-load",

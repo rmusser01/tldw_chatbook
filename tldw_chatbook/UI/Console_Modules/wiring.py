@@ -855,6 +855,15 @@ def _review_selection_capture_policy_bindings(
     )
 
 
+def _console_presentation_paused(screen: Any) -> bool:
+    """Whether a maintenance or local storage pause holds Console rendering."""
+    from tldw_chatbook.Backup_Recovery.storage_admission import local_pause_active
+
+    return bool(getattr(screen, "_console_sync_maintenance_paused", False)) or (
+        local_pause_active()
+    )
+
+
 def _console_widget_or_none(screen: Any, selector: str) -> Any | None:
     """Return one mounted Console widget without exposing query failures."""
     try:
@@ -1591,6 +1600,12 @@ def build_console_controllers(
         reveal_inspector=lambda: screen._reveal_console_inspector_rail(),
         sync_native_ui=lambda: screen._sync_native_console_chat_ui(),
         notify=lambda *args, **kwargs: screen.app_instance.notify(*args, **kwargs),
+        # TASK-33620.15.4: durable activity rows are read by a view worker.
+        run_worker=lambda work: screen.run_worker(
+            work, exclusive=False, group="console-library-activity"
+        ),
+        presentation_paused=lambda: _console_presentation_paused(screen),
+        torn_down=resume_screen_is_torn_down,
     )
     from ...Widgets.Console.portrait_radio import update_portrait_radio
 

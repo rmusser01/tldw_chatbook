@@ -21,6 +21,8 @@ _GROUPS = frozenset(
         "console-subagent-counts",
         "console-subagent-count-publication",
         "console-citation-counts",
+        "console-library-activity",
+        "console-workspace-display-reads",
         "console-context-publication",
         "console-hook-refresh",
         "console-prompt-history",
@@ -35,6 +37,31 @@ _GROUPS = frozenset(
         "console-flat-conversation-search",
     }
 )
+async def owned_display_read(database: Any, operation: Any, /, *args: Any) -> Any:
+    """Run one finite display read off the UI loop, retired before cancellation.
+
+    ``run_owned_db_call`` on a worker thread; a cancelled caller waits for the
+    executor's callback to end, so its connection is never left in use behind
+    a finished worker (TASK-33620.15.4; the citation counts' shape).
+    """
+    from ...DB.base_db import run_owned_db_call
+
+    read = asyncio.ensure_future(run_owned_db_call(database, operation, *args))
+    try:
+        return await asyncio.shield(read)
+    except asyncio.CancelledError:
+        while not read.done():
+            try:
+                await asyncio.shield(read)
+            except asyncio.CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - cancellation wins.
+                break
+        if not read.cancelled():
+            read.exception()
+        raise
+
+
 _CANCEL, _WAIT = Worker.cancel, Worker.wait
 _CANCEL_CODE, _WAIT_CODE = _CANCEL.__code__, _WAIT.__code__
 
