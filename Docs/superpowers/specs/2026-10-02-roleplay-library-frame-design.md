@@ -411,7 +411,7 @@ Rail text width is pane width − 4 (border + padding): **24 / 31 / 35** at 120 
 | State | Signal (never colour alone) |
 |---|---|
 | Loaded in the work pane | `▸` + bold name |
-| Keyboard cursor, list focused | The list's focus edge (`thick $ds-action-focus`) plus a `$ds-focus-bg` cursor row, bold, painted **only while the list has focus**. Id-scoped override `#personas-library-rows:focus > .option-list--option-highlighted`, because the global rule paints regardless of focus (`css/components/_lists.tcss:112-119`). Text ≥4.5:1, edge ≥3:1 in every theme (`test_theme_contrast` extended). |
+| Keyboard cursor, list focused | The list's focus edge (`thick $ds-active-fg`; 2026-10-23 owner decision: `$ds-action-focus` measures under 3:1 in 27 of 89 themes; B2a uses `$ds-active-fg` (follow-up TASK-36479)) plus a `$ds-focus-bg` cursor row, bold, painted **only while the list has focus**. Id-scoped override `#personas-library-rows:focus > .option-list--option-highlighted`, because the global rule paints regardless of focus (`css/components/_lists.tcss:112-119`). Text ≥4.5:1, edge ≥3:1 in every theme (`test_theme_contrast` extended). |
 | Cursor, list not focused | Not painted (RP-062's 3.83:1 border-colour cursor is retired). |
 | Marked | `✓` in gutter col 2, plus the marks bar |
 | Off | the `off` word + a muted name |
@@ -2281,7 +2281,7 @@ class RoleplayMemory:
 
   | Surface | Focus cue (shape first) | Selected/active cue (independent of focus) |
   |---|---|---|
-  | Items, entries and conversations lists | `thick $ds-action-focus` edge; cursor row `$ds-focus-bg`/`$ds-focus-fg`, bold underline, **only while focused** | `▸` + bold on the loaded row |
+  | Items, entries and conversations lists | `thick $ds-active-fg` edge (2026-10-23 owner decision: `$ds-action-focus` measures under 3:1 in 27 of 89 themes; B2a uses `$ds-active-fg` (follow-up TASK-36479)); cursor row `$ds-focus-bg`/`$ds-focus-fg`, bold underline, **only while focused** | `▸` + bold on the loaded row |
   | Rail rows | `border-left: thick $ds-action-focus` replacing the padding (`css/features/_library.tcss:433-437`) | `▸` + the selected background |
   | View strip | the strip edge; `$ds-focus-bg` on the active chip while focused | bold + underline + the active marker |
   | Text fields | unchanged input focus box | — |
