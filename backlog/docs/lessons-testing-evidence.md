@@ -15,6 +15,34 @@
 - Grep dev's tests for the private names in the conflict (`monkeypatch.setattr(runtime, "_...")`). Keep those names as seams and keep the ordering their tests assert.
 - Run dev's new tests for that area on the rebased head, and reset the diagnostic inventory to dev's copy before rebuilding it.
 
+## Before diagnosing a merge-queue eviction, read dev's history of the failing test (TASK-33620.15.6, 2026-10-22)
+
+**Incident.** PR #3187 was evicted from the merge queue when the Console P0
+gate's held-wait assertion failed
+(`test_preparing_changed_source_after_original_tab_await_replays_full`,
+`assert await _until(lambda: bool(held), 5)`, run 39584905309, base
+e639b720ca). A read-only diagnosis then listed ways the branch's merged
+Character check could have changed the timer pass. After that base, dev had
+already changed the test twice: f21a4a379d (TASK-35713, a reused frame
+address) and 99dc8f574c (PR #3202, which reproduced this exact held-wait
+signature by queuing an unchanged FULL right after the sampled idle state).
+TASK-35713 had also recorded this failure mode on plain dev in CI, in 1 of
+10 repeats. Locally, the repaired test passed 16 of 16 on the rebased head
+(8 runs of 2 variants), and so did dev. The CI-era copy passed 8 of 8 on each
+arm. Under `taskpolicy -c background`, with 6 runs at once, the CI-era copy
+failed at that same assertion on dev in 3 of 9 runs and on the branch in 2
+of 9. A timeline probe of the 4 s Preparing hold found the same 23 FULL
+starts, 20 timer polls and 19-20 Character checks on both arms.
+
+**What to do.** Start an eviction diagnosis with
+`git log <run base>..origin/dev -- <failing test> <its helper modules>`, and
+search `backlog/tasks/` for the test name. If dev has already changed or
+filed it, rebase first. Then reproduce on the rebased head and on dev. A
+hosted-only timing failure often needs a slow local runner to show up:
+clamping the runs to background QoS reproduced it on dev when plain runs
+could not. To call the failure branch-caused, show a difference between the
+arms in what the test observes.
+
 ## New regression files need an explicit PR lane (TASK-32755.3, PR #3202)
 
 **Incident.** The full review of transcription readiness found that its new
@@ -279,6 +307,28 @@ runtime can split the operation at all. A probe that times each candidate
 slice and checks what it actually reclaims takes minutes. If the fixed term
 alone exceeds the target, changing the cadence cannot help; only removing
 the operation can.
+
+## Re-measure before resuming an interrupted performance fix (TASK-33620.15.6, 2026-10-19)
+
+**Incident.** TASK-33620.15.6 was filed on 2026-10-10 from a live profile: about 21 SQLite helper starts per Console send window, 8.6 of them from the Character scope check. Its WIP, interrupted for nine days, was a new operation-scoped session thread that shared one handle across the check's awaits. When work resumed, dev was about 1,540 commits ahead. A 4-send probe of current dev (a `sitecustomize` hook on `subprocess._fork_exec` that records the spawning chain) measured about 15.5 starts per window and a Character share of 2.7. TASK-33620.15.1 and the finite Character batch had removed most of the target. The WIP's edits no longer applied, and ADR-126 now ruled out a new coordinator around that callback. What remained was one duplicate read per changed check, a smaller change of a different shape.
+
+**What to do.** Before rebasing an old performance WIP, measure the current base with the same probe the task was filed from, and restate the acceptance numbers against that measurement. Read the ADR amendments made since the WIP to the code it touches. The probe takes minutes. Rebasing a design that the base has already overtaken costs hours and changes nothing.
+
+## A barrier test's pair index names a phase, not a count (TASK-33620.15.6, 2026-10-19)
+
+**Incident.** Folding the Character display's scope probe into its reload batch removed one metadata pair from the read sequence. Dev's evidence tests block in a profiler barrier at "the Nth pair", for example `pair_count == 3` for the batch's final pair. On the branch that pair never came. Each case waited out its 10 s `release.wait`, so twenty cases took 200 s and then timed out. The entry-control hook asserted `callbacks == 1` at the reader selector's return, inside a profile callback. On the new route the selector ran before any callback, so the assertion raised in the hook and the hold never armed.
+
+**What to do.** When a change reorders or merges the reads that a barrier test counts, map each barrier to the phase it was written for: the first pair of a batch, the read before groups, or the final fence pair. Do not shift the number by the delta. Run the tests on the branch to measure the new counts, and say in a comment which phase the barrier now names. A test that times out at a barrier is usually waiting for a read that no longer happens, not a hang.
+
+## A merged step drops the absorbed step's entry side effects on raising exits too (TASK-33620.15.6, 2026-10-20)
+
+**Incident.** On dev, the Character display check probed the scope and then called `refresh()`. The first thing `refresh()` does is drop the idle display's last-successful-refresh marker. The branch folded the reload into the probe's callback, so nothing on the new path ran that entry code. Two review rounds each found part of the gap:
+- **First review: return paths.** A changed check whose owner flapped during the read returned without publishing and left the 2 s memo armed. The fix cleared the marker on three return paths. Three tests pinned them, and each failed when its clearing site was removed.
+- **Second review: raising exits.** A cancellation, or an ambient accessor error re-raised after the callback retired, still left the marker set. On dev those exits ran after `refresh()` had already dropped it. One `except BaseException` around the decision closed this.
+
+The 57 tests from the first round passed throughout. No test interrupted a changed check.
+
+**What to do.** When you fold step B into step A, list everything B did on entry, such as clearing a marker, advancing a generation or publishing a loading state. Then check every exit of the merged path against that list: each return, each exception, and cancellation. Write one test per exit class, not per return statement. A barrier that cancels the task, or makes a loop accessor raise, while the worker is held, will cover the raising exits.
 
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 

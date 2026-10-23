@@ -19,7 +19,6 @@ from Tests.Backup_Recovery.test_character_presentation_cadence import (
 from Tests.Backup_Recovery.test_character_refresh_finite_batch import (
     _closed,
     _original_calls,
-    _retired,
     _source_hashes,
 )
 from Tests.Backup_Recovery.test_finite_db_retirement import worker_leases
@@ -127,10 +126,10 @@ def _entry_hold(database, controller, boundary, executor, observed):
             and facts["readers"] is None
         ):
             assert threading.current_thread() is current
-            assert observed["callbacks"] == 1 and observed["pairs"] == 1
-            assert observed["connections"] and all(
-                _closed(connection) for connection in observed["connections"]
-            )
+            # TASK-33620.15.6: the display qualifies its one decide-and-load
+            # batch before any read; there is no preliminary probe.
+            assert observed["callbacks"] == 0 and observed["pairs"] == 0
+            assert all(_closed(connection) for connection in observed["connections"])
             assert not worker_leases(database)
             facts["readers"] = argument
             facts["native_before"] = observed["native_opens"]
@@ -144,8 +143,8 @@ def _entry_hold(database, controller, boundary, executor, observed):
             and frame.f_code is originals[1][1]
             and frame.f_locals.get("path") == database.db_path
             and facts["readers"] is not None
-            and observed["callbacks"] == 2
-            and observed["pairs"] == 1
+            and observed["callbacks"] == 1
+            and observed["pairs"] == 0
             and matching_invoke(frame)
             and type(argument) is storage.StorageLease
         ):
@@ -160,7 +159,7 @@ def _entry_hold(database, controller, boundary, executor, observed):
             and frame.f_locals.get("self") is controller
             and frame.f_locals.get("readers") is facts["readers"]
         ):
-            assert observed["callbacks"] == 2 and observed["pairs"] == 1
+            assert observed["callbacks"] == 1 and observed["pairs"] == 0
             assert matching_invoke(frame)
             operation = getattr(storage._operation_local, "operation", None)
             assert operation is not None
@@ -219,14 +218,14 @@ async def test_character_entry_body_drift_refuses_before_changed_body(
                     while not facts["entered"].is_set():
                         await asyncio.sleep(0.01)
                 assert facts["readers"] is not None and not task.done()
-                assert observed["pairs"] == 1 and observed["recent"] == 0
+                assert observed["pairs"] == 0 and observed["recent"] == 0
                 assert all(_closed(conn) for conn in observed["connections"])
                 if boundary == "queued":
-                    assert observed["callbacks"] == 1
+                    assert observed["callbacks"] == 0
                     assert facts["admission"] is None
                     assert not worker_leases(database)
                 else:
-                    assert observed["callbacks"] == 2
+                    assert observed["callbacks"] == 1
                     with storage._lock:
                         assert facts["admission"] in storage._live_leases
                         assert facts["admission"]._key is not None
@@ -237,12 +236,16 @@ async def test_character_entry_body_drift_refuses_before_changed_body(
             finally:
                 facts["release"].set()
                 await asyncio.gather(task, return_exceptions=True)
-        _retired(database, observed)
+        # TASK-33620.15.6: the refused batch was the display's only callback
+        # and read nothing, so no reader handle was observed; none is left.
+        assert not observed["connections"]
+        assert not worker_leases(database)
         if facts["admission"] is not None:
             with storage._lock:
                 assert facts["admission"]._key is None
                 assert facts["admission"] not in storage._live_leases
-        assert observed["callbacks"] == 2 and observed["pairs"] == 1
+        # The refused batch read and published nothing.
+        assert observed["callbacks"] == 1 and observed["pairs"] == 0
         assert observed["recent"] == 0
         assert controller._presentation_scope_key is None
         assert controller.state.scope_fingerprint is None

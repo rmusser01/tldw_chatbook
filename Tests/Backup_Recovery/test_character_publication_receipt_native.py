@@ -29,24 +29,16 @@ pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.usefixtures("local_root
 @contextmanager
 def _actual_publication_edge(controller, screen, edge, character_id):
     witness = OriginalStorageUnitObserver({}, lambda: True, lambda unit: None)
-    refresh = inspect.getattr_static(
-        module.ConsoleCharacterContextController, "refresh"
+    # TASK-33620.15.6: a changed stock display decides, reloads and publishes
+    # in _check_recent_batch; its entry and its return are the two edges.
+    check = inspect.getattr_static(
+        module.ConsoleCharacterContextController, "_check_recent_batch"
     )
-    batch = inspect.getattr_static(
-        module.ConsoleCharacterContextController, "_refresh_recent_batch"
+    witness._pin(check)
+    witness.slots.append(
+        (module.ConsoleCharacterContextController, "_check_recent_batch", check)
     )
-    for function in (refresh, batch):
-        witness._pin(function)
-    witness.slots.extend(
-        [
-            (module.ConsoleCharacterContextController, "refresh", refresh),
-            (module.ConsoleCharacterContextController, "_refresh_recent_batch", batch),
-        ]
-    )
-    witness.codes = {
-        refresh.__code__: "refresh_invocation",
-        batch.__code__: "stock_batch",
-    }
+    witness.codes = {check.__code__: "display_check"}
     monitor = sys.monitoring
     witness.tool = next(
         slot
@@ -59,16 +51,16 @@ def _actual_publication_edge(controller, screen, edge, character_id):
 
     def start(code, offset):
         witness._start(code, offset)
-        if code is refresh.__code__ and edge == "entry_refused":
+        if code is check.__code__ and edge == "entry_refused":
             frame = witness._frame(code)
             if frame.f_locals.get("self") is controller:
                 assert threading.current_thread() is main
                 screen.app_instance.app_config = dict(screen.app_instance.app_config)
-                events.append("original_refresh_entered_then_owner_retargeted")
+                events.append("display_check_entered_then_owner_retargeted")
 
     def returned(code, offset, value):
         witness._return(code, offset, value)
-        if code is batch.__code__ and edge == "generation_after_publication":
+        if code is check.__code__ and edge == "generation_after_publication":
             frame = witness._frame(code)
             if frame.f_locals.get("self") is controller:
                 assert threading.current_thread() is main
@@ -81,7 +73,7 @@ def _actual_publication_edge(controller, screen, edge, character_id):
                     == character_id
                 )
                 controller.invalidate_scope()  # Original public generation fence.
-                events.append("original_batch_return_then_generation_invalidated")
+                events.append("display_check_return_then_generation_invalidated")
 
     witness.registered = {
         monitor.events.PY_START: start,

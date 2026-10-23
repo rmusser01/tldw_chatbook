@@ -61,6 +61,18 @@ about the change. Interleave the launches (ABBA) so the load drift falls on
 both arms, and do not compare absolute numbers with a round taken at another
 load.
 
+## On a loaded host, judge "longest loop callback" by its thread CPU, not its wall time (TASK-33620.15.6, 2026-10-19)
+
+**Incident.** TASK-33620.15.6's acceptance criteria say the fix must not lengthen the longest UI-loop callback. Its paired live sends ran while other sessions held the host's load average between 50 and 100. The probe recorded wall time for main-thread asyncio callbacks of 10 ms or more. After round 1 (8 sends per arm) the branch looked worse: its longest-callback median was 488 ms against dev's 325, and it lost all 8 pairs. The probe was then changed to also record `time.thread_time()` around each callback, and to label each one with its Textual timer callback, worker name or await chain. That showed callbacks running 5 to 10 times longer in wall time than in CPU. The longest callback was the screen-update timer on both arms, and gen-2 GC dominated it. Over 24 sends with CPU recorded, the longest callback's loop CPU had a mean of 86.6 ms on dev and 86.8 ms on the branch. The wall mean (576 against 643 ms) was set by a few load outliers.
+
+**What to do.** When a live criterion is about loop callbacks, record each callback's thread CPU and an attributable label alongside its wall time. Compare paired arms on CPU before you accept or reject a regression on wall time. Take `uptime` with every round and report it next to the numbers.
+
+## A per-send-window count of timer-driven work measures the host's load too (TASK-33620.15.6, 2026-10-20)
+
+**Incident.** TASK-33620.15.6's AC #2 asked for about 15 SQLite helper starts or fewer per Console send window, about 2 of them from the Character scope check. On 2026-10-19 the paired live rounds ran at load averages of 50 to 100: windows lasted 7.4 s instead of the 1.6 s the task was filed at, and the branch measured 21.2 starts per window, 5.2 of them Character. The task was written up as not meeting #2 and waiting on an owner decision to restate it. The next day, at load averages of 20 to 36, the same code on a rebased head measured 14.4 and 2.2 per window (dev 16.0 and 3.0), over 2.2 s windows. The Character check runs on a 1 s cadence during a run, so its count grows with the window, while the per-send one-shot starts do not.
+
+**What to do.** When a live criterion counts timer-driven work per window, report the window length and the rate per second next to the count, and take `uptime` with every round. If windows are much longer than the length the criterion was written against, re-measure when the host is quieter before calling the criterion unmet or asking for it to be restated.
+
 ## Runtime detachment must not reopen late read admission (TASK-34406.28, 2026-10-18)
 
 **Incident.** The browser Quit repair passed74 targeted checks, but two added controls actually drained and detached the runtime during approved cleanup and then triggered cache/flat refresh. Each made two original queries: `runtime is not None and runtime._disposed` became false after detachment while the screen was still running. The final76-case repair retains that check and also reads the same App's existing permanent shutdown flag; one new strict live Enter/response/Quit validation passes without extra shutdown errors.
