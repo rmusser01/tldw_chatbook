@@ -90,12 +90,12 @@ Primary proof references: [SQLite3.49.1 release](https://www.sqlite.org/releasel
 
 **Produces:** v4 exact catalog and immutable semantic records; `load_semantic_state(scope) -> ProjectSemanticState` (read-only); `configure_semantic(scope, settings, *, enabled, expected_semantic_revision) -> ProjectSemanticState`; project allocation/native settlement helper consumed by all new projection mutations, with stable gate and legacy keyword-only availability.
 
-- [ ] Write meaningful RED tests for fresh/1->2->3->4 preservation, DDL rollback, independent semantic revision and no eager dependencies.
-- [ ] Write actual held-SQLite/native RED cases: two namespaces competing for one binding allowance, keyword lookup while a real scanner waits outside a SQL unit, negative cap/no clamping, all control/migration/status entrances, unknown sidecars before open, commit/body/rollback/close uncertainty, old Ready retained and v2/v3/v4 cleanup with v1 refusal. Use scaled budgets for exhaustion plus the analytical formula; sampled peaks alone are insufficient.
-- [ ] Run only these new nodes first; confirm failures identify absent behavior rather than bootstrap/typo.
-- [ ] Implement the narrow allocation owner and v4/settings interfaces; preserve keyword rows/policy/epoch/frontier/claims and native ownership. No generic kernel change, semantic job, embedding construction or UI.
-- [ ] Verify new files and directly affected keyword DB/service/recovery/cleanup controls, scoped Ruff/format/source guards and diff. Preserve child receipts outside numbered pytest temp immediately. Record actual SQLite/VFS proof limits.
-- [ ] Commit exact task paths and report to parent; independent task review before S1b. ADR241 is amended before code.
+- [x] Write meaningful RED tests for fresh/1->2->3->4 preservation, DDL rollback, independent semantic revision and no eager dependencies.
+- [x] Write actual held-SQLite/native RED cases: two namespaces competing for one binding allowance, keyword lookup while a real scanner waits outside a SQL unit, negative cap/no clamping, all control/migration/status entrances, unknown sidecars before open, commit/body/rollback/close uncertainty, old Ready retained and v2/v3/v4 cleanup with v1 refusal. Use scaled budgets for exhaustion plus the analytical formula; sampled peaks alone are insufficient.
+- [x] Run only these new nodes first; confirm failures identify absent behavior rather than bootstrap/typo.
+- [x] Implement the narrow allocation owner and v4/settings interfaces; preserve keyword rows/policy/epoch/frontier/claims and native ownership. No generic kernel change, semantic job, embedding construction or UI.
+- [x] Verify new files and directly affected keyword DB/service/recovery/cleanup controls, scoped Ruff/format/source guards and diff. Preserve child receipts outside numbered pytest temp immediately. Record actual SQLite/VFS proof limits.
+- [x] Commit exact task paths and report to parent; independent task review before S1b. ADR241 is amended before code.
 
 ## Task 2: S1b issued embedding scope — TASK36421
 

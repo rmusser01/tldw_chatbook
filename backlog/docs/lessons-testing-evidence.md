@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A diagnostic wrapper can replace the failure it is meant to observe (TASK-36420, 2026-10-23)
+
+**Incident.** During the semantic-cache allocation foundation, the supervisor cleared the retired run's exception to release its traceback. Reading run.error after join therefore could not identify the first failure. A temporary scanner observer then read nonexistent ScanRunResult.directories, raising its own AttributeError; two diagnostic runs were contaminated. A passive first-exception capture identified the actual SQLite SQLITE_FULL13. The wrapper was removed before the final Partial/Clear/rebuild control passed with a sampled10,684,846B peak under the12MiB fixture limit.
+
+**What to do.** Capture the actual first exception before its owner retires it, validate observer fields against the return type, and return the original value unchanged. Label observer-induced failures separately and preserve their receipts. A missing retired exception is not success evidence; a sampled peak is not an analytical quota proof.
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.
