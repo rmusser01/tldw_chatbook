@@ -495,7 +495,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # A static node (an AST walk, about 5-10 s with its private-profile child),
 # appended at the tail after TASK-35648's.
 # TASK-36360..36363 append48 nodes after the complete616-entry dev census.
-MINIMUM_FILES = 664
+# TASK-33620.15.8 (2026-10-23) appends 2 at the tail: the composer
+# state-restyle file (5 mounted tests, about 14 s locally) and one node, the
+# catalog fingerprint's first-read yield (about 4 s); the rest of its file is
+# TASK-33620.15.15's to place. 664 + 2 = 666.
+MINIMUM_FILES = 666
 
 
 def read_census(path: Path) -> list[str]:
