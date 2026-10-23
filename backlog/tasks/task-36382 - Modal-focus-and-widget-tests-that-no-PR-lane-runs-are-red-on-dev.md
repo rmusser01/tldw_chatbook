@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: '2026-10-23 17:40'
+updated_date: '2026-10-23 18:27'
 labels:
 - follow-up
 - tests
@@ -90,7 +90,9 @@ Found by the implementation and reviews of TASK-35648/35649 (PR #3217, 2026-10-2
 
 **Evidence.** All five files `-n 4`: 286 passed (one parametrize case retired with the tools sheet). Evals file serially: 32 passed. `Tests/CI -n 4`: 1025 passed, 1 skipped. Census checker OK; preflight passed. Ruff: no new findings in touched files.
 
-**Review round 1.** Five more Evals tests synced by timing: `test_new_skill_eval_button_...` waited on `_selection.kind` and then queried the panel (an unused query, deleted; its depth and estimate asserts now poll), and the compare, middle-report, artifacts-"more" and subject-pick tests asserted after one pause (now bounded waits on the asserted state). Under the reviewer's probe plugin, which makes `pilot.pause()` see one 20 ms idle window, the previous commit's `test_new_skill_eval_button_...` failed 3/3 with `NoMatches 'SkillEvalPanel'`; after the fix all five passed in 10/10 runs. The registry's skip-list comment now says "follow-up wave" entries are queued gaps, not verdicts.
+**Review round 1.** Five more Evals tests synced by timing: `test_new_skill_eval_button_...` waited on `_selection.kind` and then queried the panel (an unused query, deleted; its depth and estimate asserts now poll), and the compare, middle-report, artifacts-"more" and subject-pick tests asserted after one pause (now bounded waits on the asserted state). Under the reviewer's probe plugin, which makes `pilot.pause()` see one 20 ms idle window, the previous commit's `test_new_skill_eval_button_...` failed 3/3 with `NoMatches 'SkillEvalPanel'`. After the fix, a 10-run check passed all five, but that was too few for the subject-pick test: review round 2 saw it fail 4 of 37 probe runs. The registry's skip-list comment now says "follow-up wave" entries are queued gaps, not verdicts.
+
+**Review round 2.** The subject-pick failures were in the shared helper `_pick_via_overlay` (`test_evals_skill_eval_panel.py`). Its coordinate click could land before layout settled, leaving the Select closed and focus elsewhere. The helper now opens the dropdown from the keyboard: it focuses the Select, presses Space (which opens Select and SetSelect alike), and waits for the dropdown to open and take focus. It then presses Home plus `downs - 1` downs and Enter, and waits for the dropdown to close. A keyboard open highlights the NULL padding row where a click highlighted nothing, and without Home every pick moved one row: the first rewrite failed both screen tests 20/20 under the probe and three panel tests normally. The subject test's Run is now pressed, not clicked, after a wait for the persisted picks. Under the probe, the subject-pick and launch-picks tests passed 20/20 each. The panel file's other callers pass. Under the probe, `test_directory_path_subject_enables_run` fails 3 of 5 at its own coordinate Run click both before and after this change; that file runs on no lane.
 
 **Not verified.** The files' first CI run; CI timings are estimated from local serial runs.
 

@@ -846,8 +846,19 @@ async def test_subject_picker_product_path_run_completes(
         # store-sourced subject -- not die in SubjectError.
         screen.query_one("#skill-eval-generator", Select).value = gen_id
         screen.query_one("#skill-eval-judge", Select).value = jud_id
-        await pilot.pause()
-        await pilot.click("#skill-eval-run")
+        await _wait_until(
+            pilot,
+            lambda: (
+                load_skill_eval_bench(evals_db, screen._selection.id).judge_target_id
+                == jud_id
+            ),
+        )
+        # Pressed, not clicked: a coordinate click can land before layout settles.
+        from textual.widgets import Button
+
+        run = screen.query_one("#skill-eval-run", Button)
+        assert not run.disabled
+        run.press()
 
         def _run_completed() -> bool:
             groups = screen._view_model.run_groups()
