@@ -1,0 +1,690 @@
+{
+  "tested_head": "74c9279a202cc10b2d3549eb4224fff6710d97ff",
+  "book": {
+    "path": "C:/Users/GDesktop-1/Downloads/textual-1.pdf",
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "pdf_pages": 455,
+    "references": [
+      {
+        "chapter": 7,
+        "printed": "136–137, 144–145, 149",
+        "pdf": "145–146, 153–154, 158"
+      },
+      {
+        "chapter": 9,
+        "printed": "170–171, 180",
+        "pdf": "179–180, 189"
+      },
+      {
+        "chapter": 17,
+        "printed": "326",
+        "pdf": "335"
+      }
+    ],
+    "qualification": "Reference material only. PDF335 demonstrates cancellation-aware worker publication (worker.is_cancelled/HTTP status); submitted-snapshot and current-batch applicability are application-specific inferences."
+  },
+  "sources": [
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+      "blob": "741f916b40e090fbab3ca18008c28a557acdddf1",
+      "sha256": "d0f7a6aa308810c42c3154713ef1673d5ab909baadeaab7125e5dd0799efa928"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+      "blob": "33e1501e4a54ce02ae3c52175fe7291007238289",
+      "sha256": "8e0b425c839244af74991605ad5949c853b13ffa202ea1d883a02a7d01c3fd77"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Prompts/prompt_block_editor.py",
+      "blob": "dcf5e1114f506eca71d3a7d3ae917a09efb9cb8b",
+      "sha256": "3bb50d44ae332480d9e4dbb8ba6ae5de78adc95a43af2dbdb233db030f41daea"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "blob": "6e068cd5fc71be39d915bb4e9502b2cf0eb57e8f",
+      "sha256": "89114ddbb1666ef73bca1b41807e8174a815e448e806359602a3889364c3b404"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_dictionary_detail.py",
+      "blob": "039447312e2dc513d14cfdf0ffd1502021456387",
+      "sha256": "dead7ec97fea0fcfdfc7df4c4386dd00df7d582b7042fa63f498527ae3a18813"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/settings_theme_editor.py",
+      "blob": "8f22fe9753a107721214df0be5faca229b73a863",
+      "sha256": "475eb60ce6690cbb091fc9725948d969c9028740cb10fe83d8c605c6999c6bbe"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/settings_theme_picker.py",
+      "blob": "ef8c7492945405508df3e812cd904243a93d2877",
+      "sha256": "dc64a6f9112422367246533c80c1b0bc2002ca4a69569962450eb40baa443e4a"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "blob": "35538e3092a8df74ea0be453cc48564200d1e87c",
+      "sha256": "cb5f4d06e6031e43524975f695657de4755636de7a309400361018f0b4c4852b"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "blob": "3df65b3b38ea1fd908a6d4a51a98446e74795f66",
+      "sha256": "c7378b1997cdfd8c1e59fd5a24a5c048c4a7e8f6cc14ca24d2934bd6d9cc8184"
+    }
+  ],
+  "tasks": [
+    {
+      "key": "prompt-save",
+      "rank": 1,
+      "title": "Keep newer Library Prompt drafts when an earlier Save completes",
+      "why": "Library Prompt Save can falsely mark a later edit as saved. A real SQLite update stored the submitted body, then completion cleared dirty state and restored older canonical blocks while newer text remained visible. Back left without a warning and reopening lost that text. Preserve accepted edits while acknowledging the actual committed record.",
+      "ac": [
+        "Create and update Save acknowledge only the submitted snapshot and adopt the actual persisted identity/version; later raw metadata and canonical block edits remain visible and dirty.",
+        "The next explicit Save writes the retained draft to the same prompt using its current version. An unchanged successful Save becomes clean; definite failure preserves current edits for retry.",
+        "Basic and Advanced projections agree after acknowledgement, including live child input already accepted while its Changed notification is queued. Existing Back, navigation and quit protections detect the retained draft.",
+        "Mounted real-store regressions distinguish ordinary create/update, later accepted input, queued notification, definite failure, next Save and guarded exit; actual child input delivery and committed rows are witnessed."
+      ],
+      "related": [
+        "32603",
+        "19024",
+        "1775",
+        "32630",
+        "2702",
+        "32393",
+        "32461",
+        "32646"
+      ],
+      "dedupe": "TASK-32603 covers ordinary first-save continuity; TASK-19024/TASK-1775 own the incremental Basic/Advanced editor. Existing dirty-veto tasks depend on the predicate this acknowledgement clears. TASK-32646 protects Skills, a different owner; both Skills create controls passed. No new draft store, history or service boundary is proposed.",
+      "adr": [
+        "033-application-session-state-ownership.md",
+        "040-versioned-prompt-artifacts-and-safe-improvement-transactions.md",
+        "049-local-prompt-retained-version-history.md",
+        "076-library-lifecycle-progressive-disclosure.md",
+        "086-library-adaptive-reader-shell.md"
+      ],
+      "measured": "Submitted body -> accepted keyboard x -> visible Submitted bodyx; persisted v2 and canonical blocks remained Submitted body; dirty false, Back exits, reopen loses x. First-create acknowledgement also fails; its separate Back/reopen continuation had a harness settlement failure and is excluded. Advanced/metadata/next Save/quit are future regression requirements.",
+      "owners": [
+        "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+        "tldw_chatbook/Widgets/Library/library_prompts_canvas.py"
+      ],
+      "id": 36454,
+      "priority": "medium",
+      "status": "To Do",
+      "path": "backlog/tasks/task-36454 - Keep-newer-Library-Prompt-drafts-when-an-earlier-Save-completes.md",
+      "related_links": {
+        "32603": "backlog/tasks/task-32603 - Review-Library-Prompt-save-and-browse-continuity.md",
+        "19024": "backlog/tasks/task-19024 - Simplify-Library-Prompt-editing.md",
+        "1775": "backlog/tasks/task-1775 - Deliver-unified-Prompt-Recipe-and-Library-user-interfaces.md",
+        "32630": "backlog/tasks/task-32630 - Review-Library-Prompt-retained-history-journeys.md",
+        "2702": "backlog/tasks/task-2702 - Library-unsaved-prompt-silently-blocks-screen-navigation.md",
+        "32393": "backlog/tasks/task-32393 - Library-Prompts-Escape-on-a-dirty-prompt-editor-does-nothing-at-all.md",
+        "32461": "backlog/tasks/task-32461 - Library-Prompts-three-more-dirty-vetoes-refuse-without-a-word.md",
+        "32646": "backlog/tasks/task-32646 - Review-Library-Skills-browsing-and-editor-journeys.md"
+      }
+    },
+    {
+      "key": "dictionary-save",
+      "rank": 2,
+      "title": "Keep newer Dictionary Settings drafts when an earlier Save completes",
+      "why": "A pending Dictionary Settings Save overwrites text accepted afterward and clears both the form and aggregate dirty predicates. Real SQLite stores only the submitted settings, so the later edit is lost immediately. Acknowledge the submitted settings and committed version without replacing newer live controls.",
+      "ac": [
+        "Ordinary Dictionary Settings Save adopts the actual persisted version while later raw settings edits remain visible and unsaved; only submitted settings are acknowledged.",
+        "The next explicit Save persists retained settings to the same dictionary using the correct optimistic-lock version. No-later-edit success becomes clean and definite failures preserve the current draft for retry.",
+        "Existing New, leave and quit protections continue to detect retained settings edits, and choosing Stay retains them; entry-draft and transition ownership remain with their existing tasks.",
+        "Mounted real-service/SQLite regressions cover ordinary success, input before Save, input accepted during Save, next Save and definite failure, witnessing child delivery independently of pump settlement."
+      ],
+      "related": [
+        "33910.14",
+        "33910.8",
+        "33785",
+        "33786",
+        "33910.17",
+        "36097",
+        "36131",
+        "481"
+      ],
+      "dedupe": "TASK-33910.14 remains To Do for entry/Options draft domains, transitions and creation; its full ACs do not cover ordinary pending Options Save acknowledgement. TASK-33910.8 owns transition/load fences. Geometry and keybinding tasks remain separate. TASK-36097 protects Character/Persona forms, not Dictionary Settings.",
+      "adr": [
+        "033-application-session-state-ownership.md",
+        "046-roleplay-chat-display-identity-and-template-provenance.md",
+        "115-personas-demand-mounted-center-views.md",
+        "079-workspace-assistant-defaults.md"
+      ],
+      "measured": "Submitted name Submitted; actual later Input text Submitted-new; real SQLite v2 stores Submitted; completion restores Submitted and clears screen/aggregate dirty. Matched ordinary control persists Submitted-new cleanly. Only update/name measured; other controls, next Save, failure and navigation/quit remain regression requirements.",
+      "owners": [
+        "tldw_chatbook/UI/Screens/personas_screen.py",
+        "tldw_chatbook/Widgets/Persona_Widgets/personas_dictionary_detail.py"
+      ],
+      "id": 36455,
+      "priority": "medium",
+      "status": "To Do",
+      "path": "backlog/tasks/task-36455 - Keep-newer-Dictionary-Settings-drafts-when-an-earlier-Save-completes.md",
+      "related_links": {
+        "33910.14": "backlog/tasks/task-33910.14 - Roleplay-frame-B9a-entry-and-Options-draft-domains-no-layout-change.md",
+        "33910.8": "backlog/tasks/task-33910.8 - Roleplay-frame-B5b-1-one-guard-dialog-per-domain-executors-and-the-load-fence.md",
+        "33785": "backlog/tasks/task-33785 - Roleplay-lore-and-dictionary-Settings-tabs-cannot-scroll-so-Save-settings-Export-and-Enabled-are-unreachable.md",
+        "33786": "backlog/tasks/task-33786 - Roleplay-dictionary-and-lore-entry-forms-push-most-controls-off-screen-and-label-none.md",
+        "33910.17": "backlog/tasks/task-33910.17 - Roleplay-frame-B11-editors-growth-caps-sections-CtrlS-in-Look-and-Tool-policy.md",
+        "36097": "backlog/tasks/task-36097 - Keep-newer-Character-and-Persona-edits-dirty-when-earlier-saves-finish.md",
+        "36131": "backlog/tasks/task-36131 - Preserve-avatars-uploaded-while-an-earlier-Character-Save-is-pending.md",
+        "481": "backlog/tasks/task-481 - P3b-follow-up-sweep-deferred-editor-polish-minors.md"
+      }
+    },
+    {
+      "key": "prompt-first-block",
+      "rank": 3,
+      "title": "Keep later Basic Prompt input while the first block mounts",
+      "why": "The first edit into an empty Basic Prompt lane awaits a real block mount, then projects its older captured text back into the still-enabled editor. Actual keyboard input accepted during that wait can disappear from both the live TextArea and canonical blocks. Keep the incremental editor coherent with its newest accepted text.",
+      "ac": [
+        "Basic System and User input accepted while their first block mounts survives the earlier reconciliation, including a later clear and edits across either lane.",
+        "Canonical blocks and Basic/Advanced projections agree with the newest live text while preserving block identity, metadata and order, with no duplicate block.",
+        "Ordinary first and subsequent edits continue to work without replacing the full stateful editor or changing persistence/provider boundaries.",
+        "Mounted controls cover no-later-input and queued later-key interleavings around the original structural reconciliation, witnessing delivery to the live child before releasing the earlier handler."
+      ],
+      "related": [
+        "19024",
+        "1775",
+        "32603"
+      ],
+      "dedupe": "TASK-19024/TASK-1775 own the existing incremental Basic/Advanced composition, and TASK-32603 covers ordinary Save/browse continuity. This failure occurs before Save at the first empty-lane reconciliation. Keep its scope independent from pending Save acknowledgement.",
+      "adr": [
+        "033-application-session-state-ownership.md",
+        "040-versioned-prompt-artifacts-and-safe-improvement-transactions.md",
+        "076-library-lifecycle-progressive-disclosure.md"
+      ],
+      "measured": "Real first User-lane block reconciliation/mount completes but delivery is held at the existing await; actual keyboard b reaches the same enabled child (a -> ab), then older completion restores a in live and canonical text. No-new-key control retains a. User lane measured; System/cross-lane/clear remain regression requirements. Controlled interleaving, not natural race-frequency measurement.",
+      "owners": [
+        "tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+        "tldw_chatbook/Widgets/Prompts/prompt_block_editor.py"
+      ],
+      "id": 36456,
+      "priority": "medium",
+      "status": "To Do",
+      "path": "backlog/tasks/task-36456 - Keep-later-Basic-Prompt-input-while-the-first-block-mounts.md",
+      "related_links": {
+        "19024": "backlog/tasks/task-19024 - Simplify-Library-Prompt-editing.md",
+        "1775": "backlog/tasks/task-1775 - Deliver-unified-Prompt-Recipe-and-Library-user-interfaces.md",
+        "32603": "backlog/tasks/task-32603 - Review-Library-Prompt-save-and-browse-continuity.md"
+      }
+    },
+    {
+      "key": "theme-save",
+      "rank": 4,
+      "title": "Keep newer Theme drafts when an earlier Save returns to the picker",
+      "why": "Theme Save correctly leaves a later palette dirty, but its Saved message still hides the editor. Ordinary Edit then reloads the earlier saved TOML and clears the hidden draft without a prompt. Keep later accepted theme edits recoverable and preserve ordinary Save return behavior when no later draft exists.",
+      "ac": [
+        "Palette, name and dark-mode edits accepted while a Save is pending remain recoverable and honestly dirty after completion; only the submitted theme is written.",
+        "The actual saved-file identity remains separate from a newer draft name. A subsequent explicit Save follows the existing target-resolution and overwrite rules and persists the retained draft.",
+        "A successful Save with no later edits still returns to the picker. Existing explicit Back, category/destination leave, backup and quit protections remain effective.",
+        "Mounted real-TOML controls cover ordinary Save, later palette/name/dark edits, definite failure, Save-as and next Save, witnessing actual enabled-control input before release and ordinary reopening behavior."
+      ],
+      "related": [
+        "32948",
+        "32941",
+        "32949",
+        "33078",
+        "33240",
+        "31250",
+        "31251",
+        "31258"
+      ],
+      "dedupe": "TASK-32948 owns ordinary Save-to-picker and explicit Back. TASK-32941/TASK-32949 protect explicit leave actions; TASK-33078 moves writes off-loop; TASK-33240 fences reads/Reset/new sessions. None owns same-session Save auto-return hiding a later accepted draft. Preserve those contracts and existing file-target rules.",
+      "adr": [
+        "011-chatbook-workbench-ui-system.md",
+        "033-application-session-state-ownership.md",
+        "033-settings-commit-models-three-honestly-labeled.md",
+        "150-design-token-system-and-design-language.md",
+        "161-component-pattern-library.md"
+      ],
+      "measured": "One real TOML write stores submitted #112233; actual later Pilot input/model is #AABBCC and dirty. Completion shows picker with hidden dirty #AABBCC; ordinary Edit reopens #112233 clean. Matched ordinary control passes. Production Save-button handler is invoked directly; later input is actual Pilot. Name/dark/Save-as/next Save are future regression requirements.",
+      "owners": [
+        "tldw_chatbook/Widgets/settings_theme_editor.py",
+        "tldw_chatbook/Widgets/settings_theme_picker.py"
+      ],
+      "id": 36457,
+      "priority": "medium",
+      "status": "To Do",
+      "path": "backlog/tasks/task-36457 - Keep-newer-Theme-drafts-when-an-earlier-Save-returns-to-the-picker.md",
+      "related_links": {
+        "32948": "backlog/tasks/task-32948 - Settings-Theme-picker-first-redesign.md",
+        "32941": "backlog/tasks/task-32941 - Leaving-Theme-with-unsaved-edits-asks-Save-Discard-Stay.md",
+        "32949": "backlog/tasks/task-32949 - Leaving-Settings-with-unsaved-theme-edits-drops-them-silently.md",
+        "33078": "backlog/tasks/task-33078 - Theme-editor-file-actions-scan-off-the-UI-thread.md",
+        "33240": "backlog/tasks/task-33240 - Theme-editor-Edit-and-Reset-read-theme-files-off-the-UI-thread.md",
+        "31250": "backlog/tasks/task-31250 - Theme-editor---saved-user-themes-are-never-loaded-so-Save-cannot-make-a-theme-the-launch-theme.md",
+        "31251": "backlog/tasks/task-31251 - Theme-editor---Name-box-is-write-only-so-Apply-Export-Reset-and-Delete-act-on-a-stale-name.md",
+        "31258": "backlog/tasks/task-31258 - Theme-editor---Save-and-Export-overwrite-existing-files-silently.md"
+      }
+    },
+    {
+      "key": "parakeet-install",
+      "rank": 5,
+      "title": "Keep later Import transcription choices when Parakeet installation finishes",
+      "why": "A managed Parakeet installation admitted for an earlier audio batch unconditionally updates whichever Import form is current when it finishes. A later batch explicitly set to Faster Whisper is changed to Parakeet INT8, and the success message claims it selected the current batch. Keep installation completion from replacing newer current-batch choices.",
+      "ac": [
+        "Completion of an earlier managed Parakeet install cannot replace later accepted provider, model-folder or precision choices, including choices for a changed source/batch.",
+        "An unchanged current request retains successful Parakeet INT8 automatic selection. Installation and consented artifact activation/preference policy can finish even when its original form selection is obsolete.",
+        "Current form values, visible controls and success/status copy agree; an obsolete completion never claims to have selected the current batch when that batch choice was retained.",
+        "Bounded mounted controls retain the actual install button, consent modal, background worker and original UI publication owner, covering ordinary and later-choice cases while stubbing only external acquisition boundaries without downloads or inference."
+      ],
+      "related": [
+        "931",
+        "1696",
+        "32755",
+        "32755.1",
+        "32755.3",
+        "32664",
+        "598",
+        "602",
+        "602.1",
+        "34000.33",
+        "32755.4",
+        "32755.5"
+      ],
+      "dedupe": "TASK-931/TASK-1696 own ordinary post-install selection. TASK-32755 and its readiness children own selected-provider admission fences, not the managed-install callback. TASK-32755.4 / PR #3221 changes the fresh Auto default and effective-model preview, not installation completion; its full ACs and Library patch were inspected. TASK-32664 owns folder-picker continuity; TASK-598/TASK-602 own artifact/runtime policy, which remains unchanged. TASK-34000.33 owns other import defects. TASK-32755.5 / PR #3221 binds Auto readiness and queued execution to the displayed model; its full ACs and current code preserve all install callback ASTs and do not cover this obsolete-completion defect.",
+      "adr": [
+        "014-library-ingest-service-authority-and-recovery.md",
+        "025-shared-stt-artifacts-and-runtime-routing.md",
+        "050-external-parakeet-roots-with-managed-vad.md",
+        "033-application-session-state-ownership.md",
+        "011-chatbook-workbench-ui-system.md"
+      ],
+      "measured": "Actual install button -> consent modal -> thread worker -> original call_from_thread completion. Batch B remains staged and actual Pilot Select chooses faster-whisper before release; completion changes current provider to parakeet-onnx and says selected for this batch. Ordinary A control passes. Preflight/provision/prefer_managed are qualified stubs; no actual artifact installation, persistent preference, inference or Start-import proof. Precision was already int8 and no folder override existed in the recorded before-state; folder/precision changes remain future regression controls, not observed losses.",
+      "owners": [
+        "tldw_chatbook/UI/Screens/library_screen.py",
+        "tldw_chatbook/Widgets/Library/library_ingest_canvas.py"
+      ],
+      "id": 36458,
+      "priority": "medium",
+      "status": "To Do",
+      "path": "backlog/tasks/task-36458 - Keep-later-Import-transcription-choices-when-Parakeet-installation-finishes.md",
+      "related_links": {
+        "931": "backlog/tasks/task-931 - Install-verified-Parakeet-v2-INT8-from-Library.md",
+        "1696": "backlog/tasks/task-1696 - Port-the-Parakeet-v2-adapter-managed-first-resolver-and-plan-driven-Library-modal.md",
+        "32755": "backlog/tasks/task-32755 - Match-audio-video-import-warnings-to-the-selected-STT-backend.md",
+        "32755.1": "backlog/tasks/task-32755.1 - Validate-selected-transcription-packages-and-models-before-import.md",
+        "32755.3": "backlog/tasks/task-32755.3 - Review-all-severities-and-qualify-transcription-readiness-for-merge.md",
+        "32664": "backlog/tasks/task-32664 - Review-Parakeet-import-directory-controls-and-picker-continuity.md",
+        "598": "backlog/tasks/task-598 - Use-descriptor-verified-external-Parakeet-ONNX-bundles.md",
+        "602": "backlog/tasks/task-602 - Integrate-Parakeet-ONNX-batch-routing.md",
+        "602.1": "backlog/tasks/task-602.1 - Stage-gated-Parakeet-v3-batch-routing.md",
+        "34000.33": "backlog/tasks/task-34000.33 - Library-import-real-document-titles-clean-local-HTML-cancellable-batches-disclosed-model.md",
+        "32755.4": "https://github.com/rmusser01/tldw_chatbook/blob/6dd14ec8683de2baeee205cbf8a016e5a7b6fe1e/backlog/tasks/task-32755.4%20-%20Use-base-for-fresh-Auto-imports-and-preview-the-effective-transcription-model.md",
+        "32755.5": "https://github.com/rmusser01/tldw_chatbook/blob/6dd14ec8683de2baeee205cbf8a016e5a7b6fe1e/backlog/tasks/task-32755.5%20-%20Keep-Auto-import-execution-bound-to-its-displayed-model.md"
+      }
+    }
+  ],
+  "retained_evidence": [
+    {
+      "path": ".test-tmp/post-3219-audit/library-prompts/report.md",
+      "sha256": "b2c0226465675358980d8906b5764e0b5e4903f8fe744fbe42980cd2cc588724"
+    },
+    {
+      "path": ".test-tmp/post-3219-audit/library-prompts/evidence.json",
+      "sha256": "4526df022221e2844999f962b8e24664277b0162147196840165c5bf158faa29"
+    },
+    {
+      "path": ".test-tmp/post-3219-audit/personas/report.md",
+      "sha256": "e96c78f4398923be3c6f7687c2cf55127c6e9702324ca31862051bdc024aaed1"
+    },
+    {
+      "path": ".test-tmp/post-3219-audit/personas/evidence.json",
+      "sha256": "1628314e33d2fbca4728210b80293ad2eca666fa8d374511c03ec280586eb4f7"
+    },
+    {
+      "path": ".test-tmp/post-3219-audit/theme/report.md",
+      "sha256": "f3da909ab820eb569d65a3b1fc6ab90c14931a8d5d125f923b47825555366965"
+    },
+    {
+      "path": ".test-tmp/post-3219-audit/theme/evidence.json",
+      "sha256": "5cdef8697e6a7c86e40b87d5659f6b32a16dd22967ced4c1479b106d240949fb"
+    },
+    {
+      "path": ".test-tmp/post-3219-audit/ingestion/report.md",
+      "sha256": "545e1c69f8e89bb08650be2895d0d119111dabc7bb0def1c136f5f7e0eba8743"
+    },
+    {
+      "path": ".test-tmp/post-3219-audit/ingestion/evidence.json",
+      "sha256": "ebd6855cec5b4271fd12c931a64177ffa080616d66d9245a835578dec9f3e99b"
+    }
+  ],
+  "qualified_runs": [
+    {
+      "scope": "Prompt create acknowledgement + Skills negative hypothesis",
+      "run": "library-prompts/run-e4bc27dd",
+      "passed": 3,
+      "intended_retention_failures": 1,
+      "excluded_failures": 0,
+      "seconds": 145.26
+    },
+    {
+      "scope": "Prompt update, failure and Back/reopen loss",
+      "run": "library-prompts/run-6127f952",
+      "passed": 2,
+      "intended_retention_failures": 1,
+      "excluded_failures": 1,
+      "deselected": 3,
+      "seconds": 210.77,
+      "exclusion": "First-create Back/reopen helper did not settle; only update continuation qualifies."
+    },
+    {
+      "scope": "Basic Prompt first-block User input",
+      "run": "library-prompts/run-56ce0b0d",
+      "passed": 1,
+      "intended_retention_failures": 1,
+      "deselected": 7,
+      "seconds": 76.13
+    },
+    {
+      "scope": "Dictionary Settings update/name",
+      "run": "personas/run-3",
+      "passed": 1,
+      "intended_retention_failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 62.054
+    },
+    {
+      "scope": "Theme palette Save and reopen",
+      "run": "theme/qualified-v2",
+      "passed": 1,
+      "intended_retention_failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 66.795
+    },
+    {
+      "scope": "Parakeet current-form publication",
+      "run": "ingestion/r05",
+      "passed": 1,
+      "intended_retention_failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 66.4
+    }
+  ],
+  "limits": [
+    "These are audit failures against unfixed code, not passing repair tests.",
+    "Private mounted native Windows/headless harnesses; no native visual UAT, natural race-frequency measurement or full local test sweep.",
+    "Prompt metadata/Advanced/queued Changed/next Save/quit, Dictionary other controls/create/next Save/navigation, Theme name/dark/Save-as/next Save, and Parakeet actual acquisition/preference/inference remain future controls.",
+    "Harness setup failures are excluded: missing request fixture, parent CP1252 output, dictionary selection/observer assumptions, Theme Ctrl+A precondition and ingestion focus/route/generation assumptions.",
+    "Skills create retention hypothesis rejected by both controls. Structural Import metadata diagnostic unfiled: direct native key dispatch did not qualify actual Pilot ordering, and TASK2010/2042 already accept the residual rebuild window. Notes/Media remain owned by TASK34000/PR3215; compatibility-only NewIngest supplies no live finding.",
+    "Parakeet measured provider replacement and status copy only: precision stayed int8 and no folder override existed before completion. Source-level precision/folder writes motivate future controls, not claims of witnessed field loss."
+  ],
+  "audit_started_date": "2026-10-22",
+  "completed_utc": "2026-10-23T16:41:48.510683+00:00",
+  "merge": {
+    "baseRefOid": "52b3207ff1cfecdd057272de0312b9e10fde363f",
+    "headRefOid": "8c110c1eafb224f9e843760eaf0647d691f3e994",
+    "mergeCommit": "b20ed34ba63fd23589d01202127d6bf2bd45d535",
+    "mergedAt": "2026-10-23T16:25:51Z",
+    "state": "MERGED",
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/3219",
+    "audit_dev": "b20ed34ba63fd23589d01202127d6bf2bd45d535",
+    "verified_utc": "2026-10-23T16:28:26.784814+00:00",
+    "ci": {
+      "derived": {
+        "run": 39981373156,
+        "conclusion": "success",
+        "headSha": "8c110c1eafb224f9e843760eaf0647d691f3e994",
+        "status": "completed",
+        "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39981373156"
+      },
+      "perf": {
+        "run": 39981373158,
+        "conclusion": "success",
+        "headSha": "8c110c1eafb224f9e843760eaf0647d691f3e994",
+        "status": "completed",
+        "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39981373158"
+      }
+    },
+    "new_cases": {
+      "verified": 48,
+      "ui_shards": 13,
+      "receipt": "ci-39981373156-logs/verified.json"
+    },
+    "review": {
+      "workflow": "Superpowers requesting-code-review7.0.1 replacesQodo",
+      "head": "8c110c1eafb224f9e843760eaf0647d691f3e994",
+      "critical": 0,
+      "important": 0,
+      "minor": 0,
+      "receipt": "rebase-review-after3217.md",
+      "github_unresolved_threads": 0,
+      "external_check_annotations": 0
+    },
+    "tested_tree_equals_final_dev": true,
+    "tested_tree": "de0461c5027e0e96c390f3a105d472d926185494"
+  },
+  "source_revalidation": {
+    "qualified": true,
+    "utc": "2026-10-23T16:28:26.784814+00:00",
+    "tested_head": "74c9279a202cc10b2d3549eb4224fff6710d97ff",
+    "final_dev": "b20ed34ba63fd23589d01202127d6bf2bd45d535",
+    "sources": [
+      {
+        "path": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+        "tested_blob": "741f916b40e090fbab3ca18008c28a557acdddf1",
+        "final_blob": "741f916b40e090fbab3ca18008c28a557acdddf1",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      },
+      {
+        "path": "tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+        "tested_blob": "33e1501e4a54ce02ae3c52175fe7291007238289",
+        "final_blob": "33e1501e4a54ce02ae3c52175fe7291007238289",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      },
+      {
+        "path": "tldw_chatbook/Widgets/Prompts/prompt_block_editor.py",
+        "tested_blob": "dcf5e1114f506eca71d3a7d3ae917a09efb9cb8b",
+        "final_blob": "dcf5e1114f506eca71d3a7d3ae917a09efb9cb8b",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      },
+      {
+        "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+        "tested_blob": "6e068cd5fc71be39d915bb4e9502b2cf0eb57e8f",
+        "final_blob": "6e068cd5fc71be39d915bb4e9502b2cf0eb57e8f",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      },
+      {
+        "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_dictionary_detail.py",
+        "tested_blob": "039447312e2dc513d14cfdf0ffd1502021456387",
+        "final_blob": "039447312e2dc513d14cfdf0ffd1502021456387",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      },
+      {
+        "path": "tldw_chatbook/Widgets/settings_theme_editor.py",
+        "tested_blob": "8f22fe9753a107721214df0be5faca229b73a863",
+        "final_blob": "8f22fe9753a107721214df0be5faca229b73a863",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      },
+      {
+        "path": "tldw_chatbook/Widgets/settings_theme_picker.py",
+        "tested_blob": "ef8c7492945405508df3e812cd904243a93d2877",
+        "final_blob": "ef8c7492945405508df3e812cd904243a93d2877",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      },
+      {
+        "path": "tldw_chatbook/UI/Screens/library_screen.py",
+        "tested_blob": "35538e3092a8df74ea0be453cc48564200d1e87c",
+        "final_blob": "1cdc3bc4a6e68d1b8a8976d66f49dfcc824e7c41",
+        "qualification": "Media/Notes changes reviewed; install callbacks unchanged; rebased-code ordinary control passes and later-provider retention fails (79.681s).",
+        "changed_functions_since_original_probe": [
+          "LibraryScreen._auto_resume_review_set_worker",
+          "LibraryScreen._clear_library_media_selection_for_scope_change",
+          "LibraryScreen._delete_library_media_item",
+          "LibraryScreen._exit_library_media_viewer",
+          "LibraryScreen._flush_library_note_save",
+          "LibraryScreen._library_media_escape_label",
+          "LibraryScreen._library_media_selected_backing_id",
+          "LibraryScreen._library_route_shortcuts_for_current_state",
+          "LibraryScreen._open_library_item_by_id",
+          "LibraryScreen._open_selected_media_handoff",
+          "LibraryScreen._reset_library_media_reader_to_no_selection",
+          "LibraryScreen._save_library_media_analysis",
+          "LibraryScreen._save_library_media_edit",
+          "LibraryScreen._select_library_rail_row_after_source_admission",
+          "LibraryScreen._sync_library_media_browse_state",
+          "LibraryScreen.action_library_media_move_to_trash",
+          "LibraryScreen.action_library_media_viewer_back",
+          "LibraryScreen.compose_content",
+          "LibraryScreen.flush_pending_work",
+          "LibraryScreen.handle_library_media_analysis_generate",
+          "LibraryScreen.handle_library_media_delete",
+          "LibraryScreen.handle_library_media_delete_confirm",
+          "LibraryScreen.handle_library_media_edit_save",
+          "LibraryScreen.handle_library_media_row",
+          "LibraryScreen.on_key",
+          "LibraryScreen.on_mount",
+          "LibraryScreen.on_screen_resume",
+          "LibraryScreen.on_screen_suspend"
+        ]
+      },
+      {
+        "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+        "tested_blob": "3df65b3b38ea1fd908a6d4a51a98446e74795f66",
+        "final_blob": "3df65b3b38ea1fd908a6d4a51a98446e74795f66",
+        "qualification": "Identical tested source file.",
+        "changed_functions_since_original_probe": []
+      }
+    ],
+    "critical_callback_qualification": "Original and current retained AST fingerprints agree for all Parakeet install/preflight/publication methods; fresh copied harness confirms the provider defect after Media/Notes changes. Precision/folder variants remain unmeasured."
+  },
+  "duplicate_review": {
+    "utc": "2026-10-23T16:38:48.264413+00:00",
+    "summary": "Before filing, full-body search screened 5685 existing task files into 282 candidates; retained full-AC reviews cover the related scopes listed below. The fresh description/AC delta is completed TASK-34000.22 for Media editor Escape/leave behavior, which does not own these Prompt, Dictionary, Theme or install-publication defects. The final open-PR census contains 21 PRs and 3315 paths. Five owner-overlap heads retain prior scope review; the sixth, PR #3221, was reviewed again at 6dd14ec8683de2baeee205cbf8a016e5a7b6fe1e, including new TASK-32755.5. TASK-32755.4 owns fresh Auto defaults/preview; TASK-32755.5 owns displayed-model admission/queue consistency. Their six install callback ASTs are unchanged, so neither covers obsolete installation completion. Visible-worktree screening covered 52 worktrees and 268 additional task names; its one matching candidate was the old generic PR2427 integration task, whose ACs do not cover these five fixes. Newer visible TASK-36420–36423 concern project semantic search/consent. ID hygiene scanned 290 ref trees, reachable history and 52 worktrees without access errors. No duplicate redesign work, shared architecture or new ADR is proposed.",
+    "pre_filing_task_count": 5685,
+    "search_candidates": 282,
+    "fresh_changed_scope": "TASK-34000.22 Media-only; full description/AC reviewed",
+    "open_pr_count": 21,
+    "open_pr_paths": 3315,
+    "owner_overlap": [
+      {
+        "number": 3221,
+        "census_head": "8fdb6fa8a4285243c13c204961f225edb3a52da4",
+        "reviewed_head": "6dd14ec8683de2baeee205cbf8a016e5a7b6fe1e",
+        "paths": [
+          "tldw_chatbook/UI/Screens/library_screen.py"
+        ],
+        "qualification": "Updated task32755.5 and code reviewed; six install callback ASTs unchanged."
+      },
+      {
+        "number": 3166,
+        "census_head": "34f88d6322ee2819d3e189e97eda5bc0e3f419f1",
+        "reviewed_head": "34f88d6322ee2819d3e189e97eda5bc0e3f419f1",
+        "paths": [
+          "tldw_chatbook/UI/Screens/library_screen.py"
+        ],
+        "qualification": "Same head as prior inspected scope."
+      },
+      {
+        "number": 3148,
+        "census_head": "97ac608aba159bd8696ea50d279261867d97e16a",
+        "reviewed_head": "97ac608aba159bd8696ea50d279261867d97e16a",
+        "paths": [
+          "tldw_chatbook/UI/Screens/personas_screen.py"
+        ],
+        "qualification": "Same head as prior inspected scope."
+      },
+      {
+        "number": 3096,
+        "census_head": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+        "reviewed_head": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+        "paths": [
+          "tldw_chatbook/UI/Screens/library_screen.py"
+        ],
+        "qualification": "Same head as prior inspected scope."
+      },
+      {
+        "number": 3050,
+        "census_head": "2557f186f6e635567c370824fa43e2aadec6b82d",
+        "reviewed_head": "2557f186f6e635567c370824fa43e2aadec6b82d",
+        "paths": [
+          "tldw_chatbook/UI/Screens/personas_screen.py"
+        ],
+        "qualification": "Same head as prior inspected scope."
+      },
+      {
+        "number": 3049,
+        "census_head": "bdff2a2d957c9b3ee4cf532589562b901c193df3",
+        "reviewed_head": "bdff2a2d957c9b3ee4cf532589562b901c193df3",
+        "paths": [
+          "tldw_chatbook/UI/Screens/personas_screen.py"
+        ],
+        "qualification": "Same head as prior inspected scope."
+      }
+    ],
+    "worktrees": 52,
+    "additional_names": 268,
+    "id_high_water": 36423,
+    "new_adr_required": false
+  },
+  "latest_parakeet_revalidation": {
+    "utc": "2026-10-23T15:59:29.622983+00:00",
+    "head": "8c110c1eafb224f9e843760eaf0647d691f3e994",
+    "source_dev": "52b3207ff1cfecdd057272de0312b9e10fde363f",
+    "passed": 1,
+    "intended_retention_failures": 1,
+    "errors": 0,
+    "skips": 0,
+    "seconds": 79.681,
+    "qualification": "Copied unchanged r05qualifiedharness into separateprivate directory; ordinarycontrolpasses,laterbatchproviderassertionfails asbefore. Externalacquisition/prefer_managedstubsretained; noactualdownload/inference/preferenceproof. Startupquiz-servicewarningsnotnewassertionfailures. No tracked source changed.",
+    "files": [
+      {
+        "path": ".test-tmp/post-3219-audit/ingestion-revalidated-8c110/conftest.py",
+        "sha256": "5e7cbf289149188961a8eed8180141d165812ba3eb90bf12d5ad2176678be56a"
+      },
+      {
+        "path": ".test-tmp/post-3219-audit/ingestion-revalidated-8c110/test_install_probe_v2.py",
+        "sha256": "255e953b5f47e130ed579c5e4477bfe25a4061a578c6fb0a49d650d41cfff649"
+      },
+      {
+        "path": ".test-tmp/post-3219-audit/ingestion-revalidated-8c110/install-later.json",
+        "sha256": "544f1e65184d664d0727a32442573121414484c84a64a817cd15c0a61515468a"
+      },
+      {
+        "path": ".test-tmp/post-3219-audit/ingestion-revalidated-8c110/install-ordinary.json",
+        "sha256": "26c98585dff9d96fb6f6b4447c95f5e1b2f0b0712c9ae2ba1c5de8208985c123"
+      },
+      {
+        "path": ".test-tmp/task-36360-36363/audit-parakeet-after3215-01/result.xml",
+        "sha256": "78910dd0dce3052bdaa7f86a8953df6e4aaaa3624c8faf6717904e0cc7a7afc5"
+      },
+      {
+        "path": ".test-tmp/task-36360-36363/audit-parakeet-after3215-01/run.log",
+        "sha256": "11f2df69986e8ae0c61e972d1b705bec5430ff350dcfe7b51bde2870cce5bd9d"
+      }
+    ],
+    "field_qualification": "Measured provider replacement and current-batch claim. Before and after precision are both int8; before-state has no model-folder override. Source assigns precision/pops folder unconditionally, but distinct precision/folder loss is not empirically witnessed. Their retention is a future acceptance-control requirement."
+  },
+  "record_validation": {
+    "utc": "2026-10-23T16:45:36.061369+00:00",
+    "new_tasks": 5,
+    "unchecked_acceptance_criteria": 20,
+    "local_markdown_links": 143,
+    "cli_reads": [
+      36454,
+      36455,
+      36456,
+      36457,
+      36458
+    ],
+    "visible_worktree_id_collisions": 0,
+    "repository_id_and_readability_guard_files": 5697,
+    "id_guard": "pass",
+    "readability_guard": "pass",
+    "documentation_review": {
+      "workflow": "Superpowers requesting-code-review7.0.1",
+      "reviewer": "review_post3219_backlog",
+      "critical": 0,
+      "important": 0,
+      "minor_actionable": 0,
+      "disposition": "Ready to commit. Future repairs remain pending; fresh runtime, full duplicate census and live GitHub verification are controller-owned and qualified separately."
+    }
+  }
+}
