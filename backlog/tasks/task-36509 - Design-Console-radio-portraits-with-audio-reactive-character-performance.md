@@ -1,7 +1,7 @@
 ---
 id: TASK-36509
 title: Design Console radio portraits with audio-reactive character performance
-status: In Progress
+status: Done
 created_date: 2026-10-23 22:24
 assignee:
 - '@codex'
@@ -14,6 +14,8 @@ documentation:
 - Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md
 - backlog/decisions/242-console-radio-portrait-performance.md
 - Docs/superpowers/reviews/2026-10-23-console-radio-portraits-design-review.md
+- Docs/superpowers/plans/2026-10-23-console-radio-portraits-implementation.md
+updated_date: 2026-10-23 23:11
 ---
 
 ## Description
@@ -28,7 +30,7 @@ Define the first version of a living character portrait in the Console sidebar, 
 - [x] #2 The design defines the six-frame generation/import/preview/Apply workflow, safe ownership and persistence, compatibility, and provider capability boundaries.
 - [x] #3 A linked ADR records the new performance-artwork and speech-timing contracts, alternatives and consequences.
 - [x] #4 The spec has been checked for contradictions, placeholders, broken local links and scope, with future automated and live verification specified.
-- [ ] #5 The user has reviewed the written spec and acknowledged material review corrections before implementation planning begins.
+- [x] #5 The user has reviewed the written spec and acknowledged material review corrections before implementation planning begins.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,51 +49,19 @@ Reason: Adds durable character performance artwork, a cross-module playback-timi
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Wrote Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md and
-backlog/decisions/242-console-radio-portrait-performance.md; added ADR-242 to the
-decision index. Covers six aligned mouth/blink frames per expression, generated
-or imported into one reviewed draft, atomic local SQLite attachment storage,
-source/revision fencing, radio framing, audio-output ownership/timing, motion
-preferences and deterministic plus live qualification requirements. Original
-artwork and portable export formats remain unchanged; performance data is
-explicitly profile-local in this version. ADR-242 is Proposed pending written
-spec review, with existing ADR-074/083/144/150/161 preserved.
+The user approved the revised design on 2026-10-23. Wrote the Console radio-portrait spec, source-anchored six-finding review, accepted design-only ADR-242 and its index entry. The reviewed contracts cover source-bound six-pose artwork, local SQLite ownership, shared import/generation review, speech ownership/output timing, silence gating, cache invalidation, motion preferences and radio framing.
 
-Self-review clarified manual-reaction precedence during historical replay and
-the static-poster fallback for expressions lacking controllable mouth frames.
-Documentation link/placeholder/whitespace checks pass. Python 3.12 task-file
-validation passes across all 5501 files; the new task passes isolated ID checks.
-The repository-wide ID guard fails on existing untracked/tracked collisions for
-TASK-34991 and TASK-35028, both present before this design task. They were not
-changed. The system Python was too old for the path validator; rerunning with
-the existing Python 3.12 virtual environment succeeded.
+Created Docs/superpowers/plans/2026-10-23-console-radio-portraits-implementation.md and TASK-36542 through TASK-36550 in dependency order. All nine implementation tasks are To Do, with six unchecked outcome-based ACs each and no premature task Implementation Plans/Notes. The plan defines shared names/signatures, file ownership, meaningful red/green assertions, targeted checks and real provider/device qualification. Planning self-review settled monotonic remove/reapply revision identity, revision lookup across source changes, motion-token order and deterministic DAC publication tests.
 
-Documentation-only work: no product implementation, migration, image generation,
-live audio, full test suite or implementation plan. AC #5 remains unchecked and
-this design task remains In Progress pending acknowledgement of the revised spec.
+Validation: all 5510 repository task files are readable; all nine new IDs are unique in their source buckets, dependencies point backward, all 54 feature ACs remain unchecked, local document links resolve and all 15 Python declaration/assertion blocks parse. Spec/review/ADR/plan linkage and whitespace checks pass. Existing unrelated TASK-34991/TASK-35028 ID collisions remain untouched. No generalized lesson was added because no new repository trap beyond documented ones was established.
 
-The user reviewed the original spec, then requested a source-anchored issue review
-before continuing. Docs/superpowers/reviews/2026-10-23-console-radio-portraits-design-review.md
-records six concrete gaps, all corrected in the spec and ADR where applicable:
-persisted local-source admission rather than unsaved artwork/numeric ID alone;
-explicit hands-free/guarded-preview/transport-pause contracts; committed
-performance-revision cache invalidation; separate source/device audio clocks and
-bounded observation; a raw silence gate independent of release smoothing; and
-offline six-pose alignment preview with disclosed provider request counts.
-The original feature scope and local-only portability decision are unchanged.
-Stdlib calculations show an allowed old smoothing interpretation could take
-138.6 ms (dBFS) or 443.0 ms (amplitude) before window/paint delay to close on a
-nonzero quiet background. These are design counterexamples, not a product fix
-or measured audible timing. Implementation planning has not started.
-Review-document checks pass for all four artifacts and 14 local links; full
-task-file readability and isolated TASK-36509 ID checks pass. Product code and
-live hardware/provider behavior remain untested because this is a design review.
+Documentation/planning only: no product code, migration, provider call, live audio, product test suite, push or merge. Design ACs and user review are complete; this Done status closes design only. Plan review and execution-method choice precede implementation.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Approved design and six review corrections are recorded in the spec and ADR-242. The implementation plan and nine atomic To Do tasks (TASK-36542–TASK-36550) are ready for review; product implementation has not started.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
