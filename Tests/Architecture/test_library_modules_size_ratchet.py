@@ -598,7 +598,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-23, TASK-34000.71 fix round 1 (same owner decision): 7119 ->
     # 7134 (+15) -- the settle waits only on the task the lazy path
     # scheduled (M-1) and tells the start's cancellation from its own (M-4).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7134,
+    # 2026-10-23, TASK-34000 P1-B final fix round (same owner decision):
+    # 7134 -> 7200 (+66) -- the ``[[`` picker opens only on a typed edit and
+    # a caret move only follows an open one (C-1 (b)), the completion the
+    # picker was asked for is one state field every hot path reads first
+    # (I-1: id lookups instead of DOM walks, one candidate load per
+    # keystroke), a note switch dismisses a load in flight (M-1), the Preview
+    # link policy moved out to ``Notes/note_link_policy`` (I-2, M-2, M-3),
+    # and the dead "consume the closer" accept path is gone (M-11/M-5).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7200,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

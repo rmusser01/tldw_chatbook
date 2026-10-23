@@ -4,11 +4,15 @@ Enter on the focused Preview follows the note's one link or lists several;
 the picker at 80x24 stays inside the pane; a 30-title corpus caps the rows
 at eight and Down wraps; a title carrying ``[b]`` paints literally in the
 picker and lands in the inserted link; a terminal resize closes the picker
-and a key behind it is the editor's own (fix round 5).
+and a key behind it is the editor's own (fix round 5); only a typed edit
+opens the picker, one keystroke starts one candidate load, a load in flight
+never lands on the next note, and Escape in the resize batch window closes
+the picker and never the editor (final fix round).
 """
 
 from __future__ import annotations
 
+import functools
 import time
 
 import pytest
@@ -151,13 +155,14 @@ async def test_the_picker_fits_inside_the_pane_at_80x24(tmp_path, monkeypatch) -
         assert cut_height < options_now.option_count + 2, "the pin needs a cut box"
         # Fix round 5: a resize CLOSES the picker (its rows were laid out
         # for a terminal that no longer exists); the user reopens it by
-        # moving within the ``[[`` context. Fix round 2 (R2-5) holds for
+        # typing within the ``[[`` context (final fix round, C-1 (b): a
+        # caret move alone never opens it). Fix round 2 (R2-5) holds for
         # the reopened box: once the rows had been cut to fit beside the
         # caret, the box shown again on the taller terminal has all its
         # rows -- and still never covers the caret row.
         await pilot.resize_terminal(80, 45)
         await _until(pilot, lambda: not _picker_open(screen), "the picker to close on the resize")
-        await _reopen_at_the_caret(pilot)
+        await _reopen_by_typing(pilot)
         await _until(
             pilot,
             lambda: _picker_open(screen)
@@ -172,7 +177,7 @@ async def test_the_picker_fits_inside_the_pane_at_80x24(tmp_path, monkeypatch) -
         assert picker.region.bottom <= app.size.height
         await pilot.resize_terminal(*COMPACT)
         await _until(pilot, lambda: not _picker_open(screen), "the picker to close on the resize back")
-        await _reopen_at_the_caret(pilot)
+        await _reopen_by_typing(pilot)
         await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
         await pilot.pause(0.3)
         pane = screen.query_one("#library-note-editor-region").region
@@ -322,10 +327,13 @@ async def test_a_type_and_enter_burst_never_inserts_a_stale_row(tmp_path, monkey
 
 async def test_escape_latch_clears_on_a_new_context_and_a_note_switch(tmp_path, monkeypatch) -> None:
     """M-12: the Escape latch is the dismissed context's START; a DIFFERENT
-    context (another line, another note) must open the picker again."""
+    context (another line, another note) must open the picker again -- on
+    the next TYPED edit there. Final fix round (C-1 (b)): the caret moves
+    this arm used to open the picker with (End, Down, Ctrl+End) now open
+    nothing; a typed character at each spot does."""
     app, profile = _app(tmp_path)
     _record_open_url(monkeypatch, app)
-    latch_id = profile.db.add_note("Latch probe", "[[Tri\n[[Lisb")
+    latch_id = profile.db.add_note("Latch probe", "[[Tri\n[[Lis")
     async with app.run_test(size=SIZE) as pilot:
         screen = await _library(app, pilot)
         body = await _open_note(screen, pilot, "Latch probe", latch_id)
@@ -333,14 +341,24 @@ async def test_escape_latch_clears_on_a_new_context_and_a_note_switch(tmp_path, 
         await _until(pilot, lambda: screen.focused is body, "focus")
         await pilot.press("ctrl+home")
         await pilot.press("end")
+        await _until(pilot, lambda: body.cursor_location == (0, 5), "the caret at the end of line 0")
+        await pilot.pause(0.3)
+        assert not _picker_open(screen), "End alone opened the picker"
+        await _type(pilot, "p")
         await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
         await pilot.press("escape")
         await _until(pilot, lambda: not _picker_open(screen), "Escape to close")
-        assert body.cursor_location == (0, 5)
+        assert body.cursor_location == (0, 6)
         await pilot.press("down")
         await _until(pilot, lambda: body.cursor_location == (1, 5), "the caret on line 1")
+        await pilot.pause(0.3)
+        assert not _picker_open(screen), "Down alone opened the picker"
+        # Another line is another context: the latch is cleared and typing
+        # opens the picker there.
+        await _type(pilot, "b")
         await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
-        # The note switch: latch line 1, open another note, come back.
+        # The note switch: latch line 1, open another note, come back, and
+        # type at the SAME start -- the latch did not survive the switch.
         await pilot.press("escape")
         await _until(pilot, lambda: not _picker_open(screen), "Escape to close")
         await _open_note(screen, pilot, LISBON, profile.lisbon_id)
@@ -349,18 +367,26 @@ async def test_escape_latch_clears_on_a_new_context_and_a_note_switch(tmp_path, 
         await _until(pilot, lambda: screen.focused is body, "focus")
         await pilot.press("ctrl+end")
         await _until(pilot, lambda: body.cursor_location == (1, 6), "the caret at the end")
+        await pilot.pause(0.3)
+        assert not _picker_open(screen), "Ctrl+End alone opened the picker"
+        await _type(pilot, "o")
         await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
 
 
 REFUSED = "Link not opened (unsupported scheme): "
-#: (label, href as written, the full refusal notice -- Textual unquotes the
-#: href before it reaches the handler, and the notice drops C0/C1).
+NOWHERE = "This link doesn't point anywhere Chatbook can open: "
+OPENED = "Opened in browser: "
+#: (label, href as written, the full notice -- Textual unquotes the href
+#: before it reaches the handler, and the notice drops C0/C1 and bidi
+#: controls). Final fix round (M-2): an UPPERCASE http(s) scheme opens, and a
+#: fragment points nowhere rather than being an "unsupported scheme".
 HOSTILE_RENDERED = (
-    ("QUPPERQ", "HTTP://up.example/", f"{REFUSED}HTTP://up.example/"),
+    ("QUPPERQ", "HTTP://up.example/", f"{OPENED}HTTP://up.example/"),
     ("QPROTOQ", "//evil.example/", f"{REFUSED}//evil.example/"),
     ("QFTPQ", "ftp://a/[b]x[/]", f"{REFUSED}ftp://a/[b]x[/]"),
     ("QCTRLQ", "https://a.example/%1B]0;x%07", f"{REFUSED}https://a.example/]0;x"),
-    ("QMARKQ", "https://x.example/[b]bold[/]", "Opened in browser: https://x.example/[b]bold[/]"),
+    ("QFRAGQ", "#heading", f"{NOWHERE}#heading"),
+    ("QMARKQ", "https://x.example/[b]bold[/]", f"{OPENED}https://x.example/[b]bold[/]"),
 )
 HOSTILE_POSTED = (
     ("javascript:alert(1)", f"{REFUSED}javascript:alert(1)"),
@@ -369,27 +395,35 @@ HOSTILE_POSTED = (
     ("vbscript:msgbox(1)", f"{REFUSED}vbscript:msgbox(1)"),
     ("https://a.example/\x1b]0;x\x07", f"{REFUSED}https://a.example/]0;x"),
     ("https://a.example/with space", f"{REFUSED}https://a.example/with space"),
+    # Final fix round (M-3): a bidi override in an http(s) href refuses it,
+    # and the notice shows the href without the override.
+    ("https://a.example/‮evil", f"{REFUSED}https://a.example/evil"),
+    ("docs/relative.md", f"{NOWHERE}docs/relative.md"),
 )
+
+BIDI = "‪‫‬‭‮⁦⁧⁨⁩‎‏"
 
 
 def _has_control_chars(text: str) -> bool:
-    return any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in text)
+    return any(ord(ch) < 32 or 127 <= ord(ch) <= 159 or ch in BIDI for ch in text)
 
 
 async def test_hostile_preview_links_are_refused_and_never_reach_the_os(tmp_path, monkeypatch) -> None:
-    """I-5 / M-9: every non-http(s) scheme, a scheme-relative link, an
-    uppercase scheme and an http(s) href carrying control characters or
-    whitespace are refused with the notice (control characters stripped
-    from it); the one clean http link reaches the browser exactly once;
-    ``app.open_url`` is never called; the body is unchanged; the app lives.
-    markdown-it renders ``javascript:``/``file:``/``data:``/``vbscript:``
-    links as literal text, so those arrive as posted ``LinkClicked`` events."""
+    """I-5 / M-9: every non-http(s) scheme, a scheme-relative link and an
+    http(s) href carrying control characters, a bidi override or whitespace
+    are refused with the notice (control characters stripped from it); a
+    fragment or relative path gets the "points nowhere" notice (M-2); the
+    clean http links -- the uppercase-scheme one included (M-2) -- reach the
+    browser exactly once each; ``app.open_url`` is never called; the body is
+    unchanged; the app lives. markdown-it renders ``javascript:``/``file:``/
+    ``data:``/``vbscript:`` links as literal text, so those arrive as posted
+    ``LinkClicked`` events."""
     app, profile = _app(tmp_path)
     body_text = "\n\n".join(f"[{label}]({href})" for label, href, _notice in HOSTILE_RENDERED)
     hostile_id = profile.db.add_note("Hostile links", body_text)
     opened = _record_open_url(monkeypatch, app)
     browser = _record_browser(monkeypatch)
-    clean_http = "https://x.example/[b]bold[/]"
+    expected_browser: list[str] = []
     async with app.run_test(size=SIZE) as pilot:
         screen = await _library(app, pilot)
         toasts = _record_toasts(monkeypatch, app)
@@ -404,10 +438,11 @@ async def test_hostile_preview_links_are_refused_and_never_reach_the_os(tmp_path
             await _until(pilot, lambda: len(toasts) > before, f"a notice for {href!r}")
             notice = toasts[before]
             assert notice == expected_notice, (href, notice)
-            if href == clean_http:
-                await _until(pilot, lambda: browser == [clean_http], "the one browser call")
+            if expected_notice.startswith(OPENED):
+                expected_browser.append(href)
+                await _until(pilot, lambda: browser == expected_browser, f"the browser call for {href!r}")
             else:
-                assert browser == [], (href, browser)
+                assert browser == expected_browser, (href, browser)
             assert not _has_control_chars(notice), repr(notice)
         md = screen.query_one("#library-note-preview-body", Markdown)
         for href, expected_notice in HOSTILE_POSTED:
@@ -418,7 +453,7 @@ async def test_hostile_preview_links_are_refused_and_never_reach_the_os(tmp_path
             assert notice == expected_notice, (href, notice)
             assert not _has_control_chars(notice), repr(notice)
         await pilot.pause(0.5)
-        assert browser == [clean_http], browser
+        assert browser == expected_browser == ["HTTP://up.example/", "https://x.example/[b]bold[/]"], browser
         assert opened == [], opened
         assert profile.db.get_note_by_id(hostile_id)["content"] == body_text
         assert screen._library_note_session.snapshot.body == body_text
@@ -452,17 +487,20 @@ async def test_the_picker_hides_when_the_body_loses_focus(tmp_path, monkeypatch)
         assert body.link_picker_open is False
 
 
-async def test_accept_consumes_a_closer_a_click_accepts_and_enter_on_no_rows_inserts_a_newline(
+async def test_a_caret_inside_a_closed_link_is_no_completion_a_click_accepts_and_enter_on_no_rows_inserts_a_newline(
     tmp_path, monkeypatch
 ) -> None:
-    """M-11: (a) accepting with the caret inside ``[[Lisb]]`` leaves no stray
-    ``]]``; (b) a mouse click on a row accepts it; (c) Enter on the disabled
-    "No note titled" row closes the picker and the editor inserts its newline."""
+    """(a) Final fix round, C-1 (a): the caret parked inside a closed
+    ``[[Lisb]]`` is no completion -- nothing opens, and Enter is the editor's
+    own newline (fix round 1's M-11 "consume the closer" accept had no typed
+    path left to it and is gone); (b) a mouse click on a row accepts it; (c)
+    Enter on the disabled "No note titled" row closes the picker and the
+    editor inserts its newline."""
     from tldw_chatbook.Notes.note_import_plan_models import stored_note_link
 
     app, profile = _app(tmp_path)
     _record_open_url(monkeypatch, app)
-    lisbon_link = stored_note_link(LISBON, profile.lisbon_id)
+    lisbon_link = "[[Lisb]]"
     index_link = stored_note_link(INDEX, profile.index_id)
     async with app.run_test(size=SIZE) as pilot:
         screen = await _library(app, pilot)
@@ -470,10 +508,14 @@ async def test_accept_consumes_a_closer_a_click_accepts_and_enter_on_no_rows_ins
         await _type(pilot, "[[Lisb]]")
         await pilot.press("left", "left")
         await _until(pilot, lambda: body.cursor_location == (0, 6), "the caret inside the closer")
-        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        await pilot.pause(0.4)
+        assert not _picker_open(screen), "a caret inside a closed link opened the picker"
         await pilot.press("enter")
-        await _until(pilot, lambda: body.text == lisbon_link, f"the body to read {lisbon_link!r}")
-        assert body.text.count("]]") == 1
+        await _until(pilot, lambda: body.text == "[[Lisb\n]]", "Enter to be the editor's own newline")
+        assert "note://" not in body.text
+        await pilot.press("backspace")
+        await _until(pilot, lambda: body.text == lisbon_link, "Backspace to join the line again")
+        assert not _picker_open(screen)
 
         await pilot.press("end")
         await _type(pilot, " [[Ind")
@@ -701,11 +743,24 @@ async def test_a_follow_picker_row_click_opens_the_link_after_the_body_was_touch
     async with app.run_test(size=SIZE) as pilot:
         screen = await _library(app, pilot)
         body = await _open_note(screen, pilot, TWO, profile.two_id)
-        # The user clicked into the body once (a caret move, no edit).
+        two_body = body.text
+        # The user opened and dismissed an insert picker once, so the
+        # controller's generation is non-zero (final fix round: a caret move
+        # alone no longer bumps it, so this types ``[[``, Escapes, and puts
+        # the body back as it was).
         await pilot.click("#library-note-body")
         await _until(pilot, lambda: screen.focused is body, "focus")
-        await pilot.press("end")
-        await pilot.pause(0.3)
+        # Ctrl+End, not End: the two-link body soft-wraps, and End stops at
+        # the visual row's end -- inside the second stored link, where a
+        # ``[[`` is no completion (C-1 (a)).
+        await pilot.press("ctrl+end")
+        await _type(pilot, " [[")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        await pilot.press("escape")
+        await _until(pilot, lambda: not _picker_open(screen), "Escape to close")
+        for _ in range(3):
+            await pilot.press("backspace")
+        await _until(pilot, lambda: body.text == two_body, "the body restored")
         assert screen._notes_controller._library_notes_link_picker_generation > 0
         await _preview(screen, pilot, INDEX, app)
         region = screen.query_one("#library-note-preview-region")
@@ -827,12 +882,14 @@ def _resize_without_a_pause(app, size: tuple[int, int]) -> None:
     app.post_message(events.Resize(new, new))
 
 
-async def _reopen_at_the_caret(pilot) -> None:
-    """Reopen a closed picker without typing: Left leaves the ``[[`` context,
-    Right comes back into it, and the caret sync opens the picker again (no
-    latch is set by a resize close, unlike Escape)."""
-    await pilot.press("left")
-    await pilot.press("right")
+async def _reopen_by_typing(pilot) -> None:
+    """Reopen a closed picker the one way there is (final fix round, C-1
+    (b)): with the caret right after ``[[``, Backspace leaves the context and
+    the retyped ``[`` makes a fresh ``[[`` -- a typed edit, which opens the
+    picker on the recent rows (no latch is set by a resize close, unlike
+    Escape). A caret move alone never opens it."""
+    await pilot.press("backspace")
+    await _type(pilot, "[")
 
 
 async def _long_body_picker_at(app, screen, pilot, body, where: str) -> None:
@@ -984,7 +1041,9 @@ async def test_a_paced_resize_storm_never_freezes_the_app_and_idle_makes_no_pass
     (the time the BODY handles it -- a 20 ms poll behind the compact
     restage's own reflow measured 79-106 ms for a key handled in 5-13 ms)
     and is the editor's own, and idle (1 s after the last resize, for 2 s)
-    is 0 anchor passes and 0 refresh-chained callbacks anywhere in the app."""
+    is 0 anchor passes and 0 refresh-chained callbacks owned by the picker
+    or the controller's picker code (final fix round, P-4: an unrelated
+    idle timer elsewhere in the app is not this pin's business)."""
     from textual.message_pump import MessagePump
 
     from tldw_chatbook.Widgets.Library.library_note_link_picker import LibraryNoteLinkPicker
@@ -1003,9 +1062,24 @@ async def test_a_paced_resize_storm_never_freezes_the_app_and_idle_makes_no_pass
         passes["n"] += 1
         return real_pass(self)
 
-    def _counted_after_refresh(self, *args, **kwargs):
-        passes["refresh"] += 1
-        return real_after_refresh(self, *args, **kwargs)
+    def _picker_owned(callback) -> bool:
+        """Whether a refresh-chained callback belongs to the picker or to
+        the controller's picker code: unwrap ``functools.partial``, then
+        match the bound ``__self__`` or the ``__qualname__``."""
+        while isinstance(callback, functools.partial):
+            callback = callback.func
+        owner = getattr(callback, "__self__", None)
+        qualname = str(getattr(callback, "__qualname__", ""))
+        return (
+            isinstance(owner, LibraryNoteLinkPicker)
+            or "LibraryNoteLinkPicker" in qualname
+            or "link_picker" in qualname
+        )
+
+    def _counted_after_refresh(self, callback, *args, **kwargs):
+        if isinstance(self, LibraryNoteLinkPicker) or _picker_owned(callback):
+            passes["refresh"] += 1
+        return real_after_refresh(self, callback, *args, **kwargs)
 
     def _stamped_on_key(self, event):
         if event.key == "enter":
@@ -1090,3 +1164,189 @@ async def test_a_caret_lost_in_the_pickers_own_re_anchor_closes_through_the_cont
         await pilot.press("enter")
         await _until(pilot, lambda: body.document.line_count == lines + 1, "the editor's own newline")
         assert "note://" not in body.text
+
+
+# ---------------------------------------------------------------------------
+# Final fix round pins
+# ---------------------------------------------------------------------------
+
+
+def _gated_candidates(monkeypatch, profile):
+    """Hold every candidate load until the test releases it."""
+    import asyncio
+
+    release = asyncio.Event()
+    real = profile.scope_service.list_note_link_candidates
+
+    async def _held(*args, **kwargs):
+        await release.wait()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(profile.scope_service, "list_note_link_candidates", _held)
+    return release
+
+
+async def test_a_load_in_flight_never_lands_on_the_next_note(tmp_path, monkeypatch) -> None:
+    """M-1: ``[[`` typed in one note starts the recent-titles load (a bare
+    ``[[`` asks the service; a one-character query would show the "Keep
+    typing" hint at once and the open picker's blur would then mask this
+    path); the note is switched before it answers. The answer must be
+    dropped -- it used to open the picker on the NEXT note and arm Enter
+    routing there (the switch cleared only the Escape latch). Enter in the
+    next note is the editor's own newline."""
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    first_id = profile.db.add_note("First note", "")
+    next_id = profile.db.add_note("Next note", "plain body")
+    release = _gated_candidates(monkeypatch, profile)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "First note", first_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        await _type(pilot, "[[")
+        await pilot.pause(0.3)
+        assert not _picker_open(screen), "the held load must still be in flight"
+        body = await _open_note(screen, pilot, "Next note", next_id)
+        release.set()
+        await pilot.pause(0.8)
+        assert not _picker_open(screen), "the in-flight load opened the picker on the next note"
+        assert body.link_picker_open is False, "the next note's body routes keys to a picker"
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        await pilot.press("end")
+        lines = body.document.line_count
+        await pilot.press("enter")
+        await _until(pilot, lambda: body.document.line_count == lines + 1, "the editor's own newline")
+        assert "note://" not in body.text
+        assert not _picker_open(screen)
+
+
+async def test_one_keystroke_inside_a_completion_starts_one_candidate_load(
+    tmp_path, monkeypatch
+) -> None:
+    """I-1 / M-6: a typed key posts ``SelectionChanged`` AND ``Changed``;
+    both used to sync the picker, bump the generation and start a candidate
+    load -- two SQL loads per keystroke. One keystroke inside a ``[[``
+    context starts exactly ONE load; a caret move that narrows the query
+    (Left) starts one; a keystroke outside any context starts none."""
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import LibraryNotesController
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    loads: list[str] = []
+    real_load = LibraryNotesController._load_library_note_link_candidates
+
+    def _counted(self, query, generation):
+        loads.append(query)
+        return real_load(self, query, generation)
+
+    monkeypatch.setattr(LibraryNotesController, "_load_library_note_link_candidates", _counted)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _body_focused(screen, pilot)
+        await _type(pilot, "x")
+        await pilot.pause(0.3)
+        assert loads == [], f"a keystroke outside any context started {loads}"
+        await _type(pilot, " [[Lis")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        await pilot.pause(0.3)
+        del loads[:]
+        await _type(pilot, "b")
+        await _until(pilot, lambda: body.text == "x [[Lisb", "the b to land")
+        await pilot.pause(0.5)
+        assert loads == ["Lisb"], f"one keystroke started {len(loads)} loads: {loads}"
+        del loads[:]
+        await pilot.press("left")
+        await pilot.pause(0.5)
+        assert loads == ["Lis"], f"one caret move started {len(loads)} loads: {loads}"
+        assert _picker_open(screen)
+        del loads[:]
+        await pilot.press("right")
+        await pilot.pause(0.5)
+        assert loads == ["Lisb"], f"one caret move started {len(loads)} loads: {loads}"
+        await pilot.press("escape")
+        await _until(pilot, lambda: not _picker_open(screen), "Escape to close")
+        del loads[:]
+        for _ in range(8):
+            await pilot.press("backspace")
+        await _until(pilot, lambda: body.text == "", "the text cleared")
+        await pilot.pause(0.3)
+        assert loads == [], f"keystrokes with the picker closed started {loads}"
+
+
+async def test_escape_in_the_resize_batch_window_closes_the_picker_and_never_the_editor(
+    tmp_path, monkeypatch
+) -> None:
+    """P-2: Escape pressed right behind a terminal resize -- inside the
+    App's 1/120 s batch, while the picker is still painted -- used to fall
+    through to the editor's Back and close the editor. The body keeps
+    claiming Escape in that window: the picker closes, the editor stays
+    open with the typed text, and the next Enter is the editor's own."""
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    note_id = profile.db.add_note("Long body", LONG_BODY)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Long body", note_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        for target in (COMPACT, SIZE):
+            await _long_body_picker_at(app, screen, pilot, body, "middle")
+            text_before = body.text
+            _resize_without_a_pause(app, target)
+            _send_key(app, "escape")
+            await _until(pilot, lambda: not _picker_open(screen), f"the picker to close ({target})")
+            await pilot.pause(0.8)
+            assert screen._notes_state.view == "editor", f"Escape closed the editor ({target})"
+            snapshot = screen._library_note_session.snapshot
+            assert snapshot is not None and snapshot.note_id == note_id, target
+            assert screen.query_one("#library-note-body", TextArea) is body, target
+            assert body.text == text_before, target
+            assert body.link_picker_open is False, target
+            await pilot.pause(0.5)
+            if screen.focused is not body:
+                await pilot.click("#library-note-body")
+                await _until(pilot, lambda: screen.focused is body, f"focus ({target})")
+            lines = body.document.line_count
+            await pilot.press("enter")
+            await _until(pilot, lambda: body.document.line_count == lines + 1, f"the editor's own newline ({target})")
+            assert "note://" not in body.text
+        await pilot.resize_terminal(*SIZE)
+
+
+async def test_after_a_resize_close_only_typing_reopens_the_picker_and_enter_accepts(
+    tmp_path, monkeypatch
+) -> None:
+    """P-3 with C-1 (b): after a resize closed the picker, Left/Right within
+    the ``[[`` context open nothing (they used to); typing one character
+    reopens it on the narrowed rows and Enter accepts the highlighted row."""
+    from tldw_chatbook.Notes.note_import_plan_models import stored_note_link
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _body_focused(screen, pilot)
+        await _type(pilot, "[[Lis")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        await pilot.resize_terminal(*COMPACT)
+        await _until(pilot, lambda: not _picker_open(screen), "the picker to close on the resize")
+        await pilot.pause(0.5)
+        if screen.focused is not body:
+            await pilot.click("#library-note-body")
+            await _until(pilot, lambda: screen.focused is body, "focus")
+        await pilot.press("left")
+        await pilot.press("right")
+        await _until(pilot, lambda: body.cursor_location == (0, 5), "the caret back at the end")
+        await pilot.pause(0.5)
+        assert not _picker_open(screen), "a caret move reopened the picker after the resize close"
+        await _type(pilot, "b")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        options = screen.query_one("#library-note-link-picker-options", OptionList)
+        await _until(pilot, lambda: options.option_count == 1, "the one Lisbon row")
+        await pilot.press("enter")
+        expected = stored_note_link(LISBON, profile.lisbon_id)
+        await _until(pilot, lambda: body.text == expected, f"Enter to insert {expected!r}")
+        assert not _picker_open(screen)
+        await pilot.resize_terminal(*SIZE)

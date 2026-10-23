@@ -116,8 +116,13 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: (2026-10-23) -- ``link_picker_generation``, the ``[[`` picker's
 #: candidate-load generation that drops a stale answer, and
 #: ``link_picker_latch``, the completion start Escape dismissed so the picker
-#: stays closed until the context changes (112 + 2 = 114).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 114
+#: stays closed until the context changes (112 + 2 = 114). **115**:
+#: TASK-34000.11 final fix round (2026-10-23) -- ``link_picker_request``, the
+#: ``(start, query)`` completion the picker was last asked for, the one
+#: field every hot path (caret move, Tab, resize frame) reads before doing
+#: anything, and the reason one keystroke starts one candidate load
+#: (114 + 1 = 115).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 115
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

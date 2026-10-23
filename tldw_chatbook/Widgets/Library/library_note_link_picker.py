@@ -230,8 +230,9 @@ class LibraryNoteLinkPicker(Widget):
                 follow mode). Its region is re-read on every anchor pass.
             cell: The screen cell to sit under -- the body's caret in insert
                 mode. ``None`` anchors at the region's own top-left.
-            cell_provider: Re-reads that cell on later passes (a resize moves
-                the caret on screen); wins over ``cell`` when it answers.
+            cell_provider: Re-reads that cell on later passes (a body scroll
+                or a same-rows re-show moves the caret on screen, R3-3);
+                wins over ``cell`` when it answers.
             on_caret_lost: Called when a later pass finds no caret cell (R4-3:
                 the controller's close path). Without it the box hides itself.
         """
@@ -248,9 +249,10 @@ class LibraryNoteLinkPicker(Widget):
 
     def reanchor(self) -> None:
         """Re-run the anchor pass against the anchor widget's CURRENT region
-        and caret cell (fix round 2, R2-5: the note pane calls this on a
-        resize, so a box cut to fit beside the caret grows back when the
-        terminal does)."""
+        and caret cell. FOLLOW mode only on a resize: the note pane calls this
+        so the box stays at the Preview region's top-left (R3-4); the insert
+        picker is CLOSED by a resize instead (fix round 5) and re-anchors only
+        on a body scroll (R3-3) or a same-rows re-show."""
         if self._anchor_widget is None or not self.is_open:
             return
         try:
@@ -281,6 +283,8 @@ class LibraryNoteLinkPicker(Widget):
         self._apply_anchor()
 
     def on_resize(self) -> None:
+        # The insert picker is gone by the time its own Resize lands (the
+        # screen's Resize closed it); this is the follow picker's re-anchor.
         self.reanchor()
 
     def _apply_anchor(self) -> None:

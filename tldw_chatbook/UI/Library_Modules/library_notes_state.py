@@ -556,6 +556,17 @@ class LibraryNotesState:
     #: context changes); any other context -- or none -- clears it.
     link_picker_latch: tuple[int, int] | None = None
 
+    #: TASK-34000.11 final fix round (I-1, C-1 (b)): the completion the
+    #: picker was last asked for, as ``(start, query)`` -- ``start`` the
+    #: opener's ``(row, column)``, ``query`` the text between ``[[`` and the
+    #: caret -- or ``None`` while nothing is open and no load is in flight.
+    #: The hot paths (every caret move, Tab and resize frame) read this one
+    #: field and stop when it is ``None``; a keystroke's ``SelectionChanged``
+    #: + ``Changed`` pair starts ONE load because the second sees the same
+    #: request; a caret move into a different ``[[`` ends the completion
+    #: instead of opening a new one.
+    link_picker_request: tuple[tuple[int, int], str] | None = None
+
     # Task 7 owns measured breakpoint transitions. Task 5 consumes this
     # explicit presentation input now so compact/wide utility grouping is
     # testable without coupling the canvas to terminal geometry.

@@ -502,6 +502,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
@@ -601,6 +602,7 @@ from ...Widgets.Library.library_note_link_picker import (
 from ...Utils.fts5_match_forms import (
     NOTES_FILTER_MIN_PREFIX_CHARS as LIBRARY_NOTE_LINK_PICKER_MIN_QUERY,
 )
+from ...Notes.note_link_policy import link_kind, link_notice_text
 from ...Notes.note_import_plan_models import (
     note_link_entries,
     stored_note_link,
@@ -3564,8 +3566,12 @@ class LibraryNotesController:
         self._library_notes_backlinks_status = "loading"
         self._library_note_location = ("", "", False)
         # Fix round 1 (M-12): the Escape latch is one note's; it does not
-        # survive a note switch.
+        # survive a note switch. Final fix round (M-1): neither does a
+        # candidate load still in flight -- the dismiss bumps the generation
+        # so an answer landing after the switch never opens the picker on
+        # the next note and arms Enter routing there.
         self._library_notes_link_picker_latch = None
+        self._dismiss_library_note_link_picker(self._library_note_body_or_none())
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3845,17 +3851,24 @@ class LibraryNotesController:
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
         # TASK-34000.11 (AC#1): after the draft mutation, never before it --
-        # the picker reads the text the session now holds.
-        self._sync_library_note_link_picker(event.text_area)
+        # the picker reads the text the session now holds. A typed edit is
+        # the ONE thing that opens the picker (final fix round, C-1 (b)).
+        self._sync_library_note_link_picker(event.text_area, typed=True)
     @on(TextArea.SelectionChanged, "#library-note-body")
     def handle_library_note_body_selection_changed(
         self, event: TextArea.SelectionChanged
     ) -> None:
-        """Keep the ``[[`` picker in step with the caret (TASK-34000.11).
+        """Keep an OPEN ``[[`` picker in step with the caret (TASK-34000.11).
 
-        An arrow key or a click moves the caret without a ``Changed``; the
-        picker closes when the caret leaves the completion and reopens
-        when it comes back.
+        An arrow key or a click moves the caret without a ``Changed``. Final
+        fix round (C-1 (b)): a caret move never opens a closed picker --
+        Home/Right into a stored ``[[Title]](note://id)`` used to open it and
+        Enter then rewrote the link to another note. While the picker is
+        open (or its first load is in flight) the move re-anchors it, narrows
+        it to the text now between ``[[`` and the caret, and closes it once
+        the caret leaves the context. With nothing open and nothing in
+        flight this is one attribute read per caret move -- no DOM query, no
+        line parse (I-1).
 
         Args:
             event: The body's selection event, which carries the TextArea.
@@ -3863,28 +3876,33 @@ class LibraryNotesController:
         if (
             self._library_note_presentation_syncing
             or not self._library_note_editor_armed
+            or self._library_notes_link_picker_request is None
         ):
             return
-        self._sync_library_note_link_picker(event.text_area)
+        self._sync_library_note_link_picker(event.text_area, typed=False)
 
     # ------------------------------------------------------------------
     # TASK-34000.11: the ``[[`` link picker, typed-title links, Preview links
     # ------------------------------------------------------------------
 
     def _library_note_link_picker_or_none(self) -> LibraryNoteLinkPicker | None:
-        """The mounted picker, or ``None`` outside the note editor."""
-        found = self.query("#library-note-link-picker")
-        if not found:
+        """The mounted picker, or ``None`` outside the note editor.
+
+        ``query_one`` by id (final fix round, I-1): an id lookup is a dict
+        read (0.2 us; 33 us on a miss), where ``self.query(...).first()``
+        walked the whole screen DOM (607 us) -- four of those per body
+        keystroke made 2.5 ms, picker or no picker.
+        """
+        try:
+            return self.query_one("#library-note-link-picker", LibraryNoteLinkPicker)
+        except NoMatches:
             return None
-        picker = found.first()
-        return picker if isinstance(picker, LibraryNoteLinkPicker) else None
 
     def _library_note_body_or_none(self) -> NoteEditorTextArea | None:
-        found = self.query("#library-note-body")
-        if not found:
+        try:
+            return self.query_one("#library-note-body", NoteEditorTextArea)
+        except NoMatches:
             return None
-        body = found.first()
-        return body if isinstance(body, NoteEditorTextArea) else None
 
     def _library_note_link_picker_claims_tab(self) -> bool:
         """Whether the open insert-mode picker owns Tab right now.
@@ -3893,7 +3911,11 @@ class LibraryNotesController:
         resolved by the App before the key reaches ``NoteEditorTextArea.
         on_key``; the screen's ``check_action`` deactivates ``focus_next``
         on this answer so Tab can accept the highlighted row instead.
+        Asked on EVERY Tab anywhere in the Library: with no completion
+        requested it answers from one attribute (I-1).
         """
+        if self._library_notes_link_picker_request is None:
+            return False
         picker = self._library_note_link_picker_or_none()
         body = self._library_note_body_or_none()
         return (
@@ -3914,6 +3936,13 @@ class LibraryNotesController:
         )
 
     def _close_library_note_link_picker(self, body: NoteEditorTextArea | None) -> None:
+        """Hide the picker and forget the completion it was answering.
+
+        ``link_picker_request`` is the one flag the hot paths read (I-1): a
+        caret move, a Tab or a resize with it ``None`` costs an attribute
+        read and nothing else.
+        """
+        self._library_notes_link_picker_request = None
         picker = self._library_note_link_picker_or_none()
         if picker is not None:
             picker.hide()
@@ -3922,32 +3951,62 @@ class LibraryNotesController:
             body.link_picker_has_rows = False
             body.link_picker_terminal = None
 
-    def _sync_library_note_link_picker(self, body: NoteEditorTextArea | Any) -> None:
-        """Open, narrow, or close the picker for the caret's ``[[`` context.
+    def _sync_library_note_link_picker(
+        self, body: NoteEditorTextArea | Any, *, typed: bool
+    ) -> None:
+        """Open, narrow, re-anchor or close the picker for the caret's context.
 
-        ``None`` context -> hide and clear the Escape latch. A context whose
-        ``start`` equals the latched one -> stay hidden (the Console rule:
-        Escape keeps the picker away until the context changes). Otherwise
-        bump the generation and ask the loader for rows; the rows already
-        showing stay put until the answer lands.
+        ``None`` context -> close (superseding any load in flight, R2-3) and
+        clear the Escape latch. A context whose ``start`` equals the latched
+        one -> stay closed (the Console rule: Escape keeps the picker away
+        until the context changes). A context whose ``start`` differs from
+        the one requested -> the old completion ENDED: close it, and only a
+        typed edit opens the new one. Otherwise, when ``typed`` or when a
+        picker is already open on this context: ask the loader for rows --
+        once per distinct ``(start, query)``, so the ``SelectionChanged`` +
+        ``Changed`` pair one keystroke posts starts ONE candidate load (I-1,
+        M-6) -- and re-anchor the box under the caret.
+
+        Args:
+            body: The note body.
+            typed: ``True`` from ``TextArea.Changed`` (an edit), ``False``
+                from ``SelectionChanged`` (a caret move). Final fix round,
+                C-1 (b): only a typed edit opens a closed picker; a caret
+                move never does, so Home/Right/Down/Enter over a stored link
+                leave it exactly as it was.
         """
         picker = self._library_note_link_picker_or_none()
         if picker is None or not isinstance(body, NoteEditorTextArea):
             return
         if picker.is_open and picker.mode == "follow":
             return
+        requested = self._library_notes_link_picker_request
         context = wikilink_completion_context(body.text, body.cursor_location)
         if context is None:
             self._library_notes_link_picker_latch = None
-            # Fix round 2 (R2-3): supersede an in-flight load too, or its
-            # answer opened the picker on a line with no ``[[`` (Enter landing
-            # between the ``[[Lisb`` sync and its answer).
-            self._library_notes_link_picker_generation += 1
-            self._close_library_note_link_picker(body)
+            if requested is not None or picker.is_open:
+                # Fix round 2 (R2-3): supersede an in-flight load too, or its
+                # answer opened the picker on a line with no ``[[`` (Enter
+                # landing between the ``[[Lisb`` sync and its answer). With
+                # nothing requested there is nothing to close (I-1).
+                self._dismiss_library_note_link_picker(body)
             return
         query, start = context
         if self._library_notes_link_picker_latch == start:
-            self._close_library_note_link_picker(body)
+            if requested is not None or picker.is_open:
+                self._dismiss_library_note_link_picker(body)
+            return
+        if requested is not None and requested[0] != start:
+            # Another ``[[`` is another completion: the one on show ended.
+            self._dismiss_library_note_link_picker(body)
+            requested = None
+        if requested is None and not typed:
+            return
+        if requested == (start, query):
+            # The same completion this keystroke already asked for (or the
+            # rows on show answer): re-anchor only.
+            if picker.is_open:
+                self._anchor_library_note_link_picker(picker, body)
             return
         # Fix round 1 (M-12): a DIFFERENT context clears the latch (another
         # line, a fresh ``[[``); it used to clear only when no context was
@@ -3955,6 +4014,7 @@ class LibraryNotesController:
         self._library_notes_link_picker_latch = None
         self._library_notes_link_picker_generation += 1
         generation = self._library_notes_link_picker_generation
+        self._library_notes_link_picker_request = (start, query)
         # A held accept belongs to the context it was pressed in (I-2).
         picker.accept_pending_for = None
         if picker.is_open:
@@ -4021,15 +4081,19 @@ class LibraryNotesController:
         one close path (generation bump, the body's routing flags reset),
         before any frame paints the box detached from the caret. Nothing is
         inserted; a key after the close is the editor's own. The user
-        reopens it by typing or moving within the ``[[`` context, as after
-        Escape (no latch is set). The follow-mode picker is anchored to the
-        Preview region, not a caret, and keeps re-anchoring (R3-4).
+        reopens it by typing within the ``[[`` context, as after Escape (no
+        latch is set; a caret move alone never opens it, C-1 (b)). The
+        follow-mode picker is anchored to the Preview region, not a caret,
+        and keeps re-anchoring (R3-4).
 
-        Called on EVERY Library resize frame, so it costs nothing while no
-        picker is open: the editor-armed flag gates the DOM query, and a
-        closed picker is not touched.
+        Called on EVERY Library resize frame. With no completion requested
+        it is two attribute reads and no DOM query (I-1); with one it is an
+        id lookup, and a closed picker is not touched.
         """
-        if not self._library_note_editor_armed:
+        if (
+            not self._library_note_editor_armed
+            or self._library_notes_link_picker_request is None
+        ):
             return
         picker = self._library_note_link_picker_or_none()
         if picker is None or not picker.is_open or picker.mode != "insert":
@@ -4183,25 +4247,18 @@ class LibraryNotesController:
             return
         _query, start = context
         insert = stored_note_link(candidate.title, candidate.note_id)
-        end = self._library_note_link_closer_end(body)
-        result = body.replace(insert, start, end, maintain_selection_offset=False)
+        # The replacement ends at the caret. A caret inside a CLOSED link
+        # (``[[Lisb]]``, ``[[Lis|alias]]``) is no completion at all since the
+        # final fix round (C-1 (a)), so fix round 1's "consume the ``]]``
+        # right after the caret" path (M-11) had no typed path left to it
+        # and is gone with the alias-drop case (M-5).
+        result = body.replace(
+            insert, start, body.cursor_location, maintain_selection_offset=False
+        )
         body.move_cursor(result.end_location)
         self._library_notes_link_picker_latch = None
         self._library_notes_link_picker_generation += 1
         self._close_library_note_link_picker(body)
-
-    _NOTE_LINK_CLOSER_RE = re.compile(r"(?:\|[^\[\]\n]*)?\]\]")
-
-    def _library_note_link_closer_end(self, body: NoteEditorTextArea) -> tuple[int, int]:
-        """Where the accept's replacement ends: the caret, or past an existing
-        ``]]`` / ``|alias]]`` right after it (fix round 1, M-11: accepting
-        with the caret inside ``[[Lisb]]`` left a stray ``]]``)."""
-        row, column = body.cursor_location
-        line = body.document.get_line(row) if row < body.document.line_count else ""
-        match = self._NOTE_LINK_CLOSER_RE.match(line, column)
-        if match is None:
-            return (row, column)
-        return (row, match.end())
 
     def handle_library_note_link_picker_selected(self, event: Any) -> None:
         """A mouse click on a picker row accepts it (fix round 1, M-11).
@@ -4232,23 +4289,6 @@ class LibraryNotesController:
         if body is not None:
             self._accept_library_note_link_picker(body)
 
-    @staticmethod
-    def _library_note_link_notice_text(href: str) -> str:
-        """The href as a notice may show it: C0/C1 control characters dropped
-        (fix round 1, M-9 -- an escape sequence must never reach the toast)."""
-        return "".join(
-            ch for ch in href if not (ord(ch) < 32 or 127 <= ord(ch) <= 159)
-        )
-
-    @staticmethod
-    def _library_note_link_is_clean_http(href: str) -> bool:
-        """``http://``/``https://`` with no whitespace or control character in
-        it (fix round 1, M-9): anything else is refused, not handed to the
-        browser."""
-        if not href.startswith(("http://", "https://")):
-            return False
-        return not any(ch.isspace() or ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in href)
-
     def _library_note_preview_links(self) -> tuple[tuple[str, str], ...]:
         """``(label, note_id)`` for the open note's stored links, Preview only."""
         snapshot = self._library_note_session.snapshot
@@ -4259,21 +4299,36 @@ class LibraryNotesController:
     async def handle_library_note_preview_link(self, event: Any) -> None:
         """Preview's link policy (AC#3): nothing is handed to the OS blindly.
 
-        A ``note://<id>`` link opens that note in the editor; ``http(s)``
-        opens the system browser through the app's own thread worker with a
-        notice (the Settings About policy, ``_handle_about_link``); any other
-        scheme is refused with a notice. ``app.open_url`` is never called.
+        A ``note://<id>`` link opens that note in the editor; a clean
+        ``http(s)`` url (the scheme read case-insensitively) opens the system
+        browser through the app's own thread worker with a notice (the
+        Settings About policy, ``_handle_about_link``); a scheme-less href
+        with no host (``#heading``, a relative path) points nowhere Chatbook
+        can open and says so; any other scheme, and an http(s) url carrying
+        whitespace or control characters, is refused with a notice. The
+        rules are ``Notes/note_link_policy`` (pure, pinned in the PR lane).
+        ``app.open_url`` is never called.
 
         Args:
             event: ``Markdown.LinkClicked`` from ``#library-note-preview-body``.
         """
         event.stop()
         href = str(getattr(event, "href", "") or "").strip()
-        shown = self._library_note_link_notice_text(href)
-        if href.startswith("note://"):
+        shown = link_notice_text(href)
+        kind = link_kind(href)
+        if kind == "note":
             await self._open_library_note_link_target(href[len("note://") :].strip())
             return
-        if self._library_note_link_is_clean_http(href):
+        if kind == "no_target":
+            self.app.notify(
+                "This link doesn't point anywhere Chatbook can open"
+                + (f": {shown}" if shown else "."),
+                severity="warning",
+                timeout=6,
+                markup=False,
+            )
+            return
+        if kind == "http":
             import webbrowser  # noqa: PLC0415 -- lazy, as the Settings policy does
 
             # OS spawn off the UI thread (TASK-34937's rule).
@@ -4324,8 +4379,12 @@ class LibraryNotesController:
             try:
                 row = await asyncio.to_thread(reader, self._library_notes_user_id(), note_id)
             except Exception:  # noqa: BLE001 - refuse, never crash the screen
+                # The target is author-written href text (final fix round,
+                # M-4): the log carries a short fingerprint of it, never the
+                # text itself (TASK-15103).
                 logger.opt(exception=True).debug(
-                    "library_note_link_target_read_failed", note_id=note_id
+                    "library_note_link_target_read_failed",
+                    target=hashlib.sha256(note_id.encode("utf-8")).hexdigest()[:12],
                 )
                 row = None
         if not row or (isinstance(row, dict) and row.get("deleted")):
@@ -4374,7 +4433,14 @@ class LibraryNotesController:
         picker.reposition(region)
 
     def library_note_follow_picker_claims(self, key: str) -> bool:
-        """Whether the open follow-mode picker owns ``key`` (screen ``on_key``)."""
+        """Whether the open follow-mode picker owns ``key`` (screen ``on_key``).
+
+        Asked on EVERY key the Library sees (I-1): outside Preview, where no
+        follow picker can be open, it answers from one attribute; inside,
+        the picker is one id lookup away.
+        """
+        if not self._library_note_preview or key not in NoteEditorTextArea.LINK_PICKER_KEYS:
+            return False
         picker = self._library_note_link_picker_or_none()
         if picker is None or not picker.is_open or picker.mode != "follow":
             return False
