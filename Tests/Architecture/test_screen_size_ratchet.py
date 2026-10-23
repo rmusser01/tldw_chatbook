@@ -113,7 +113,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: three dialog pushes (scope picker, character picker, Conversation
     #: Inspector), two lines each. Dev 2d071d6d71 measured 24329/736; with the
     #: fix, 24335/736, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 736),
+    #: 2026-10-20, TASK-33620.15.3: owner decision (2026-10-04 ruling: a fix
+    #: over a size ratchet raises the row to the measured value; never move
+    #: or reflow code to make it fit). This task adds 6 lines and no method:
+    #: the idle heap re-freeze's two request points (a conversation painted,
+    #: the transcript poll's stop edge) and their import. Rebased 2026-10-22
+    #: onto dev 7700c63a68 (24335/736, the TASK-34720 row above): 24341/736,
+    #: the exact measurement, never above it.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24341, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

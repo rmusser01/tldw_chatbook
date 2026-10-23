@@ -40,6 +40,27 @@ output paths as absolute paths. Before you analyse a round, count each
 launch's records and rerun the launches that have none. Otherwise the
 analysis silently drops those pairs.
 
+## On a loaded host, count blocking callbacks by thread CPU as well as wall time (TASK-33620.15.3, 2026-10-19)
+
+**Incident.** The idle heap re-freeze was measured live with 16 ABBA-interleaved
+send pairs against origin/dev while other sessions held the 14-core host at a
+load average of 70-100. Every send window (Enter to the provider call) took
+7-20 s, against a median of 1.5 s in the 2026-10-10 profiling round. The
+task's criterion, sends with a UI-loop callback of 100 ms or more, read 16/16
+on both arms by wall time: a runnable thread waited for a core several times
+longer than it ran, so every send crossed the threshold whatever the change
+did. The probe also recorded each callback's `time.thread_time()`. By CPU the
+count was 13/16 on dev against 1/16 on the branch, and the longest callback
+fell from a median of 118 to 69 ms of CPU (fix lower in 14/16 pairs).
+
+**What to do.** Have a live probe record thread CPU next to wall time for every
+callback and collection it times: `time.thread_time()` around `Handle._run`,
+and in the `gc.callbacks` start/stop pair. Report both. When both arms cross
+a wall-clock threshold on every send, the count is saturated and says nothing
+about the change. Interleave the launches (ABBA) so the load drift falls on
+both arms, and do not compare absolute numbers with a round taken at another
+load.
+
 ## Runtime detachment must not reopen late read admission (TASK-34406.28, 2026-10-18)
 
 **Incident.** The browser Quit repair passed74 targeted checks, but two added controls actually drained and detached the runtime during approved cleanup and then triggered cache/flat refresh. Each made two original queries: `runtime is not None and runtime._disposed` became false after detachment while the screen was still running. The final76-case repair retains that check and also reads the same App's existing permanent shutdown flag; one new strict live Enter/response/Quit validation passes without extra shutdown errors.

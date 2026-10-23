@@ -119,6 +119,182 @@ about 0.6M unfrozen objects. Two things dominate it:
 - **`gc.disable()` plus manual collection at idle.** This risks unbounded
   growth when nothing is ever idle, such as during a long agent run.
 
+## Amendment (2026-10-10, TASK-33620.15.3): re-freeze at idle, bound the frozen garbage
+
+**Context.** Live profiling on 2026-10-10 (160x45, Anthropic haiku, 56
+sends) found the residual this ADR predicted, on the Console's hottest path.
+Generation-2 collection on the main thread took about 70 ms per send window
+(Enter to the provider call), with single pauses of 23-65 ms at up to 16 turns
+and 78-122 ms at 31-46 turns. That was 54% of the time spent in Textual screen
+updates after a send was accepted. Each pass rescanned everything the Console
+had built since the last boot freeze, and the pauses grew with every send
+within a launch (36 ms on the first send, 121 ms by the fifth).
+
+**Decision.**
+
+1. **Re-freeze at idle moments the Console names.** The Console asks for a
+   re-freeze when a run settles (the transcript poll's stop edge) and when
+   its transcript shows a different conversation.
+   `IdleHeapRefreezer` (`Utils/ui_responsiveness.py`, one per process) runs
+   it only when two things hold:
+   - the Console says it is not busy. It is busy from Enter until the run
+     settles, and whenever it is not the top screen;
+   - no user input has arrived for 2 s. A `TextualAppGuards` mixin stamps
+     every input event twice: when it is posted to the app, and when the app
+     dispatches it. A key still waiting in the app's queue therefore counts
+     as input (TASK-33620.15.10).
+
+   A busy Console drops the request and asks again when it next settles.
+2. **Collect the unfrozen heap in full before each re-freeze**
+   (`refreeze_long_lived_heap`). Frozen objects are not scanned, so this
+   costs what the next automatic pass would have cost, paid at an idle moment
+   instead of in a send window. Without it, cyclic garbage already in the old
+   generation would be frozen for good. The boot freezes keep decision 2's
+   young collection.
+3. **Bound what re-freezing can leak.** `gc.freeze()` never collects a frozen
+   object. Textual widgets are cyclic: their parent links, styles and message
+   pumps form reference cycles. So a widget frozen while live and dropped
+   later (a switched-away transcript, a recomposed rail) is garbage that
+   never goes away. `Tests/Performance/test_gc_idle_refreeze.py` shows this
+   with real widgets.
+
+   Each re-freeze therefore measures the permanent generation. Once it has
+   grown by 25% of its size after the last compaction (with a 50K floor), the
+   next idle moment with 5 s of quiet compacts instead: unfreeze, collect the
+   whole heap, freeze what survives. 25% is CPython's own rule for deferring a
+   full collection (`long_lived_pending < long_lived_total / 4`), applied
+   here to the frozen set.
+
+   The measure is the generation's real size, not a count of what each
+   re-freeze added. Live, a send's re-freeze froze 70-130K objects for
+   about 20K of real growth: reference counting frees most of the rest out
+   of the permanent generation, because the next paint replaces them.
+   Counting additions instead triggered a compaction every third send.
+
+   Sizing the generation means walking it. The generation is walked once
+   after each re-freeze, at the next maintenance, so the budget reads the
+   frozen set after the next run has freed what it replaced. The walk takes
+   about 5 ms of CPU per 1.3M objects, and it runs only at idle. A first
+   version walked only when a running total of what re-freezes counted
+   reached the budget. That total is not a true upper bound, because other
+   threads can allocate between a re-freeze's count and its freeze.
+
+   No re-freeze runs while a compaction is due. The permanent generation
+   therefore never outgrows its size after the last compaction by more than
+   that budget plus one re-freeze, and a send's re-freeze is large. On
+   2026-10-20 the frozen set peaked 396K objects above its post-compaction
+   size against a 272K budget, because the re-freeze before the compaction
+   froze at least 123K; the compaction then reclaimed 273K. The first
+   version peaked the same way on 2026-10-19 (372K against 244K, at least
+   128K in the last re-freeze). Both rounds show the bound holding, not a
+   missed compaction. The next compaction reclaims whatever in it has
+   become garbage, including boot-era garbage the earlier freezes kept.
+   (Garbage can also form inside the post-compaction set -- a transcript
+   frozen live, then switched away -- so the bound is on the frozen set's
+   size, not on the garbage in the growth alone.)
+
+   **Switched-away transcripts compact at once (2026-10-19).** The budget
+   alone let them pile up. Live, across 24 chat switches and 12 runs, the
+   frozen set's garbage reached 212-373K objects before a compaction ran,
+   and each such compaction held the UI loop for 2.1-2.8 s of CPU (27-37 s
+   of wall time at a load average near 95), against 329 ms for dev's worst
+   generation-2 pass in the same run. The total collection CPU was the same
+   on both arms (12.4 s against 12.5 s); the budget only gathered it into a
+   few long stalls. The Console rebuilds its transcript for every
+   conversation it shows, so it records the process's freeze epoch
+   (`heap_freeze_epoch()`) with each conversation it paints. When it paints
+   another one and the epoch has moved, a freeze caught the outgoing rows
+   while they were shown, and it calls `IdleHeapRefreezer.note_stranded()`:
+   the next idle maintenance compacts, whatever the budget says, and meets
+   about one transcript of garbage. The note survives a request dropped by a
+   send. Rows replaced before any freeze are ordinary garbage, which the
+   re-freeze's own full collection reclaims, so rapid switching owes nothing.
+   A new chat gaining its conversation id on its first send (the painted key
+   goes from (session, none) to (session, id)) is not a switch: the
+   transcript matches rows by message id, so none are replaced, and the
+   epoch recorded when the new chat was first shown carries over (review
+   follow-up, 2026-10-20: live, a fresh session's first send owed a 316 ms
+   compaction only because the screen pre-import froze the heap while the
+   empty chat was shown).
+
+   **A freeze follows only a collection that ran (2026-10-19).** CPython's
+   `gc.collect()` returns 0 at once, collecting nothing, while another pass
+   is in progress, and a worker thread's pass can hand the GIL to the UI
+   loop from its finalizers or callbacks. In one live run, a compaction met
+   such a pass. It froze the heap again, garbage included, and was booked
+   as done, so that run's frozen garbage outlived it. A re-freeze or
+   compaction now requires the generation-2 pass count to move (five tries,
+   2 ms apart, so the other pass can finish). Otherwise the maintenance
+   reports `busy`. A re-freeze then freezes nothing. A compaction freezes
+   the heap again, so the automatic passes do not rescan it, and stays owed.
+4. **Unchanged.** Thresholds stay at CPython's defaults. The collector is
+   never disabled. The policy is off under pytest (`PYTEST_CURRENT_TEST`), as
+   the screen pre-import is; `TLDW_IDLE_HEAP_REFREEZE` overrides it either way.
+
+**Consequences.**
+
+- A compaction scans the whole heap. That is the pass decision 2 kept off
+  `_ui_ready`, and this ADR measured it at 130-420 ms. It runs only after 5 s
+  without input and with no send in flight: after a switch away from a
+  transcript a freeze caught, and otherwise about once per 25% growth of the
+  frozen set. A user who switches chats often pays one compaction per
+  switch at idle, where origin/dev paid a generation-2 pass per switch that
+  could land anywhere, a send window included. Live on 2026-10-19 (about
+  800K objects, load average 40-65), a switch's compaction took 263-375 ms of
+  UI-loop CPU. Origin/dev's automatic generation-2 passes in the same round
+  took a median of 192 ms and at most 264 ms. Dev's passes can land in a
+  send window; the compactions ran only at idle.
+- **A compaction cannot be made shorter than a full pass over the whole heap
+  (TASK-33620.15.9, 2026-10-20).** The owner asked for its pause to be no
+  longer than origin/dev's worst automatic generation-2 pass while keeping
+  this amendment's send-window gain. CPython has no way to do that.
+  `gc.unfreeze()` moves the whole permanent generation, boot heap included,
+  into generation 2. Collections of generations 0 and 1 never reach it, and a
+  generation-2 collection is one pass that cannot be interrupted. On 3.12.11,
+  frozen cyclic garbage survived `gc.collect(0)` and `gc.collect(1)` after
+  `gc.unfreeze()` and died only in `gc.collect(2)`. That pass took about as
+  long with no garbage as with it, and its cost grew with the whole heap. The
+  same holds on 3.13 and 3.14.5+ (see Python versions below). Live, in
+  TASK-33620.15.3's round 9, all 27 compactions took at least 235 ms of
+  UI-loop CPU. Fitting their CPU to the objects they freed gives 235 ms plus
+  1.27 ms per 1K objects, and the boot heap alone is about 625K objects.
+  Origin/dev's worst automatic generation-2 pass in the same round took 202
+  ms. So any design that freezes the Console's heap pays at least one
+  whole-heap pass to reclaim the garbage it strands. Spreading that pass
+  across idle slices, compacting less often, or waiting longer before it
+  cannot bring it under 202 ms. The bound can be met only by not freezing
+  after boot. Collecting the unfrozen heap at idle without freezing it meets
+  it, but keeps almost none of the gain. Dev's generation-2 passes follow
+  allocation (97 of 139 in round 9 came exactly 11 generation-1 collections
+  after the one before, CPython's minimum), and a send window allocates enough
+  for two to five of them. Even a collection run exactly at Enter would have
+  removed only 8 of the 45 passes in round 9's dev send windows: median
+  generation-2 CPU per window 189 -> about 162 ms, against 189 -> 77 ms with
+  the re-freeze. The owner ruled on 2026-10-22 (next consequence).
+- **Owner decision (2026-10-22, TASK-33620.15.9): "Keep it as built".**
+  The owner re-ruled once the 2026-10-20 bound proved impossible on CPython,
+  and accepted this amendment's design unchanged: the re-freeze, the
+  compaction after a switch away from a transcript a freeze caught, and the
+  25% budget compaction, all after 5 s without input and with nothing in
+  flight. The trade accepted is the measured one. Main-thread generation-2
+  CPU per send window drops (median about 189 -> 77 ms in round 9), and in
+  exchange an idle compaction costs at least about 235 ms of UI-loop CPU
+  (worst seen about 490 ms) after a conversation switch, and about once per
+  20 runs otherwise. A key pressed while one runs waits until it ends. The
+  bound on a compaction's pause is waived, not met; the other rules of this
+  amendment (never in a send window, never within the quiet period after
+  input, frozen garbage reclaimed and bounded) still hold and stay pinned by
+  the tests under Verification. Revisit if a later CPython adds an
+  incremental or interruptible full collection (see Python versions).
+- The "boot-era garbage becomes permanent" consequence above is now temporary:
+  the first compaction reclaims it.
+- Re-freezing ends CPython's habit, noted in the measured result above, of
+  running full collections more often against a small unfrozen old
+  generation. Each re-freeze resets it.
+
+**Measured.** See TASK-33620.15.3's Implementation Notes: paired live sends
+against origin/dev, and memory across conversation switches and run cycles.
+
 ## Python versions
 
 The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.14 documentation on 2026-09-29:
@@ -135,3 +311,22 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
     at `_ui_ready`;
   - records the automatic gen-2 pause durations of a destination tour as
     evidence in the task notes rather than as a timing assertion.
+- `Tests/Performance/test_gc_idle_refreeze.py` (amendment): the re-freeze's
+  full collect then freeze; scheduling (quiet period, busy owner, departed
+  owner, stale timers, errors); the compaction budget; the input tap,
+  including a key posted to the app but not yet dispatched (negative
+  control: with the stamp at dispatch only, a maintenance runs); and,
+  with the real collector and real Textual widgets, that a frozen
+  switched-away transcript survives a full collection (negative control),
+  that a compaction reclaims it, and that the frozen set stays bounded over
+  24 switches; a stranded note compacts at the next maintenance and frees
+  the real Console transcript's switched-away rows (negative control: without
+  it they survive), and survives a dropped request. Run while another
+  collection is in progress, a re-freeze freezes nothing, and a compaction
+  freezes the heap again and stays owed.
+- `Tests/UI/test_console_idle_heap_refreeze.py` (amendment): on the mounted
+  Console, a re-freeze is requested when a conversation is painted and when a
+  run settles, and the busy check holds on every loop turn from Enter to the
+  provider call; the paint policy notes stranded garbage only when a freeze
+  ran while the outgoing conversation was shown, and never when a new chat
+  gains its conversation id.
