@@ -591,47 +591,6 @@ class PersonasLibraryPane(Vertical):
 
     # Structure only: colors come from the app stylesheet.
     BUNDLED_CSS = """
-    PersonasLibraryPane #personas-library-rows ListItem {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem Static {
-        width: 100%;
-        height: 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-recovery-row {
-        height: auto;
-        min-height: 6;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-recovery-row Static {
-        height: auto;
-        min-height: 6;
-        text-wrap: wrap;
-        text-overflow: clip;
-    }
-
-    /* The generic Button min-width:16 default would push "next" past the
-       pane's narrow width (2fr of the workbench split); pin the prev/next
-       buttons to a compact width and let the page-info Static fill the rest
-       so the bar never overflows its container. */
-    PersonasLibraryPane #personas-library-pagebar Button {
-        width: 5;
-        min-width: 5;
-    }
-
-    PersonasLibraryPane #personas-library-page-info {
-        width: 1fr;
-        text-align: center;
-    }
-
     /* F-030: toolbar buttons size to their labels. The Textual Button
        default min-width:16 let "New" alone fill a narrow pane and clipped
        Import/Duplicate/Tag off the right edge at supported widths. */

@@ -863,30 +863,12 @@ _CredentialClearModal {
 /* Keyboard-browse cursor: visually distinct from the flat subdued bg.
    $ds-grid-line (#26364D) is lighter than $ds-surface-raised/#ds-focus-bg
    (#142033) so browsed rows are visible without special-casing focus state.
-   Place BEFORE the .is-active rules so equal-specificity cascade gives
-   .is-active the final word. */
-ListItem.personas-library-row.-highlight,
+   (Roleplay frame B2a: the library rail's ListItem rules that shared this
+   block left with its ListView; its rows are OptionList lines styled in
+   features/_roleplay.tcss.) */
 ListItem.personas-conversation-row.-highlight {
   background: $ds-grid-line;
   color: $ds-text-primary;
-  text-style: bold;
-}
-
-/* Selected/active row: wins because it appears later in the sheet. */
-ListItem.personas-library-row.is-active {
-  border: none;
-  background: $ds-focus-bg;
-  color: $ds-focus-fg;
-  text-style: bold;
-}
-
-/* Active row that is also the browse cursor: .is-active styling wins
-   (later in sheet, same specificity as the -highlight rule above). */
-ListItem.personas-library-row.is-active.-highlight {
-  outline: none;
-  border: none;
-  background: $ds-focus-bg;
-  color: $ds-focus-fg;
   text-style: bold;
 }
 
@@ -897,7 +879,11 @@ ListItem.personas-library-row.is-active.-highlight {
    height), so the outline rendered as a tall empty bordered rectangle
    hanging below the selected row (RP UX review). Rows already show
    selection via .is-active/.-highlight backgrounds above, so the fallback
-   outline is both redundant and visually broken here. */
+   outline is both redundant and visually broken here.
+   Roleplay frame B2a: the list is now RoleplayItemList (an OptionList, same
+   id). Its focus shows as the box-stable left edge and the focus-only
+   cursor row (features/_roleplay.tcss), so the rule still stands, and it
+   stays pinned in boot (R18, css/build_css.py). */
 #personas-library-rows:focus {
   outline: none;
 }

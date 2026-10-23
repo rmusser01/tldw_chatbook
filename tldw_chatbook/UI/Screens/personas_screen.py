@@ -1250,15 +1250,6 @@ class PersonasScreen(BaseAppScreen):
         min-height: 3;
     }
 
-    #personas-library-pane ListItem.personas-library-row {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-
     #personas-conversation-actions {
         height: 9;
         min-height: 9;

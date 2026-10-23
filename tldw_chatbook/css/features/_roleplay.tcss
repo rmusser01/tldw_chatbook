@@ -165,8 +165,14 @@
     scrollbar-gutter: stable;
 }
 
+/* OptionList tints its whole background 5% toward the foreground on focus;
+   on that tint the cursor text measured below AA on two themes (4.33:1 on
+   monokai_pro, 4.44:1 on high_contrast_yellow_black; 4.73:1 and 4.85:1
+   without it), so the Roleplay list clears it: the edge and the cursor row
+   mark focus. */
 .roleplay-items-list:focus {
     border-left: thick $ds-active-fg;
+    background-tint: transparent;
 }
 
 .roleplay-items-list > .option-list--option-highlighted {
