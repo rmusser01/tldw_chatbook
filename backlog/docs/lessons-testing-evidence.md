@@ -21655,3 +21655,9 @@ attributes they touch. Do not list them from the domain model. Read mutable
 inputs by value at read time, because a held reference compares equal to
 itself after an in-place write. Give each input a test that changes it alone
 and ticks through the real gate.
+
+## A screen helper extraction can consume the preimport module budget
+
+**TASK-36458 / PR #3228, 2026-10-23.** Extracting Parakeet completion reduced LibraryScreen size, but its top-level helper import made Perf Guard run 40015030825 fail at 559/558 preimport modules. The existing native guard reproduced the same count. Scoped request/completion imports restored 558/558 while retaining the 37,525-line screen ceiling; both preimport and first-send warmup controls passed (2/2, 18.818 seconds). No ratchet was raised.
+
+When extracting a screen helper, check whether it belongs on screen preloading or only on the action path, and run the existing preimport guard along with the owner size check. ADR-097 governs this cost even when behavior and total code size barely change.

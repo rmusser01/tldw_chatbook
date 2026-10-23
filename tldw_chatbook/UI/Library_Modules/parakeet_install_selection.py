@@ -17,7 +17,7 @@ from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 logger = logger.bind(module="LibraryScreen")
 
 
-def capture_parakeet_install_selection(screen: Any) -> tuple[Any, ...]:
+def capture_selection(screen: Any) -> tuple[Any, ...]:
     """Capture form ownership, accepted edits and not-yet-delivered controls."""
     form = screen._ingest_state.form
     names = (
@@ -49,7 +49,7 @@ def apply_parakeet_install_result(
 ) -> None:
     """Publish installation and select only the unchanged requesting form."""
     pending = self._parakeet_v2_pending_selection
-    current = capture_parakeet_install_selection(self)
+    current = capture_selection(self)
     select_current = (
         pending is not None and pending[0] is current[0] and pending[1:] == current[1:]
     )
