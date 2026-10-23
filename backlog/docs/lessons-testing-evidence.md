@@ -21006,6 +21006,73 @@ makes the condition impossible (here: a shared helper that holds both config loc
 True). Grep every call site that drops the result before trusting one; only the ones followed by a press, a click or
 an assertion on what it renders are exposed.
 
+**Reading a dropped press from the CI log (TASK-35660).** You can see a dropped press in CI without reproducing it.
+Pytest prints loguru output under the failed test's "Captured stderr call" section. Both failed jobs (114249247572,
+114260833572) show this test's other `chat_screen` lines there, but not
+`ChatScreen on_button_pressed called with button: console-send-message`, which every local run writes. Send's handler
+never ran, so the send was never made, and no runner would have been fast enough. Before you blame a slow runner for
+a timeout after a pilot `press()`, grep the failed test's captured output for the handler's log line. Also assert
+`not button.disabled`, naming its tooltip, right before any press that a later wait depends on.
+
+Read the failed job's own log with `gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`. On 2026-10-19
+`gh run view --job 114249247572 --log` returned the log of that run's passing re-run (attempt 2, job 114263924697,
+"704 passed"), so the failure looked absent.
+
+**Holding the locks removed one reason to defer, not all of them (TASK-35660, 2026-10-19).** After TASK-34789 the
+shared helper held both config locks and asserted that its one sync rendered. Under `taskpolicy -b` it still failed,
+with a bare `assert False`, in 3 of 10 runs of dev's poll test. Another dev caller failed the same way at normal
+priority on a loaded host. The bare assert named no reason, so a probe logged why each sync deferred. In one probed
+run the warm-up was not current twice, because its key went stale while a refresh was pending. The sync renders from
+a readiness proof that is good for one second. Replaying a loop that resumes the helper later than that, after
+another display has started the next refresh, makes the sync defer at the same assert. Both orders now replay
+deterministically, and the helper retries within a 15 s bound and then names the last refusal. When a call can defer
+for several reasons, removing one reason and asserting a single attempt only makes the flake rarer. Retry within a
+bound, and name the reason when the bound runs out.
+
+**Read where each starved run failed before you count it.** At host load 70-100, `taskpolicy -b` failed app-booting
+pilots before their bodies ran: `HelperTimeoutError` starting a private SQLite helper while building the app, and
+Textual's `WaitForScreenTimeout` inside `run_test`. Those runs say nothing about the test. Tally failures by line and
+compare with dev under the same load. Here dev's poll test failed 9 of 10, and every red was in a place this branch
+changed: its 10 s wait (6) or the helper (3).
+
+**A pause-count loop is not a deadline.** The first pass at TASK-35660 replaced the poll test's
+`for _ in range(100): await pilot.pause(0.05)` with a 20 s deadline. `pilot.pause()` also waits for the app to drain
+its messages, so under load the 100 pauses stretched while 20 s did not. With a 5 s precapture delay at load ~100, one
+poll tick took several seconds and the deadline failed in 1 of 6 paired runs with either helper. If you turn a wait
+into a wall-clock deadline, size it for the slowest host it must survive. A bound that ends as soon as its condition
+holds costs passing runs nothing; the poll test now waits up to 60 s.
+
+**A stall patched onto a class method catches every caller.** The stale-proof replay patched
+`ConsoleReadinessConfigProjection.warm` to sleep 1.1 s after the first current warm-up, and recorded that only after
+the sleep. The context snapshot also warms that projection from a worker, so a second call slept too, and a run failed
+the replay's own guard (`[True, True] == [True]`). Worse, the worker's call could have taken the only stall and left
+the helper undelayed, so the test would pass without testing anything. Scope an injected delay to the caller under
+test. Here that meant checking `asyncio.current_task()` against the test's own task.
+
+**A retry raising the same exception type turns fast-failure tests into slow passes (TASK-35660, 2026-10-20).** Once
+the helper retried for 15 s and then raised `AssertionError`, the existing
+`pytest.raises(AssertionError)` around its "closing Console" refusal stopped testing that refusal. With both fast
+refusals deleted from the helper (scratch mutation), that test still passed, after 15.0 s, on the retry's own
+timeout message. It now matches the refusal's message, and a disposed-runtime twin does the same; both fail under the
+mutation. When you add a bounded retry, grep the tests that expect the call to fail and give each a `match=`.
+
+**An end state the product also reaches cannot show the helper reached it.** The stale-proof replay asserted that Send
+was enabled after the helper returned. During its 1.1 s stall the product's own delayed control-bar replay lifts the
+mount-time block, so with the helper changed to return after one deferred sync, the replay still passed. It now records
+the helper's own syncs (those made from the test's task) and requires a deferral followed by a render; under the same
+mutation it fails with `[False]`. Before trusting an outcome assertion, ask what else in the app could produce it while
+the code under test does nothing.
+
+**A guard on a derived state can hold for a different reason (TASK-35660, review of 2026-10-20).** Both helper pilots
+opened with `assert send.disabled, "no mount-time block for the helper to lift"`. But Send is disabled whenever the
+draft is empty (`send_ready = has_draft and not effective_send_blocked` in the composer), and the draft was empty
+there, so the guard held with or without the block. A probe read `disabled=True, _send_blocked=True` with the tooltip
+"Add API key ..." before the helper, and `disabled=True, _send_blocked=False` with "Type a message to send." after it.
+Without the block, the lock-hold test's final `assert not send.disabled` passes even when the helper renders nothing.
+So this guard was the only thing that kept the test from passing vacuously, and it could never fail. The guards now
+assert the block itself (`composer._send_blocked`, naming the tooltip). When a guard exists to stop a test from going
+vacuous, check that the state it reads has no other cause.
+
 
 ## Loaded controller data does not give a newly shown button mouse geometry
 
@@ -21277,3 +21344,9 @@ During optional keyword scanner qualification (TASK-36003, 2026-10-21), retainin
 During TASK-36132, a repository-wide guard run overlapped an implementer temporarily restoring baseline source for a redundant RED run in the same worktree. All four guards returned zero, but that scan could not certify one source snapshot. The final guard run had to be repeated after implementation handoff, with matching before/after source hashes.
 
 Serialize baseline reversals and shared scans. Private test profiles isolate storage, not the Python source checkout. Finish implementation handoff before repository-wide verification; record the reviewed source identity and verify it stays unchanged for the scan.
+
+## A UI shard cancelled with no failing test ran out its own job cap; the gate only reports it (PR #3190, TASK-35660, 2026-10-22)
+
+**Incident.** PR #3190 was evicted from the merge queue after "required check failed twice". The Derived Artifacts gate's log says only "The required UI fast lane did not succeed", which reads like a red test in the PR. There was none. In both attempts, UI Fast Lane job 2 of 10 was cancelled at 97% with every test that ran passing. Its check-run annotation said "The job has exceeded the maximum execution time of 20m0s" (20m19s from start), and the gate job started only after that. The job held none of the PR's changed census entries, so the overrun was dev's own load, which TASK-35834's 13-shard deal later fixed. The day before, PR #3188's identical eviction had been filed as the gate cancelling in-flight shards (TASK-35920). That job's durations (20m01s-20m19s, all ending before the gate started) show the same cap.
+
+**What to do.** Before reproducing a test, read the cancelled job's annotations (`gh api repos/<owner>/<repo>/check-runs/<job id>/annotations`) and compare its `started_at`/`completed_at` with the gate job's start. An attempt's annotations can later be missing; the durations still show the cap. A cap overrun is a shard-load question. Check whether the PR adds entries to that job (`scripts/check_ui_pr_gate_census.py --shard <i> <n>`), and replay its minutes (`scripts/ui_lane_shard_replay.py`). Do not treat it as a test to fix in the PR.

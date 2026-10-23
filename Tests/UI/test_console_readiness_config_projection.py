@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -112,8 +113,165 @@ async def test_control_bar_helper_still_refuses_an_unavailable_owner(monkeypatch
     )
     screen._console_readiness_config_projection = projection
     screen._sync_console_control_bar = lambda: pytest.fail("closed owner rendered")
-    with pytest.raises(AssertionError):
+    # The match pins the helper's own fast refusal; without it, its 15 s
+    # retry bound would raise a different AssertionError that passes too.
+    with pytest.raises(AssertionError, match="the Console is closing"):
         await _sync_console_control_bar_now(screen)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_refuses_a_disposed_runtime_at_once(monkeypatch):
+    """A disposed runtime can never render, so the helper fails at once
+    instead of retrying until its bound (TASK-35660)."""
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, _owner, _identity, _tasks, _published = _screen(monkeypatch)
+    screen._console_runtime_fallback = SimpleNamespace(_disposed=True)
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: pytest.fail("disposed owner read")
+    )
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("disposed owner rendered")
+    with pytest.raises(AssertionError, match="the Console runtime is disposed"):
+        await _sync_console_control_bar_now(screen)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_warms_again_while_each_read_goes_stale(monkeypatch):
+    """Under ``taskpolicy -b`` the helper's second warm-up was not current
+    either, and it failed with a bare ``assert False`` (TASK-35660). Here the
+    settings change during the first two reads; the third is current."""
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    reads, rendered = [], []
+
+    def read():
+        revision = owner.revision
+        reads.append(revision)
+        if len(reads) < 3:
+            owner.revision += 1  # the settings changed while this read ran
+        return _read_result({"revision": revision})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: rendered.append(projection.value) or True
+    try:
+        await _sync_console_control_bar_now(screen)
+        assert reads == [1, 2, 3]
+        assert rendered == [{"revision": 3}]
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_bounds_a_warm_up_that_never_settles(monkeypatch):
+    """The helper's bound covers its warm-up too: a refresh that never
+    settles fails within the bound, naming the warm-up (TASK-35660)."""
+    from Tests.UI import test_console_native_chat_flow as flow
+
+    monkeypatch.setattr(flow, "_CONTROL_BAR_RENDER_TIMEOUT_S", 0.3)
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+
+    def read():
+        entered.set()
+        assert release.wait(10)
+        return _read_result({"settled": True})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("rendered before a warm-up")
+    try:
+        # A helper that waits on the warm-up unbounded fails here, not at
+        # pytest's own timeout.
+        async with asyncio.timeout(5):
+            with pytest.raises(
+                AssertionError, match="last: the readiness warm-up did not settle"
+            ):
+                await flow._sync_console_control_bar_now(screen)
+        assert entered.is_set()
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_bounds_taking_the_config_locks(monkeypatch):
+    """The helper's bound covers taking the config locks: another thread that
+    keeps them fails the helper within the bound, naming the locks, instead
+    of blocking the loop until that thread lets go (TASK-35660)."""
+    from Tests.UI import test_console_native_chat_flow as flow
+
+    monkeypatch.setattr(flow, "_CONTROL_BAR_RENDER_TIMEOUT_S", 0.3)
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: _read_result({"revision": owner.revision})
+    )
+    screen._console_readiness_config_projection = projection
+    rendered = []
+    screen._sync_console_control_bar = lambda: rendered.append(True) or True
+    held, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with config._settings_rebuild_lock(), config._config_file_lock():
+            held.set()
+            release.wait(6)
+
+    holder = threading.Thread(target=hold, name="config-lock-keeper", daemon=True)
+    holder.start()
+    try:
+        assert await asyncio.to_thread(held.wait, 5), "the keeper never took the locks"
+        started = time.monotonic()
+        # A helper that blocks on the locks unbounded renders once the keeper
+        # gives up at 6 s, and so does not raise.
+        with pytest.raises(
+            AssertionError, match="last: another thread held the config locks"
+        ):
+            await flow._sync_console_control_bar_now(screen)
+        assert time.monotonic() - started < 3, "the bound did not cover the locks"
+        assert rendered == []
+    finally:
+        release.set()
+        await asyncio.to_thread(holder.join, 10)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_names_a_deferral_that_used_up_its_bound(monkeypatch):
+    """A sync that defers just inside the bound is the refusal the helper
+    names. It must not start another warm-up with no time left, which would
+    time out at once and be named instead (TASK-35660)."""
+    from Tests.UI import test_console_native_chat_flow as flow
+
+    real_monotonic = time.monotonic
+    offset = [-real_monotonic()]  # the helper's clock starts at zero
+    monkeypatch.setattr(
+        flow, "time", SimpleNamespace(monotonic=lambda: real_monotonic() + offset[0])
+    )
+    monkeypatch.setattr(flow, "_CONTROL_BAR_RENDER_TIMEOUT_S", 5.0)
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: _read_result({"revision": owner.revision})
+    )
+    screen._console_readiness_config_projection = projection
+    syncs = []
+
+    def defer_at_the_deadline() -> bool:
+        syncs.append(owner.revision)
+        owner.revision += 1  # so the next warm-up would have to wait
+        offset[0] = 4.99 - real_monotonic()  # 10 ms of the bound left
+        return False
+
+    screen._sync_console_control_bar = defer_at_the_deadline
+    try:
+        with pytest.raises(
+            AssertionError, match="last: the control-bar sync deferred"
+        ):
+            await flow._sync_console_control_bar_now(screen)
+        assert syncs == [1]
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def test_checked_config_source_tags_require_active_matching_operation():
