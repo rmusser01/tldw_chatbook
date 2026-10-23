@@ -550,7 +550,10 @@ _BUDGETS: dict[str, int] = {
     # re-points Textual's ``_last_focused_on_app_blur`` at the live instance
     # of the user's field, so AppFocus lands there (docstring included), plus
     # the two-line call at the restore's ``set_focus``. Exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6473,
+    # 2026-10-22, TASK-34000.10 final-review re-review (owner decision, same
+    # rule): 6473 -> 6484 -- the blurred-terminal restore leaves another
+    # screen's or a modal's own focus slot alone.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6484,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

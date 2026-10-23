@@ -166,6 +166,10 @@ async def test_the_items_filter_never_moves_the_reader_off_a_dirty_form(monkeypa
             lambda: getattr(screen.focused, "id", None) == "library-media-filter",
             message="the Items filter never took focus",
         )
+        # One burst must not straddle the first settle's recompose under a
+        # loaded runner (a 250 ms stall between keys let it land mid-word).
+        from tldw_chatbook.UI.Library_Modules import library_media_controller as _lmc
+        monkeypatch.setattr(_lmc, "MEDIA_FILTER_DEBOUNCE_SECONDS", 1.0)
         await _type(pilot, "Product")
         await _browse_settled(screen, pilot, query="Product", rows=1)
         assert [str(r.media_id) for r in _rows(screen)] == [ROW_0]

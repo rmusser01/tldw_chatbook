@@ -5,7 +5,8 @@ duplicate ("ok, x, X"), vetoes every autosave -- ADR-027 forbids the save
 from stripping or deduplicating on the user's behalf. The tidy runs when the
 user LEAVES the field, as a visible draft edit, and it is the inverse of
 exactly those two vetoes and nothing more: no truncation, no markup change,
-no rewrite of a title or keyword list the save would already accept.
+and a title or keyword list is rewritten only when something is dropped
+(edge whitespace, a duplicate, an empty segment).
 
 Deterministic examples only: this file runs in the PR Fast Lane, which
 installs no Hypothesis. The properties (a tidied value never draws its

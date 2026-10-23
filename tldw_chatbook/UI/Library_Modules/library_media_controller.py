@@ -3239,8 +3239,8 @@ class LibraryMediaController:
         browse-state sync, ``compose_content``, the canvas sync and
         ``_build_library_media_active_child``) goes through this one seam.
         While the Reader holds the highlight (``_library_media_reader_holds_
-        highlight``: the viewer view AND the ORDER-based
-        ``highlight_held_by_reader`` flag, set at every open/select door and
+        highlight``: the viewer view -- or any view while a Reader form is
+        dirty -- AND the ORDER-based ``highlight_held_by_reader`` flag, set at every open/select door and
         released only at the user's scope-change seams), the selection
         keeps naming the Reader's item -- the pending one while a selection
         loads, else the loaded one -- when the page is still loading or

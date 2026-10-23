@@ -509,8 +509,8 @@ automatically") until you change the marked field; pressing **Save**
 takes you there. Leaving the Title field
 tidies a leading or trailing space, and leaving Keywords drops a duplicate
 that differs only in case ("x, X" becomes "x") and an empty entry ("a,,b"
-becomes "a, b"), so an ordinary slip like that never leaves the note
-unsaved; a list the save already accepts is left exactly as you typed it
+becomes "a, b"), so an ordinary slip like the duplicate never leaves the
+note unsaved; a list with nothing to drop is left exactly as you typed it
 ("a,b" stays "a,b"). You see the edit in the field, and nothing is
 rewritten at save. Switching to another window and back does not count as leaving the
 field: what you typed stays exactly as it was. If the same note was changed somewhere else while you were editing,

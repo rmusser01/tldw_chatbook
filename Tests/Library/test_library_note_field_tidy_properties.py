@@ -8,7 +8,7 @@ this file is NOT in ``FAST_LANE_TARGETS``.
 
 Each tidy is the inverse of exactly its veto: a tidied title never draws
 the whitespace veto, tidied keywords never draw the duplicate veto, and a
-title or keyword list the save already accepts is left exactly as typed.
+title or keyword list with nothing to drop is left exactly as typed.
 """
 
 from __future__ import annotations

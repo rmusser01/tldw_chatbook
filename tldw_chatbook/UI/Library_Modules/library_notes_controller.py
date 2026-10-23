@@ -2188,6 +2188,17 @@ class LibraryNotesController:
         if app is None or getattr(app, "app_focus", True):
             return False
         previous = getattr(app, "_last_focused_on_app_blur", None)
+        # Never hijack another screen's or a modal's own restore slot: when
+        # the remembered widget is still mounted on a DIFFERENT screen, defer
+        # (do not focus) but leave the slot to its owner. A detached widget
+        # (the Input this recompose just replaced) is ours to repoint.
+        if previous is not None and getattr(previous, "is_attached", False):
+            try:
+                foreign = previous.screen is not target.screen
+            except Exception:  # noqa: BLE001 - NoScreen while unmounting
+                foreign = False
+            if foreign:
+                return True
         live: Widget | None = None
         previous_id = getattr(previous, "id", None)
         if previous_id:

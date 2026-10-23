@@ -11,8 +11,9 @@ session receives it as an ordinary draft mutation through the field's own
 
 The two pure functions are the inverse of exactly the two vetoes they
 target (``validate_database_note_draft``'s whitespace and duplicate arms)
-and nothing more: no truncation, no markup change, no rewrite of a value
-the save would already accept. ``Tests/Library/test_library_note_field_tidy.py``
+and nothing more: no truncation, no markup change, and a value is rewritten
+only when there is something to drop (edge whitespace, a duplicate identity
+or an empty segment -- the save stores the same identities either way). ``Tests/Library/test_library_note_field_tidy.py``
 pins that with deterministic examples and
 ``test_library_note_field_tidy_properties.py`` with Hypothesis.
 
@@ -76,8 +77,8 @@ def tidy_note_keywords(value: str) -> str:
 
     Final review (2026-10-22, M-2): the text is rewritten ONLY when there is
     something to drop -- a duplicate identity or an empty segment (``"a,,b"``,
-    a trailing comma). A list the save already accepts is returned exactly
-    as typed: ``"a,b"`` stays ``"a,b"``, never ``"a, b"``. When a rewrite
+    a trailing comma). A list with nothing to drop is returned exactly as
+    typed: ``"a,b"`` stays ``"a,b"``, never ``"a, b"``. When a rewrite
     does happen the kept tokens are re-joined with ", ".
 
     Args:
