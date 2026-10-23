@@ -339,9 +339,13 @@ def wikilink_completion_context(
         the nearest ``[[`` before the caret has no ``]``, ``|`` or ``[``
         between it and the caret and is not an embed (``![[``); ``None``
         when there is no such opener, when it sits inside backticks on that
-        line (an odd count of `` ` `` before it) or inside an open fence (an
-        odd count of lines starting with ``` ``` ``` above the caret row).
-        Never raises for an out-of-range caret.
+        line (an odd count of `` ` `` before it), inside an open fence (an
+        odd count of lines starting with ``` ``` ``` above the caret row), or
+        inside a CLOSED link -- the rest of the caret's line carries ``]]``
+        before any ``[[`` (final fix round, C-1: a caret parked inside
+        ``[[Title]]`` or ``[[Title]](note://id)`` by Home/Right/a click is
+        not a completion, so navigation keys alone can never rewrite the
+        link to another note). Never raises for an out-of-range caret.
     """
     if not text or "[[" not in text:
         return None
@@ -364,6 +368,12 @@ def wikilink_completion_context(
         return None
     if head[:start].count("`") % 2 == 1:
         return None
+    tail = line[column:]
+    closer = tail.find("]]")
+    if closer >= 0:
+        opener = tail.find("[[")
+        if opener < 0 or closer < opener:
+            return None
     return query, (row, start)
 
 

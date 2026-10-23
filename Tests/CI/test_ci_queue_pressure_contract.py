@@ -94,6 +94,11 @@ FAST_LANE_TARGETS = (
     # (real tmp SQLite, no Hypothesis -- the properties sit in the
     # `_properties.py` sibling outside this lane); about three seconds.
     "Tests/Notes/test_note_links_typed_titles.py",
+    # TASK-34000.11 final fix round (I-2): the Preview link policy as a pure
+    # table over ``Notes/note_link_policy`` -- refused schemes, control and
+    # bidi characters, the case-insensitive scheme, the scheme-less href
+    # (no app import, no Hypothesis; well under a second).
+    "Tests/Notes/test_note_link_policy.py",
     # TASK-34000.25: the ``[<title>](media://<uuid>)`` source line a note
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).

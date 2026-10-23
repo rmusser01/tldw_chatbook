@@ -7,20 +7,26 @@ nothing, and activating a stored note link in Preview handed
 ``note://<id>`` to the operating system's URL handler.
 
 One boot at 160x45 over a real ChaChaNotes database (see
-``library_note_links_support``): the Escape-latch arm shares the insert
-boot. The Preview arms (click, http, deleted target) are the sibling census
-file ``test_library_note_links_preview_opens_in_app.py`` -- two boots in one
+``library_note_links_support``): the Escape-latch arm and the final fix
+round's navigation-keys arm (C-1: Home/Right/Down/Enter/Tab over a stored
+link and over a bare ``[[Title]]`` never open the picker and never change
+the link) share the insert boot. The Preview arms (click, http, deleted
+target) are the sibling census file
+``test_library_note_links_preview_opens_in_app.py`` -- two boots in one
 file sat at the lane's 35 s ceiling (fix round 1, I-4). The picker arms read what the compositor
 paints inside ``#library-note-link-picker`` and what the body ``TextArea``
 holds after Enter. The many-links Enter picker, the 80x24 size, the ``[b]``
 title, the burst races and the hostile-scheme pins are in
-``test_library_note_links_picker_and_preview_extended.py``.
+``test_library_note_links_picker_and_preview_extended.py``; the pure link
+policy table is ``Tests/Notes/test_note_link_policy.py`` (FAST_LANE).
 """
 
 from __future__ import annotations
 
 import pytest
 from textual.widgets import OptionList, TextArea
+
+from tldw_chatbook.Widgets.Library.library_note_link_picker import LibraryNoteLinkPicker
 
 from Tests.UI.library_note_links_support import (
     INDEX,
@@ -50,6 +56,80 @@ from Tests.UI.test_library_notes_files_sync_journey import (
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 VERIFIER = "Verifier link test"
+NAVIGATION = "Navigation probe"
+
+
+def _link_edges(db, note_id: str) -> list[str]:
+    """The ``note_links`` targets recorded for ``note_id``, sorted."""
+    rows = db.get_connection().execute(
+        "SELECT target_note_id FROM note_links WHERE source_note_id = ? ORDER BY 1",
+        (note_id,),
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def _count_picker_opens(monkeypatch) -> dict[str, int]:
+    """Count every ``show_candidates`` -- the one way the picker ever opens
+    (rows or a hint row), so "never opened" is a counted claim."""
+    opens = {"n": 0}
+    real = LibraryNoteLinkPicker.show_candidates
+
+    def _counted(self, rows, **kwargs):
+        opens["n"] += 1
+        return real(self, rows, **kwargs)
+
+    monkeypatch.setattr(LibraryNoteLinkPicker, "show_candidates", _counted)
+    return opens
+
+
+async def _navigation_keys_leave_the_line_alone(
+    pilot, screen, body: TextArea, opens: dict[str, int], *, row: int, label: str
+) -> None:
+    """Probe 2's keys over the link on ``row``: Home, Right x10 (the caret
+    inside the title), Down, Enter, then Tab. The picker never opens; Enter
+    is the editor's own newline at the caret (undone with Backspace so the
+    line is byte-identical again); Tab leaves the body."""
+    before = body.text
+    lines = before.split("\n")
+    assert len(lines) == 2 and row in (0, 1)
+    await pilot.click("#library-note-body")
+    await _until(pilot, lambda: screen.focused is body, f"the body to take focus ({label})")
+    # Ctrl+Home / Ctrl+End reach the row by document position: the stored
+    # line is long enough to soft-wrap, so Down from row 0 would land in
+    # its wrapped continuation, not on row 1.
+    await pilot.press("ctrl+home" if row == 0 else "ctrl+end")
+    await pilot.press("home")
+    for _ in range(10):
+        await pilot.press("right")
+    await _until(pilot, lambda: body.cursor_location == (row, 10), f"the caret inside the title ({label})")
+    # The base opened the picker from this caret move alone; give its load
+    # the time it needs so the counter below is a real negative.
+    await pilot.pause(0.3)
+    assert opens["n"] == 0, f"the picker opened on a caret move ({label})"
+    assert not _picker_open(screen), label
+    assert body.text == before, label
+    await pilot.press("down")
+    await pilot.pause(0.3)
+    assert opens["n"] == 0, f"the picker opened on Down ({label})"
+    assert body.text == before, label
+    caret_row, caret_column = body.cursor_location
+    split = lines[caret_row]
+    expected_lines = [*lines[:caret_row], split[:caret_column], split[caret_column:], *lines[caret_row + 1 :]]
+    await pilot.press("enter")
+    await _until(
+        pilot,
+        lambda: body.text == "\n".join(expected_lines),
+        f"Enter to be the editor's own newline ({label}); body reads {body.text!r}",
+    )
+    assert body.text.count("note://") == before.count("note://"), label
+    assert opens["n"] == 0, f"the picker opened on Enter ({label})"
+    await pilot.press("backspace")
+    await _until(pilot, lambda: body.text == before, f"Backspace to restore the line ({label})")
+    await pilot.press("tab")
+    await _until(pilot, lambda: screen.focused is not body, f"Tab to leave the body ({label})")
+    assert opens["n"] == 0, f"the picker opened on Tab ({label})"
+    assert not _picker_open(screen), label
+    assert body.text == before, f"navigation keys changed the body ({label})"
 
 
 async def _blank_note_with_body_focused(screen, pilot) -> TextArea:
@@ -68,13 +148,26 @@ async def test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_l
 ) -> None:
     """AC#1 / AC#5: Escape leaves the typed text and latches; ``[[`` lists
     recent titles, ``Lisb`` narrows to one, Enter inserts the stored link
-    form, and once autosaved the target's Info counts the new note under
-    Linked from (three, with the two stored ones)."""
+    form; navigation keys over an existing link never open the picker and
+    never change the link (final fix round, C-1); and once autosaved the
+    target's Info counts the new notes under Linked from (four, with the
+    two stored ones and the navigation probe)."""
     app, profile = _app(tmp_path)
     opened = _record_open_url(monkeypatch, app)
     # The quit-guard support's scaled autosave pair (1 s / 2 s): the arm
     # waits for the save, not for the production 2 s debounce.
     _scaled_autosave(monkeypatch)
+    # Arm C's corpus (C-1): a stored link and a bare ``[[Title]]`` to Lisbon
+    # on two lines, and a note titled "Trip" -- the reviewer's probe 2: on
+    # the base, Home/Right x10 opened the picker on the rows [Lisbon, Trip],
+    # Down chose "Trip" and Enter rewrote the Lisbon link to the WRONG note
+    # (autosave then swapped the edge).
+    navigation_body = (
+        f"See [[{LISBON}]](note://{profile.lisbon_id}) today.\nSee [[{LISBON}]] today."
+    )
+    navigation_id = profile.db.add_note(NAVIGATION, navigation_body)
+    assert navigation_id and profile.db.add_note("Trip", "the wrong note")
+    opens = _count_picker_opens(monkeypatch)
     async with app.run_test(size=SIZE) as pilot:
         screen = await _library(app, pilot)
         body = await _blank_note_with_body_focused(screen, pilot)
@@ -145,9 +238,34 @@ async def test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_l
 
         await _until(pilot, _saved, "autosave to store the linked body", timeout=25.0)
 
+        # Arm C (final fix round, C-1): probe 2's keys over the stored link
+        # (line 0) and over the bare ``[[Title]]`` (line 1). The picker
+        # never opens, the body is byte-identical, and the recorded edges
+        # are the same after the save.
+        body = await _open_note(screen, pilot, NAVIGATION, navigation_id)
+        edges_before = _link_edges(profile.db, navigation_id)
+        assert edges_before == [profile.lisbon_id], edges_before
+        opens["n"] = 0
+        await _navigation_keys_leave_the_line_alone(
+            pilot, screen, body, opens, row=0, label="stored link"
+        )
+        await _navigation_keys_leave_the_line_alone(
+            pilot, screen, body, opens, row=1, label="bare [[Title]]"
+        )
+        assert body.text == navigation_body
+
+        def _navigation_saved() -> bool:
+            snapshot = screen._library_note_session.snapshot
+            return snapshot is not None and snapshot.note_id == navigation_id and not snapshot.dirty
+
+        await _until(pilot, _navigation_saved, "the navigation probe to be saved", timeout=25.0)
+        assert profile.db.get_note_by_id(navigation_id)["content"] == navigation_body
+        assert _link_edges(profile.db, navigation_id) == edges_before
+        assert opens["n"] == 0
+
         # Index and "Two links" already link to Lisbon through the stored
-        # form; the typed-and-picked link makes three.
+        # form; the typed-and-picked link and the navigation probe make four.
         await _open_note(screen, pilot, LISBON, profile.lisbon_id)
-        rows = await _info_backlinks(screen, pilot, "Linked from (3)")
-        assert sorted(rows) == sorted([INDEX, TWO, VERIFIER]), rows
+        rows = await _info_backlinks(screen, pilot, "Linked from (4)")
+        assert sorted(rows) == sorted([INDEX, NAVIGATION, TWO, VERIFIER]), rows
         assert opened == []

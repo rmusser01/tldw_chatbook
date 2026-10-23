@@ -149,6 +149,7 @@ jobs:
             Tests/Chatbooks/test_chatbook_keywords_round_trip.py \
             Tests/Utils/test_notes_filter_match.py \
             Tests/Notes/test_note_links_typed_titles.py \
+            Tests/Notes/test_note_link_policy.py \
             Tests/Library/test_library_media_source_link.py \
             Tests/Library/test_library_notes_canvas_pending_lookup.py \
             Tests/App/test_detached_focus_guard.py \

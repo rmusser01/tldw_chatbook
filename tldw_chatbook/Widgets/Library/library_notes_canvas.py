@@ -1001,6 +1001,12 @@ class NoteEditorTextArea(DetachSafeTextArea):
             self.link_picker_open = False
             self.link_picker_has_rows = False
             self.post_message(self.LinkPickerKey(self, "resize"))
+            if event.key == "escape":
+                # Final fix round (P-2): the box is still painted, so the
+                # user's Escape means "close it" -- claimed here, or it
+                # fell through to the editor's Back and closed the editor.
+                event.stop()
+                event.prevent_default()
             return
         if event.key != "escape" and not self.link_picker_has_rows:
             return
@@ -4480,17 +4486,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     @on(Resize)
     def _note_link_picker_follows_resize(self, event: Resize) -> None:
-        """Fix round 2 (R2-5): an open link picker re-anchors to the pane's
-        new geometry, so rows cut beside the caret grow back. Decorated, like
-        ``_note_chrome_follows_width`` beside it: the pane's own ``on_resize``
-        keeps running."""
+        """The FOLLOW-mode picker re-anchors to the pane's new geometry (fix
+        round 3, R3-4: it is anchored to the Preview region, which a resize
+        moves). Decorated, like ``_note_chrome_follows_width`` beside it: the
+        pane's own ``on_resize`` keeps running."""
         try:
             picker = self.query_one("#library-note-link-picker", LibraryNoteLinkPicker)
         except NoMatches:
             return
-        # Insert mode re-anchors through the body's own resize (the
-        # controller scrolls the caret into view first, R3-2); this hook is
-        # the follow picker's, anchored to the Preview region (R3-4).
+        # The insert-mode picker does not re-anchor on a resize: fix round 5
+        # CLOSES it on the screen's own Resize (the controller's
+        # ``close_library_note_link_picker_on_resize``), and typing within
+        # the ``[[`` reopens it. This hook is the follow picker's alone.
         if picker.is_open and picker.mode == "follow":
             picker.reanchor()
 
