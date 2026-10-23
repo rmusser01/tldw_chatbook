@@ -313,7 +313,8 @@ _BUDGETS: dict[str, int] = {
     # two methods nothing calls go (-19): 35,663.
     # TASK-36361: staged completion delegates to the same-owner helper (-45).
     # TASK-36387: five badge branches read the category list's table (-3): 35,660.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35615,
+    # TASK-36388: the context-window suppress queue nothing wrote goes (-13): 35,647.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35602,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

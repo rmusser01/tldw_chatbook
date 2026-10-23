@@ -492,15 +492,6 @@ class ModelSearchPicker(Widget):
         self._hide_results()
         self._render_catalog_status()
 
-    def set_custom_value(self, model_id: str | None) -> None:
-        """Synchronize a custom model draft from a compatibility adapter."""
-        self._custom_mode = True
-        self._selected_model = normalize_custom_model_id(model_id)
-        self._set_input_value(self._selected_model or "")
-        self._sync_custom_button()
-        self._hide_results()
-        self._render_catalog_status()
-
     def set_discovered_models(
         self,
         provider: str,
