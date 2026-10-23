@@ -1,7 +1,7 @@
 ---
 id: TASK-36454
 title: Keep newer Library Prompt drafts when an earlier Save completes
-status: To Do
+status: In Progress
 created_date: 2026-10-23 16:33
 labels:
 - textual
@@ -25,6 +25,9 @@ documentation:
 - backlog/decisions/076-library-lifecycle-progressive-disclosure.md
 - backlog/decisions/086-library-adaptive-reader-shell.md
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
+assignee:
+- '@codex'
+updated_date: 2026-10-23 19:10
 ---
 
 ## Description
@@ -42,7 +45,7 @@ Related tasks: [TASK-32603](task-32603%20-%20Review-Library-Prompt-save-and-brow
 
 ADR check: no new ADR expected for a bounded repair within existing owners and contracts. Applicable decisions: [033-application-session-state-ownership](../decisions/033-application-session-state-ownership.md), [040-versioned-prompt-artifacts-and-safe-improvement-transactions](../decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md), [049-local-prompt-retained-version-history](../decisions/049-local-prompt-retained-version-history.md), [076-library-lifecycle-progressive-disclosure](../decisions/076-library-lifecycle-progressive-disclosure.md), [086-library-adaptive-reader-shell](../decisions/086-library-adaptive-reader-shell.md). Re-evaluate if implementation changes a boundary.
 
-[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). This task does not claim the repair is implemented.
+[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). The audit records the pre-fix behavior; implementation evidence is recorded below.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -56,3 +59,21 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce create/update acknowledgement with mounted real-store tests, including later Basic/Advanced/raw metadata edits, queued Changed, definite failure and next Save.
+2. Capture submitted and current live drafts at the existing UI owner. Adopt actual saved identity/version and retain newer blocks/raw controls, dirty/action/history projections and stable children.
+3. Verify current-version retry and Back/navigation/quit guards; run targeted editor/service/governance checks, update documentation and obtain Superpowers review.
+
+ADR required: no
+ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md; backlog/decisions/049-local-prompt-retained-version-history.md; backlog/decisions/076-library-lifecycle-progressive-disclosure.md; backlog/decisions/086-library-adaptive-reader-shell.md
+Reason: bounded acknowledgement repair inside existing editor/persistence/history owners; no boundary changes.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+Prompt Save now captures live Basic/Advanced blocks and raw metadata, adopts the actual persisted identity/version, and retains later edits as a dirty working copy. The existing first-save capability refresh keeps the next Save on the same row; old queued semantic projections are rejected. Completion moved to UI/Library_Modules/prompt_save_ack.py to lower the controller ceiling to5,100. Child editors and existing history/guard/service boundaries stay in place.
+
+Mounted real-SQLite regressions cover create/update, later and queued input, definite failure, second Save, guarded Back/navigation/quit flush and a held older semantic message. See Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md for RED/GREEN receipts and fixture qualifications. Existing ADR-033 application state and ADR-040/049/076/086 apply; no new ADR. Independent Superpowers review and hosted CI remain pending.
+<!-- SECTION:NOTES:END -->

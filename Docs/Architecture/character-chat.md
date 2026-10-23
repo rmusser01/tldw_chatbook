@@ -52,6 +52,8 @@ All three are managed in the Personas screen.
 
 Dictionaries map trigger phrases to replacement text. `apply_active_chatdicts_to_text` applies active dictionaries to the ephemeral final user message under a strategy (`apply_strategy`; Console constants: max 500 tokens, "sorted_evenly"). Parsing supports user markdown dictionary files; the applier never raises on failure — the payload goes through unchanged. Console dictionary settings are currently hard-coded at the screen; world info is gated by `[character_chat] enable_world_info` (default on).
 
+The mounted Dictionary Settings form acknowledges only the raw controls submitted by Save and adopts the actual committed optimistic-lock version. Controls edited while that Save is pending remain visible and unsaved for the next explicit Save; the existing New, leave, and quit guards continue to detect those settings drafts.
+
 ## Expressions and emotes
 
 Cards can drive live expression playback: `emote_directives.CharacterEmoteEvent` parses emote directives **inline during streaming** (inside `append_stream_chunk`, with a fail-closed parser reset), and `character_expression_playback.prepare_expression` selects the sprite/mood for display. Durable emote metadata follows ADR-075.

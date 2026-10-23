@@ -5871,8 +5871,10 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         if self.state.selected_entity_kind != "dictionary":
             return
-        if self.state.has_unsaved_changes != message.is_dirty:
-            self.state.has_unsaved_changes = message.is_dirty
+        # A Changed message queued behind Save can describe an older baseline.
+        is_dirty = self.query_one(PersonasDictionaryDetailWidget).has_unsaved_settings
+        if self.state.has_unsaved_changes != is_dirty:
+            self.state.has_unsaved_changes = is_dirty
             self._update_title()
             self._sync_inspector_console_actions()
 
@@ -5888,6 +5890,9 @@ class PersonasScreen(BaseAppScreen):
             return
         detail = self.query_one(PersonasDictionaryDetailWidget)
         payload = dict(message.payload)
+        submitted_snapshot = message.submitted_snapshot
+        if submitted_snapshot is None:
+            submitted_snapshot = detail._settings_snapshot()
         if not payload.get("name"):
             detail.set_status("A name is required.")
             return
@@ -5914,23 +5919,11 @@ class PersonasScreen(BaseAppScreen):
             )
             detail.set_status(f"Save failed: {exc}")
             return
-        raw_version = record.get("version")
-        self._selected_dictionary_version = (
-            int(raw_version) if raw_version is not None else None
+        from ..Persona_Modules.persona_save_completion import finish_dictionary_settings_save
+
+        await finish_dictionary_settings_save(
+            self, detail, record, submitted_snapshot, entity_id
         )
-        self.state.has_unsaved_changes = False
-        self.state.selected_entity_name = str(record.get("name") or "")
-        self.query_one(PersonasInspectorPane).show_selection(
-            name=self.state.selected_entity_name, kind="dictionary"
-        )
-        detail.load_dictionary(record)
-        await self._refresh_dictionary_statistics(record)
-        detail.set_status("Saved.")
-        self._update_title()
-        await self._render_dictionary_rows(query=self.state.search_query)
-        self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
-        self._sync_inspector_console_actions()
-        await self._refresh_dictionary_versions()
 
     _MARKDOWN_LOSSY_FIELDS = (
         "regex/type, probability, group, max replacements, timed effects, "

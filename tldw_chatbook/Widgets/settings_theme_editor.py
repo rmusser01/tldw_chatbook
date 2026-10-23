@@ -214,10 +214,18 @@ class SettingsThemeEditor(Vertical):
             super().__init__()
 
     class Saved(Message):
-        """A Save or Save as wrote ``theme_name``; the pane returns to the picker."""
+        """A Save wrote ``theme_name`` without leaving a newer draft to edit."""
 
-        def __init__(self, theme_name: str) -> None:
+        def __init__(
+            self,
+            theme_name: str,
+            *,
+            session: int | None = None,
+            working_palette: tuple[str, bool, dict[str, str]] | None = None,
+        ) -> None:
             self.theme_name = theme_name
+            self.session = session
+            self.working_palette = working_palette
             super().__init__()
 
     class SaveAsRequested(Message):
@@ -1242,6 +1250,7 @@ class SettingsThemeEditor(Vertical):
         session, loaded = self._session, self._loaded_user_theme
         theme_data = self._theme_file_data(theme_name)
         theme_dict = self._theme_dict()
+        submitted = self._working_palette()
         self._saves_in_flight += 1
         self._save_idle.clear()
         try:
@@ -1259,7 +1268,7 @@ class SettingsThemeEditor(Vertical):
                     theme_path.exists() and (always_confirm or loaded != theme_name)
                 ):
                     await self._write_theme_file(
-                        theme_name, theme_path, theme_data, theme_dict, session
+                        theme_name, theme_path, theme_data, theme_dict, session, submitted
                     )
                     return
 
@@ -1269,7 +1278,7 @@ class SettingsThemeEditor(Vertical):
                     target = await self._resolve_write_target(theme_name)
                     if target is not None:
                         await self._write_theme_file(
-                            theme_name, target, theme_data, theme_dict, session
+                            theme_name, target, theme_data, theme_dict, session, submitted
                         )
 
             self._dialog_if_current(
@@ -1324,6 +1333,7 @@ class SettingsThemeEditor(Vertical):
         theme_data: dict[str, Any],
         theme_dict: dict[str, Any],
         session: int,
+        submitted: tuple[str, bool, dict[str, str]],
     ) -> None:
         """Write the theme TOML and register it; post ``Saved`` on success.
 
@@ -1350,22 +1360,30 @@ class SettingsThemeEditor(Vertical):
                     self._reapply_if_active(theme_name)
                 self.post_message(self.ThemesChanged())
                 return
-            # An edit made while the file was being written is still unsaved.
-            if self._theme_file_data(theme_name) == theme_data:
-                self.is_modified = False
+            # TASK-36457: compare live controls, including invalid raw text
+            # and edits whose Changed message has not reached this owner yet.
+            self.is_modified = self._working_palette() != submitted
             self._loaded_user_theme = theme_name
             # Review I-2: a running Try becomes the saved theme -- even under
             # a new name (Save as / renamed), where the tried custom_<old>
             # would otherwise keep running. Nothing is left for Discard.
             undo, self._try_undo = self._try_undo, None
-            if self.current_theme_name != theme_name:
-                # Save as: the editor now edits the new file. Name first, so
-                # the Name box's Changed echo is a no-op.
+            if (
+                self.query_one("#settings-theme-name", Input).value == submitted[0]
+                and self.current_theme_name != theme_name
+            ):
+                # Save as follows its actual saved file unless the user has
+                # already typed a newer name. Name first makes its echo a no-op.
                 self.current_theme_name = theme_name
                 self._show_name(theme_name)
             self._reapply_if_active(theme_name, tried=undo[1] if undo else None)
             self.post_message(self.ThemesChanged())
-            self.post_message(self.Saved(theme_name))
+            if not self.is_modified:
+                self.post_message(
+                    self.Saved(
+                        theme_name, session=session, working_palette=self._working_palette()
+                    )
+                )
         except Exception as e:
             logger.error(f"Failed to save theme: {e}")
             self.app.notify(
@@ -1562,8 +1580,8 @@ class SettingsThemeEditor(Vertical):
     def _working_palette(self) -> tuple[str, bool, dict[str, str]]:
         """The edits on screen: name, dark flag and the colour boxes as typed."""
         return (
-            self.current_theme_name,
-            self.is_dark_theme,
+            self.query_one("#settings-theme-name", Input).value,
+            self.query_one("#settings-theme-dark-mode", Checkbox).value,
             {name: box.value for name, box in self.color_inputs.items()},
         )
 

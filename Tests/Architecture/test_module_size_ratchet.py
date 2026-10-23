@@ -150,7 +150,8 @@ _BUDGETS: dict[str, int] = {
     # limits, never contort code"), applied 2026-10-22 and 2026-10-23: B2a
     # grows personas_screen.py from 16,561 lines (dev 7700c63a68) to 16,885;
     # the row rises in each commit that grows it.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16885,
+    # TASK-36454..36458: narrow completion helpers lower the combined owner.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16878,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
