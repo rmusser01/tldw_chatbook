@@ -896,8 +896,8 @@ async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
     only its transport stubbed. Discover models for a saved koboldcpp root,
     then for a prefix root typed into Endpoint, lists from the /v1/models
     Switch model probes. AC#2: for an endpoint the contract refuses, the line
-    beside Discover names the contract's reason, with a fix that keeps
-    koboldcpp's native send route."""
+    beside Discover names the contract's reason, and points at the native
+    /api/v1/generate route koboldcpp's sends need."""
     from tldw_chatbook.Chat.provider_endpoint_contract import (
         ConnectionProbeAvailability,
         connection_probe_availability,
@@ -935,7 +935,9 @@ async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
         await _settle(host, pilot)
         screen.query_one("#settings-discover-provider-models", Button).focus()
         await pilot.press("enter")
-        await pilot.pause()  # the press starts the worker _settle waits for
+        await _until(
+            pilot, lambda: screen._model_discovery_status.startswith("Endpoint path")
+        )
         await _settle(host, pilot)
         status = screen.query_one("#settings-model-discovery-status", Static)
         shown = _static_text(status) if status.display else ""
@@ -949,6 +951,6 @@ async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
     ]
     assert [str(sent.url) for sent in served.requests] == probed
     assert shown == (
-        "Endpoint path has ambiguous API suffixes. Use the server's address, "
-        "such as http://localhost:5001, or its /api/v1/generate route."
+        "Endpoint path has ambiguous API suffixes. Use the server's "
+        "/api/v1/generate route, such as http://localhost:5001/api/v1/generate."
     ), shown
