@@ -54,9 +54,11 @@ class _FilterProfile(_NotesProfile):
         self.lisbon_id = self.db.add_note(
             "Trip planning: Lisbon", "itinerary and chunk size notes"
         )
-        self.zebra_id = self.db.add_note("Zebra", "nothing here")
-        assert self.meeting_id and self.lisbon_id and self.zebra_id
-        for note_id, keyword in ((self.zebra_id, "zebra"), (self.lisbon_id, "homelab")):
+        # The keyed note: its keyword appears in NEITHER its title nor its
+        # body, so only the keyword leg can find it (fix round 1, I-1).
+        self.keyed_id = self.db.add_note("Field trip", "nothing here")
+        assert self.meeting_id and self.lisbon_id and self.keyed_id
+        for note_id, keyword in ((self.keyed_id, "zebra"), (self.lisbon_id, "homelab")):
             keyword_id = self.db.add_keyword(keyword)
             assert keyword_id is not None
             assert self.db.link_note_to_keyword(note_id, keyword_id) is True
@@ -74,8 +76,10 @@ def _app(tmp_path):
 
 
 async def _notes_list(app, pilot):
+    """Click the rail's Notes row -- a real click, so focus lands where it
+    does live (``Button.press()`` would not move it)."""
     screen = await _library(app, pilot)
-    screen.query_one("#library-row-browse-notes", Button).press()
+    await pilot.click("#library-row-browse-notes")
     await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
     return screen
 
@@ -134,24 +138,37 @@ async def _clear_filter(screen, pilot) -> None:
 async def test_typing_meet_and_enter_lists_the_meeting_notes_and_zebra_finds_the_keyed_note(
     tmp_path,
 ) -> None:
-    """AC#1 and AC#3, painted: a partial word and a keyword both find their note."""
+    """AC#3 and AC#1, painted: a keyword-only word, a keyword+body pair and a partial word each find their note."""
     app, _profile = _app(tmp_path)
     async with app.run_test(size=SIZE) as pilot:
         screen = await _notes_list(app, pilot)
 
+        # keyword leg first: "zebra" is only a keyword of "Field trip", so on
+        # the base this half fails for the keyword reason alone
+        await _filter(screen, pilot, "zebra")
+        await _until_painted(app, screen, pilot, "#library-notes-status", "filter: zebra · 1 result")
+        rows = _painted(app, screen, "#library-notes-list")
+        assert "Field trip" in rows, rows
+        assert "Meeting notes" not in rows, rows
+        assert not screen.query("#library-notes-empty")
+
+        # across legs: one word in a keyword, the other in the body
+        await _clear_filter(screen, pilot)
+        await _filter(screen, pilot, "homelab itinerary")
+        await _until_painted(
+            app, screen, pilot, "#library-notes-status", "filter: homelab itinerary · 1 result"
+        )
+        rows = _painted(app, screen, "#library-notes-list")
+        assert "Trip planning: Lisbon" in rows, rows
+        assert not screen.query("#library-notes-empty")
+
+        # a partial word
+        await _clear_filter(screen, pilot)
         await _filter(screen, pilot, "meet")
         await _until_painted(app, screen, pilot, "#library-notes-status", "filter: meet · 1 result")
         rows = _painted(app, screen, "#library-notes-list")
         assert "Meeting notes" in rows, rows
         assert "Trip planning: Lisbon" not in rows, rows
-        assert not screen.query("#library-notes-empty")
-
-        await _clear_filter(screen, pilot)
-        await _filter(screen, pilot, "zebra")
-        await _until_painted(app, screen, pilot, "#library-notes-status", "filter: zebra · 1 result")
-        rows = _painted(app, screen, "#library-notes-list")
-        assert "Zebra" in rows, rows
-        assert "Meeting notes" not in rows, rows
         assert not screen.query("#library-notes-empty")
 
 
