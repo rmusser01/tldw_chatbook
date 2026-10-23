@@ -644,6 +644,14 @@ if TYPE_CHECKING:
 #: implementation, which every screen wiring this controller must match.
 LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
 
+#: TASK-34000.71 AC#4: how long Add from files… waits for a notes-sync start
+#: the Library scheduled lazily to settle before painting the chooser. On a
+#: no-root profile that start is one ``Path.exists`` on a thread, so the
+#: chooser paints Keep a folder synced available on its first frame; a
+#: configured profile's full start that outlives the wait paints the honest
+#: not-ready option, and the start's done-callback repaints it when it lands.
+_NOTES_SYNC_START_SETTLE_SECONDS = 0.5
+
 
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
@@ -5733,6 +5741,28 @@ class LibraryNotesController:
                 "Notes import needs attention. Review the import panel and try again.",
                 severity="warning",
             )
+    async def _settle_library_notes_sync_start(self) -> None:
+        """Give a lazily scheduled notes-sync start a bounded chance to settle.
+
+        TASK-34000.71: the app's ``ensure_notes_sync_runtime_started`` is
+        idempotent (it returns boot's own task, or the one the screen's
+        constructor scheduled); a task still pending is awaited for at most
+        ``_NOTES_SYNC_START_SETTLE_SECONDS`` through a shield, so a timeout
+        never cancels the start itself. A failed start is the done-callback's
+        to log; here it only means the chooser reads the honest status.
+        """
+        ensure_started = getattr(
+            self.app_instance, "ensure_notes_sync_runtime_started", None
+        )
+        task = ensure_started() if callable(ensure_started) else None
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_NOTES_SYNC_START_SETTLE_SECONDS
+            )
+        except Exception:  # noqa: BLE001 - the timeout, or the start's own failure
+            return
     @on(Button.Pressed, "#library-notes-add-from-files")
     async def handle_library_notes_add_from_files(self, event: Button.Pressed) -> None:
         """Open the one authority chooser before any source picker."""
@@ -5769,6 +5799,10 @@ class LibraryNotesController:
             "activating",
         }:
             await self._library_notes_sync_controller.abandon_setup()
+        # TASK-34000.71 AC#4: the chooser re-reads availability from the
+        # runtime (``begin_add_from_files``), so let a lazily scheduled start
+        # settle first -- bounded, because this is the cheap no-root probe.
+        await self._settle_library_notes_sync_start()
         self._library_notes_sync_controller.begin_add_from_files()
         self._library_notes_lasting_origin = "setup"
         self._library_notes_view = "lasting_add"

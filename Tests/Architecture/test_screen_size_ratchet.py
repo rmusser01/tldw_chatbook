@@ -1048,7 +1048,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-23, TASK-34000.11 fix round 5 (same owner decision): 37757 ->
     #: 37761 (+4), methods unchanged -- ``on_resize`` closes the open ``[[``
     #: picker first, on the earliest resize the screen sees (one call).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37761, 1361),
+    #: 2026-10-23, TASK-34000.71 (same owner decision): 37761 -> 37771
+    #: (+10), methods unchanged -- the constructor asks the app to schedule
+    #: the notes-sync runtime's lazy non-forced start once it holds the
+    #: owner (the no-root "Keep a folder synced" deadlock).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37771, 1361),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

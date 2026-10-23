@@ -1057,3 +1057,4 @@ Tests/UI/test_library_notes_tree_keeps_folders_after_create.py
 Tests/UI/test_library_notes_filter_finds_what_you_typed.py
 Tests/UI/test_library_note_links_picker_and_preview.py
 Tests/UI/test_library_note_links_preview_opens_in_app.py
+Tests/UI/test_library_notes_keep_synced_without_a_root.py

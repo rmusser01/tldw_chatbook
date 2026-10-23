@@ -92,7 +92,13 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
-    "tldw_chatbook/app_service_wiring.py": 3573,
+    # 2026-10-23, TASK-34000.71 (owner decision: a fix over a size ratchet
+    # raises the row, never contorts the code): 3573 -> 3633 (+60) --
+    # ``ensure_notes_sync_runtime_started``, the Library side's one entry
+    # for the lazy non-forced start through boot's own start-task
+    # bookkeeping (its docstring carries the deadlock it breaks), plus the
+    # done-callback's no-screen-stack guard and two imports.
+    "tldw_chatbook/app_service_wiring.py": 3633,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved

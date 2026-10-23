@@ -1107,6 +1107,66 @@ async def test_not_configured_refresh_keeps_setup_available() -> None:
     assert controller.snapshot.lasting_available is True
 
 
+async def test_configured_runtime_still_starting_is_not_offered_as_ready() -> None:
+    """TASK-34000.71 AC#5: a profile WITH roots whose start is in flight.
+
+    The lazy no-root fix must not be bought by widening the setup gate:
+    "starting" stays outside ``_SETUP_READY_STATUSES``, so a configured
+    user's in-flight boot start is reported honestly (not ready, with the
+    not-ready copy on press), and the option is offered once it settles.
+    """
+
+    from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+        _SETUP_READY_STATUSES,
+    )
+
+    assert "starting" not in _SETUP_READY_STATUSES
+    runtime = _Runtime()
+    root = NotesSyncRootRuntimeSnapshot("root-" + "a" * 40, "up_to_date", "none")
+    current = NotesSyncRuntimeSnapshot("starting", "wait", (root,))
+    runtime.snapshot = lambda: current
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    assert controller.snapshot.lasting_available is False
+    assert controller.begin_add_from_files() is True
+    assert controller.snapshot.lasting_available is False
+
+    assert controller.choose_relationship("keep_synced") == "choose"
+    assert controller.snapshot.phase == "choose"
+    assert (
+        controller.snapshot.status_line
+        == "Keeping a folder synced isn't ready on this profile yet."
+    )
+
+    # The start settles: the next chooser re-reads it as ready.
+    current = NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+    assert controller.begin_add_from_files() is True
+    assert controller.snapshot.lasting_available is True
+    assert controller.choose_relationship("keep_synced") == "configure"
+
+
+async def test_failed_runtime_start_shows_the_honest_copy_not_an_inert_option() -> (
+    None
+):
+    """TASK-34000.71 AC#4: a start that FAILS is the TASK-21249 state, named."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot("failed", "review_settings")
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    assert controller.snapshot.lasting_available is False
+    assert controller.choose_relationship("keep_synced") == "choose"
+    assert (
+        controller.snapshot.status_line
+        == "Lasting folder sync could not start. Review settings and restart."
+    )
+
+
 async def test_conflict_selection_stages_without_runtime_and_survives_paging() -> None:
     runtime = _Runtime()
     runtime.check_plan = _conflict_plan(bindings=("bind-1", "bind-2"), page_size=1)

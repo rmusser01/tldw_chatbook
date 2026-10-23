@@ -502,7 +502,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # filter finds what you typed (2 boots, ~25 s), and .11's link picker and
 # in-app Preview links split in two (1 boot each, ~20 s / ~17 s):
 # 664 + 5 = 669.
-MINIMUM_FILES = 669
+# TASK-34000.71 (2026-10-23) appends one file at the tail: Keep a folder
+# synced offered on a no-root profile, the real app booted into Library
+# (1 boot, ~13 s): 669 + 1 = 670.
+MINIMUM_FILES = 670
 
 
 def read_census(path: Path) -> list[str]:
