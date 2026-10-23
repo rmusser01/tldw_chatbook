@@ -877,13 +877,14 @@ ListItem.personas-conversation-row.-highlight {
    box once it takes keyboard focus after a row is selected -- and that box
    is taller than the 1-2 rows it holds (it fills the rail's remaining
    height), so the outline rendered as a tall empty bordered rectangle
-   hanging below the selected row (RP UX review). Rows already show
-   selection via .is-active/.-highlight backgrounds above, so the fallback
-   outline is both redundant and visually broken here.
+   hanging below the selected row (RP UX review). The ListView's rows showed
+   selection with their own backgrounds, so the fallback outline was both
+   redundant and visually broken there.
    Roleplay frame B2a: the list is now RoleplayItemList (an OptionList, same
-   id). Its focus shows as the box-stable left edge and the focus-only
-   cursor row (features/_roleplay.tcss), so the rule still stands, and it
-   stays pinned in boot (R18, css/build_css.py). */
+   id), and those ListItem rules left with the ListView. Its focus shows as
+   the box-stable left edge and the focus-only cursor row
+   (features/_roleplay.tcss), so the outline is still redundant: the rule
+   stands, and it stays pinned in boot (R18, css/build_css.py). */
 #personas-library-rows:focus {
   outline: none;
 }

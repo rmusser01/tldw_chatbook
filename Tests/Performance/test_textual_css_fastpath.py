@@ -323,7 +323,7 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
 #: vocabulary pinning reorganised ten of these rules away: measured 264,
 #: re-pinned at 264 + 10 so the freed headroom is banked, per the same
 #: convention.
-#: LOWERED 2026-10-19 (Roleplay frame B2a, TASK-33910.3; spec 2.12 item 1):
+#: LOWERED 2026-10-22 (Roleplay frame B2a, TASK-33910.3; spec 2.12 item 1):
 #: the ListView and its pager left PersonasLibraryPane, and with them three
 #: counted rules (`#personas-library-rows ListItem Static`, the recovery
 #: row's `Static`, `#personas-library-pagebar Button`). Measured 272 -> 269

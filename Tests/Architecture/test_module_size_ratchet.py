@@ -157,14 +157,13 @@ _BUDGETS: dict[str, int] = {
     # server label on one header row adds 15 lines; the row rises 369 -> 384,
     # never squeezed code.
     # Roleplay frame B2a (TASK-33910.3), owner decision 2026-10-19 ("expand
-    # limits, never contort code"): the items-list state (prompt builder,
-    # density, count text, marks-bar and delete-modal copy, window rules;
-    # spec 5.11's B2a row) adds +536 lines (384 -> 920); the row rises
-    # with it, never squeezed code (Roleplay frame B2a). B2a Task 5, same
-    # decision, applied 2026-10-22: the marks bar's narrow forms (whole
-    # actions drop, none is cut) add +8 (920 -> 928), and the Task 5
-    # review's fix (the count yields before Delete, so Delete never drops)
-    # adds +3 (928 -> 931).
+    # limits, never contort code"), applied 2026-10-22: the items-list state
+    # (prompt builder, density, count text, marks-bar and delete-modal copy,
+    # window rules; spec 5.11's B2a row) adds +536 lines (384 -> 920); the
+    # row rises with it, never squeezed code. B2a Task 5, same decision and
+    # day: the marks bar's narrow forms (whole actions drop, none is cut)
+    # add +8 (920 -> 928), and the Task 5 review's fix (the count yields
+    # before Delete, so Delete never drops) adds +3 (928 -> 931).
     "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 931,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,

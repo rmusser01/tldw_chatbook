@@ -87,7 +87,7 @@ panes (handle → Library → centre → Inspector → handle).
 
 | Control | What it does | Shown in |
 |---|---|---|
-| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter puts the first match under the cursor in the list. | every mode |
+| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter puts the first match under the cursor in the list; if the search takes longer than 2 seconds (a slow server), Enter stops waiting and the cursor goes to the first row shown then. | every mode |
 | **New** | Creates a new item in the current mode. ("Create a new item in this mode.") | every mode |
 | **Import** | Opens a file picker; the tooltip names the accepted formats per mode — "Import a character card (PNG or JSON).", "Import a dictionary (JSON or Markdown).", "Import a world book (JSON)." | Characters, Dictionaries, Lore — **hidden in Personas** |
 | **Duplicate** | Copies the selected item. ("Duplicate the selected item.") | Characters, Dictionaries, Lore — **hidden in Personas** |
@@ -129,9 +129,10 @@ keys act on the list only, never on a focused button.
 The list's top border names the kind and its count: "Characters 349",
 "Personas 114", "Lore books 3 · 2 on" and "Chat dictionaries 3 · 2 on"
 (books add how many are on). While a search or a tag narrows the list it
-reads "Characters 48 of 349", adding "· tag fantasy" for a tag. It shows
-"(…)" while counting, "100+" on a server until the total is known, and
-"(?)" when the list could not load.
+reads "Characters 48 of 349", adding "· tag fantasy" for a tag. Personas
+reads "Personas (…)" while it loads. On a server, Characters reads
+"Characters 0" with the empty-list line until the server first answers,
+then "100+" until the total is known. "(?)" means the list could not load.
 
 The bottom border gives the open item's place in the list, "#4 of 28". It
 is blank while nothing is open, or while a search hides the open item.
