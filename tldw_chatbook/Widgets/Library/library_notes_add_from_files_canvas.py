@@ -249,6 +249,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     class BackRequested(Message):
         pass
 
+    class ManageRootsRequested(Message):
+        """TASK-34000.17 AC#4: the receipt's own route onward to Manage sync folders."""
+
     def __init__(
         self, snapshot: LibraryNotesLastingSyncSnapshot, **kwargs: Any
     ) -> None:
@@ -353,79 +356,89 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             "Resolution history", "it starts after this root is activated"
         )
 
+    def _compose_chooser(self) -> ComposeResult:
+        """The one authority chooser: Import once or Keep a folder synced.
+
+        TASK-34000.17 AC#5: this is also what every phase the body chain
+        does not name renders -- ``roots`` after "Nothing to review." or a
+        failed Recovery used to fall through to NOTHING (a heading over an
+        empty box, no way back), because the chain had no branch for it.
+        """
+        # task-32612 AC#1: this used to open with a THIRD header line --
+        # "Choose the relationship before selecting a file or folder." --
+        # under the pane's own "Add files to Library notes." and the
+        # status line's "Choose how files should relate…": three
+        # near-identical sentences over two buttons. The heading above
+        # asks the question once; each option answers it.
+        #
+        # AC#2: the structural consequence is the largest difference
+        # between the two and neither sentence named it -- Import once
+        # reproduced the vault's tree (A cap 23) while lasting sync put
+        # all 54 notes flat under one managed folder (A cap 51). When
+        # task-32586 gives lasting sync its own folder-creation path,
+        # the second sentence here is what has to change with it.
+        yield Static(
+            "Import once — Copy files into Notes, reproducing your folder "
+            "structure as Library folders. Later changes to the originals "
+            "are not tracked.",
+            markup=False,
+        )
+        # task-32125: both relationships are one choice, so both buttons
+        # belong here under their own description. Import once used to be
+        # composed into the pinned bar, 36 rows below its description.
+        yield Button(
+            "Import once",
+            id="notes-add-import-once",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Static(
+            "Keep a folder synced — Create a lasting connection. Changes "
+            "continue between the folder and Notes, and every note is "
+            "collected in one managed Library folder rather than your "
+            "folder structure.",
+            markup=False,
+        )
+        lasting = self.snapshot.lasting_available
+        keep = Button(
+            "Keep a folder synced" if lasting else "○ Keep a folder synced",
+            id="notes-add-keep-synced",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        # The chooser remains physically actionable while inert so it can
+        # explain the cutover gate instead of becoming unreadable.
+        keep.tooltip = (
+            None
+            if lasting
+            else "Keeping a folder synced isn't ready on this profile yet."
+        )
+        yield keep
+        if not lasting:
+            yield Static(
+                "Keeping a folder synced isn't ready on this profile yet. "
+                "Nearest valid action: Import once.",
+                classes="library-disabled-reason",
+                markup=False,
+            )
+        # task-32612 AC#3: the third world is not on this canvas at all,
+        # and it is the one that matches "edit my vault where it is" --
+        # the reason a vault owner opened this screen. It is a MODE of
+        # Notes, reachable from the source strip directly above the
+        # canvas, so the chooser points at it rather than offering it.
+        yield Static(
+            "Neither? To edit the files where they already are, switch "
+            "the strip above to Folder files — it opens the folder "
+            "directly and imports nothing.",
+            id="notes-add-folder-files-pointer",
+            classes="destination-purpose",
+            markup=False,
+        )
+
     def _compose_phase(self) -> ComposeResult:
         phase = self.snapshot.phase
         if phase == "choose":
-            # task-32612 AC#1: this used to open with a THIRD header line --
-            # "Choose the relationship before selecting a file or folder." --
-            # under the pane's own "Add files to Library notes." and the
-            # status line's "Choose how files should relate…": three
-            # near-identical sentences over two buttons. The heading above
-            # asks the question once; each option answers it.
-            #
-            # AC#2: the structural consequence is the largest difference
-            # between the two and neither sentence named it -- Import once
-            # reproduced the vault's tree (A cap 23) while lasting sync put
-            # all 54 notes flat under one managed folder (A cap 51). When
-            # task-32586 gives lasting sync its own folder-creation path,
-            # the second sentence here is what has to change with it.
-            yield Static(
-                "Import once — Copy files into Notes, reproducing your folder "
-                "structure as Library folders. Later changes to the originals "
-                "are not tracked.",
-                markup=False,
-            )
-            # task-32125: both relationships are one choice, so both buttons
-            # belong here under their own description. Import once used to be
-            # composed into the pinned bar, 36 rows below its description.
-            yield Button(
-                "Import once",
-                id="notes-add-import-once",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Static(
-                "Keep a folder synced — Create a lasting connection. Changes "
-                "continue between the folder and Notes, and every note is "
-                "collected in one managed Library folder rather than your "
-                "folder structure.",
-                markup=False,
-            )
-            lasting = self.snapshot.lasting_available
-            keep = Button(
-                "Keep a folder synced" if lasting else "○ Keep a folder synced",
-                id="notes-add-keep-synced",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            # The chooser remains physically actionable while inert so it can
-            # explain the cutover gate instead of becoming unreadable.
-            keep.tooltip = (
-                None
-                if lasting
-                else "Keeping a folder synced isn't ready on this profile yet."
-            )
-            yield keep
-            if not lasting:
-                yield Static(
-                    "Keeping a folder synced isn't ready on this profile yet. "
-                    "Nearest valid action: Import once.",
-                    classes="library-disabled-reason",
-                    markup=False,
-                )
-            # task-32612 AC#3: the third world is not on this canvas at all,
-            # and it is the one that matches "edit my vault where it is" --
-            # the reason a vault owner opened this screen. It is a MODE of
-            # Notes, reachable from the source strip directly above the
-            # canvas, so the chooser points at it rather than offering it.
-            yield Static(
-                "Neither? To edit the files where they already are, switch "
-                "the strip above to Folder files — it opens the folder "
-                "directly and imports nothing.",
-                id="notes-add-folder-files-pointer",
-                classes="destination-purpose",
-                markup=False,
-            )
+            yield from self._compose_chooser()
             return
         if phase == "configure":
             setup = self.snapshot.setup
@@ -596,6 +609,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             return
         if phase == "history":
             yield from self._compose_history()
+            return
+        # TASK-34000.17 AC#5: ``roots`` and any phase this chain does not name
+        # render the chooser -- Add from files never paints nothing.
+        yield from self._compose_chooser()
 
     # task-32535: the review used to read "Safe item N / Create a Library
     # note" sixty times over. Rows now follow Import once's grammar (path ·
@@ -1167,6 +1184,16 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                         else "Resolution history starts after this root is activated."
                     ),
                 )
+            # TASK-34000.17 AC#4: the receipt had no route onward -- Resolution
+            # history is disabled after a setup activation, so the only control
+            # was ‹ Notes, and a second folder meant finding the toolbar again.
+            # The toolbar's own label, so one name for one place.
+            yield Button(
+                "Manage sync folders",
+                id="notes-sync-manage-roots",
+                classes="library-canvas-action",
+                compact=True,
+            )
             yield Button(
                 back_cue_label("Notes"),
                 id="notes-sync-back",
@@ -1175,6 +1202,23 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
         elif phase == "history":
             yield from self._compose_history_actions()
+            # TASK-34000.17 AC#3: Previous/Next/Return alone left this page
+            # without the way back every other settled page offers.
+            yield Button(
+                back_cue_label("Notes"),
+                id="notes-sync-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
+        else:
+            # TASK-34000.17 AC#3/AC#5: the chooser bar, for ``roots`` and any
+            # phase this chain does not name -- never a page without ‹ Notes.
+            yield Button(
+                back_cue_label("Notes"),
+                id="notes-sync-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
 
     def _apply_tooltip(self) -> str | None:
         blocker = self.snapshot.review.apply_blocker
@@ -1488,6 +1532,12 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             if self.snapshot.review.stale
             else "#notes-sync-back",
             "receipt": "#notes-sync-back",
+            # TASK-34000.17 AC#3: ``roots`` renders the chooser, so it focuses
+            # what the chooser focuses; history lands on its own Return. Before,
+            # neither had an entry and nothing was focused -- which is why the
+            # footer fell back to the rail tier with no Esc on a stranded page.
+            "roots": "#notes-add-import-once",
+            "history": "#notes-sync-history-return",
         }
         selector = selectors.get(self.snapshot.phase)
         if selector is None:
@@ -1707,6 +1757,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
         elif button_id == "notes-sync-back":
             self.post_message(self.BackRequested())
+        elif button_id == "notes-sync-manage-roots":
+            self.post_message(self.ManageRootsRequested())
 
 
 __all__ = ["LibraryNotesAddFromFilesCanvas"]

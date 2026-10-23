@@ -28649,8 +28649,20 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_notes_manage_sync_folders(
         self, event: Button.Pressed
     ) -> None:
-        """Open the path-free lasting root list."""
+        """Open the path-free lasting root list from the notes toolbar."""
         event.stop()
+        await self._open_library_notes_sync_roots()
+
+    @on(LibraryNotesAddFromFilesCanvas.ManageRootsRequested)
+    async def handle_library_notes_sync_manage_roots(
+        self, event: LibraryNotesAddFromFilesCanvas.ManageRootsRequested
+    ) -> None:
+        """Open the root list from the activation receipt (TASK-34000.17 AC#4)."""
+        event.stop()
+        await self._open_library_notes_sync_roots()
+
+    async def _open_library_notes_sync_roots(self) -> None:
+        """Open the path-free lasting root list; the one body behind both doors."""
         if self._library_notes_mutation_fenced():
             return
         note_flush = await self._flush_library_note_save()
