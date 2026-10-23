@@ -2259,7 +2259,10 @@ class TestSummaryThreeState:
             f"context window has room. Turn gates on under {TOOL_GATES_PANE_PATH}"
         )
         assert "all off" not in rows["Tools"].detail
-        assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+        # TASK-36387, rewritten on purpose: MCP is a Settings category now.
+        assert TOOL_GATES_PANE_PATH == (
+            "Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+        )
 
     def test_plaintext_keys_flag_encryption_as_attention(self):
         """Unencrypted stored keys make the encryption row a ✗ call to action."""
