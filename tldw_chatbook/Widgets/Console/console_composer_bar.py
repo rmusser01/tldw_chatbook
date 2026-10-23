@@ -45,6 +45,7 @@ from textual.events import (
 )
 from textual.geometry import Region
 from textual.message import Message
+from textual.message_pump import NoActiveAppError
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
@@ -574,6 +575,17 @@ class ConsoleComposerBar(Horizontal):
             """
             return self.composer
 
+    #: TASK-33620.15.8: the bar's focus and draft-presence state classes,
+    #: and the descendants that rules keyed on them style. Textual restyles
+    #: a node's whole subtree when one of its classes changes: 26 nodes and
+    #: about 10 ms live when a Send's acceptance cleared the draft, inside
+    #: run start's longest UI-loop callback. The rules keyed on these classes
+    #: (`css/features/_console.tcss`) style only the bar and its visible
+    #: draft, so `_sync_interaction_classes` restyles just those.
+    #: `Tests/UI/test_console_composer_state_restyle.py` fails when a rule
+    #: keyed on either class styles a node missing here.
+    INTERACTION_CLASSES = ("console-composer-focused", "console-composer-has-draft")
+    INTERACTION_STYLED_DESCENDANTS = ("#console-command-visible-text",)
     DEFAULT_STATUS = "No active Console session."
     DRAFT_PLACEHOLDER = "Ask, command, or paste task..."
     PASTE_COLLAPSE_THRESHOLD = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
@@ -2080,12 +2092,26 @@ class ConsoleComposerBar(Horizontal):
         self._hidden_input_mirror = canonical
 
     def _sync_interaction_classes(self) -> None:
-        """Mirror focus-within and draft presence onto stable CSS state classes."""
-        self.set_class(self.has_focus_within, "console-composer-focused")
-        self.set_class(
-            self._has_any_draft_content(),
-            "console-composer-has-draft",
-        )
+        """Mirror focus-within and draft presence onto stable CSS state classes.
+
+        TASK-33620.15.8: a change restyles only the bar and
+        `INTERACTION_STYLED_DESCENDANTS`, the nodes rules keyed on these
+        classes style, instead of the bar's whole subtree.
+        """
+        focused, has_draft = self.INTERACTION_CLASSES
+        wanted = {
+            focused: bool(self.has_focus_within),
+            has_draft: bool(self._has_any_draft_content()),
+        }
+        if any(self.has_class(name) != on for name, on in wanted.items()):
+            self.update_classes(wanted, update=False)
+            nodes: list[Widget] = [self]
+            for selector in self.INTERACTION_STYLED_DESCENDANTS:
+                nodes.extend(self.query(selector))
+            try:
+                self.app.stylesheet.update_nodes(nodes, animate=True)
+            except NoActiveAppError:
+                pass
         self._sync_raw_cli_state()
 
     def _sync_current_action_state(self) -> None:
@@ -2504,12 +2530,19 @@ class ConsoleComposerBar(Horizontal):
             send_button.tooltip = self.SEND_READY_TOOLTIP
         else:
             send_button.tooltip = "Type a message to send."
-        send_button.set_class(send_ready, "console-action-primary")
-        send_button.set_class(not send_ready, "console-action-subdued")
-        send_button.set_class(not send_ready, "console-action-disabled")
-        send_button.set_class(send_ready, "console-send-ready")
-        send_button.set_class(not has_draft, "console-send-inactive")
-        send_button.set_class(effective_send_blocked, "console-send-blocked")
+        # TASK-33620.15.8: one restyle for the six readiness classes; six
+        # `set_class` calls restyled the button once per changed class, on
+        # every readiness flip (a Send's acceptance, the first keystroke).
+        send_button.update_classes(
+            {
+                "console-action-primary": send_ready,
+                "console-action-subdued": not send_ready,
+                "console-action-disabled": not send_ready,
+                "console-send-ready": send_ready,
+                "console-send-inactive": not has_draft,
+                "console-send-blocked": effective_send_blocked,
+            }
+        )
         # TASK-33625.1: a queue state arrives as `queue_blocked_reason`, never
         # as setup copy, so it cannot become a link into the setup wizard.
         self.set_class(
