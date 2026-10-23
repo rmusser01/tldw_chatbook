@@ -336,6 +336,43 @@ async def test_enter_in_the_search_box_lands_on_the_first_match_before_the_debou
         assert screen.focused is screen.query_one(RoleplayItemList)
 
 
+async def test_enter_after_the_debounce_fired_waits_for_its_window_and_lands_on_the_first_match(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Enter after the 0.2 s debounce fired but before its window read returned:
+    the screen waits for that render, so the cursor lands on the new first
+    match. Never on dev (where Enter used the previous result); B2a's window
+    path had it until this test: the cursor stayed on rows the render then
+    replaced, and ``set_options`` cleared it, so a second Enter opened nothing."""
+    target = volume_348.get_character_card_by_name("Character 0042")
+    page = personas_screen_module.get_character_page_for_ui
+    release = threading.Event()
+    reading = threading.Event()
+
+    def held(db, **kwargs):
+        if "0042" in str(kwargs.get("search_term") or ""):
+            reading.set()
+            release.wait(10)
+        return page(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", held)
+        await pilot.press("ctrl+f", *"Character 0042")
+        await wait_until(pilot, reading.is_set, what="the debounced search's read")
+        assert screen._search_debounce_timer is None
+        await pilot.press("enter")
+        release.set()
+        await wait_until(
+            pilot,
+            lambda: highlighted_item_id(screen) == f"character:{target['id']}",
+            what="the first match under the cursor",
+        )
+        assert screen.focused is screen.query_one(RoleplayItemList)
+
+
 # ---- Marks by id, the marks bar and the one delete modal (AC#5, R32; Task 5) ----
 
 

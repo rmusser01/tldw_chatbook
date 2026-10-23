@@ -3798,6 +3798,19 @@ class PersonasScreen(BaseAppScreen):
             await self._render_search_query(
                 query=self.state.search_query, mode=self.state.active_mode
             )
+        else:
+            # The debounce already fired; its render may still be reading. Wait
+            # for it, or the cursor lands on rows it is about to replace.
+            for worker in list(self.workers):
+                if (
+                    worker.node is self
+                    and worker.group == "personas-library-search"
+                    and not worker.is_finished
+                ):
+                    try:
+                        await worker.wait()
+                    except (WorkerCancelled, WorkerFailed):
+                        pass
         try:
             library = self.query_one(PersonasLibraryPane)
         except QueryError:
