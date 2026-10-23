@@ -311,9 +311,11 @@ $ds-conversation-menu-width: 30;
 
 /* TASK-36386 / ADR-097: the File Notes revision-history dialog is a rarely
    opened Library modal, so its rules do NOT ride the boot parse:
-   build_css.py splits every `file-notes-history*` block out of this module
-   into screen_modal_file_notes_history.tcss, which FileNotesHistoryDialog's
-   own CSS_PATH loads on first open (TASK-33628.2's pattern). The screen is
+   build_css.py splits every `file-notes-history-*` dialog block out of this
+   module into screen_modal_file_notes_history.tcss, which
+   FileNotesHistoryDialog's own CSS_PATH loads on first open (TASK-33628.2's
+   pattern). The workspace's `#file-notes-history` button is pinned to the
+   boot bundle (see build_css.py), so a rule naming it stays. The screen is
    centered through its own id, because a bare type selector carries no
    owner token and would stay on the boot bundle. */
 #file-notes-history-dialog-screen {

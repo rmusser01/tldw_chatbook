@@ -1305,10 +1305,11 @@ breach. The constant itself never moved. The per-segment diff charged 2,457 B to
 each lifted class pays a `/* ===== WIDGET: X (path) ===== */` banner in every stream it
 lands in, about 75 B, and the class body's indentation and blank lines are copied
 verbatim. (Since TASK-36386, 2026-10-23, the generator dedents each block, so only the
-blank lines and the CSS's own indentation are still copied.) Rewriting the two modals' blocks as one-line rules recovered 267 B, but that
-left only 173 B, which is the near-zero headroom ADR-097's Context warns about. Review then
-kept the quit-only `SessionSummaryDialog` on `DEFAULT_CSS` with a reasoned allowlist
-entry, which left 775 B. Screenshots were byte-identical throughout.
+blank lines and the CSS's own indentation are still copied.) Rewriting the two modals'
+blocks as one-line rules recovered 267 B, but that left only 173 B, which is the near-zero
+headroom ADR-097's Context warns about. Review then kept the quit-only
+`SessionSummaryDialog` on `DEFAULT_CSS` with a reasoned allowlist entry, which left 775 B.
+Screenshots were byte-identical throughout.
 
 **What to do:**
 - Run `Tests/Performance/test_boot_css_byte_budget.py` with the allowlist test whenever
