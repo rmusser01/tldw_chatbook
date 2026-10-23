@@ -39,31 +39,21 @@ class SessionSummaryDialog(ModalScreen[None]):
     idempotent close that stops the timer) and the ConfirmationDialog
     small-modal structure. No BINDINGS: any key skips (ADR-031 -- no
     terminal-convention keys bound; ctrl+q stays app-global). Styling uses
-    legacy semantic variables because ``$ds-*`` tokens do not resolve in
-    Python-side DEFAULT_CSS (only in the bundled tcss).
+    legacy semantic variables because ``$ds-*`` tokens do not resolve in a
+    class's own DEFAULT_CSS: Textual scopes variables per stylesheet source.
+    It stays DEFAULT_CSS on purpose (TASK-35649): the dialog is opt-in and
+    quit-only, so its source registers at quit, off the boot parse.
     """
 
     DEFAULT_CSS = """
-    SessionSummaryDialog {
-        align: center middle;
-    }
+    SessionSummaryDialog { align: center middle; }
     #session-summary-dialog {
-        width: 44;
-        height: auto;
-        background: $panel;
-        border: round $secondary;
-        padding: 1 2;
+        width: 44; height: auto; background: $panel;
+        border: round $secondary; padding: 1 2;
     }
-    .session-summary-title {
-        text-style: bold;
-        color: $accent;
-    }
-    .session-summary-line {
-        color: $text;
-    }
-    .session-summary-hint {
-        color: $text-muted;
-    }
+    .session-summary-title { text-style: bold; color: $accent; }
+    .session-summary-line { color: $text; }
+    .session-summary-hint { color: $text-muted; }
     """
 
     def __init__(

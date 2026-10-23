@@ -33,7 +33,7 @@ OTHER_LABEL = "Other…"
 class VoiceOptionPicker(Vertical):
     """A Select of known values over the free-text Input that holds the value."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     VoiceOptionPicker {
         height: auto;
     }

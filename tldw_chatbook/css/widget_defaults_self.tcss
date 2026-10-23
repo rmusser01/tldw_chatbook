@@ -192,6 +192,20 @@
         text-style: bold underline;
     }
 
+/* ===== WIDGET: SkillEvalDetail (UI/Evals/skill_eval_detail.py) ===== */
+
+    SkillEvalDetail { padding: 1; }
+
+/* ===== WIDGET: SkillEvalPanel (UI/Evals/skill_eval_panel.py) ===== */
+
+    SkillEvalPanel { padding: 1; }
+
+/* ===== WIDGET: LlamaCppSetupView (UI/LLM_Management/llamacpp_setup_view.py) ===== */
+
+    LlamaCppSetupView { height: auto; }
+    LlamaCppSetupView Horizontal { height: auto; }
+    LlamaCppSetupView .llamacpp-status { height: auto; }
+
 /* ===== WIDGET: VllmSetupView (UI/LLM_Management/vllm_setup_view.py) ===== */
 
     VllmSetupView > #vllm-local-setup,
@@ -1118,6 +1132,12 @@
         margin-top: 1;
     }
 
+/* ===== WIDGET: VoiceOptionPicker (UI/Wizards/first_run_voice_pickers.py) ===== */
+
+    VoiceOptionPicker {
+        height: auto;
+    }
+
 /* ===== WIDGET: DestinationHeader (UI/Workbench/workbench_widgets.py) ===== */
 
     DestinationHeader {
@@ -1760,6 +1780,10 @@ ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;bac
         height: 1;
         border: none;
     }
+
+/* ===== WIDGET: FileNotesHistoryDialog (Widgets/Library/library_file_notes_workspace.py) ===== */
+
+    FileNotesHistoryDialog { align: center middle; }
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 

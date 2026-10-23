@@ -2730,6 +2730,20 @@
     WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions { height: 3; }
     WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions Button.workspace-archive-receipt-modal-button { width: auto; min-width: 8; margin-right: 1; }
 
+/* ===== WIDGET: FileNotesHistoryDialog (Widgets/Library/library_file_notes_workspace.py) ===== */
+
+
+    FileNotesHistoryDialog #file-notes-history-dialog {
+        width: 90; max-width: 95%; height: auto; max-height: 85%;
+        border: round $primary; background: $surface; padding: 1 2;
+    }
+    FileNotesHistoryDialog #file-notes-history-title { height: 1; text-style: bold; }
+    FileNotesHistoryDialog #file-notes-history-list { height: auto; max-height: 10; min-height: 1; margin-top: 1; }
+    FileNotesHistoryDialog #file-notes-history-destination-label { height: 1; margin-top: 1; }
+    FileNotesHistoryDialog #file-notes-history-destination { height: 1; }
+    FileNotesHistoryDialog #file-notes-history-actions { height: 1; margin-top: 1; }
+    FileNotesHistoryDialog #file-notes-history-status { height: 1; margin-top: 1; }
+
 /* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
 
 
