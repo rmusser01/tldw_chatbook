@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import Focus, Key, Resize
+from textual.events import Blur, Focus, Key, Resize
 from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -953,6 +953,11 @@ class NoteEditorTextArea(DetachSafeTextArea):
     #: A plain attribute, not a reactive: it gates a key handler, nothing
     #: paints from it.
     link_picker_open: bool = False
+    #: Fix round 1 (M-11): whether the open picker shows a real row. With
+    #: only a hint row ("No note titled …", "Keep typing…") Enter and Tab
+    #: are NOT intercepted, so the editor inserts its newline / moves focus
+    #: and the context change closes the picker; Escape is still claimed.
+    link_picker_has_rows: bool = False
 
     class LinkPickerKey(Message):
         """One of ``LINK_PICKER_KEYS`` pressed while the picker is open."""
@@ -978,9 +983,22 @@ class NoteEditorTextArea(DetachSafeTextArea):
         """
         if not self.link_picker_open or event.key not in self.LINK_PICKER_KEYS:
             return
+        if event.key != "escape" and not self.link_picker_has_rows:
+            return
         event.stop()
         event.prevent_default()
         self.post_message(self.LinkPickerKey(self, event.key))
+
+    def _on_blur(self, event: Blur) -> None:
+        """Fix round 1 (M-4): the picker goes with the focus.
+
+        A click on the Title or Shift+Tab out of the body used to leave the
+        picker open with this widget's key routing armed. Routed as the
+        pseudo-key ``"blur"`` so the controller owns the one close path;
+        the MRO walk still reaches ``TextArea._on_blur`` after this.
+        """
+        if self.link_picker_open:
+            self.post_message(self.LinkPickerKey(self, "blur"))
 
     def action_cursor_document_end(self) -> None:
         """Move the caret to the end of the note body."""
@@ -4034,7 +4052,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or (picker.mode == "follow" and not show_preview)
         ):
             picker.hide()
-            node("#library-note-body").link_picker_open = False
+            body = node("#library-note-body")
+            body.link_picker_open = False
+            body.link_picker_has_rows = False
 
         for selector in (
             "#library-note-edit",

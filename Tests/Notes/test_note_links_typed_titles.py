@@ -137,6 +137,22 @@ async def test_zero_or_two_title_matches_record_nothing_and_leave_the_text_as_ty
 
 
 @pytest.mark.asyncio
+async def test_the_title_match_folds_case_for_ascii_letters_only(notes_scope_service):
+    """Fix round 1, M-3 (ruling: document, don't widen): ``COLLATE NOCASE``
+    folds A-Z only. ``[[WEEKLY]]`` finds "Weekly"; ``[[élan]]`` does NOT find
+    "Élan" (Unicode case folding is TASK-34000.74). Pinned so the guide's
+    wording and the behaviour cannot drift apart silently."""
+    weekly = await _add(notes_scope_service, "Weekly", "a")
+    await _add(notes_scope_service, "Shouter", "see [[WEEKLY]]")
+    assert await _backlink_titles(notes_scope_service, weekly) == ["Shouter"]
+    elan = await _add(notes_scope_service, "Élan", "x")
+    await _add(notes_scope_service, "Accented", "see [[élan]]")
+    assert await _backlink_titles(notes_scope_service, elan) == []
+    await _add(notes_scope_service, "Exact", "see [[Élan]]")
+    assert await _backlink_titles(notes_scope_service, elan) == ["Exact"]
+
+
+@pytest.mark.asyncio
 async def test_editing_away_a_typed_title_removes_its_backlink_and_a_title_only_save_leaves_it(
     notes_scope_service, db
 ):
@@ -252,6 +268,7 @@ async def test_list_note_link_candidates_narrows_by_title_and_lists_recent_notes
     # Any order, LAST word a prefix (Task 3's rule): "trip lisb" finds
     # Lisbon; "lisb trip" does not, because a non-last word is matched whole.
     assert await candidates("trip lisb") == [LISBON]
+    assert await candidates("lisbon trip") == [LISBON]
     assert await candidates("lisb trip") == []
     # Ten matches, eight rows: rank ties, then title order (the LIMIT).
     assert await candidates("Fill") == [f"Filler {index:02d}" for index in range(8)]

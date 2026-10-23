@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import webbrowser
 
+from textual import events
 from textual.widgets import Button, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
@@ -211,3 +212,23 @@ async def _info_backlinks(screen, pilot, expected_header: str) -> list[str]:
         str(button.label)
         for button in screen.query(".library-note-backlink").results(Button)
     ]
+
+
+def _send_key(app, key: str, character: str | None = None) -> None:
+    """Deliver one key through the driver WITHOUT a pilot pause.
+
+    Two or more of these in a row arrive in the same read, the way a real
+    terminal delivers a fast burst (the reviewer's probe technique):
+    ``pilot.press`` pauses between keys and can never reproduce it.
+    """
+    event = events.Key(key, character)
+    event.set_sender(app)
+    app._driver.send_message(event)
+
+
+def _burst(app, text: str, *trailing: str) -> None:
+    """Send ``text`` one key per character, then ``trailing`` keys, as one burst."""
+    for char in text:
+        _send_key(app, "left_square_bracket" if char == "[" else ("space" if char == " " else char), char)
+    for key in trailing:
+        _send_key(app, key, None)
