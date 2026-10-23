@@ -4170,7 +4170,7 @@ class ConsoleComposerBar(Horizontal):
         # stacks and leaves the accepted text in place).
         self.restore_undo_history(banked)
 
-    def load_draft(self, text: str) -> None:
+    def load_draft(self, text: str, *, defer_action_state: bool = False) -> None:
         """Replace the native Console draft with literal text.
 
         The caret lands at the end of the restored draft.
@@ -4189,6 +4189,12 @@ class ConsoleComposerBar(Horizontal):
 
         Args:
             text: Draft payload to show and send literally.
+            defer_action_state: Restyle the action row (Send's readiness, its
+                reason strip) in the composer's next callback instead of this
+                one. TASK-33620.15.8: a Send's acceptance clears the draft
+                inside run start's longest UI-loop callback, and Send's
+                readiness flip is four restyles there; the draft, its caret
+                and its state classes still change here.
         """
         self._clear_raw_cli_provenance()
         self._advance_draft_generation()
@@ -4202,6 +4208,11 @@ class ConsoleComposerBar(Horizontal):
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
+        if defer_action_state:
+            # Reads the draft and the cached run state when it runs, so a
+            # sync that lands first leaves it nothing to change.
+            self.call_later(self._sync_current_action_state)
+            return
         self._sync_current_action_state()
 
     def capture_draft_for_send(self) -> ConsoleDraftStash | None:

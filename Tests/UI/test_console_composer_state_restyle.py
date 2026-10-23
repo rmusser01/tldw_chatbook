@@ -237,3 +237,41 @@ async def test_rules_keyed_on_state_classes_style_only_the_declared_nodes():
             "skips; add its selector to INTERACTION_STYLED_DESCENDANTS: "
             f"{offenders}"
         )
+
+
+@pytest.mark.asyncio
+async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
+    monkeypatch,
+):
+    """The accepted clear lands in the step; Send's readiness restyles after it.
+
+    Red on origin/dev: projecting the accepted (empty) draft restyled the Send
+    button inside the projection call, which runs in run start's post-commit
+    step, the step's longest piece once the bar's own restyle was targeted.
+    """
+    host = _ready_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        composer = await _mounted_composer(host, pilot)
+        console = host.screen_stack[-1]
+        send = composer.query_one("#console-send-message", Button)
+        composer.load_draft("Reply with the single word ok")
+        await pilot.pause(0.1)
+        assert send.has_class("console-send-ready") and not send.disabled
+        session_id = console._console_visible_draft_session_id
+        assert session_id is not None
+        store = console._console_chat_store
+        # The durable acceptance's input CAS has already emptied the draft.
+        monkeypatch.setattr(store, "session_draft", lambda _session_id: "")
+        applied = _spy_restyles(host, monkeypatch)
+
+        console._project_console_received_input(session_id)
+
+        assert composer.draft_text() == ""
+        assert not composer.has_class("console-composer-has-draft")
+        assert not any(node is send for node in applied), (
+            "Send was restyled inside the acceptance projection"
+        )
+        await pilot.pause()
+        assert send.disabled
+        assert send.has_class("console-send-inactive")
+        assert not send.has_class("console-send-ready")
