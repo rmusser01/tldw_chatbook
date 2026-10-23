@@ -13,6 +13,7 @@ Optional keyword indexes belong to an explicit local workspace folder binding. T
 | `Workspaces/project_index/scanner.py` | Bounded wire operations and actual worker-tree retirement |
 | `Tools/project_index_scan_worker.py` | Isolated directory enumeration and UTF-8 capture |
 | `Workspaces/project_index/lifetime.py` | Native binding lifetime ownership, including inherited child ownership |
+| `Workspaces/project_index/allocation.py` | Binding-wide native SQL-unit gate, inventory and held-connection page admission |
 | `Agents/local_tool_provider.py` | `fs_search_index` schema/permissions, run exclusion floor, Capture reader and wire budget |
 | `Widgets/Settings_Widgets/project_index_binding_card.py` | Exact-binding Settings management, status/policy workers and visit/request fencing |
 | `Widgets/Console/console_workspace_files_modal.py` | Captured-binding status lane and safe Settings handoff |
@@ -36,9 +37,13 @@ The index-only wire protocol is version2; ordinary filesystem tools keep their o
 
 Cache schema3 adds `directories.attempt_revision` and the `(complete,attempt_revision,path)` eligibility index. A terminal incomplete attempt is skipped for the rest of that job revision; explicit Resume advances the revision and retries it once. Continuations remain eligible. This replaces the tree-sized in-memory attempted set and avoids missing new children behind a lexical cursor. Existing singleton preparation/publication APIs remain compatible adapters.
 
+Cache schema4 adds independent semantic consent/control, generation and member tables. Semantic settings hold provider/model IDs and opaque configuration/destination fingerprints and references, never credentials or indexed source text. Semantic revision changes independently of the keyword scope; full binding revoke disables semantic use. The current implementation exposes settings and derived state only: it does not run embeddings, build semantic generations, search vectors or add a UI control. Fresh production status projects Off in memory without creating cache control. Existing v3 keyword reads remain available without a migration; semantic state projects Off until an explicit admitted upgrade/configuration. v2 remains cleanup-only and v1 requires rebuild/quarantine.
+
 The same FTS indexes path and bounded text. A valid captured file that yields no ordinary chunks receives one zero-length path-search chunk, including empty and whitespace-only files. Candidate ranking still applies the requesting run's exclusions before LIMIT. Paths never substitute for live identity/hash validation.
 
 The file-backed003 migration preserves control, claim and frontier state and rebuilds/backfills FTS in SQL. Only legacy migration takes the exact binding capability. Before its transaction, the runtime counts all namespaces/sidecars and reserves DELETE-journal headroom plus1 MiB; native page limits bound allocation. SQL failure rolls back to the validated v2 catalog, which remains available to nonmigrating cleanup. Current-v3 readers do not acquire the migration capability. An unproven failed-constructor native close retains the counted connection and one binding capability in the runtime factory, blocks further affected construction and reports unresolved retirement on close.
+
+The file-backed004 migration preserves the validated v3 keyword catalog and adds only semantic metadata/derived tables. Each current binding SQL unit acquires a try-only native group gate before its registry fence, then closes its actual SQLite connection and inventories settlement before release. The source-pinned semantic allowance uses actual page count/size and whole-group file lengths to reserve every old rollback page, journal headers and up to4096 bytes of control growth. It refuses unknown files, recovery sidecars, aliased namespace directories and observed other busy native owners. Pure keyword transactions retain the earlier aggregate two-copy cap without requiring semantic SQLite qualification. Scanner/provider waits, file Capture, native joins and retry sleeps occur outside SQL units. Cleanup holds a control gate while sequential namespace units borrow its exact lease; no two independent stores overlap. Existing-only v3 reads inventory strictly without creating a gate. The analytical bound applies only to the qualified SQLite build, runtime settings and cooperating current-version writers; it is not a filesystem quota or a claim about unobserved older writers.
 
 Registry connections created by writer, supervisor, complete index-tool invocation, controller preparation and UI operations have finite owning-thread scopes. Scope exit requires positive closure of the exact native handle and registered-core retirement; generic helper exit alone is insufficient because ordinary DB close can swallow failure. Borrowed connections retain their caller's ownership. Outer registry leases can outlive an inner query pin but block maintenance independently until the provider returns; failed close cannot return successful evidence.
 
@@ -61,7 +66,7 @@ only workspace ID, binding ID and enrolled authority revision (at most4096 UTF8
 bytes); it contains no root locator, source text or query grant. The existing
 native capability opens the file no-follow/single-link under the verified private
 group. Handle-based bounded I/O, truncation and flush precede a fresh exact live
-witness check. No cache schema migration is introduced. The receipt and creation
+witness check. Cleanup does not introduce a cache schema migration. The receipt and creation
 headroom count against the binding quota; validated legacy Clear does not require
 receipt allocation. Missing/corrupt detached receipts and unproven legacy catalogs
 refuse rather than infer ownership from an opaque pathname.

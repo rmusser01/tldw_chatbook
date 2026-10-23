@@ -216,6 +216,8 @@ class _AdmittedStoreFactory:
         path = index_store_path(self.data_root, key)
         group = path.parent.parent
         if not path.exists():
+            if cleanup_only:
+                raise FileNotFoundError(path)
             result = secure_private_directory(
                 group, create=True, application_owned=True
             )

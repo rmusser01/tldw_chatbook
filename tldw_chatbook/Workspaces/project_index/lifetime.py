@@ -29,6 +29,24 @@ class BindingLifetime:
         self._receipt_descriptors: set[int] = set()
         self._receipt_handles: set[int] = set()
 
+    def assert_live(self) -> None:
+        """Check that this code-owned native capability still names a live file."""
+        if self.closed:
+            raise ValueError("lifetime_closed")
+        if os.name == "nt":
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.GetFileType.argtypes = [wintypes.HANDLE]
+            kernel.GetFileType.restype = wintypes.DWORD
+            if kernel.GetFileType(wintypes.HANDLE(self.handle)) != 1:
+                raise OSError("lifetime_handle_invalid")
+        else:
+            held = os.fstat(self.handle)
+            named = self.path.stat(follow_symlinks=False)
+            if (held.st_dev, held.st_ino) != (named.st_dev, named.st_ino):
+                raise OSError("lifetime_handle_replaced")
+
     @classmethod
     def acquire(cls, path: Path, *, existing_only: bool = False) -> BindingLifetime:
         """Acquire an existing-or-new stable object; caller admits private parent."""

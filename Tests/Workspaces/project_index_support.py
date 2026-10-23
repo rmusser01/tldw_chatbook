@@ -63,3 +63,11 @@ def search_authority(tmp_path, scope, exclusions=()):
         None,
         lambda candidate: None,
     )
+
+
+def open_semantic_store(tmp_path: Path) -> WorkspaceProjectIndexDB:
+    """Use the real binding/namespace shape for semantic allocation tests."""
+    key = make_index_key(tmp_path)
+    directory = tmp_path / key.binding_namespace / key.namespace
+    directory.mkdir(parents=True, exist_ok=True)
+    return WorkspaceProjectIndexDB(directory / "workspace_project_index.db")
