@@ -30,11 +30,13 @@ Key Features & Fixes in this Version
 #
 # Imports
 import asyncio  # noqa: E402
+import os  # noqa: E402
 import random  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
 import sys  # noqa: E402
 from collections import OrderedDict  # noqa: E402
+from pathlib import Path  # noqa: E402
 from typing import (  # noqa: E402
     Any,
     Annotated,
@@ -52,7 +54,7 @@ from typing import (  # noqa: E402
 # Third-Party Libraries
 import requests  # noqa: E402
 from loguru import logger  # noqa: E402
-from tldw_chatbook.RAG_Search.model_recovery import (
+from tldw_chatbook.RAG_Search.model_recovery import (  # noqa: E402
     model_operation,
     recovered_close,
     recovered_encode,
@@ -68,7 +70,7 @@ from pydantic import (  # noqa: E402
 )
 
 # Optional dependencies with fallbacks
-from ..Utils.optional_deps import get_safe_import, DEPENDENCIES_AVAILABLE  # noqa: E402
+from ..Utils.optional_deps import get_safe_import  # noqa: E402
 
 # torch/transformers/numpy are heavy optional dependencies (torch alone pulls
 # in roughly a thousand transitive modules, transformers a few hundred more).
@@ -333,6 +335,61 @@ class CacheRecord(TypedDict):
     refs: int
 
 
+def existing_local_hf_snapshot(cfg: HFModelCfg) -> Path:
+    """Resolve a complete local HF snapshot without contacting the Hub."""
+    configured = Path(cfg.model_name_or_path).expanduser()
+    if configured.is_dir():
+        snapshot = configured.resolve(strict=True)
+    else:
+        parts = cfg.model_name_or_path.split("/")
+        if len(parts) != 2 or not all(parts):
+            raise FileNotFoundError("local_embedding_snapshot_required")
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        model = Path(os.environ.get("HF_HUB_CACHE", HF_HUB_CACHE)) / (
+            "models--" + "--".join(parts)
+        )
+        snapshots = model / "snapshots"
+        if cfg.revision:
+            revision = cfg.revision
+            ref = model / "refs" / revision
+            if ref.is_file():
+                revision = ref.read_text(encoding="utf-8").strip()
+            if not revision or any(ch in revision for ch in ("/", "\\", ".")):
+                raise FileNotFoundError("local_embedding_snapshot_required")
+            snapshot = snapshots / revision
+        else:
+            available = (
+                tuple(p for p in snapshots.iterdir() if p.is_dir())
+                if snapshots.is_dir()
+                else ()
+            )
+            if len(available) != 1:
+                raise FileNotFoundError("local_embedding_snapshot_required")
+            snapshot = available[0]
+    files = {p.name for p in snapshot.iterdir()} if snapshot.is_dir() else set()
+    if (
+        "config.json" not in files
+        or not files.intersection(("tokenizer.json", "vocab.txt", "spiece.model"))
+        or not files.intersection(
+            (
+                "model.safetensors",
+                "pytorch_model.bin",
+                "model.safetensors.index.json",
+                "pytorch_model.bin.index.json",
+            )
+        )
+    ):
+        raise FileNotFoundError("local_embedding_snapshot_required")
+    from tldw_chatbook.RAG_Search.model_recovery import _closure
+
+    try:
+        _closure(snapshot)
+    except (OSError, ValueError):
+        raise FileNotFoundError("local_embedding_snapshot_required") from None
+    return snapshot.resolve(strict=True)
+
+
 class _HuggingFaceEmbedder:
     """Wraps HF model/tokenizer; exposes poolable, dtype/device-aware embedding."""
 
@@ -558,9 +615,7 @@ def _openai_embedder(
         str(cfg.base_url) if cfg.base_url else "https://api.openai.com/v1"
     )
     embeddings_endpoint = f"{endpoint_url_base.rstrip('/')}/embeddings"
-    logger.info(
-        f"OpenAI embedder configured for endpoint: {embeddings_endpoint} with model {cfg.model_name_or_path}"
-    )
+    logger.info("OpenAI embedder configured")
 
     def _embed(
         texts: List[str], *, as_list: bool = False
@@ -580,35 +635,25 @@ def _openai_embedder(
                 data = resp.json()["data"]
                 arr = np.asarray([d["embedding"] for d in data], dtype=np.float32)
                 latency = time.perf_counter() - t0
-                logger.debug(
-                    "openai_embed[{}] {} texts in {:.3f}s via {}",
-                    cfg.model_name_or_path,
-                    len(texts),
-                    latency,
-                    embeddings_endpoint,
-                )
+                logger.debug("openai_embed {} texts in {:.3f}s", len(texts), latency)
                 return arr.tolist() if as_list else arr
             except requests.RequestException as exc:
                 if attempt == len(_BACKOFF):
                     logger.error(
-                        "openai_embed failed after {} retries for {}: {}",
+                        "openai_embed failed after {} attempts ({})",
                         attempt,
-                        embeddings_endpoint,
-                        exc,
+                        type(exc).__name__,
                     )
-                    raise
+                    raise requests.RequestException("embedding_provider_request_failed") from None
                 logger.warning(
-                    "openai_embed retry {}/{} after {} for {}: {}",
+                    "openai_embed retry {}/{} after {} ({})",
                     attempt,
                     len(_BACKOFF),
                     wait,
-                    embeddings_endpoint,
-                    exc,
+                    type(exc).__name__,
                 )
                 time.sleep(wait + random.random())
-        raise RuntimeError(
-            f"Exhausted retries in OpenAI embedder for {embeddings_endpoint}"
-        )  # Should be unreachable
+        raise RuntimeError("embedding_provider_request_failed")  # Unreachable
 
     return _embed
 
@@ -647,6 +692,7 @@ class EmbeddingFactory:
         max_cached: int = 2,
         idle_seconds: int = 900,
         allow_dynamic_hf: bool = True,
+        local_files_only: bool | None = None,
     ) -> None:
         # Check if embeddings/RAG dependencies are available (lazily checking
         # for real on first use if nothing has populated the registry yet --
@@ -662,17 +708,26 @@ class EmbeddingFactory:
                 if isinstance(cfg, EmbeddingConfigSchema)
                 else EmbeddingConfigSchema(**cfg)
             )
-        except ValidationError as e_pydantic:  # Catch Pydantic validation errors
-            logger.critical(
-                f"Invalid embedding configuration provided to EmbeddingFactory: {e_pydantic}"
+        except ValidationError:  # Never propagate credential-bearing config text.
+            logger.critical("Invalid embedding configuration provided to EmbeddingFactory")
+            raise ValueError("embedding_configuration_invalid") from None
+
+        if local_files_only is not None:
+            self._cfg = self._cfg.model_copy(
+                update={
+                    "models": {
+                        name: spec.model_copy(update={"local_files_only": local_files_only})
+                        if isinstance(spec, HFModelCfg)
+                        else spec
+                        for name, spec in self._cfg.models.items()
+                    }
+                }
             )
-            raise ValueError(
-                f"Embedding configuration error: {e_pydantic}"
-            ) from e_pydantic
 
         self._max_cached = max_cached
         self._idle = idle_seconds
         self._allow_dynamic_hf = allow_dynamic_hf
+        self._local_files_only = local_files_only
         self._cache: "OrderedDict[str, CacheRecord]" = OrderedDict()
         self._lock = threading.Lock()
         # Condition sharing ``self._lock``: ``with self._cond`` acquires the
@@ -727,6 +782,14 @@ class EmbeddingFactory:
 
         t0 = time.perf_counter()
         if spec.provider == "huggingface":
+            if self._local_files_only is True:
+                spec = spec.model_copy(
+                    update={
+                        "model_name_or_path": str(existing_local_hf_snapshot(spec)),
+                        "local_files_only": True,
+                        "cache_dir": None,
+                    }
+                )
             # Check if torch and transformers are available (imports them on
             # first real use if they haven't been loaded yet)
             _ensure_torch()

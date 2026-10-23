@@ -11,7 +11,7 @@ from Tests.network_guard import install, blocked_attempts
 install()
 route,state=sys.argv[1:]
 selector=Path(os.environ['TLDW_CONFIG_PATH']);base=selector.parent.parent;data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n[rag.service]\nfirst_run_import_done=true\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+data.as_posix()+'"\n[rag.service]\nfirst_run_import_done=true\n')
 selector.chmod(0o600)
 os.environ.update(RAG_EMBEDDING_MODEL='mock',RAG_PERSIST_DIR=str(data/'vectors'),HF_HUB_CACHE=str(data/'models'))
 from tldw_chatbook.Backup_Recovery import bootstrap,storage_admission as storage

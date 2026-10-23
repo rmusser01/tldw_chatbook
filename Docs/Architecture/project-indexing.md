@@ -91,3 +91,11 @@ tracebacks. Unresolved native owners and physically live supervisors retain thei
 shutdown join records beyond that tail; close joins them despite repeated observer
 cancellation. Scanner typing documents
 both singleton `ScanPage` compatibility and production callback/`ScanUnit` handoff.
+
+## Issued semantic embedding scope (Task 2)
+
+`Workspaces/project_index/semantic.py` resolves a selected current embedding catalog key and issues `ProjectionExecutionScope` only after existing-only semantic settings, exact approved destination, semantic revision, scope and live binding checks. The carrier keeps the actual admitted registry/data parent live through a finite embedding operation; all project SQL/gate/fence handles close before model loading or provider waits. Invalid, disabled, paused, legacy, stale, copied or dead authority refuses without configuring or migrating the cache. Project routing precedes Library source inference; a missing carrier still uses the Library path.
+
+The actual wrapper/factory accept an explicit project carrier and `local_files_only`. A project Hugging Face model must be a complete existing snapshot and loads offline with dynamic fallback disabled. A later independent build/query issues a new accepted carrier and calls `EmbeddingsServiceWrapper.rebind_execution_scope(successor)` only after the old carrier and its native children have closed; compatible cached model state may remain but no idle project pin or source permission does. Credential rotation requires a fresh wrapper. Construction and accepted async/native transfer use `RAG_Search/activation.py`; callers finish native work before each carrier closes and close a retained wrapper under its final live carrier.
+
+On Windows, `RAG_Search/model_recovery.py` uses the existing `Utils.platform_files.os` descriptor adapter to enumerate the pinned model directory. This preserves ADR-126 handle-relative closure, alias, hardlink and manifest checks; it does not introduce a path fallback. Offline factory and issued-project composition qualification are distinct from semantic generation/query quality and scale verification.

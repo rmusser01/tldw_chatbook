@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:27'
-updated_date: '2026-10-23 15:44'
+updated_date: '2026-10-23 16:27'
 labels: []
 dependencies:
   - TASK-36420
@@ -42,4 +42,7 @@ Allow project embeddings to use their own admitted folder lifetime while preserv
 ADR required: yes, existing amended decision.
 ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md.
 Reason: direct implementation of accepted folder-bound semantic projection and destination-consent boundary; no new persistence owner or Library policy change.
+
+Demonstrated Windows offline-loader correction: actual qualified factory reached model_recovery._closure and failed because that owner imports stdlib os while pinned_directory returns the existing platform filesystem descriptor. Python Windows stdlib os.listdir(fd) is unsupported. Reuse tldw_chatbook.Utils.platform_files.os in model_recovery.py, as native_files already does, so listdir/open/fstat use the existing handle-relative no-follow Windows implementation and unchanged stdlib POSIX behavior. This is a narrow import/adapter correction under existing ADR126 and ADR241, not a new storage/source permission or Windows backend. Do not add path-based enumeration fallback, weaken alias/single-link/identity/manifest/closure limits, change the generic platform shim or bypass model/recovery gates. Retain the actual offline13/16/17 failures and run native closure success/refusal tests plus directly affected model-reference/recovery controls and actual blocked-network offline factory. Report any additional owner need before edits.
+ADR path also applies: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct reuse of existing Windows-native filesystem contract; no new ADR.
 <!-- SECTION:PLAN:END -->

@@ -27,10 +27,10 @@ def captured_logs(monkeypatch):
         embeddings_lib.logger.remove(sink_id)
 
 
-def test_openai_embedder_failure_log_names_endpoint_and_cause(
+def test_openai_embedder_failure_does_not_expose_endpoint_or_cause(
     monkeypatch, captured_logs
 ):
-    """The exhausted-retry error names the endpoint and the underlying cause."""
+    """The exhausted-retry error classifies failure without revealing routing text."""
     monkeypatch.setattr(embeddings_lib, "_BACKOFF", (0,))
 
     class _FailingSession:
@@ -48,17 +48,16 @@ def test_openai_embedder_failure_log_names_endpoint_and_cause(
         provider="openai",
         model_name_or_path="text-embedding-3-small",
         dimension=1536,
-        base_url="http://127.0.0.1:1/v1",
+        base_url="http://user:secret@127.0.0.1:1/v1?token=secret",
     )
     embed = embeddings_lib._openai_embedder(cfg)
 
-    with pytest.raises(embeddings_lib.requests.RequestException):
+    with pytest.raises(embeddings_lib.requests.RequestException) as failure:
         embed(["hello"])
 
     rendered = "".join(captured_logs)
-    assert "%s" not in rendered and "%d" not in rendered
-    assert "http://127.0.0.1:1/v1/embeddings" in rendered
-    assert "connection refused" in rendered
+    assert "secret" not in rendered + str(failure.value)
+    assert "127.0.0.1" not in rendered + str(failure.value)
 
 
 def test_common_model_catalog_pins_a_revision_for_remote_code_models():
@@ -77,3 +76,60 @@ def test_common_model_catalog_pins_a_revision_for_remote_code_models():
         and not getattr(cfg, "revision", None)
     )
     assert unpinned == []
+
+
+@pytest.mark.parametrize("outcomes", [("ok",), ("retry", "ok"), ("retry", "retry")])
+def test_actual_factory_http_paths_hide_credentials(
+    monkeypatch, captured_logs, outcomes
+):
+    monkeypatch.setattr(embeddings_lib, "_BACKOFF", (0, 0))
+    monkeypatch.setattr(embeddings_lib, "_embeddings_rag_available", lambda: True)
+    attempts = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"embedding": [1.0, 2.0]}]}
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        def post(self, url, *, json, timeout):
+            attempts.append(url)
+            outcome = outcomes[len(attempts) - 1]
+            if outcome == "retry":
+                raise embeddings_lib.requests.RequestException("secret-in-cause")
+            return Response()
+
+    monkeypatch.setattr(embeddings_lib.requests, "Session", Session)
+    factory = embeddings_lib.EmbeddingFactory(
+        {
+            "default_model_id": "test",
+            "models": {
+                "test": {
+                    "provider": "openai",
+                    "model_name_or_path": "synthetic-model",
+                    "api_key": "secret-header",
+                    "base_url": "http://user:secret@127.0.0.1:1/v1?token=secret",
+                }
+            },
+        },
+        allow_dynamic_hf=False,
+    )
+    try:
+        if outcomes[-1] == "retry":
+            with pytest.raises(embeddings_lib.requests.RequestException) as failure:
+                factory.embed(["synthetic text"])
+            assert "secret" not in str(failure.value)
+            assert "127.0.0.1" not in str(failure.value)
+        else:
+            assert factory.embed(["synthetic text"]).shape == (1, 2)
+        assert len(attempts) == len(outcomes)
+        rendered = "".join(captured_logs)
+        assert "secret" not in rendered
+        assert "127.0.0.1" not in rendered
+    finally:
+        factory.close()
