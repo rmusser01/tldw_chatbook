@@ -103,10 +103,10 @@ Primary proof references: [SQLite3.49.1 release](https://www.sqlite.org/releasel
 
 **Files:** Explicit embedding scope row; `Tests/RAG/test_project_projection_scope.py`, focused factory/offline/logging tests, actual existing activation/native lifetime regressions.
 
-- [ ] Write REDs through actual constructor, source admission, synchronous/async/native entrances, wrong target/forged scope/stale revision/copied or dead parent, repeated cancellation and default Library behavior.
-- [ ] Write actual factory offline missing-snapshot/blocked-network and controlled-HTTP credential-bearing success/retry/failure tests. Replace old raw-endpoint logging expectations with safe behavior assertions.
-- [ ] Implement exact issued routing before Library inference, retained accepted-parent transfer and actual native/model retirement, offline-only complete-snapshot loading, secret-free config/destination resolution and safe error classification. Do not unwrap decorators, impersonate Library service, weaken broad optional-dependency guards or construct unused Chroma.
-- [ ] Verify new scope/offline/privacy tests plus affected existing wrapper/factory/activation defaults. Record true setup-required conditions; deterministic embeddings are not quality evidence. Commit/report/review.
+- [x] Write REDs through actual constructor, source admission, synchronous/async/native entrances, wrong target/forged scope/stale revision/copied or dead parent, repeated cancellation and default Library behavior.
+- [x] Write actual factory offline missing-snapshot/blocked-network and controlled-HTTP credential-bearing success/retry/failure tests. Replace old raw-endpoint logging expectations with safe behavior assertions.
+- [x] Implement exact issued routing before Library inference, retained accepted-parent transfer and actual native/model retirement, offline-only complete-snapshot loading, secret-free config/destination resolution and safe error classification. Do not unwrap decorators, impersonate Library service, weaken broad optional-dependency guards or construct unused Chroma.
+- [x] Verify new scope/offline/privacy tests plus affected existing wrapper/factory/activation defaults. Record true setup-required conditions; deterministic embeddings are not quality evidence. Commit/report/review.
 
 ## Task 3: S2 generations and search — TASK36422
 

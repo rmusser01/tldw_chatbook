@@ -1,11 +1,11 @@
 ---
 id: TASK-36421
 title: Admit project embeddings with explicit scope and offline loading
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:27'
-updated_date: '2026-10-23 17:08'
+updated_date: '2026-10-23 17:47'
 labels: []
 dependencies:
   - TASK-36420
@@ -23,11 +23,11 @@ Allow project embeddings to use their own admitted folder lifetime while preserv
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Actual embedding constructor, activation and native worker entrances select the exact code-issued project scope before effects, refuse forged/stale/wrong-target or dead transfers, and never infer Library source owners.
-- [ ] #2 Accepted async/native work retains the actual live parent and physical retirement; default Library scope behavior remains compatible.
-- [ ] #3 Project local embedding loads use a complete existing local snapshot with offline-only loading; a missing model or optional dependency reports setup required without download or keyword failure.
-- [ ] #4 Actual embedding factory success/retry/failure and propagated errors expose no raw credential-bearing endpoint or request secrets; only secret-free configuration/destination references are persisted.
-- [ ] #5 Model, configuration, artifact and destination compatibility distinguishes same-dimension changes and never treats Library policy as project consent.
+- [x] #1 Actual embedding constructor, activation and native worker entrances select the exact code-issued project scope before effects, refuse forged/stale/wrong-target or dead transfers, and never infer Library source owners.
+- [x] #2 Accepted async/native work retains the actual live parent and physical retirement; default Library scope behavior remains compatible.
+- [x] #3 Project local embedding loads use a complete existing local snapshot with offline-only loading; a missing model or optional dependency reports setup required without download or keyword failure.
+- [x] #4 Actual embedding factory success/retry/failure and propagated errors expose no raw credential-bearing endpoint or request secrets; only secret-free configuration/destination references are persisted.
+- [x] #5 Model, configuration, artifact and destination compatibility distinguishes same-dimension changes and never treats Library policy as project consent.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,3 +56,9 @@ Authorized additional exact product path is tldw_chatbook/Workspaces/project_ind
 
 ADR required: yes, amend existing ADR241 before the cross-module owner change. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: narrow completion of accepted physical retirement and keyword independence, reusing existing project operation owner; no duplicate ADR.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented exact folder-bound project embedding admission before Library inference, explicit offline snapshot loading, safe catalog/destination identities and privacy-safe factory errors. Configured keyless endpoints/cache roots and per-call safe identity checks are covered. Failed model closure retains the actual service operation/wrapper/factory/parent until positive retry while real keyword search remains usable. Source commits2160d5b31c+ef0af31c6c; independent review found four Important issues, all addressed in scoped re-review with no new breakage. Targeted actual SQLite/native/HTTP/default Library and cached MiniLM receipts, scoped Ruff/format/diff evidence retained; no full sweep or real async retrieval/quality/scale claim. Exact later source deltas are attributed to final covering receipts. ADR241 and ADR126 apply; architecture/plan and runtime-bootstrap lesson updated. Existing deprecation warnings and unavailable Windows symlink control remain disclosed.
+<!-- SECTION:NOTES:END -->
