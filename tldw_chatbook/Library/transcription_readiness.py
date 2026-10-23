@@ -72,7 +72,10 @@ def check_transcription_readiness(
         TranscriptionReadinessError: A runtime, model or VAD is unavailable.
         ValueError: The selected provider or language route is invalid.
     """
-    from tldw_chatbook.Local_Ingestion.stt_batch_routing import resolve_batch_stt_route
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        resolve_batch_stt_model,
+        resolve_batch_stt_route,
+    )
     from tldw_chatbook.Library.ingest_capabilities import (
         field_gate_open,
         get_capabilities,
@@ -117,9 +120,15 @@ def check_transcription_readiness(
     if route.provider == "faster-whisper":
         from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-        model = default_model or "base"
-        if route.requested_provider == "faster-whisper":
-            model = options.get("model") or options.get("transcription_model") or "base"
+        model = (
+            resolve_batch_stt_model(
+                route,
+                selected_model=options.get("model")
+                or options.get("transcription_model"),
+                default_model=default_model or "base",
+            )
+            or "base"
+        )
         try:
             if Path(model).is_dir():
                 root = Path(model)

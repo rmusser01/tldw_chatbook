@@ -243,3 +243,216 @@ def test_missing_custom_whisper_path_is_not_echoed_in_remedy(tmp_path):
         )
     assert caught.value.reason == "model_missing"
     assert model not in str(caught.value)
+
+
+@pytest.mark.parametrize("saved_model", [None, "distil-large-v3", "org/custom-whisper"])
+def test_auto_uses_fresh_base_without_rewriting_saved_model(
+    tmp_path, monkeypatch, saved_model
+):
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.Local_Ingestion import transcription_service
+    from tldw_chatbook.UI.Screens import library_screen
+
+    path = tmp_path / "config.toml"
+    original = None
+    if saved_model is not None:
+        original = f'[transcription]\ndefault_model = "{saved_model}"\ndevice = "cpu"\n'.encode()
+        path.write_bytes(original)
+    source = select_config_source(
+        monkeypatch, path, transcription_service.__dict__, library_screen.__dict__
+    )
+    backend = transcription_service._LegacyTranscriptionBackend()
+    expected = saved_model or "base"
+    assert backend.config["default_model"] == expected
+    assert source.get_cli_setting("transcription.default_model", "base") == expected
+    payload = library_screen._read_library_ingest_options_from_config()
+    assert payload["transcription_default_model"] == expected
+    from types import SimpleNamespace
+    from tldw_chatbook.UI.Library_Modules.library_ingest_state import LibraryIngestState
+    from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+    from tldw_chatbook.app_ingest_queue import LibraryIngestQueueMixin
+
+    form = _transcription_preview({"transcription_provider": "default"}, expected).form
+    form.analyze = False
+    form.chunk = False
+    registry = LibraryIngestJobRegistry()
+    owner = SimpleNamespace(
+        _ingest_state=LibraryIngestState(form=form),
+        _media_state=SimpleNamespace(analyze_running=False),
+        _library_ingest_registry=lambda: registry,
+        app_instance=SimpleNamespace(media_db=object()),
+    )
+    library_screen.LibraryScreen._load_library_ingest_options_from_config(owner)
+    assert owner._transcription_default_model == expected
+    state = library_screen.LibraryScreen._build_library_ingest_state(owner)
+    label = expected if saved_model != "org/custom-whisper" else "custom model"
+    assert f"Faster Whisper · {label} (Auto)" in state.commit_summary_line
+
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"")
+    job = registry.submit(
+        source_path=str(audio),
+        detected_type="audio",
+        chunk_enabled=False,
+        perform_analysis=False,
+        ingest_options={
+            "audio_video": {
+                "transcription_provider": "default",
+                "transcription_model": "large-v3",
+            }
+        },
+    )
+    options = LibraryIngestQueueMixin._ingest_job_options(
+        SimpleNamespace(media_db=None), job
+    )
+    observed = []
+
+    def transcribe_native(path, model, *args, **kwargs):
+        observed.append(model)
+        return {"text": "probe", "segments": []}
+
+    monkeypatch.setattr(transcription_service, "FASTER_WHISPER_AVAILABLE", True)
+    monkeypatch.setattr(backend, "_transcribe_with_faster_whisper", transcribe_native)
+    backend.transcribe(
+        str(audio),
+        provider=options["transcription_provider"],
+        model=options["transcription_model"],
+        language="en",
+        batch_route_resolved=True,
+    )
+    assert observed == [expected]
+    if original is not None:
+        assert path.read_bytes() == original
+    else:
+        import tomllib
+
+        assert (
+            tomllib.loads(path.read_text(encoding="utf-8"))["transcription"][
+                "default_model"
+            ]
+            == "base"
+        )
+
+
+def _transcription_preview(
+    options, default_model="base", *, group="audio_video", server=False
+):
+    from tldw_chatbook.Library.ingest_types import PreflightResult
+    from tldw_chatbook.Library.library_ingest_state import (
+        LibraryIngestFormState,
+        build_library_ingest_state,
+    )
+
+    path = "clip.mp4" if group == "audio_video" else "notes.txt"
+    form = LibraryIngestFormState(path=path, type_options={"audio_video": options})
+    form.preflight = PreflightResult(
+        type_groups={group: [path]},
+        warnings=[],
+        errors=[],
+        total_files=1,
+        total_size=1,
+        truncated=False,
+    )
+    return build_library_ingest_state(
+        (),
+        form=form,
+        transcription_default_model=default_model,
+        ingest_backend="server" if server else "local",
+        runtime_source="server" if server else "local",
+        server_ingest_available=server,
+        transcribe_cpp_configured=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "options,default_model,expected",
+    [
+        (
+            {"transcription_provider": "default", "transcription_model": "large-v3"},
+            "base",
+            "Faster Whisper · base (Auto)",
+        ),
+        (
+            {"transcription_provider": "default", "transcription_model": "base"},
+            "distil-large-v3",
+            "Faster Whisper · distil-large-v3 (Auto)",
+        ),
+        (
+            {
+                "transcription_provider": "faster-whisper",
+                "transcription_model": "small.en",
+            },
+            "distil-large-v3",
+            "Faster Whisper · small.en",
+        ),
+        (
+            {
+                "transcription_provider": "faster-whisper",
+                "model": "large-v3",
+                "transcription_model": "base",
+            },
+            "base",
+            "Faster Whisper · large-v3",
+        ),
+        (
+            {"transcription_provider": "parakeet-onnx", "language": "en"},
+            "base",
+            "Parakeet ONNX · nemo-parakeet-tdt-0.6b-v2 · INT8",
+        ),
+        (
+            {
+                "transcription_provider": "parakeet-onnx",
+                "language": "de",
+                "transcription_precision": "f32",
+            },
+            "base",
+            "Parakeet ONNX · nemo-parakeet-tdt-0.6b-v3 · F32",
+        ),
+        (
+            {"transcription_provider": "transcribe-cpp"},
+            "base",
+            "transcribe.cpp · configured GGUF",
+        ),
+    ],
+)
+def test_import_summary_names_the_effective_transcription_model(
+    options, default_model, expected
+):
+    state = _transcription_preview(options, default_model)
+    assert f"Transcription: {expected}" in state.commit_summary_line
+
+
+@pytest.mark.parametrize("group,server", [("generic", False), ("audio_video", True)])
+def test_local_transcription_preview_is_absent_for_other_import_targets(group, server):
+    state = _transcription_preview(
+        {"transcription_provider": "default"}, group=group, server=server
+    )
+    assert "Transcription:" not in state.commit_summary_line
+
+
+def test_custom_transcription_model_preview_does_not_expose_path_or_markup():
+    state = _transcription_preview(
+        {"transcription_provider": "default"}, "/private/[red]weights/model"
+    )
+    assert "Faster Whisper · custom model (Auto)" in state.commit_summary_line
+    assert "/private" not in state.commit_summary_line
+    assert "[red]" not in state.commit_summary_line
+
+
+def test_selected_unavailable_server_backend_does_not_advertise_local_model():
+    from tldw_chatbook.Library.library_ingest_state import build_library_ingest_state
+
+    form = _transcription_preview({"transcription_provider": "default"}).form
+    state = build_library_ingest_state(
+        (), form=form, ingest_backend="server", server_ingest_available=False
+    )
+    assert "Transcription:" not in state.commit_summary_line
+
+
+def test_direct_local_preview_does_not_claim_a_missing_gguf_is_configured():
+    from tldw_chatbook.Library.library_ingest_state import build_library_ingest_state
+
+    form = _transcription_preview({"transcription_provider": "transcribe-cpp"}).form
+    state = build_library_ingest_state((), form=form, transcribe_cpp_configured=False)
+    assert "transcribe.cpp · choose a GGUF model" in state.commit_summary_line
+    assert "configured GGUF" not in state.commit_summary_line

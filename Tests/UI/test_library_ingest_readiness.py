@@ -274,3 +274,96 @@ def test_restaging_same_source_and_options_fences_pending_readiness():
     assert screen._ingest_state.form.title == "Previous title"
     LibraryScreen._apply_library_transcription_readiness(screen, *checks[0], None)
     assert not queued
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 40), (80, 24)])
+async def test_effective_model_stays_visible_and_updates_before_start(size):
+    from textual import on
+    from textual.app import ComposeResult
+    from textual.screen import Screen
+    from textual.widgets import Select, Static
+    from Tests.Library.test_transcription_readiness import _transcription_preview
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+
+    initial = _transcription_preview(
+        {"transcription_provider": "default"}, "distil-large-v3"
+    )
+    initial.form.expanded_type_groups.add("audio_video")
+
+    class PreviewScreen(Screen):
+        def __init__(self):
+            super().__init__()
+            self._ingest_state = SimpleNamespace(form=initial.form)
+            from tldw_chatbook.UI.Screens.library_screen import LIBRARY_ROW_INGEST_MEDIA
+
+            self._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
+
+        def compose(self) -> ComposeResult:
+            yield LibraryIngestCanvas(initial)
+
+        def _invalidate_library_external_submission(self):
+            pass
+
+        def _disarm_library_ingest_start_confirm(self):
+            pass
+
+        def _disarm_library_ingest_retry_confirm(self):
+            pass
+
+        def _update_library_ingest_fold_hint(self):
+            pass
+
+        def _build_library_ingest_state(self):
+            return _transcription_preview(
+                self._ingest_state.form.type_options["audio_video"], "distil-large-v3"
+            )
+
+        def _update_library_ingest_gate(self, state):
+            LibraryScreen._update_library_ingest_gate(self, state)
+
+        def _update_library_ingest_option_group(self, group):
+            LibraryScreen._update_library_ingest_option_group(self, group)
+
+        @on(LibraryIngestCanvas.OptionValueChanged)
+        def option_changed(self, event):
+            LibraryScreen.handle_library_ingest_option_value_changed(self, event)
+
+    class Host(ConsolidatedCSSApp):
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+        def on_mount(self):
+            self.push_screen(PreviewScreen())
+
+    host = Host()
+    from unittest.mock import patch
+
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with host.run_test(size=size) as pilot:
+            await pilot.pause()
+            summary = host.screen.query_one("#library-ingest-commit-summary", Static)
+            assert summary.display
+            assert "Faster Whisper · distil-large-v3 (Auto)" in str(summary.render())
+            assert 0 < summary.region.bottom <= size[1]
+            host.screen.query_one(
+                "#opt-audio_video-transcription_provider", Select
+            ).value = "faster-whisper"
+            await pilot.pause()
+            assert host.screen.query_one("#library-ingest-commit-summary") is summary
+            assert "Faster Whisper · base" in str(summary.render())
+            assert "distil-large-v3" not in str(summary.render())
+            host.screen.query_one(
+                "#opt-audio_video-transcription_model", Select
+            ).value = "small.en"
+            await pilot.pause()
+            assert "Faster Whisper · small.en" in str(summary.render())
+            host.screen.query_one(
+                "#opt-audio_video-transcription_provider", Select
+            ).value = "default"
+            await pilot.pause()
+            assert "Faster Whisper · distil-large-v3 (Auto)" in str(summary.render())
+            assert "small.en" not in str(summary.render())

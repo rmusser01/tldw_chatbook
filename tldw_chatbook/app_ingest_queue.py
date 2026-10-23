@@ -101,6 +101,7 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
     BatchSTTRoutingError,
+    resolve_batch_stt_model,
     resolve_batch_stt_route,
 )
 from tldw_chatbook.Research_Workspace.source_operation_store import (
@@ -2418,17 +2419,11 @@ class LibraryIngestQueueMixin:
                 else ""
             )
             options["transcription_model_dir"] = selected_model_dir or None
-            selected_model = route.model
-            if selected_model is None and route.requested_provider not in {
-                "default",
-                "transcribe-cpp",
-            }:
-                selected_model = flat_opts.get("model") or flat_opts.get(
-                    "transcription_model"
-                )
-                if route.requested_provider == "faster-whisper" and not selected_model:
-                    selected_model = "base"
-            options["transcription_model"] = selected_model
+            options["transcription_model"] = resolve_batch_stt_model(
+                route,
+                selected_model=flat_opts.get("model")
+                or flat_opts.get("transcription_model"),
+            )
             options["language"] = route.requested_language
             options["translation_target_language"] = route.target_language
             options["transcription_precision"] = route.precision
