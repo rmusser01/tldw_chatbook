@@ -499,7 +499,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # contracts, Evals skill eval, the llama.cpp refresh gate, the CSS staleness
 # manifest) and three node ids of test_modal_wide_tier.py, whose whole file
 # is over the 60 s per-file rule. Appended at the tail.
-MINIMUM_FILES = 671
+# TASK-36382 review raised it by 2, to 625: that file's two remaining static
+# contracts (the renamed-modal-id guard over every anchor, and the block
+# check), well under 1 s together. Appended at the tail.
+MINIMUM_FILES = 673
 
 
 def read_census(path: Path) -> list[str]:
