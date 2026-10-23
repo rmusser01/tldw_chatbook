@@ -130,7 +130,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the row's new exact measurement.
     #: Rebased 2026-10-23 onto dev, which measures 24341 (TASK-33620.15.3's row
     #: above): +3 for the cadence hooks; the row is the exact measurement.
-    #: Raised by +22 (no method added) 2026-10-23 under the same
+    #: Raised by +19 (no method added) 2026-10-23 under the same
     #: ruling: TASK-36385 stops the mount saving default rail state, and
     #: holds those defaults for the next rail save to write first so seeding
     #: stays one-time (the logic itself is in Chat/console_rail_state.py::
