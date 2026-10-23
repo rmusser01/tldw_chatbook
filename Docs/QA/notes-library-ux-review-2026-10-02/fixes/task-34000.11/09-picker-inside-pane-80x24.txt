@@ -3,22 +3,22 @@
 ────────────────────────────────────────────────────────────────────────────────
  Library | Local
   Library notes  |  Folder files
-  N    N   Saved 01:43 · Next: Keep editing; changes save automatically.
+  N    N   Saved 02:46 · Next: Keep editing; changes save automatically.
   a    o
-  v    t    ‹ Back to list    Compact link test               Library notes
+  v    t    ‹ Back to list    Compact recapture               Library notes
        e   In the Library database only — no file on disk
        s   Saved
               Edit     Preview     Info
 --->          Save     Use in Console
+           Title     Compact recapture
+     --->  Keywords  Comma-separated keywords
+           Body
+          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+--->      ┃ See [[                                                             ┃
           ╭────────────────────────────────────────────────────────────────────╮
-     ---> │Thesis outline — retrieval-augmented tutoring                       │
           │Advisor meeting 2026-09-24                                          │
-          │Quotes                                                              │
---->      │Scratch                                                             │
-          │Untitled                                                            │
-          │A very long note title that keeps going so we can test how the      │
-          │tree, the editor header and the Info pane cope with it at every     │
-          │📚 Reading queue 2026 ✨                                          ▇▇│
+          │Thesis outline — retrieval-augmented tutoring                     ▇▇│
+          │Scratch                                                             │
           ╰────────────────────────────────────────────────────────────────────╯
                                                                   2 words · 1:7
   esc notes | ctrl+end end | F1 · F6 · Ctrl+P · Ctrl+Q

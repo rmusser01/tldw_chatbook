@@ -6,15 +6,14 @@ control at all, a typed ``[[Title]]`` rendered as plain text and recorded
 nothing, and activating a stored note link in Preview handed
 ``note://<id>`` to the operating system's URL handler.
 
-Two boots at 160x45 over a real ChaChaNotes database (see
+One boot at 160x45 over a real ChaChaNotes database (see
 ``library_note_links_support``): the Escape-latch arm shares the insert
-boot and the deleted-target arm shares the Preview-click boot, because one
-boot costs ~12 s on this machine and the lane's ceiling is 35 s. The picker arms read what the compositor
+boot. The Preview arms (click, http, deleted target) are the sibling census
+file ``test_library_note_links_preview_opens_in_app.py`` -- two boots in one
+file sat at the lane's 35 s ceiling (fix round 1, I-4). The picker arms read what the compositor
 paints inside ``#library-note-link-picker`` and what the body ``TextArea``
-holds after Enter; the Preview arms count calls on a recorder standing in
-for ``app.open_url`` (AC#5: "never reaches ``app.open_url``" is asserted as
-``== []`` after the click, with the in-app open as the positive signal).
-The many-links Enter picker, the 80x24 size and the ``[b]`` title are in
+holds after Enter. The many-links Enter picker, the 80x24 size, the ``[b]``
+title, the burst races and the hostile-scheme pins are in
 ``test_library_note_links_picker_and_preview_extended.py``.
 """
 
@@ -24,22 +23,14 @@ import pytest
 from textual.widgets import OptionList, TextArea
 
 from Tests.UI.library_note_links_support import (
-    DELETED_NOTICE,
     INDEX,
     LISBON,
-    STALE,
     TWO,
-    WEB,
-    WEB_URL,
     _app,
-    _armed_editor,
-    _click_preview_link,
     _info_backlinks,
     _open_note,
     _painted,
     _picker_open,
-    _preview,
-    _record_browser,
     _record_open_url,
     _title_value,
     _until,
@@ -49,7 +40,6 @@ from Tests.UI.library_quit_guard_support import (
     SIZE,
     _library,
     _new_blank_note,
-    _record_toasts,
     _scaled_autosave,
     _type,
 )
@@ -161,71 +151,3 @@ async def test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_l
         rows = await _info_backlinks(screen, pilot, "Linked from (3)")
         assert sorted(rows) == sorted([INDEX, TWO, VERIFIER]), rows
         assert opened == []
-
-
-async def test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url(
-    tmp_path, monkeypatch
-) -> None:
-    """AC#3 / AC#5: a click on the painted link text opens Lisbon in the
-    editor and ``app.open_url`` is never called. Negative control in the
-    same boot: an http(s) link goes to ``webbrowser.open`` exactly once,
-    with a notice, and still never to ``app.open_url``. Then a link whose
-    target was deleted is refused with the notice (Review Focus 4)."""
-    app, profile = _app(tmp_path)
-    opened = _record_open_url(monkeypatch, app)
-    browser = _record_browser(monkeypatch)
-    async with app.run_test(size=SIZE) as pilot:
-        screen = await _library(app, pilot)
-        toasts = _record_toasts(monkeypatch, app)
-        await _open_note(screen, pilot, INDEX, profile.index_id)
-        await _preview(screen, pilot, LISBON, app)
-
-        await _click_preview_link(app, screen, pilot, LISBON)
-
-        def _lisbon_armed() -> bool:
-            snapshot = screen._library_note_session.snapshot
-            return (
-                snapshot is not None
-                and snapshot.note_id == profile.lisbon_id
-                and screen._notes_state.editor_armed
-            )
-
-        # Either the app opened Lisbon, or the OS handler was asked: the
-        # base fails HERE, on the recorder, not on a bare timeout.
-        await _until(pilot, lambda: bool(opened) or _lisbon_armed(), "the click to land")
-        assert opened == [], f"note:// reached app.open_url: {opened}"
-        await _armed_editor(screen, pilot, profile.lisbon_id)
-        assert _title_value(screen) == LISBON
-        assert browser == []
-
-        await _open_note(screen, pilot, WEB, profile.web_id)
-        await _preview(screen, pilot, "docs", app)
-        await _click_preview_link(app, screen, pilot, "docs")
-        await _until(pilot, lambda: browser == [WEB_URL], f"webbrowser.open({WEB_URL!r})")
-        await _until(
-            pilot,
-            lambda: any(t == f"Opened in browser: {WEB_URL}" for t in toasts),
-            "the browser notice",
-        )
-        await pilot.pause(0.3)
-        assert browser == [WEB_URL]
-        assert opened == [], opened
-        assert screen._library_note_session.snapshot.note_id == profile.web_id
-
-        # Arm C (Review Focus 4): a stale ``note://`` link is refused with
-        # the notice; the editor does not move and the OS handler is never
-        # asked. Same boot: one lane boot costs ~12 s here.
-        await _open_note(screen, pilot, STALE, profile.stale_id)
-        await _preview(screen, pilot, "Gone", app)
-        await _click_preview_link(app, screen, pilot, "Gone")
-        await _until(
-            pilot,
-            lambda: bool(opened) or DELETED_NOTICE in toasts,
-            "the click to land",
-        )
-        assert opened == [], f"note:// reached app.open_url: {opened}"
-        assert DELETED_NOTICE in toasts, toasts
-        await pilot.pause(0.3)
-        assert screen._library_note_session.snapshot.note_id == profile.stale_id
-        assert screen.query_one("#library-note-preview-region").display
-        assert browser == [WEB_URL]

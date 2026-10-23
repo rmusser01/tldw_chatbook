@@ -513,7 +513,7 @@ from textual import on
 from textual.containers import Horizontal
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, OptionList, Static, TextArea
 
 from ...DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -597,6 +597,9 @@ from ...Widgets.Library.library_note_link_picker import (
     MAX_VISIBLE_ROWS as LIBRARY_NOTE_LINK_PICKER_ROWS,
     LibraryNoteLinkPicker,
     LinkCandidate,
+)
+from ...Utils.fts5_match_forms import (
+    NOTES_FILTER_MIN_PREFIX_CHARS as LIBRARY_NOTE_LINK_PICKER_MIN_QUERY,
 )
 from ...Notes.note_import_plan_models import (
     note_link_entries,
@@ -3552,6 +3555,9 @@ class LibraryNotesController:
         self._library_notes_backlinks = ()
         self._library_notes_backlinks_status = "loading"
         self._library_note_location = ("", "", False)
+        # Fix round 1 (M-12): the Escape latch is one note's; it does not
+        # survive a note switch.
+        self._library_notes_link_picker_latch = None
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3896,6 +3902,7 @@ class LibraryNotesController:
             picker.hide()
         if body is not None:
             body.link_picker_open = False
+            body.link_picker_has_rows = False
 
     def _sync_library_note_link_picker(self, body: NoteEditorTextArea | Any) -> None:
         """Open, narrow, or close the picker for the caret's ``[[`` context.
@@ -3920,8 +3927,14 @@ class LibraryNotesController:
         if self._library_notes_link_picker_latch == start:
             self._close_library_note_link_picker(body)
             return
+        # Fix round 1 (M-12): a DIFFERENT context clears the latch (another
+        # line, a fresh ``[[``); it used to clear only when no context was
+        # left, so Escape on line 0 kept the picker shut on line 1.
+        self._library_notes_link_picker_latch = None
         self._library_notes_link_picker_generation += 1
         generation = self._library_notes_link_picker_generation
+        # A held accept belongs to the context it was pressed in (I-2).
+        picker.accept_pending_for = None
         if picker.is_open:
             self._anchor_library_note_link_picker(picker, body)
         self.run_worker(
@@ -3958,7 +3971,11 @@ class LibraryNotesController:
         snapshot = self._library_note_session.snapshot
         open_note_id = snapshot.note_id if snapshot is not None else ""
         rows: Any = []
-        if callable(method):
+        # Fix round 1 (M-6): a one-character query is matched whole by Task
+        # 3's rule, so it finds nothing by design -- ask for more instead of
+        # claiming "No note titled". No SQL runs for it.
+        short_query = 0 < len(query.strip()) < LIBRARY_NOTE_LINK_PICKER_MIN_QUERY
+        if callable(method) and not short_query:
             try:
                 rows = await method(
                     scope="local_note",
@@ -3977,17 +3994,23 @@ class LibraryNotesController:
         body = self._library_note_body_or_none()
         if picker is None or body is None:
             return
-        if self._library_notes_link_picker_latch is not None:
-            # Escape landed while this load was in flight.
-            return
         candidates = [
             LinkCandidate(str(row.get("id") or ""), str(row.get("title") or ""))
             for row in rows or ()
             if str(row.get("id") or "")
         ]
-        picker.show_candidates(candidates, mode="insert", empty_query=query)
+        empty_text = "Keep typing…" if short_query else f"No note titled “{query}”"
+        picker.show_candidates(
+            candidates, mode="insert", empty_text=empty_text, generation=generation
+        )
         self._anchor_library_note_link_picker(picker, body)
         body.link_picker_open = picker.is_open
+        body.link_picker_has_rows = picker.has_rows
+        if picker.accept_pending_for == generation:
+            # I-2: Enter arrived while this load was in flight; it was held
+            # rather than accepting the previous query's rows.
+            picker.accept_pending_for = None
+            self._accept_library_note_link_picker(body)
 
     def handle_library_note_link_picker_key(
         self, message: NoteEditorTextArea.LinkPickerKey
@@ -4004,7 +4027,11 @@ class LibraryNotesController:
             body.link_picker_open = False
             return
         key = message.key
-        if key == "up":
+        if key == "blur":
+            # Fix round 1 (M-4): the focus left the body.
+            self._library_notes_link_picker_generation += 1
+            self._close_library_note_link_picker(body)
+        elif key == "up":
             picker.move_highlight(-1)
         elif key == "down":
             picker.move_highlight(1)
@@ -4028,6 +4055,14 @@ class LibraryNotesController:
         picker = self._library_note_link_picker_or_none()
         if picker is None:
             return
+        current = self._library_notes_link_picker_generation
+        if picker.generation != current:
+            # I-2: the rows on show answered an OLDER query -- never insert
+            # a stale row (the probe inserted "Burst 0" for "Lisb"+Enter and
+            # autosave recorded a wrong backlink). Hold the accept; the
+            # loader honours it when the current answer lands.
+            picker.accept_pending_for = current
+            return
         candidate = picker.accept_selected()
         context = wikilink_completion_context(body.text, body.cursor_location)
         if candidate is None or context is None:
@@ -4035,11 +4070,61 @@ class LibraryNotesController:
             return
         _query, start = context
         insert = stored_note_link(candidate.title, candidate.note_id)
-        result = body.replace(insert, start, body.cursor_location, maintain_selection_offset=False)
+        end = self._library_note_link_closer_end(body)
+        result = body.replace(insert, start, end, maintain_selection_offset=False)
         body.move_cursor(result.end_location)
         self._library_notes_link_picker_latch = None
         self._library_notes_link_picker_generation += 1
         self._close_library_note_link_picker(body)
+
+    _NOTE_LINK_CLOSER_RE = re.compile(r"(?:\|[^\[\]\n]*)?\]\]")
+
+    def _library_note_link_closer_end(self, body: NoteEditorTextArea) -> tuple[int, int]:
+        """Where the accept's replacement ends: the caret, or past an existing
+        ``]]`` / ``|alias]]`` right after it (fix round 1, M-11: accepting
+        with the caret inside ``[[Lisb]]`` left a stray ``]]``)."""
+        row, column = body.cursor_location
+        line = body.document.get_line(row) if row < body.document.line_count else ""
+        match = self._NOTE_LINK_CLOSER_RE.match(line, column)
+        if match is None:
+            return (row, column)
+        return (row, match.end())
+
+    def handle_library_note_link_picker_selected(self, event: Any) -> None:
+        """A mouse click on a picker row accepts it (fix round 1, M-11).
+
+        Args:
+            event: ``OptionList.OptionSelected`` from the picker's list.
+        """
+        event.stop()
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not picker.is_open or not picker.has_rows:
+            return
+        index = int(getattr(event, "option_index", 0) or 0)
+        picker.query_one(OptionList).highlighted = index
+        if picker.mode == "follow":
+            self.handle_library_note_follow_picker_key("enter")
+            return
+        body = self._library_note_body_or_none()
+        if body is not None:
+            self._accept_library_note_link_picker(body)
+
+    @staticmethod
+    def _library_note_link_notice_text(href: str) -> str:
+        """The href as a notice may show it: C0/C1 control characters dropped
+        (fix round 1, M-9 -- an escape sequence must never reach the toast)."""
+        return "".join(
+            ch for ch in href if not (ord(ch) < 32 or 127 <= ord(ch) <= 159)
+        )
+
+    @staticmethod
+    def _library_note_link_is_clean_http(href: str) -> bool:
+        """``http://``/``https://`` with no whitespace or control character in
+        it (fix round 1, M-9): anything else is refused, not handed to the
+        browser."""
+        if not href.startswith(("http://", "https://")):
+            return False
+        return not any(ch.isspace() or ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in href)
 
     def _library_note_preview_links(self) -> tuple[tuple[str, str], ...]:
         """``(label, note_id)`` for the open note's stored links, Preview only."""
@@ -4061,10 +4146,11 @@ class LibraryNotesController:
         """
         event.stop()
         href = str(getattr(event, "href", "") or "").strip()
+        shown = self._library_note_link_notice_text(href)
         if href.startswith("note://"):
             await self._open_library_note_link_target(href[len("note://") :].strip())
             return
-        if href.startswith(("http://", "https://")):
+        if self._library_note_link_is_clean_http(href):
             import webbrowser  # noqa: PLC0415 -- lazy, as the Settings policy does
 
             # OS spawn off the UI thread (TASK-34937's rule).
@@ -4074,10 +4160,10 @@ class LibraryNotesController:
                 exit_on_error=False,
                 name="open-link",
             )
-            self.app.notify(f"Opened in browser: {href}", timeout=4, markup=False)
+            self.app.notify(f"Opened in browser: {shown}", timeout=4, markup=False)
             return
         self.app.notify(
-            f"Link not opened (unsupported scheme): {href}",
+            f"Link not opened (unsupported scheme): {shown}",
             severity="warning",
             timeout=6,
             markup=False,
@@ -4170,8 +4256,14 @@ class LibraryNotesController:
             return False
         return key in NoteEditorTextArea.LINK_PICKER_KEYS
 
-    async def handle_library_note_follow_picker_key(self, key: str) -> None:
-        """Route Up/Down/Enter/Escape to the follow-mode picker."""
+    def handle_library_note_follow_picker_key(self, key: str) -> None:
+        """Route Up/Down/Enter/Escape to the follow-mode picker.
+
+        Synchronous (fix round 1, I-1): every key used to go through one
+        exclusive worker, so an Enter arriving in the same read as a Down
+        cancelled the Down and opened the FIRST link. Only the open itself
+        is async now, started after the row is taken and the picker hidden.
+        """
         picker = self._library_note_link_picker_or_none()
         if picker is None or not picker.is_open:
             return
@@ -4183,7 +4275,11 @@ class LibraryNotesController:
             candidate = picker.accept_selected()
             picker.hide()
             if candidate is not None:
-                await self._open_library_note_link_target(candidate.note_id)
+                self.run_worker(
+                    self._open_library_note_link_target(candidate.note_id),
+                    exclusive=True,
+                    group="library_note_link_follow",
+                )
         elif key == "escape":
             picker.hide()
     @on(Input.Changed, "#library-note-keywords")

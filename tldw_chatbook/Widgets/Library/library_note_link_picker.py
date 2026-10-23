@@ -26,8 +26,6 @@ from textual.widget import Widget
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
-from tldw_chatbook.Utils.input_validation import escape_markup
-
 MAX_VISIBLE_ROWS = 8
 MIN_WIDTH = 30
 MAX_WIDTH = 70
@@ -44,8 +42,8 @@ class LinkCandidate:
 class _CandidateOption(Option):
     """OptionList row carrying its ``LinkCandidate``.
 
-    The title goes through ``escape_markup`` and is rendered from a plain
-    ``Text``: a title such as ``Bold [b] title`` must paint literally
+    The title is rendered from a plain rich ``Text``, which is never parsed
+    as console markup: a title such as ``Bold [b] title`` paints literally
     (lessons-textual, "Square brackets in widget text are console markup").
     """
 
@@ -69,7 +67,12 @@ class LibraryNoteLinkPicker(Widget):
         kwargs.setdefault("id", "library-note-link-picker")
         super().__init__(**kwargs)
         self._candidates: list[LinkCandidate] = []
-        self._empty_query: str | None = None
+        self._empty_text: str | None = None
+        #: Fix round 1 (I-2): the load generation the rows on show answered.
+        #: An accept for any OTHER generation is stale -- the controller
+        #: holds it (``accept_pending_for``) until the current answer lands.
+        self.generation = 0
+        self.accept_pending_for: int | None = None
         self._desired_height = 0
         self._desired_width = MIN_WIDTH
         # region == flow_base + the last offset applied; the two together
@@ -100,41 +103,50 @@ class LibraryNoteLinkPicker(Widget):
     def candidates(self) -> tuple[LinkCandidate, ...]:
         return tuple(self._candidates)
 
+    @property
+    def has_rows(self) -> bool:
+        """Whether a real (acceptable) row is on show, not a hint row."""
+        return bool(self._candidates)
+
     def show_candidates(
         self,
         rows: list[LinkCandidate],
         *,
         mode: Literal["insert", "follow"] = "insert",
-        empty_query: str | None = None,
+        empty_text: str | None = None,
+        generation: int = 0,
     ) -> None:
         """Replace rows, reset the highlight, and show.
 
         Idempotent when already open in the same mode with the SAME rows:
-        the highlight the user moved is left alone (task-3790's rule).
+        the highlight the user moved is left alone (task-3790's rule); the
+        generation stamp is refreshed either way.
 
         Args:
             rows: The candidates, in the order to show them.
             mode: ``"insert"`` (the ``[[`` completion) or ``"follow"`` (the
                 Preview's Enter picker).
-            empty_query: When ``rows`` is empty, the query that found
-                nothing -- rendered as one disabled row. ``None`` keeps the
-                picker hidden on no rows (the loader has not answered yet).
+            empty_text: When ``rows`` is empty, the one disabled row to show
+                ("No note titled …", "Keep typing…"). ``None`` keeps the
+                picker hidden on no rows.
+            generation: The load generation these rows answer (I-2).
         """
         rows = list(rows)
+        self.generation = generation
         if self.is_open and self.mode == mode and rows == self._candidates and (
-            rows or self._empty_query == empty_query
+            rows or self._empty_text == empty_text
         ):
             return
-        if not rows and empty_query is None:
+        if not rows and empty_text is None:
             self.hide()
             return
         self.mode = mode
         self._candidates = rows
-        self._empty_query = empty_query if not rows else None
+        self._empty_text = empty_text if not rows else None
         self._desired_height = max(1, min(len(rows), MAX_VISIBLE_ROWS))
         longest = max((len(row.title) for row in rows), default=0)
         if not rows:
-            longest = len(self._empty_row_text())
+            longest = len(empty_text or "")
         self._desired_width = max(MIN_WIDTH, min(MAX_WIDTH, longest + 4))
         # The sheet's `round` border takes one row above and one below the
         # rows, so the box is rows + 2 (the Console popup has no border and
@@ -147,20 +159,18 @@ class LibraryNoteLinkPicker(Widget):
             option_list.add_options([_CandidateOption(row) for row in rows])
             option_list.highlighted = 0
         else:
-            option_list.add_option(Option(Text(self._empty_row_text()), disabled=True))
+            option_list.add_option(Option(Text(self._empty_text or ""), disabled=True))
             option_list.highlighted = None
         self.display = True
         self._apply_anchor()
         self.call_after_refresh(self._apply_anchor)
 
-    def _empty_row_text(self) -> str:
-        return f"No note titled “{self._empty_query or ''}”"
-
     def hide(self) -> None:
         """Hide the picker and drop its rows."""
         self.display = False
         self._candidates = []
-        self._empty_query = None
+        self._empty_text = None
+        self.accept_pending_for = None
 
     def move_highlight(self, delta: int) -> None:
         """Move the highlight by ``delta`` rows, wrapping at both ends."""
@@ -209,11 +219,26 @@ class LibraryNoteLinkPicker(Widget):
             height = self._desired_height + 2
             x = max(left, min(cell_x, right - width))
             x = max(x, 0)
-            y = cell_y + 1
-            if y + height > bottom:
-                above = cell_y - height
-                y = above if above >= top else max(top, bottom - height)
+            # Fix round 1 (M-5): the caret ROW stays visible. Below the caret
+            # when the box fits there, else above when it fits there, else
+            # the larger side with the rows cut to fit (never over the
+            # caret: at 80x24 the box used to be clamped onto it).
+            below = bottom - (cell_y + 1)
+            above = cell_y - top
+            if below >= height:
+                y = cell_y + 1
+            elif above >= height:
+                y = cell_y - height
+            elif below >= above:
+                height = max(3, below)
+                y = cell_y + 1
+            else:
+                height = max(3, above)
+                y = cell_y - height
             y = max(y, 0)
+            if height != self._desired_height + 2:
+                # ds-runtime: the rows are cut to the space beside the caret.
+                self.set_styles(height=height)
             if self.region.height > 0:
                 flow_x = self.region.x - self._anchor_offset[0]
                 flow_y = self.region.y - self._anchor_offset[1]
@@ -229,4 +254,4 @@ class LibraryNoteLinkPicker(Widget):
             logger.warning(f"LibraryNoteLinkPicker.reposition failed: {exception!r}")
 
 
-__all__ = ["LibraryNoteLinkPicker", "LinkCandidate", "MAX_VISIBLE_ROWS", "escape_markup"]
+__all__ = ["LibraryNoteLinkPicker", "LinkCandidate", "MAX_VISIBLE_ROWS"]

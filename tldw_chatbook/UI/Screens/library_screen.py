@@ -9049,11 +9049,9 @@ class LibraryScreen(BaseAppScreen):
         if self._notes_controller.library_note_follow_picker_claims(event.key):
             event.stop()
             event.prevent_default()
-            self.run_worker(
-                self._notes_controller.handle_library_note_follow_picker_key(event.key),
-                exclusive=True,
-                group="library_note_link_follow",
-            )
+            # Synchronous (fix round 1, I-1): a worker per key let Enter
+            # cancel a Down that arrived in the same read.
+            self._notes_controller.handle_library_note_follow_picker_key(event.key)
             return
         emergency_tab = bool(
             event.key in {"tab", "shift+tab", "backtab"}
@@ -21481,6 +21479,12 @@ class LibraryScreen(BaseAppScreen):
         self, message: NoteEditorTextArea.LinkPickerKey
     ) -> None:
         return self._notes_controller.handle_library_note_link_picker_key(message)
+
+    @on(OptionList.OptionSelected, "#library-note-link-picker-options")
+    def handle_library_note_link_picker_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        return self._notes_controller.handle_library_note_link_picker_selected(event)
 
     @on(Markdown.LinkClicked, "#library-note-preview-body")
     async def handle_library_note_preview_link(self, event: Markdown.LinkClicked) -> None:

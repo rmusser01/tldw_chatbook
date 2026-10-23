@@ -565,7 +565,12 @@ _BUDGETS: dict[str, int] = {
     # caret move, the candidate loader worker, key routing, accept through
     # ``TextArea.replace``), Preview's in-app link policy and the
     # Enter-follows-link action with its follow-mode picker.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6871,
+    # 2026-10-23, TASK-34000.11 fix round 1 (same owner decision): 6871 ->
+    # 6966 (+95; the round-0 row had been set one line over the measured
+    # 6870) -- the held stale accept, the closer consumption, the row-click
+    # accept, the control-character link policy and the synchronous
+    # follow-picker keys.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6966,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

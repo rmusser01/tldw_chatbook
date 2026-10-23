@@ -1042,7 +1042,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: its ``check_action`` arm, the follow-picker ``on_key`` branch, the
     #: ``[[`` picker's Tab gate, three ``@on`` delegators (caret, picker
     #: keys, ``Markdown.LinkClicked``) and the Preview footer chip.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37753, 1360),
+    #: 2026-10-23, TASK-34000.11 fix round 1 (same owner decision): 37753 ->
+    #: 37757 (+4), methods 1360 -> 1361 -- the picker row-click delegator;
+    #: the follow-picker key branch is synchronous.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37757, 1361),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
