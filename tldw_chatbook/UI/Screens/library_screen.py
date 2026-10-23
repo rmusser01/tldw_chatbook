@@ -9498,6 +9498,12 @@ class LibraryScreen(BaseAppScreen):
     def refresh_notes_sync_runtime(self) -> None:
         """Project the app-owned runtime after detached startup settles."""
 
+        # TASK-34000.71 fix round 1 (M-5): the runtime's done-callback defers
+        # this through ``call_after_refresh``; one that lands after a
+        # same-refresh suspend must touch nothing (TASK-31521). Resume
+        # clears the flag before it re-dispatches this itself.
+        if getattr(self, "_library_screen_suspended", False):
+            return
         self._library_notes_sync_controller.refresh_roots()
         if (
             self.is_mounted

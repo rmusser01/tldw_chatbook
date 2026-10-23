@@ -1052,7 +1052,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (+10), methods unchanged -- the constructor asks the app to schedule
     #: the notes-sync runtime's lazy non-forced start once it holds the
     #: owner (the no-root "Keep a folder synced" deadlock).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37771, 1361),
+    #: 2026-10-23, TASK-34000.71 fix round 1 (same owner decision): 37771 ->
+    #: 37777 (+6), methods unchanged -- ``refresh_notes_sync_runtime`` is a
+    #: no-op on a suspended screen (M-5, TASK-31521).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37777, 1361),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

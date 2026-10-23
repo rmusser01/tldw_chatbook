@@ -595,7 +595,10 @@ _BUDGETS: dict[str, int] = {
     # ``_settle_library_notes_sync_start`` and its settle constant: Add from
     # files… gives a lazily scheduled notes-sync start a bounded 0.5 s to
     # settle before the chooser re-reads availability (AC#4).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7119,
+    # 2026-10-23, TASK-34000.71 fix round 1 (same owner decision): 7119 ->
+    # 7134 (+15) -- the settle waits only on the task the lazy path
+    # scheduled (M-1) and tells the start's cancellation from its own (M-4).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7134,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
