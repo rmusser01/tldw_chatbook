@@ -17,7 +17,10 @@ from Tests.Workspaces.project_index_support import (
     open_semantic_store,
 )
 from Tests.Workspaces.test_project_semantic_settings import digest, settings
-from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime, LifetimeBusy
+from tldw_chatbook.Workspaces.project_index.lifetime import (
+    BindingLifetime,
+    LifetimeBusy,
+)
 from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 from Tests.private_profile import private_profile_test
 
@@ -37,14 +40,26 @@ def populated_store(tmp_path):
     with store.transaction() as conn:
         conn.execute(
             "INSERT INTO files VALUES(?,?,?,?,?,?)",
-            ("src/dog.py", "identity-1", 123, len(text), sha256(text.encode()).hexdigest(), text),
+            (
+                "src/dog.py",
+                "identity-1",
+                123,
+                len(text),
+                sha256(text.encode()).hexdigest(),
+                text,
+            ),
         )
         chunk = conn.execute(
             "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
             ("src/dog.py", text, 0, len(text), 1, 1),
         ).lastrowid
-        conn.execute("INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)", (chunk, "src/dog.py", text))
-        conn.execute("UPDATE control SET state='Ready',manifest_revision=manifest_revision+1")
+        conn.execute(
+            "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+            (chunk, "src/dog.py", text),
+        )
+        conn.execute(
+            "UPDATE control SET state='Ready',manifest_revision=manifest_revision+1"
+        )
     semantic = store.configure_semantic(
         scope, settings(), enabled=True, expected_semantic_revision=0
     )
@@ -63,7 +78,14 @@ def seed_keyword_ready(rig):
         with store.transaction() as conn:
             conn.execute(
                 "INSERT INTO files VALUES(?,?,?,?,?,?)",
-                ("dog.py", "identity-1", 123, len(text), sha256(text.encode()).hexdigest(), text),
+                (
+                    "dog.py",
+                    "identity-1",
+                    123,
+                    len(text),
+                    sha256(text.encode()).hexdigest(),
+                    text,
+                ),
             )
             chunk = conn.execute(
                 "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
@@ -73,7 +95,9 @@ def seed_keyword_ready(rig):
                 "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
                 (chunk, "dog.py", text),
             )
-            conn.execute("UPDATE control SET state='Ready',manifest_revision=manifest_revision+1")
+            conn.execute(
+                "UPDATE control SET state='Ready',manifest_revision=manifest_revision+1"
+            )
         return store.load_status(rig.key)
     finally:
         store.close_native()
@@ -108,10 +132,15 @@ def start_held_semantic(rig, monkeypatch, started, release, *, close=None):
             if close is not None:
                 close()
 
-    monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
-    monkeypatch.setattr(semantic, "_require_current_catalog", lambda *args: (None, None))
     monkeypatch.setattr(
-        semantic, "_target",
+        semantic, "_issue_project_projection_scope", lambda *args: Carrier()
+    )
+    monkeypatch.setattr(
+        semantic, "_require_current_catalog", lambda *args: (None, None)
+    )
+    monkeypatch.setattr(
+        semantic,
+        "_target",
         lambda *args: SimpleNamespace(artifact_fingerprint=digest("artifact-a")),
     )
     monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
@@ -121,13 +150,17 @@ def start_held_semantic(rig, monkeypatch, started, release, *, close=None):
     try:
         store.bind_native_lifetime(lease)
         state = store.configure_semantic(
-            status.scope, settings(), enabled=True, expected_semantic_revision=0,
+            status.scope,
+            settings(),
+            enabled=True,
+            expected_semantic_revision=0,
         )
     finally:
         store.close_native()
         lease.close()
     job = rig.service.refresh_semantic(
-        rig.key, expected_epoch=status.scope.epoch,
+        rig.key,
+        expected_epoch=status.scope.epoch,
         expected_semantic_revision=state.semantic_revision,
     )
     assert started.wait(45)
@@ -140,7 +173,8 @@ async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_r
 ):
     from Tests.Workspaces.test_project_index_service import Rig
     from tldw_chatbook.Workspaces.project_index.models import (
-        ProjectIndexRetirementUnproven, ProjectIndexSearchAuthority,
+        ProjectIndexRetirementUnproven,
+        ProjectIndexSearchAuthority,
     )
 
     rig = Rig(tmp_path)
@@ -154,7 +188,11 @@ async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_r
             raise RuntimeError("injected_model_close_failure")
 
     status, _, run = start_held_semantic(
-        rig, monkeypatch, started, release, close=close,
+        rig,
+        monkeypatch,
+        started,
+        release,
+        close=close,
     )
     clear_task = None
     try:
@@ -172,8 +210,14 @@ async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_r
         assert run.stop.is_set() and not run.native_retired
         assert rig.service.status(rig.key).scope.epoch > status.scope.epoch
         old_search = ProjectIndexSearchAuthority(
-            status.scope, rig.live.root, rig.live.chain, (), 1,
-            lambda: True, None, lambda candidate: None,
+            status.scope,
+            rig.live.root,
+            rig.live.chain,
+            (),
+            1,
+            lambda: True,
+            None,
+            lambda candidate: None,
         )
         assert rig.service.search(old_search, "canine").status == "unavailable"
         with pytest.raises(ProjectIndexRetirementUnproven, match="close_pending"):
@@ -229,17 +273,22 @@ async def test_held_semantic_refuses_publication_after_binding_or_settings_chang
         else:
             changed = settings("changed-destination")
             monkeypatch.setattr(
-                semantic, "_settings_for_project_model",
+                semantic,
+                "_settings_for_project_model",
                 lambda model_id: replace(
-                    changed, approved_destination_fingerprint=None,
+                    changed,
+                    approved_destination_fingerprint=None,
                 ),
             )
-            change_task = asyncio.create_task(asyncio.to_thread(
-                rig.service.enable_semantic,
-                rig.key, changed,
-                expected_epoch=status.scope.epoch,
-                expected_semantic_revision=state.semantic_revision,
-            ))
+            change_task = asyncio.create_task(
+                asyncio.to_thread(
+                    rig.service.enable_semantic,
+                    rig.key,
+                    changed,
+                    expected_epoch=status.scope.epoch,
+                    expected_semantic_revision=state.semantic_revision,
+                )
+            )
             deadline = asyncio.get_running_loop().time() + 5
             while not run.stop.is_set():
                 if change_task.done():
@@ -254,7 +303,9 @@ async def test_held_semantic_refuses_publication_after_binding_or_settings_chang
         assert not run.thread.is_alive() and run.native_retired
         assert run.lease.closed and run.store is None
         store = rig.store(rig.key)
-        lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+        lease = BindingLifetime.acquire(
+            store.db_path.parent.parent / rig.key.lifetime_name
+        )
         try:
             store.bind_native_lifetime(lease)
             current = store.load_status(rig.key)
@@ -276,29 +327,46 @@ def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path)
     try:
         manifest = store.load_status(scope.key).manifest_revision
         first = store.semantic_claim(
-            scope, state, manifest_revision=manifest,
-            artifact_fingerprint=digest("artifact-a"), claim_token="first"
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="first",
         )
         rows = store.semantic_source_page(scope, first, "first", after=0)
         assert len(rows) == 1 and rows[0].text == "canine companion"
-        assert store.semantic_append(scope, first, "first", rows, [encode_vector([1, 0])])
+        assert store.semantic_append(
+            scope, first, "first", rows, [encode_vector([1, 0])]
+        )
         assert store.semantic_publish(scope, first, "first")
         assert store.load_semantic_state(scope).ready_generation_id == first
 
         second = store.semantic_claim(
-            scope, state, manifest_revision=manifest,
-            artifact_fingerprint=digest("artifact-a"), claim_token="second"
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="second",
         )
-        assert store.semantic_fail(scope, second, "second", reason="provider_unavailable")
+        assert store.semantic_fail(
+            scope, second, "second", reason="provider_unavailable"
+        )
         failed = store.load_semantic_state(scope)
         assert failed.ready_generation_id == first
         assert failed.state == "Ready"
         assert failed.reason == "previous_index_refresh_failed_provider_unavailable"
-        assert store.semantic_ready_generation(scope, failed, digest("artifact-a")) is not None
+        assert (
+            store.semantic_ready_generation(scope, failed, digest("artifact-a"))
+            is not None
+        )
         from tldw_chatbook.Workspaces.project_index.semantic import rank_semantic
-        assert rank_semantic(
-            store, scope, failed, digest("artifact-a"), [1, 0], (), limit=10
-        )[0].relative_path == "src/dog.py"
+
+        assert (
+            rank_semantic(
+                store, scope, failed, digest("artifact-a"), [1, 0], (), limit=10
+            )[0].relative_path
+            == "src/dog.py"
+        )
     finally:
         store.close_native()
         lease.close()
@@ -308,15 +376,21 @@ def test_failed_first_generation_has_no_ready_projection(tmp_path):
     store, scope, state, lease = populated_store(tmp_path)
     try:
         generation = store.semantic_claim(
-            scope, state,
+            scope,
+            state,
             manifest_revision=store.load_status(scope.key).manifest_revision,
-            artifact_fingerprint=digest("artifact-a"), claim_token="first",
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="first",
         )
-        assert store.semantic_fail(scope, generation, "first", reason="provider_unavailable")
+        assert store.semantic_fail(
+            scope, generation, "first", reason="provider_unavailable"
+        )
         failed = store.load_semantic_state(scope)
         assert failed.state == "Error"
         assert failed.ready_generation_id is None
-        assert store.semantic_ready_generation(scope, failed, digest("artifact-a")) is None
+        assert (
+            store.semantic_ready_generation(scope, failed, digest("artifact-a")) is None
+        )
     finally:
         store.close_native()
         lease.close()
@@ -327,26 +401,34 @@ def test_ready_zero_members_is_distinct_from_unavailable_semantics(tmp_path):
 
     store, scope, state, lease = populated_store(tmp_path)
     try:
-        assert rank_semantic(
-            store, scope, state, digest("artifact-a"), [1, 0], (), limit=10
-        ) is None
+        assert (
+            rank_semantic(
+                store, scope, state, digest("artifact-a"), [1, 0], (), limit=10
+            )
+            is None
+        )
         with store.transaction() as conn:
             conn.execute("DELETE FROM chunk_fts")
             conn.execute("DELETE FROM chunks")
             conn.execute("DELETE FROM files")
             conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
         generation = store.semantic_claim(
-            scope, state,
+            scope,
+            state,
             manifest_revision=store.load_status(scope.key).manifest_revision,
-            artifact_fingerprint=digest("artifact-a"), claim_token="empty",
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="empty",
         )
         assert store.semantic_source_page(scope, generation, "empty", after=0) == ()
         assert store.semantic_publish(scope, generation, "empty")
         ready = store.load_semantic_state(scope)
         assert ready.state == "Ready" and ready.ready_generation_id == generation
-        assert rank_semantic(
-            store, scope, ready, digest("artifact-a"), [1, 0], (), limit=10
-        ) == ()
+        assert (
+            rank_semantic(
+                store, scope, ready, digest("artifact-a"), [1, 0], (), limit=10
+            )
+            == ()
+        )
     finally:
         store.close_native()
         lease.close()
@@ -365,14 +447,23 @@ def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
     try:
         second.bind_native_lifetime(second_lease)
         second_scope = second.configure(
-            other_key, ProjectIndexPolicy((), (".py",)), enabled=True,
+            other_key,
+            ProjectIndexPolicy((), (".py",)),
+            enabled=True,
             expected_scope=second.load_status(other_key).scope,
         )
         text = "canine companion"
         with second.transaction() as conn:
             conn.execute(
                 "INSERT INTO files VALUES(?,?,?,?,?,?)",
-                ("src/dog.py", "identity-1", 123, len(text), sha256(text.encode()).hexdigest(), text),
+                (
+                    "src/dog.py",
+                    "identity-1",
+                    123,
+                    len(text),
+                    sha256(text.encode()).hexdigest(),
+                    text,
+                ),
             )
             chunk = conn.execute(
                 "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
@@ -382,20 +473,31 @@ def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
                 "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
                 (chunk, "src/dog.py", text),
             )
-            conn.execute("UPDATE control SET state='Ready',manifest_revision=manifest_revision+1")
+            conn.execute(
+                "UPDATE control SET state='Ready',manifest_revision=manifest_revision+1"
+            )
         second_state = second.configure_semantic(
-            second_scope, settings(), enabled=True, expected_semantic_revision=0,
+            second_scope,
+            settings(),
+            enabled=True,
+            expected_semantic_revision=0,
         )
         for store, selected_scope, selected_state, token, vector in (
             (first, scope, state, "first", [1, 0]),
             (second, second_scope, second_state, "second", [0, 1]),
         ):
             generation = store.semantic_claim(
-                selected_scope, selected_state,
-                manifest_revision=store.load_status(selected_scope.key).manifest_revision,
-                artifact_fingerprint=digest("artifact-a"), claim_token=token,
+                selected_scope,
+                selected_state,
+                manifest_revision=store.load_status(
+                    selected_scope.key
+                ).manifest_revision,
+                artifact_fingerprint=digest("artifact-a"),
+                claim_token=token,
             )
-            page = store.semantic_source_page(selected_scope, generation, token, after=0)
+            page = store.semantic_source_page(
+                selected_scope, generation, token, after=0
+            )
             assert len(page) == 1 and page[0].text == text
             assert store.semantic_append(
                 selected_scope, generation, token, page, [encode_vector(vector)]
@@ -425,20 +527,32 @@ def test_failed_rebuild_with_changed_artifact_cannot_project_prior_ready(tmp_pat
     try:
         manifest = store.load_status(scope.key).manifest_revision
         first = store.semantic_claim(
-            scope, state, manifest_revision=manifest,
-            artifact_fingerprint=digest("artifact-a"), claim_token="first",
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="first",
         )
         page = store.semantic_source_page(scope, first, "first", after=0)
-        assert store.semantic_append(scope, first, "first", page, [encode_vector([1, 0])])
+        assert store.semantic_append(
+            scope, first, "first", page, [encode_vector([1, 0])]
+        )
         assert store.semantic_publish(scope, first, "first")
         second = store.semantic_claim(
-            scope, state, manifest_revision=manifest,
-            artifact_fingerprint=digest("artifact-b"), claim_token="second",
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-b"),
+            claim_token="second",
         )
-        assert store.semantic_fail(scope, second, "second", reason="provider_unavailable")
+        assert store.semantic_fail(
+            scope, second, "second", reason="provider_unavailable"
+        )
         failed = store.load_semantic_state(scope)
         assert failed.state == "Error"
-        assert store.semantic_ready_generation(scope, failed, digest("artifact-b")) is None
+        assert (
+            store.semantic_ready_generation(scope, failed, digest("artifact-b")) is None
+        )
     finally:
         store.close_native()
         lease.close()
@@ -451,8 +565,11 @@ def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
     try:
         manifest = store.load_status(scope.key).manifest_revision
         generation = store.semantic_claim(
-            scope, state, manifest_revision=manifest,
-            artifact_fingerprint=digest("artifact-a"), claim_token="claim"
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="claim",
         )
         rows = store.semantic_source_page(scope, generation, "claim", after=0)
         with store.transaction() as conn:
@@ -469,22 +586,102 @@ def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
         lease.close()
 
 
-def test_stale_semantic_failure_cannot_settle_new_claim_or_reconfigured_control(tmp_path):
+@pytest.mark.parametrize("mutation_point", ["between_pages", "final_cas"])
+def test_multipage_generation_refuses_changed_manifest_at_page_or_final_cas(
+    tmp_path, mutation_point
+):
+    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+
+    store, scope, state, lease = populated_store(tmp_path)
+    try:
+        with store.transaction() as conn:
+            for index in range(32):
+                conn.execute(
+                    "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) "
+                    "VALUES(?,?,?,?,?,?)",
+                    ("src/dog.py", f"canine {index}", 0, 9, index + 2, index + 2),
+                )
+        manifest = store.load_status(scope.key).manifest_revision
+        generation = store.semantic_claim(
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="multipage",
+        )
+        first = store.semantic_source_page(scope, generation, "multipage", after=0)
+        assert len(first) == 32
+        assert store.semantic_append(
+            scope,
+            generation,
+            "multipage",
+            first,
+            [encode_vector([1.0, 0.0]) for _ in first],
+        )
+        if mutation_point == "between_pages":
+            with store.transaction() as conn:
+                conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
+            with pytest.raises(ValueError, match="stale_semantic_page"):
+                store.semantic_source_page(
+                    scope,
+                    generation,
+                    "multipage",
+                    after=first[-1].chunk_id,
+                )
+        else:
+            second = store.semantic_source_page(
+                scope,
+                generation,
+                "multipage",
+                after=first[-1].chunk_id,
+            )
+            assert len(second) == 1
+            assert store.semantic_append(
+                scope,
+                generation,
+                "multipage",
+                second,
+                [encode_vector([1.0, 0.0])],
+            )
+            with store.transaction() as conn:
+                conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
+        assert not store.semantic_publish(scope, generation, "multipage")
+        assert store.load_semantic_state(scope).ready_generation_id is None
+        assert store.semantic_fail(
+            scope, generation, "multipage", reason="source_changed"
+        )
+        assert store.load_semantic_state(scope).state == "Error"
+    finally:
+        store.close_native()
+        lease.close()
+
+
+def test_stale_semantic_failure_cannot_settle_new_claim_or_reconfigured_control(
+    tmp_path,
+):
     store, scope, state, lease = populated_store(tmp_path)
     try:
         manifest = store.load_status(scope.key).manifest_revision
         first = store.semantic_claim(
-            scope, state, manifest_revision=manifest,
-            artifact_fingerprint=digest("artifact-a"), claim_token="first",
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="first",
         )
         second = store.semantic_claim(
-            scope, state, manifest_revision=manifest,
-            artifact_fingerprint=digest("artifact-a"), claim_token="second",
+            scope,
+            state,
+            manifest_revision=manifest,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="second",
         )
         assert not store.semantic_fail(scope, first, "first", reason="source_changed")
         assert store.load_semantic_state(scope).state == "Building"
         changed = store.configure_semantic(
-            scope, settings(), enabled=True,
+            scope,
+            settings(),
+            enabled=True,
             expected_semantic_revision=state.semantic_revision,
         )
         assert changed.semantic_revision > state.semantic_revision
@@ -503,9 +700,11 @@ def test_semantic_checkpoint_refuses_binding_allocation_quota(tmp_path, monkeypa
     store, scope, state, lease = populated_store(tmp_path)
     try:
         generation = store.semantic_claim(
-            scope, state,
+            scope,
+            state,
             manifest_revision=store.load_status(scope.key).manifest_revision,
-            artifact_fingerprint=digest("artifact-a"), claim_token="quota",
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="quota",
         )
         rows = store.semantic_source_page(scope, generation, "quota", after=0)
         module = importlib.import_module("tldw_chatbook.DB.Workspace_Project_Index_DB")
@@ -515,7 +714,10 @@ def test_semantic_checkpoint_refuses_binding_allocation_quota(tmp_path, monkeypa
             )
             with pytest.raises(ValueError, match="index_cache_limit"):
                 store.semantic_append(
-                    scope, generation, "quota", rows,
+                    scope,
+                    generation,
+                    "quota",
+                    rows,
                     [encode_vector([1.0] * 16384)],
                 )
         assert store.load_semantic_state(scope).ready_generation_id is None
@@ -568,10 +770,15 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
         def close(self):
             pass
 
-    monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
-    monkeypatch.setattr(semantic, "_require_current_catalog", lambda *args: (None, None))
     monkeypatch.setattr(
-        semantic, "_target",
+        semantic, "_issue_project_projection_scope", lambda *args: Carrier()
+    )
+    monkeypatch.setattr(
+        semantic, "_require_current_catalog", lambda *args: (None, None)
+    )
+    monkeypatch.setattr(
+        semantic,
+        "_target",
         lambda *args: SimpleNamespace(artifact_fingerprint=digest("artifact-a")),
     )
     monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
@@ -585,7 +792,9 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
         from tldw_chatbook.Tools.remote_root_types import LocalRoot
         from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
         from tldw_chatbook.Workspaces.project_index.models import (
-            ProjectIndexAuthority, locator_fingerprint, root_identity_fingerprint,
+            ProjectIndexAuthority,
+            locator_fingerprint,
+            root_identity_fingerprint,
         )
         from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
         from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
@@ -610,7 +819,9 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
         try:
             other_store.bind_native_lifetime(other_lease)
             other_scope = other_store.configure(
-                other_namespace, POLICY, enabled=True,
+                other_namespace,
+                POLICY,
+                enabled=True,
                 expected_scope=other_store.load_status(other_namespace).scope,
             )
             other_status = other_store.load_status(other_namespace)
@@ -618,7 +829,9 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
             other_store.close_native()
             other_lease.close()
         store = rig.store(rig.key)
-        lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+        lease = BindingLifetime.acquire(
+            store.db_path.parent.parent / rig.key.lifetime_name
+        )
         try:
             store.bind_native_lifetime(lease)
             semantic_state = store.configure_semantic(
@@ -628,19 +841,32 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
             store.close_native()
             lease.close()
         job_id = rig.service.refresh_semantic(
-            rig.key, expected_epoch=status.scope.epoch,
+            rig.key,
+            expected_epoch=status.scope.epoch,
             expected_semantic_revision=semantic_state.semantic_revision,
         )
         assert await asyncio.to_thread(started.wait, 10)
+
         def read(candidate):
             data = file.read_text(encoding="utf-8")
             return FileCapture(
-                candidate.relative_path, candidate.file_identity, 123,
-                len(data), sha256(data.encode()).hexdigest(), data,
+                candidate.relative_path,
+                candidate.file_identity,
+                123,
+                len(data),
+                sha256(data.encode()).hexdigest(),
+                data,
             )
+
         authority = ProjectIndexSearchAuthority(
-            status.scope, rig.live.root, rig.live.chain, (), 1,
-            lambda: True, None, read,
+            status.scope,
+            rig.live.root,
+            rig.live.chain,
+            (),
+            1,
+            lambda: True,
+            None,
+            read,
         )
         result = await asyncio.to_thread(rig.service.search, authority, "canine")
         assert result.hits and result.hits[0].relative_path == "dog.py"
@@ -648,14 +874,16 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
             rig.refresh()
         assert other_namespace.lifetime_name == rig.key.lifetime_name
         other_service = ProjectIndexService(
-            rig.store, ProjectScanner(),
+            rig.store,
+            ProjectScanner(),
             lambda selected: other_live if selected == other_namespace else None,
             lambda selected: rig.fence(rig.key),
         )
         try:
             with pytest.raises(LifetimeBusy):
                 other_service.refresh(
-                    other_namespace, expected_scope=other_scope,
+                    other_namespace,
+                    expected_scope=other_scope,
                     expected_job_revision=other_status.job_revision,
                 )
         finally:
@@ -663,14 +891,17 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
         lifetime_path = store.db_path.parent.parent / other_namespace.lifetime_name
         child = subprocess.run(
             [
-                sys.executable, "-c",
+                sys.executable,
+                "-c",
                 "from pathlib import Path; from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime, LifetimeBusy; "
                 "import sys; "
                 "p=Path(sys.argv[1]); "
                 "exec('try:\\n BindingLifetime.acquire(p)\\nexcept LifetimeBusy:\\n print(\"busy\")\\nelse:\\n raise SystemExit(3)')",
                 str(lifetime_path),
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert child.returncode == 0 and child.stdout.strip() == "busy"
         release.set()
@@ -694,7 +925,9 @@ async def test_unknown_registry_retirement_roots_model_and_native_owners(
     from Tests.Workspaces.test_project_index_service import Rig
     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
     from tldw_chatbook.Workspaces.project_index import semantic
-    from tldw_chatbook.Workspaces.project_index.models import ProjectIndexRetirementUnproven
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ProjectIndexRetirementUnproven,
+    )
 
     rig = Rig(tmp_path)
     (rig.root / "dog.py").write_text("canine companion", encoding="utf-8")
@@ -735,23 +968,30 @@ async def test_unknown_registry_retirement_roots_model_and_native_owners(
             raise AssertionError("model_close_with_uncertain_native_registry")
 
     rig.service._registry_connections = registry
-    monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
+    monkeypatch.setattr(
+        semantic, "_issue_project_projection_scope", lambda *args: Carrier()
+    )
     monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
     try:
         status = seed_keyword_ready(rig)
         store = rig.store(rig.key)
-        lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+        lease = BindingLifetime.acquire(
+            store.db_path.parent.parent / rig.key.lifetime_name
+        )
         try:
             store.bind_native_lifetime(lease)
             state = store.configure_semantic(
-                status.scope, settings(), enabled=True,
+                status.scope,
+                settings(),
+                enabled=True,
                 expected_semantic_revision=0,
             )
         finally:
             store.close_native()
             lease.close()
         job = rig.service.refresh_semantic(
-            rig.key, expected_epoch=status.scope.epoch,
+            rig.key,
+            expected_epoch=status.scope.epoch,
             expected_semantic_revision=state.semantic_revision,
         )
         run = rig.service._semantic_runs[job]
@@ -763,7 +1003,9 @@ async def test_unknown_registry_retirement_roots_model_and_native_owners(
         gc.collect()
         assert observed and all(reference() is not None for reference in observed[0])
         assert native and sqlite3.Connection.in_transaction.__get__(native[0]) is False
-        assert any(operation.retirement_unproven for operation in rig.service._operations)
+        assert any(
+            operation.retirement_unproven for operation in rig.service._operations
+        )
         with pytest.raises(
             (ProjectIndexRetirementUnproven, RuntimeError),
             match="retirement_unproven",
@@ -807,17 +1049,24 @@ async def test_retired_semantic_error_drops_traceback_but_keeps_live_join_record
         def close(self):
             pass
 
-    monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
+    monkeypatch.setattr(
+        semantic, "_issue_project_projection_scope", lambda *args: Carrier()
+    )
     monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
     historic = []
     try:
         status = seed_keyword_ready(rig)
         store = rig.store(rig.key)
-        lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+        lease = BindingLifetime.acquire(
+            store.db_path.parent.parent / rig.key.lifetime_name
+        )
         try:
             store.bind_native_lifetime(lease)
             state = store.configure_semantic(
-                status.scope, settings(), enabled=True, expected_semantic_revision=0,
+                status.scope,
+                settings(),
+                enabled=True,
+                expected_semantic_revision=0,
             )
         finally:
             store.close_native()
@@ -832,7 +1081,8 @@ async def test_retired_semantic_error_drops_traceback_but_keeps_live_join_record
             rig.service._semantic_runs[job] = old
             historic.append(job)
         job = rig.service.refresh_semantic(
-            rig.key, expected_epoch=status.scope.epoch,
+            rig.key,
+            expected_epoch=status.scope.epoch,
             expected_semantic_revision=state.semantic_revision,
         )
         run = rig.service._semantic_runs[job]
@@ -846,6 +1096,7 @@ async def test_retired_semantic_error_drops_traceback_but_keeps_live_join_record
         for job in historic:
             rig.service._semantic_runs.pop(job, None)
         await rig.close()
+
 
 @pytest.mark.parametrize("vector", [[], [math.nan], [math.inf], [1e50]])
 def test_vector_codec_refuses_empty_nonfinite_and_float32_overflow(vector):
@@ -880,12 +1131,17 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
     from tldw_chatbook import config
     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
     from tldw_chatbook.Workspaces.project_index.models import (
-        ProjectIndexAuthority, ProjectIndexKey, ProjectIndexPolicy,
-        locator_fingerprint, root_identity_fingerprint,
+        ProjectIndexAuthority,
+        ProjectIndexKey,
+        ProjectIndexPolicy,
+        locator_fingerprint,
+        root_identity_fingerprint,
     )
     from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
     from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
-    from tldw_chatbook.Workspaces.project_index.semantic import _settings_for_project_model
+    from tldw_chatbook.Workspaces.project_index.semantic import (
+        _settings_for_project_model,
+    )
     from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
 
     model_id = os.environ.get("TLDW_TEST_OFFLINE_EMBEDDING_MODEL")
@@ -900,7 +1156,8 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
         embedding = dict(data.get("embedding_config", {}))
         models = dict(embedding.get("models", {}))
         models["minilm-local"] = {
-            "provider": "huggingface", "model_name_or_path": model_id,
+            "provider": "huggingface",
+            "model_name_or_path": model_id,
             "device": "cpu",
         }
         embedding["models"] = models
@@ -928,8 +1185,11 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
         chain = capture_directory_chain(root)
         factory = _AdmittedStoreFactory()
         key = ProjectIndexKey(
-            factory.identity, "workspace", "binding",
-            locator_fingerprint(root), root_identity_fingerprint(chain),
+            factory.identity,
+            "workspace",
+            "binding",
+            locator_fingerprint(root),
+            root_identity_fingerprint(chain),
         )
         authority = ProjectIndexAuthority(key, root, chain, (), 1)
 
@@ -938,18 +1198,22 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
             yield authority if selected == key else None
 
         service = ProjectIndexService(
-            factory, ProjectScanner(),
-            lambda selected: authority if selected == key else None, fence,
+            factory,
+            ProjectScanner(),
+            lambda selected: authority if selected == key else None,
+            fence,
         )
         try:
             status = service.status(key)
             scope = service.enable(
-                key, ProjectIndexPolicy(("",), (".txt",)),
+                key,
+                ProjectIndexPolicy(("",), (".txt",)),
                 expected_scope=status.scope,
             ).scope
             current_status = service.status(key)
             service.refresh(
-                key, expected_scope=scope,
+                key,
+                expected_scope=scope,
                 expected_job_revision=current_status.job_revision,
             )
             for active in service._runs.values():
@@ -962,11 +1226,14 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
                 approved_destination_fingerprint=candidate.destination_fingerprint,
             )
             state = service.enable_semantic(
-                key, approved, expected_epoch=scope.epoch,
+                key,
+                approved,
+                expected_epoch=scope.epoch,
                 expected_semantic_revision=0,
             )
             job_id = service.refresh_semantic(
-                key, expected_epoch=scope.epoch,
+                key,
+                expected_epoch=scope.epoch,
                 expected_semantic_revision=state.semantic_revision,
             )
             job = service._semantic_runs[job_id]
@@ -999,14 +1266,21 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
     from tldw_chatbook import config
     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
     from tldw_chatbook.Workspaces.project_index.models import (
-        ProjectIndexAuthority, ProjectIndexKey, ProjectIndexPolicy,
-        ProjectIndexSearchAuthority, locator_fingerprint, root_identity_fingerprint,
+        ProjectIndexAuthority,
+        ProjectIndexKey,
+        ProjectIndexPolicy,
+        ProjectIndexSearchAuthority,
+        locator_fingerprint,
+        root_identity_fingerprint,
     )
     from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
     from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
-    from tldw_chatbook.Workspaces.project_index.semantic import _settings_for_project_model
+    from tldw_chatbook.Workspaces.project_index.semantic import (
+        _settings_for_project_model,
+    )
     from tldw_chatbook.Workspaces.project_index.service import (
-        ProjectIndexRetirementUnproven, ProjectIndexService,
+        ProjectIndexRetirementUnproven,
+        ProjectIndexService,
     )
     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
 
@@ -1038,7 +1312,8 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
         embedding = dict(data.get("embedding_config", {}))
         models = dict(embedding.get("models", {}))
         models["held-openai"] = {
-            "provider": "openai", "model_name_or_path": "held-vector",
+            "provider": "openai",
+            "model_name_or_path": "held-vector",
             "base_url": url,
         }
         embedding["models"] = models
@@ -1070,8 +1345,11 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
         chain = capture_directory_chain(root)
         factory = _AdmittedStoreFactory()
         key = ProjectIndexKey(
-            factory.identity, "workspace", "binding",
-            locator_fingerprint(root), root_identity_fingerprint(chain),
+            factory.identity,
+            "workspace",
+            "binding",
+            locator_fingerprint(root),
+            root_identity_fingerprint(chain),
         )
         authority = ProjectIndexAuthority(key, root, chain, (), 1)
 
@@ -1081,28 +1359,39 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
 
         scanner = ProjectScanner()
         service = ProjectIndexService(
-            factory, scanner,
-            lambda selected: authority if selected == key else None, fence,
+            factory,
+            scanner,
+            lambda selected: authority if selected == key else None,
+            fence,
         )
         try:
             scope = service.enable(
-                key, ProjectIndexPolicy(("",), (".txt",)),
+                key,
+                ProjectIndexPolicy(("",), (".txt",)),
                 expected_scope=service.status(key).scope,
             ).scope
             status = service.status(key)
-            service.refresh(key, expected_scope=scope, expected_job_revision=status.job_revision)
+            service.refresh(
+                key, expected_scope=scope, expected_job_revision=status.job_revision
+            )
             for active in service._runs.values():
                 active.supervisor.join(45)
                 assert not active.supervisor.is_alive()
             assert service.status(key).state == "Ready"
             candidate = _settings_for_project_model("held-openai")
-            approved = replace(candidate, approved_destination_fingerprint=candidate.destination_fingerprint)
+            approved = replace(
+                candidate,
+                approved_destination_fingerprint=candidate.destination_fingerprint,
+            )
             state = service.enable_semantic(
-                key, approved, expected_epoch=scope.epoch,
+                key,
+                approved,
+                expected_epoch=scope.epoch,
                 expected_semantic_revision=0,
             )
             job_id = service.refresh_semantic(
-                key, expected_epoch=scope.epoch,
+                key,
+                expected_epoch=scope.epoch,
                 expected_semantic_revision=state.semantic_revision,
             )
             assert entered.wait(45)
@@ -1124,7 +1413,13 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
 
             record["close"] = fail_then_close
             search = ProjectIndexSearchAuthority(
-                scope, authority.root, chain, (), 1, lambda: True, None,
+                scope,
+                authority.root,
+                chain,
+                (),
+                1,
+                lambda: True,
+                None,
                 lambda candidate: scanner.capture_file(
                     authority, candidate.relative_path, stop=threading.Event()
                 ),
@@ -1179,8 +1474,10 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
             assert observed_wrappers[0]._project_close_complete
             assert observed_wrappers[0]._projection_execution_scope._closed
             reopened = ProjectIndexService(
-                factory, scanner,
-                lambda selected: authority if selected == key else None, fence,
+                factory,
+                scanner,
+                lambda selected: authority if selected == key else None,
+                fence,
             )
             try:
                 assert reopened.semantic_state(key).ready_generation_id is None

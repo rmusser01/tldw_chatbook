@@ -648,6 +648,30 @@ class ProjectIndexService:
                 wrapper = None
                 vector = None
                 try:
+                    with self._store(authority.scope.key, cleanup_only=True) as store:
+                        with self._read_fenced(store, authority.scope.key) as live:
+                            ready = (
+                                live is not None
+                                and live.root == authority.root
+                                and live.chain == authority.chain
+                                and store.semantic_ready_generation(
+                                    authority.scope, state,
+                                    carrier.artifact_fingerprint,
+                                ) is not None
+                            )
+                except ProjectIndexRetirementUnproven:
+                    self._retain_uncertain_model(carrier)
+                    raise
+                except BaseException:
+                    try:
+                        carrier.close()
+                    except BaseException as error:
+                        self._retain_uncertain_model(carrier)
+                        raise ProjectIndexRetirementUnproven(
+                            "index_projection_retirement_unproven"
+                        ) from error
+                    return None
+                try:
                     self._retire_registry_for_model()
                 except ProjectIndexRetirementUnproven:
                     self._retain_uncertain_model(carrier)
@@ -661,6 +685,15 @@ class ProjectIndexService:
                             "index_projection_retirement_unproven"
                         ) from error
                     raise
+                if not ready:
+                    try:
+                        carrier.close()
+                    except BaseException as error:
+                        self._retain_uncertain_model(carrier)
+                        raise ProjectIndexRetirementUnproven(
+                            "index_projection_retirement_unproven"
+                        ) from error
+                    return None
                 try:
                     wrapper = EmbeddingsServiceWrapper(
                         model_name=carrier.model_name,
