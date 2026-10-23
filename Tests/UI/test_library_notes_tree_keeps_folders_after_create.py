@@ -118,6 +118,20 @@ def _painted_list(host, screen) -> str:
     return " ".join(" ".join(rows).split())
 
 
+def _count_root_placement_pages(monkeypatch, profile) -> list[tuple]:
+    """Record every root placements page the real scope service serves."""
+    pages: list[tuple] = []
+    real_page = profile.scope_service.page_note_placements
+
+    async def counted(**kwargs):
+        if kwargs.get("parent_id") is None:
+            pages.append((kwargs.get("offset"), kwargs.get("order")))
+        return await real_page(**kwargs)
+
+    monkeypatch.setattr(profile.scope_service, "page_note_placements", counted)
+    return pages
+
+
 async def _tree_settled(screen, pilot) -> None:
     """Wait until the root slices have answered, or were never asked for.
 
@@ -187,7 +201,7 @@ async def _open_folder_picker(host, screen, pilot, button_id: str) -> list[str]:
 
 
 async def test_palette_new_note_then_blank_then_escape_shows_every_top_level_folder(
-    tmp_path,
+    tmp_path, monkeypatch
 ) -> None:
     """AC#1 and AC#4 (palette route).
 
@@ -196,9 +210,10 @@ async def test_palette_new_note_then_blank_then_escape_shows_every_top_level_fol
     Library mounts; the same context arrives here the same way, so the
     Library opens straight on Create.
     """
-    host, _profile = _mounted(
+    host, profile = _mounted(
         tmp_path, navigation_context={LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
     )
+    root_placement_pages = _count_root_placement_pages(monkeypatch, profile)
     async with host.run_test(size=SIZE) as pilot:
         screen = await _shell(host, pilot)
         blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
@@ -209,6 +224,9 @@ async def test_palette_new_note_then_blank_then_escape_shows_every_top_level_fol
 
         painted = _painted_list(host, screen)
         _assert_folders_above_unfiled(painted, note_title=TITLE)
+        # Fix round 1 (M-1): the locator already loads root placements for
+        # the new note; the create arrival must not fetch them a second time.
+        assert len(root_placement_pages) == 1, root_placement_pages
         assert [
             name
             for name in FOLDERS
@@ -287,12 +305,23 @@ async def test_loading_row_paints_while_the_root_slice_loads_and_g_is_not_advert
     async with host.run_test(size=SIZE) as pilot:
         screen = await _shell(host, pilot)
         await _new_blank_note(screen, pilot)
+        note_id = screen._notes_state.selected_note_id
+        assert note_id
+        # Fix round 1 (M-2): the create reconcile itself owes the root
+        # folders slice -- by the time the editor is armed it is requested
+        # (held here) or already fresh; without that arm the list would
+        # only get it from the editor-return belt.
+        requested = screen._notes_state.tree_branches.get(ROOT_FOLDERS)
+        assert requested is not None and (
+            requested.loading or requested.freshness == "fresh"
+        ), requested
         await _title_then_escape(screen, pilot, TITLE)
         await _until(
             pilot,
             lambda: (
                 screen.focused is not None
                 and screen.focused.has_class("library-notes-tree-note-row")
+                and getattr(screen.focused, "note_id", "") == note_id
             ),
             "focus to return to the new note's row",
         )

@@ -628,7 +628,9 @@ def test_a_managed_active_note_row_does_not_echo_its_folders_own_badge() -> None
     )
 
     folder_row = projection.row(FolderPlacementId.folder("managed"))
-    note_row = projection.row(FolderPlacementId.note("managed", "n1", "m-connected"))
+    note_row = projection.row(
+        FolderPlacementId.note("managed", "n1", "m-connected")
+    )
     assert folder_row is not None and folder_row.status_text == "⇄ Sync managed"
     assert note_row is not None
     assert note_row.semantic_status == "connected"

@@ -35,7 +35,6 @@ from Tests.UI.test_library_notes_tree_keeps_folders_after_create import (
     _title_then_escape,
     _tree_settled,
 )
-from Tests.UI.library_quit_guard_support import _until as _wait_until
 from Tests.UI.test_library_shell import _wait_for_selector
 from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTES_CREATE, TAB_LIBRARY
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -140,7 +139,7 @@ async def test_the_list_return_re_requests_a_root_slice_a_fence_left_behind(
         screen = await _shell(host, pilot)
         await _new_blank_note(screen, pilot)
         branches = screen._notes_state.tree_branches
-        await _wait_until(
+        await _until(
             pilot,
             lambda: (
                 ROOT_FOLDERS in branches and branches[ROOT_FOLDERS].freshness == "fresh"
@@ -162,7 +161,7 @@ async def test_the_list_return_re_requests_a_root_slice_a_fence_left_behind(
         ].generation
 
         await _title_then_escape(screen, pilot, TITLE)
-        await _wait_until(
+        await _until(
             pilot,
             lambda: len(_folder_rows(screen)) == len(FOLDERS),
             "the editor return to re-request the root folders slice",
