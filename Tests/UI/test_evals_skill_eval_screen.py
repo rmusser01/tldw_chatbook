@@ -82,6 +82,11 @@ async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0
     raise AssertionError("condition never became true")
 
 
+def _detail_lines(app) -> list[str]:
+    """The rendered text of every Static in the mounted SkillEvalDetail."""
+    return [str(static.render()) for static in app.screen.query("SkillEvalDetail Static")]
+
+
 def _write_skill_dir(tmp_path) -> str:
     """One minimal on-disk skill: front matter + body, ``subject_from_directory``
     shaped. The name matches ``test_runner.py``'s ``_Chat`` selection default
@@ -400,7 +405,6 @@ async def test_new_skill_eval_button_creates_a_draft_bench_and_selects_it(
         assert config.generator_target_id == ""
         assert config.judge_target_id == ""
 
-        panel = screen.query_one(SkillEvalPanel)
         # The panel is fed the view model's targets (set_options runs
         # post-mount via the screen's call_after_refresh population).
         def _targets_fed() -> bool:
@@ -413,12 +417,14 @@ async def test_new_skill_eval_button_creates_a_draft_bench_and_selects_it(
         assert screen.query_one("#skill-eval-generator", Select).value is Select.NULL
         # The draft's saved depth (STANDARD) is restored into the depth
         # Select, which fires Select.Changed and syncs the estimate line.
-        assert (
-            screen.query_one("#skill-eval-depth", Select).value
-            is SkillEvalDepth.STANDARD
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.query_one("#skill-eval-depth", Select).value
+                is SkillEvalDepth.STANDARD
+                and "16" in str(screen.query_one("#skill-eval-estimate").render())
+            ),
         )
-        estimate = str(screen.query_one("#skill-eval-estimate").render())
-        assert "16" in estimate
 
 
 @pytest.mark.asyncio
@@ -822,9 +828,13 @@ async def test_subject_picker_product_path_run_completes(
         # Pick the subject through the Select's own dropdown, the way a
         # user does; the screen must persist the pick onto the bench.
         await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
-        await pilot.pause()
         from tldw_chatbook.Evals.skill_eval.storage import load_skill_eval_bench
 
+        await _wait_until(
+            pilot,
+            lambda: load_skill_eval_bench(evals_db, screen._selection.id).subject_ref
+            == "csv-cleaner",
+        )
         config = load_skill_eval_bench(evals_db, screen._selection.id)
         assert config.subject_ref == "csv-cleaner"
         assert config.subject_kind == "store"
@@ -1570,14 +1580,16 @@ async def test_compare_with_previous_run_group(evals_db, tmp_path):
 
     app = _DetailHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
-        await pilot.pause()
+        await _wait_until(
+            pilot, lambda: app.screen.query_one("#skill-eval-compare", Button)
+        )
         compare = app.screen.query_one("#skill-eval-compare", Button)
         compare.press()
-        await pilot.pause()
-        lines = [
-            str(static.render())
-            for static in app.screen.query("SkillEvalDetail Static")
-        ]
+        await _wait_until(
+            pilot,
+            lambda: any("newer" in ln and "older" in ln for ln in _detail_lines(app)),
+        )
+        lines = _detail_lines(app)
         text = "\n".join(lines)
         assert "Compare with previous" in str(compare.label) or True  # label check
         assert any("newer" in line and "older" in line for line in lines), text
@@ -1642,13 +1654,14 @@ async def test_middle_report_compares_against_the_older_sibling(evals_db, tmp_pa
 
     app = _DetailHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
-        await pilot.pause()
+        await _wait_until(
+            pilot, lambda: app.screen.query_one("#skill-eval-compare", Button)
+        )
         app.screen.query_one("#skill-eval-compare", Button).press()
-        await pilot.pause()
-        lines = [
-            str(static.render())
-            for static in app.screen.query("SkillEvalDetail Static")
-        ]
+        await _wait_until(
+            pilot, lambda: any("older: " in line for line in _detail_lines(app))
+        )
+        lines = _detail_lines(app)
         # Baseline is the OLDER sibling (70.0), never the newer (90.0).
         assert any("older: 70.0" in line for line in lines), lines
         assert not any("older: 90.0" in line for line in lines)
@@ -1706,22 +1719,15 @@ async def test_artifact_listing_expands_beyond_the_first_page(evals_db, tmp_path
 
     app = _DetailHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
-        await pilot.pause()
-        lines = [
-            str(static.render())
-            for static in app.screen.query("SkillEvalDetail Static")
-        ]
-        text = "\n".join(lines)
-        assert "judge-task-11" in text
+        await _wait_until(
+            pilot, lambda: "judge-task-11" in "\n".join(_detail_lines(app))
+        )
+        text = "\n".join(_detail_lines(app))
         assert "judge-task-14" not in text  # still on the first page
         app.screen.query_one("#skill-eval-artifacts-more", Button).press()
-        await pilot.pause()
-        lines = [
-            str(static.render())
-            for static in app.screen.query("SkillEvalDetail Static")
-        ]
-        text = "\n".join(lines)
-        assert "judge-task-14" in text  # expanded: every artifact reachable
+        await _wait_until(
+            pilot, lambda: "judge-task-14" in "\n".join(_detail_lines(app))
+        )  # expanded: every artifact reachable
 
 
 @pytest.mark.asyncio
