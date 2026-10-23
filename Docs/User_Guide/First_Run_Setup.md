@@ -139,7 +139,7 @@ OpenAI-compatible**.
 | Model | Default chat model | Settings ▸ Providers & Models |
 | RAG | Embedding model (needs the `embeddings_rag` extras) | Settings ▸ RAG |
 | Speech (full track) | Voice-input transcription language and precision | `[transcription]` in config.toml — no Settings category owns it yet |
-| Tools | Built-in tool gates (all off by default) | MCP ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml — no Settings category owns them |
+| Tools | Built-in tool gates (all off by default) | Settings ▸ Tools & MCP (Ctrl+9) ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
 | Voice | Spoken replies — "No voice for now" (the default), PocketTTS (its own local server), OpenAI (your OpenAI key), a Custom endpoint, or OmniVoice (local, installs its model here); sample + "Test and Hear" (endpoint, model, voice and format under Advanced) | Settings ▸ Speech & TTS |
@@ -156,7 +156,8 @@ is a supported outcome: the summary then reads "gates off; the assistant
 may still use chatbook's own tools (sub-agents, web search, notes, Watchlists)
 when the model's context window has room. Turn gates on under MCP ▸ Servers ▸
 built-in row ▸ Tool gates", which is
-where the same switches live after setup. The first half is there because
+where the same switches live after setup: that MCP is the Settings ▸ Tools &
+MCP category, which **Ctrl+9** opens. The first half is there because
 the switches are not the whole story: Console's assistant also gets the agent
 runtime (sub-agents, skills), the local web and Watchlists tools
 (`[console] local_tools_enabled`) and chatbook's built-in notes and character

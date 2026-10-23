@@ -335,6 +335,7 @@ from .settings_provider_view_model import (
     provider_picker_summary,
 )
 from .settings_config_models import (
+    LISTED_SAVE_MODELS,
     SettingsCategoryId,
     SettingsCategorySummary,
     SettingsDomainCategoryContract,
@@ -2500,7 +2501,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "profiles contain policy only; MCP owns policy editing and importing never installs tools",
+            "profiles contain policy only; policy editing is in Settings ▸ Tools & MCP, and importing never installs tools",
         ),
     ),
     SettingsCategoryId.PRIVACY_SECURITY: (
@@ -5630,13 +5631,13 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.WORKSPACES,
                 "Workspaces",
                 "Create, rename, archive, and bind folders for agent file tools.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.WORKSPACES],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.TOOL_PROFILES,
                 "Tool Profiles",
                 "Import, export, review, bind, and remove portable tool permission profiles.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.TOOL_PROFILES],
             ),
             TOOLS_HUB_CATEGORY_SUMMARY,
             SettingsCategorySummary(
@@ -5673,19 +5674,19 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.ARTIFACTS,
                 "Artifacts",
                 "Chatbooks, saved outputs, and artifact resume defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.ARTIFACTS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.PERSONAS,
                 "Roleplay",
                 "Character and user profile browsing, plus how they attach to Console chats.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.PERSONAS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.SKILLS,
                 "Skills",
                 "Skill import, validation, trust, and attach defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.SKILLS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.SCHEDULES,
@@ -5697,31 +5698,31 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.WATCHLISTS,
                 "Watchlists",
                 "Feed monitoring, polling, notification, and run defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.WATCHLISTS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.DREAMS,
                 "Dreams",
                 "Enable the daily discovery digest and edit your interest topics.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.DREAMS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.GUARDIAN,
                 "Guardian",
                 "Enable local self-monitoring awareness rules and trend notices.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.GUARDIAN],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.WORKFLOWS,
                 "Workflows",
                 "Procedure, dry-run, approval, and execution safety defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.WORKFLOWS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.ACP_DEFAULTS,
                 "ACP Defaults",
                 "ACP runtime/session defaults without owning ACP launch operations.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.ACP_DEFAULTS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.IMAGE_GENERATION,
@@ -10002,8 +10003,8 @@ class SettingsScreen(BaseAppScreen):
             )
         if category == SettingsCategoryId.TOOL_PROFILES:
             return (
-                "Reviewed actions: imports stay unbound, exports publish an exact "
-                "snapshot, and policy editing opens MCP Permissions."
+                "Immediate actions: imports stay unbound, exports publish an exact "
+                "snapshot, and Edit opens the profile in Tools & MCP's Permissions."
             )
         if category == SettingsCategoryId.AGENTS:
             return (
@@ -10766,6 +10767,8 @@ class SettingsScreen(BaseAppScreen):
         """
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             return "Draft — save with s"
+        if category in LISTED_SAVE_MODELS:  # the category list's own words
+            return LISTED_SAVE_MODELS[category]
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             return "Applies immediately"
         if category is SettingsCategoryId.IMAGE_GENERATION:
@@ -10774,13 +10777,7 @@ class SettingsScreen(BaseAppScreen):
             return "Draft — save/revert below"
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Auto-saved"
-        if category is SettingsCategoryId.WORKSPACES:
-            return "Applies immediately"
-        if category is SettingsCategoryId.TOOL_PROFILES:
-            return "Reviewed actions"
-        if category is SettingsCategoryId.TOOLS:  # the category list's own words
-            return TOOLS_HUB_CATEGORY_SUMMARY.status
-        if category in (SettingsCategoryId.AGENTS, SettingsCategoryId.GUARDIAN):
+        if category is SettingsCategoryId.AGENTS:
             return "Applies immediately"
         if category is SettingsCategoryId.THEME:
             # Use/Try/Revert act at once; the banner stays hidden for Theme,
@@ -10792,7 +10789,7 @@ class SettingsScreen(BaseAppScreen):
             return "Pending — save with s"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
-        if category in (SettingsCategoryId.SCHEDULES, SettingsCategoryId.DREAMS):
+        if category is SettingsCategoryId.SCHEDULES:
             return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
@@ -10844,7 +10841,7 @@ class SettingsScreen(BaseAppScreen):
             return "Gates and permissions save at once; a server form has its own Save."
         if category is SettingsCategoryId.TOOL_PROFILES:
             return (
-                "Imports stay unbound; MCP owns policy editing; removal permanently "
+                "Imports stay unbound; Tools & MCP edits policy; removal permanently "
                 "reserves the profile id."
             )
         if category is SettingsCategoryId.AGENTS:
