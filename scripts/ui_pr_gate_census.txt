@@ -1058,8 +1058,9 @@ Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_ans
 # 664-entry census ahead of it so the two heaviest (Evals skill eval ~27-38 s,
 # the modal reverse sweep ~27-50 s) land on lightly loaded shards and the
 # sub-second nodes on the near-cap ones; any tail append ahead of this block
-# shifts every position, so re-check `--shard` after each rebase. test_modal_wide_tier.py runs by node: the whole file took 66 s
-# serially, over the 60 s per-file rule. Its static contracts are all in (the
+# shifts every position, so re-check `--shard` after each rebase.
+# test_modal_wide_tier.py runs by node: the whole file took 66 s serially,
+# over the 60 s per-file rule. Its static contracts are all in (the
 # last two, the renamed-modal-id guard and the block check, run under 1 s);
 # its 40 mounted spot-geometry cases and the toggle MRO check stay out.
 Tests/UI/test_non_obscuring_focus_contract.py
