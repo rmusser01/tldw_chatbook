@@ -41,7 +41,7 @@ async def test_warm_speculative_voice_latency_distribution_meets_gate() -> None:
 def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
     inventory = completed_pair_locator_inventory()
 
-    assert inventory["count"] == 19
+    assert inventory["count"] == 28
     assert {"table": "canvas_revisions", "column": "origin_message_id"} in inventory[
         "locators"
     ]
@@ -66,7 +66,7 @@ def test_completed_pair_history_gate_meets_large_history_thresholds(
     assert report["measurement_order"] == "ABBA"
     assert report["scan_count"] == 0
     assert report["sqlite"]["pragmas_match"] is True
-    assert report["inventory"]["count"] == 19
+    assert report["inventory"]["count"] == 28
     assert all(
         locator["large_rows"] == locator["baseline_rows"] * 100
         for locator in report["distribution"]
