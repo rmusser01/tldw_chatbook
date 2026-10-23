@@ -11,18 +11,23 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from textual import events
+from textual.app import App
 from textual.screen import Screen
+from textual.widget import Widget
 from textual.widgets import Input
 from textual.worker import WorkerState
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
+import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 from Tests.UI.roleplay_frame_harness import (
+    VOLUME_SIZES,
     StyledRoleplayMockApp,
     highlighted_item_id,
     item_at,
@@ -529,6 +534,231 @@ async def test_the_footer_advertises_space_where_it_toggles(
         assert await pilot.click("#personas-mode-characters")
         await settle(pilot)
         assert "space" not in footer.shortcut_text
+
+
+# ---- CI counts per settled keystroke, 348 and 5,000 (AC#8, AC#10; Task 8) ----
+#
+# Spec 5.2 B2a (a): deterministic counts, never a wall-clock threshold taken
+# through pilot.press() + pause() (lessons-testing-evidence). The wall clock
+# is the live harness's job (Task 13).
+
+
+class _Work:
+    """What one settled keystroke, resize or End did, counted at its seams."""
+
+    def __init__(self) -> None:
+        self.armed = False
+        self.reset()
+
+    def reset(self) -> None:
+        self.windows: list[tuple[int, int]] = []
+        self.set_options = 0
+        self.add_options = 0
+        self.prompts = 0
+        self.mounts = 0
+        self.recomposes = 0
+
+
+@pytest.fixture
+def work(monkeypatch) -> _Work:
+    tally = _Work()
+    page = personas_screen_module.get_character_page_for_ui
+
+    def window(db, **kwargs):
+        if tally.armed:
+            tally.windows.append((kwargs["limit"], kwargs["offset"]))
+        return page(db, **kwargs)
+
+    set_options = RoleplayItemList.set_options
+    add_options = RoleplayItemList.add_options
+    build = frame_state.build_item_prompt
+    register = App._register
+    recompose = Widget.recompose
+
+    def counted_set_options(self, options):
+        tally.set_options += tally.armed
+        self._counting_set_options = True  # its own add_options is not an append
+        try:
+            return set_options(self, options)
+        finally:
+            self._counting_set_options = False
+
+    def counted_add_options(self, options):
+        if not getattr(self, "_counting_set_options", False):
+            tally.add_options += tally.armed
+        return add_options(self, options)
+
+    def counted_build(**kwargs):
+        tally.prompts += tally.armed
+        return build(**kwargs)
+
+    def counted_register(self, parent, *widgets, **kwargs):
+        if tally.armed:
+            tally.mounts += len(widgets)
+        return register(self, parent, *widgets, **kwargs)
+
+    async def counted_recompose(self, *args, **kwargs):
+        tally.recomposes += tally.armed
+        return await recompose(self, *args, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", window)
+    monkeypatch.setattr(RoleplayItemList, "set_options", counted_set_options)
+    monkeypatch.setattr(RoleplayItemList, "add_options", counted_add_options)
+    monkeypatch.setattr(frame_state, "build_item_prompt", counted_build)
+    monkeypatch.setattr(App, "_register", counted_register)
+    monkeypatch.setattr(Widget, "recompose", counted_recompose)
+    return tally
+
+
+@pytest.fixture(params=VOLUME_SIZES, ids=lambda count: f"{count}-characters")
+def volume_db(request, tmp_path_factory, tmp_path):
+    db = open_volume_db(tmp_path, volume_db_path(tmp_path_factory, request.param))
+    yield db
+    db.close_connection()
+
+
+async def test_a_search_keystroke_reads_one_window_and_mounts_nothing(volume_db, work):
+    """AC#8: one window query (<=200 rows), one set_options, prompts built ==
+    the window's rows, 0 mounts, 0 recomposes. On dev every keystroke cleared
+    and remounted the page's rows (PERF-22's per-row widgets)."""
+    async with roleplay_full_app(size=SIZE, character_db=volume_db) as pilot:
+        screen = pilot.app.screen
+        screen.query_one("#personas-library-search", Input).focus()
+        await settle(pilot)
+        work.armed = True
+        await pilot.press("C")
+        await wait_until(pilot, lambda: bool(work.windows), what="the window query")
+        await settle(pilot)
+        work.armed = False
+        rows = len(visible_item_ids(screen))
+        assert screen.state.search_query == "C"
+        assert work.windows == [(200, 0)]
+        assert (work.set_options, work.add_options) == (1, 0)
+        assert work.prompts == rows == 200
+        assert (work.mounts, work.recomposes) == (0, 0)
+
+
+async def test_a_cursor_keystroke_reads_nothing_and_builds_nothing(volume_db, work):
+    async with roleplay_full_app(size=SIZE, character_db=volume_db) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        item_list.focus()
+        await settle(pilot)
+        # The first paint read one window and rows remain: a near-end check
+        # that ignored the cursor would have read the rest of 348 already.
+        assert len(visible_item_ids(screen)) == 200 and item_list.more_available
+        work.armed = True
+        await pilot.press("down")
+        await settle(pilot)
+        work.armed = False
+        assert work.windows == []
+        assert (work.set_options, work.add_options, work.prompts) == (0, 0, 0)
+        assert (work.mounts, work.recomposes) == (0, 0)
+
+
+async def test_a_slow_window_read_never_stalls_the_event_loop(volume_db, monkeypatch):
+    """AC#8's stall check, in the discriminating heartbeat form
+    (test_personas_deferred_center_views.py): the read is made deliberately
+    slow, so the heartbeat fails if it ever runs on the event loop."""
+    page = personas_screen_module.get_character_page_for_ui
+
+    def slow(db, **kwargs):
+        time.sleep(0.6)
+        return page(db, **kwargs)
+
+    async with roleplay_full_app(size=SIZE, character_db=volume_db) as pilot:
+        screen = pilot.app.screen
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", slow)
+        screen.query_one("#personas-library-search", Input).focus()
+        await settle(pilot)
+        gaps: list[float] = []
+        running = True
+
+        async def heartbeat() -> None:
+            loop = asyncio.get_running_loop()
+            previous = loop.time()
+            while running:
+                await asyncio.sleep(0.005)
+                now = loop.time()
+                gaps.append(now - previous)
+                previous = now
+
+        beat = asyncio.create_task(heartbeat())
+        await pilot.press("C")
+        await wait_until(
+            pilot,
+            lambda: (
+                " of " in str(screen.query_one("#personas-library-pane").border_title)
+                and not _window_workers(pilot.app)
+            ),
+            what="the slow window",
+        )
+        await asyncio.sleep(0.7)
+        running = False
+        await beat
+        assert gaps
+        # A read on the loop would stall it for >= 0.6 s; 0.45 leaves room for
+        # a loaded CI runner without letting that through.
+        assert max(gaps) < 0.45, f"event loop stalled for {max(gaps):.3f}s"
+
+
+async def test_with_5000_rows_loaded_a_resize_and_end_do_no_data_work(
+    tmp_path_factory, tmp_path, work
+):
+    """AC#10 (RC-6): scrolled to the end with every window resident, a
+    120 <-> 160 resize rebuilds only the prompts the new width changes, each
+    once, with at most one set_options; End then does nothing at all."""
+    db = open_volume_db(tmp_path, volume_db_path(tmp_path_factory, 5000))
+    for n in range(3):
+        db.add_character_card({"name": f"Zz {'Long ' * 9}Name {n}", "description": "x"})
+    try:
+        async with roleplay_full_app(size=SIZE, character_db=db) as pilot:
+            screen = pilot.app.screen
+            item_list = screen.query_one(RoleplayItemList)
+            item_list.focus()
+            work.armed = True
+            await pilot.press("end")
+            await wait_until(
+                pilot, lambda: not item_list.more_available, what="every window"
+            )
+            await settle(pilot)
+            work.armed = False
+            total = 5000 + 1 + 3
+            assert len(visible_item_ids(screen)) == total
+            assert work.windows == [(200, offset) for offset in range(200, total, 200)]
+            assert (work.set_options, work.add_options) == (0, 1)
+            assert work.prompts == total - 200
+            assert (work.mounts, work.recomposes) == (0, 0)
+            for size in ((160, 45), (120, 36)):
+                before = {
+                    oid: item_list.prompt_for(oid) for oid in item_list.loaded_ids()
+                }
+                work.reset()
+                work.armed = True
+                await pilot.resize_terminal(*size)
+                await settle(pilot)
+                work.armed = False
+                width = item_list.scrollable_content_region.width
+                changed = sum(
+                    prompt.needs_rebuild(width=width, density=item_list.density)
+                    for prompt in before.values()
+                )
+                assert 3 <= changed < total
+                assert work.prompts == changed
+                assert work.set_options == 1 and work.add_options == 0
+                assert work.windows == []
+                assert (work.mounts, work.recomposes) == (0, 0)
+            work.reset()
+            work.armed = True
+            await pilot.press("end")
+            await settle(pilot)
+            work.armed = False
+            assert highlighted_item_id(screen) == visible_item_ids(screen)[-1]
+            assert work.windows == []
+            assert (work.set_options, work.add_options, work.prompts) == (0, 0, 0)
+            assert (work.mounts, work.recomposes) == (0, 0)
+    finally:
+        db.close_connection()
 
 
 # ---- The visit-lifecycle hooks (spec 4.11, AC#11; Task 7) ----
