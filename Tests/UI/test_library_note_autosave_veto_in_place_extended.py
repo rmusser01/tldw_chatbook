@@ -26,6 +26,7 @@ from Tests.UI.library_quit_guard_support import (
     _library,
     _library_app,
     _new_blank_note,
+    _no_autosave,
     _open_note,
     _scaled_autosave,
     _settings_without_splash,
@@ -145,6 +146,10 @@ def _painted_color_of(app, widget, text: str):
     raise AssertionError(f"{text!r} is not painted inside {widget.id}: {strip.text!r}")
 
 
+def _focused_id(screen) -> str | None:
+    return getattr(screen.focused, "id", None)
+
+
 async def test_losing_terminal_focus_mid_word_does_not_tidy_the_field(
     tmp_path, monkeypatch
 ):
@@ -152,8 +157,15 @@ async def test_losing_terminal_focus_mid_word_does_not_tidy_the_field(
     ``set_focus(None)``), which blurs the Input too. The tidy must run only
     for a focus move the user made inside the app: Cmd-Tab mid-word and back
     used to glue the next keys on ("Meeting withAlice", "okx").
+
+    Final review (I-1): this arm pins the TIDY, so no autosave runs under it
+    (``_no_autosave``): a blank note's first save landing inside the blur
+    window recomposes the canvas and replaces the Inputs, which is the
+    separate focus-loss defect ``test_the_first_save_inside_a_terminal_blur_
+    keeps_the_field_for_the_returning_typist`` pins. Focus is compared by
+    id and the Inputs re-queried for the value reads for the same reason.
     """
-    _scaled_autosave(monkeypatch)
+    _no_autosave(monkeypatch)
     events: list = []
     app, profile = _library_app(tmp_path, monkeypatch, events, lambda notes: None)
     try:
@@ -161,30 +173,138 @@ async def test_losing_terminal_focus_mid_word_does_not_tidy_the_field(
             async with app.run_test(size=SIZE) as pilot:
                 screen = await _library(app, pilot)
                 await _new_blank_note(screen, pilot)
-                title = screen.query_one("#library-note-title", Input)
-                keywords = screen.query_one("#library-note-keywords", Input)
-                await _until(pilot, lambda: screen.focused is title, "the title caret")
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == "library-note-title",
+                    "the title caret",
+                )
 
                 await _type(pilot, "Meeting with ")
                 app.post_message(events_module.AppBlur())
                 await _until(pilot, lambda: screen.focused is None, "AppBlur to clear focus")
                 assert app.app_focus is False
                 app.post_message(events_module.AppFocus())
-                await _until(pilot, lambda: screen.focused is title, "AppFocus to restore focus")
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == "library-note-title",
+                    "AppFocus to restore focus",
+                )
+                title = screen.query_one("#library-note-title", Input)
                 assert title.value == "Meeting with ", "losing the terminal tidied the title"
                 await _type(pilot, "Alice")
-                assert title.value == "Meeting with Alice"
+                assert screen.query_one("#library-note-title", Input).value == (
+                    "Meeting with Alice"
+                )
 
                 await pilot.press("tab")
-                await _until(pilot, lambda: screen.focused is keywords, "Tab to keywords")
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == "library-note-keywords",
+                    "Tab to keywords",
+                )
                 await _type(pilot, "ok, ")
                 app.post_message(events_module.AppBlur())
                 await _until(pilot, lambda: screen.focused is None, "AppBlur to clear focus")
                 app.post_message(events_module.AppFocus())
-                await _until(pilot, lambda: screen.focused is keywords, "AppFocus to restore focus")
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == "library-note-keywords",
+                    "AppFocus to restore focus",
+                )
+                keywords = screen.query_one("#library-note-keywords", Input)
                 assert keywords.value == "ok, ", "losing the terminal tidied the keywords"
                 await _type(pilot, "x")
-                assert keywords.value == "ok, x"
+                assert screen.query_one("#library-note-keywords", Input).value == "ok, x"
+    finally:
+        profile.db.close_connection()
+    assert events == []
+
+
+async def test_the_first_save_inside_a_terminal_blur_keeps_the_field_for_the_returning_typist(
+    tmp_path, monkeypatch
+):
+    """Final review I-1 (the real defect behind the flaky arm): a blank note's
+    FIRST save lands while the terminal is blurred (``screen.focused is
+    None``). The save recomposes the canvas, replacing the Inputs, and the
+    focus-identity restore used to land on the body -- so Textual's
+    ``AppFocus`` restore (which acts only while nothing is focused) did
+    nothing and the returning typist's keys went into the body. Now the
+    restore focuses nothing while the app is blurred and re-points Textual's
+    remembered widget at the LIVE Keywords Input, so AppFocus lands there.
+
+    Create a note, type keywords, ``AppBlur``, wait for the first save to
+    land (the Input instance is replaced by it), ``AppFocus``: focus is back
+    on Keywords (by id) and the next key goes into it. RED on 843d72ee14
+    (``the restore focused 'library-note-body' while the app was blurred``).
+
+    The save is made to land INSIDE the window deterministically: the
+    autosave is off (``_no_autosave``) while the keys are typed, so a slow
+    machine cannot fire it before the blur (it did, once in five ``-n 4``
+    runs at load 9), and it is re-armed with the scaled debounce only once
+    the terminal is blurred -- the burst began at the first keystroke, so
+    the capped delay is at most the 1 s debounce.
+    """
+    _no_autosave(monkeypatch)
+    events: list = []
+    app, profile = _library_app(tmp_path, monkeypatch, events, lambda notes: None)
+    try:
+        with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+            async with app.run_test(size=SIZE) as pilot:
+                screen = await _library(app, pilot)
+                await _new_blank_note(screen, pilot)
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == "library-note-title",
+                    "the title caret",
+                )
+                await _type(pilot, "Meeting with Alice")
+                await pilot.press("tab")
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == "library-note-keywords",
+                    "Tab to keywords",
+                )
+                await _type(pilot, "ok, ")
+                before = screen.query_one("#library-note-keywords", Input)
+                assert screen._notes_state.autosave_state != "saved"
+
+                app.post_message(events_module.AppBlur())
+                await _until(pilot, lambda: screen.focused is None, "AppBlur to clear focus")
+                assert app.app_focus is False
+                _scaled_autosave(monkeypatch)
+                screen._schedule_library_note_autosave()
+                # The first save lands inside the blur window and recomposes
+                # the editor: the Keywords Input is a new instance. (The
+                # recompose has a frame with NO Keywords Input, so the
+                # predicate reads the query's length, never ``query_one``.)
+                def _recomposed_after_save() -> bool:
+                    live = screen.query("#library-note-keywords")
+                    return (
+                        screen._notes_state.autosave_state == "saved"
+                        and len(live) == 1
+                        and live.first() is not before
+                    )
+
+                await _until(
+                    pilot,
+                    _recomposed_after_save,
+                    "the first save to land and recompose the editor",
+                    timeout=15.0,
+                )
+                assert screen.focused is None, (
+                    f"the restore focused {_focused_id(screen)!r} while the app was blurred"
+                )
+
+                app.post_message(events_module.AppFocus())
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == "library-note-keywords",
+                    "AppFocus to land on the Keywords field",
+                )
+                assert screen.query_one("#library-note-keywords", Input).value == "ok, "
+                await _type(pilot, "x")
+                assert screen.query_one("#library-note-keywords", Input).value == "ok, x"
+                assert screen.query_one("#library-note-body").document.text == ""
     finally:
         profile.db.close_connection()
     assert events == []

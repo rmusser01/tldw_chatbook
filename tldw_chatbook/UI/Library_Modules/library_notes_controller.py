@@ -2136,7 +2136,9 @@ class LibraryNotesController:
                 body.move_cursor(end, select=start != end)
         self._library_notes_restoring_focus = True
         try:
-            if self.focused is not target:
+            if self.focused is not target and not (
+                self._library_notes_defer_focus_to_app_focus(target)
+            ):
                 exact_scroll = identity.scroll_offset is not None
                 self._library_notes_programmatic_focus_target = target
                 self.set_focus(target, scroll_visible=not exact_scroll)
@@ -2153,6 +2155,49 @@ class LibraryNotesController:
             self._library_notes_pending_focus_identity = None
             self._library_notes_pending_focus_generation = None
         return restored_exact_target
+    def _library_notes_defer_focus_to_app_focus(self, target: Widget) -> bool:
+        """Hand a focus restore made while the TERMINAL is blurred to AppFocus.
+
+        TASK-34000.10 final review (2026-10-22, I-1). Textual clears focus on
+        ``AppBlur`` (``App._watch_app_focus(False)``: ``set_focus(None)``,
+        remembering the widget in ``app._last_focused_on_app_blur``) and on
+        ``AppFocus`` puts it back ONLY while ``screen.focused is None``. A
+        blank note's first save can land inside that window: it recomposes
+        the canvas, which replaces the Inputs, and this restore -- built
+        from an identity captured with nothing focused -- used to land on
+        the body fallback. That left ``focused`` set, so AppFocus did
+        nothing, and a user who typed keywords, switched away for a few
+        seconds and kept typing found the keys in the body.
+
+        While ``app.app_focus`` is False the restore therefore focuses
+        nothing (Textual's invariant for a blurred terminal) and instead
+        points ``_last_focused_on_app_blur`` at the LIVE instance of the
+        widget the user was in -- resolved by id, since the recompose
+        replaced it -- so AppFocus lands there. When that widget cannot be
+        found (nothing was focused, or its id is gone), ``target`` takes
+        the slot, which is where this restore would have put focus anyway.
+
+        Args:
+            target: The widget this restore resolved for the identity.
+
+        Returns:
+            True when the terminal is blurred and the restore was deferred
+            (the caller must not focus); False when the app has focus.
+        """
+        app = getattr(self, "app", None)
+        if app is None or getattr(app, "app_focus", True):
+            return False
+        previous = getattr(app, "_last_focused_on_app_blur", None)
+        live: Widget | None = None
+        previous_id = getattr(previous, "id", None)
+        if previous_id:
+            try:
+                live = self.query_one(f"#{previous_id}", Widget)
+            except (NoMatches, QueryError):
+                live = None
+        app._last_focused_on_app_blur = live if live is not None else target
+        return True
+
     def _restore_library_notes_after_targeted_sync(
         self, identity: LibraryNotesFocusIdentity
     ) -> None:
