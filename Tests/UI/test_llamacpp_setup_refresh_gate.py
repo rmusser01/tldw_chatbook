@@ -41,8 +41,12 @@ def _make_view():
     widgets = {}
 
     def query_one(selector, cls=None):
+        # ``renderable`` is the Static read the view compares before update().
         return widgets.setdefault(
-            selector, SimpleNamespace(disabled=False, display=True, update=lambda *a: None)
+            selector,
+            SimpleNamespace(
+                disabled=False, display=True, renderable="", update=lambda *a: None
+            ),
         )
 
     view.query_one = query_one

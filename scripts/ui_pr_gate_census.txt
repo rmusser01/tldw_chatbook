@@ -1052,3 +1052,18 @@ Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_onl
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[retry-edited-correct]
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_retained_create_next_explicit_save_updates_same_owner_and_row
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[ordinary-multi-question]
+
+# TASK-36382: five files no lane ran had gone red on dev unseen (deleted sheets
+# and classes, stale tokens, a stale fake, a race-prone wait). Ordered so the
+# two heaviest (Evals skill eval ~27 s, the modal reverse sweep ~27 s) land on
+# the lightest shards of the 2026-10-23 replay and the small ones on the
+# heaviest. test_modal_wide_tier.py runs by node: the whole file took 66 s
+# serially, over the 60 s per-file rule; its ~130 mounted spot-geometry cases
+# stay out.
+Tests/UI/test_non_obscuring_focus_contract.py
+Tests/UI/test_evals_skill_eval_screen.py
+Tests/UI/test_llamacpp_setup_refresh_gate.py
+Tests/UI/test_css_staleness_manifest.py
+Tests/UI/test_modal_wide_tier.py::test_every_registered_anchor_has_a_wide_tier_rule
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered

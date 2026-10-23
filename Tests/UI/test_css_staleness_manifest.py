@@ -337,6 +337,10 @@ class TestBuilderIntegration:
         (css_dir / "core" / "_base.tcss").write_text(
             distinctive_rule + "\n", encoding="utf-8"
         )
+        # build_widget_defaults() reads the token file (design_token_preamble).
+        (css_dir / "core" / "_variables.tcss").write_text(
+            "$ds-space-1: 1;\n", encoding="utf-8"
+        )
 
         monkeypatch.setattr(bc, "CSS_MODULES", ["core/_base.tcss"])
         monkeypatch.setattr(bc.widget_css, "iter_blocks", lambda root, attr: [])
