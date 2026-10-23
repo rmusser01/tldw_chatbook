@@ -187,6 +187,16 @@ class ConfigEncryption:
         """Check if a value is encrypted based on its prefix."""
         return isinstance(value, str) and value.startswith(self.ENCRYPTION_PREFIX)
 
+    def is_legacy(self, value: str) -> bool:
+        """Check if an encrypted value carries the v1 (scrypt 2^20) version byte."""
+        if not self.is_encrypted(value):
+            return False
+        try:
+            payload = base64.b64decode(value[len(self.ENCRYPTION_PREFIX) :])
+        except ValueError:
+            return False
+        return payload[:1] == bytes([self.LEGACY_VERSION])
+
     def encrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
         """
         Encrypt all string values in a configuration dictionary.

@@ -990,3 +990,4 @@ Tests/UI/test_library_media_editor_dirty_escape_openers.py
 Tests/UI/test_library_note_autosave_after_dialog.py
 Tests/UI/test_library_note_autosave_veto_in_place.py
 Tests/UI/test_library_media_reader_controls_in_list_view.py
+Tests/UI/test_settings_configuration_hub.py::test_settings_keyless_provider_save_keeps_template_env_name_out[legacy-env-unset]

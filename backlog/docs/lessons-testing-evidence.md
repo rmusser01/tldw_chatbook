@@ -19171,6 +19171,18 @@ Pin that value after `persist_cli_config_for_shutdown()` and a
 save, and read the live profile's config after the app quits, not only after
 the toast.
 
+**Update (TASK-35835, 2026-10-22).** The quit no longer writes the merge back:
+`persist_cli_config_for_shutdown` now writes only for encryption work an
+unlocked session can do on the file's own contents (encrypting a plaintext
+secret, re-encrypting v1 values as v2), so the deleted key stays out of the
+file. It
+still returns in memory at the next reload. A byte-identity check across a
+whole boot and quit still fails for another reason: Console's mount saves
+its rail state (`console.rail_state`) through the normal writer, which dumps
+the file without its comments. The real-quit test in
+`Tests/ProductionApp/test_config_profile_isolation.py` therefore compares the
+file only around the shutdown persist.
+
 ### "Still asks under Allow" was never true for an explicit Allow (TASK-32956, 2026-09-27)
 
 **What happened.** The TASK-32954 spec listed "`mutates` save still asks under

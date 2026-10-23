@@ -482,7 +482,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # + Reader-opener refusals), .9's autosave-after-dialog and .10's
 # veto-in-place. Dev carried two assignments here (605, then 604; the last
 # won) over 605 entries; collapsed to one: 605 + 8 = 613.
-MINIMUM_FILES = 613
+# TASK-35835 appends one more, to 614: the keyless-save pin
+# (test_settings_keyless_provider_save_keeps_template_env_name_out
+# [legacy-env-unset], one private-profile child, ~8 s) proves a quit keeps
+# the bytes a Settings save wrote. Appended at the tail, like the others.
+MINIMUM_FILES = 614
 
 
 def read_census(path: Path) -> list[str]:
