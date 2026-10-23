@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 18:48
+updated_date: 2026-10-23 21:08
 labels:
 - follow-up
 - tests
@@ -81,12 +81,13 @@ Test-infrastructure fixes, plus one production change from review round 1: Tools
 
 **Review round 1.**
 - Tools & MCP (TASK-35150) replaced the MCP Defaults domain category without adding an `_INSPECTOR_GUIDANCE` entry, so its inspector showed the generic fallback and every run logged "No inspector guidance entry". `settings_screen.py` now has a TOOLS entry, and the strict xfail is gone. Each row was checked against the code:
-  - "Affected config": the hub writes `[tools]` gate keys (`builtin_tool_gate.py`), `[mcp]` enabled/expose_* (`MCPWorkbench._save_builtin_flag`), and the permission-store Tool policy (`TOOLS_HUB_OWNERSHIP_RECORD`).
+  - "Affected config" (completed in review round 2): the Tools & MCP pane writes `[tools]` gate keys and the Local group's master gate `[console] local_tools_enabled` (`all_tool_gates()` in `builtin_tool_gate.py`; `mcp_servers_mode.py` routes both), `[mcp]` enabled/expose_* (`MCPWorkbench._save_builtin_flag`), the permission-store Tool policy (`TOOLS_HUB_OWNERSHIP_RECORD`), and server definitions. A local server form saves a stdio profile into `local_mcp_store.json` (`save_local_profile` -> `LocalMCPStore.save_profile`); in server source the form creates or updates the external server on the connected server (`server_unified_service.create_external_server`). The pane never writes `mcp_server_targets.json`: it only calls `target_store.list_targets()`. So the row says "saved MCP server definitions", not "saved server targets". A temporary assertion in `test_settings_registers_tools_category_and_mounts_pane` confirmed all three rows render in the mounted Tools inspector, `[tools]` literally, and the fallback copy is gone; the assertion was then removed.
   - "Recovery": re-opening the category builds a fresh workbench that reloads (cached snapshots only when the catalog fingerprint is unchanged, `_collect_snapshots_stale_gated`), and `r` calls `refresh_now()` -> `workbench.reload(force=True)` from inside the pane and from the rail.
   - "Boundary": the category banner's own line, plus the record's Tool Profiles boundary.
   - The base run's failure of that guard is its red; it is green now. The `settings_screen.py` row in `Tests/Architecture/test_module_size_ratchet.py` goes 35,663 -> 35,677 (+14), measured, under the 2026-10-04 owner ruling. `Docs/User_Guide/settings.md` lists no per-category inspector rows, so it needs no edit.
 - `test_state_banner_is_pinned_outside_detail_scroll` left `run_test` while Library/RAG's off-thread `_rag_index_status_worker` was still running, so teardown refused config retirement. It now calls `_settle_settings_mount_storm(pilot)` after opening the category. Result: 5 of 5 serial passes, and it passed in the loaded full run.
 - `_seed_active_config(request, text)` asserts `is_private_profile_child(request)` before writing. Negative control: with the decorator temporarily removed from one caller, the test failed on "needs @private_profile_test" before any write.
+- Review round 2 left `TOOLS_HUB_OWNERSHIP_RECORD.owns_config_sections` alone, so the inspector's "Owns" row still lists only the two MCP sections. That tuple has two consumers: the "Owns" row and the category search's owned-keys tier (`_category_search_rank`, rank 5). Adding "[console] tool gates" would list Tools & MCP for every "console" search and claim a `[console]` section that Console Behavior owns, apart from one key. That widens the record's meaning. No test pins the record.
 - `app_factory.py`'s docstring limits `bootstrap_profile` to tests that neither save config nor assign into `app.app_config`, and its Returns line names the selected profile's config file.
 - `Tests/Architecture/test_module_size_ratchet.py` has 8 other rows red on dev 52b3207ff1 (`mcp_workbench.py`, `change_review_screen.py`, `llm_screen.py`, `console_transcript.py`, `app_command_providers.py`, `app_ingest_queue.py`, `app_lifecycle.py`, `tldw_api/client.py`). None of those files differ from base, and their base line counts equal the reported counts.
 

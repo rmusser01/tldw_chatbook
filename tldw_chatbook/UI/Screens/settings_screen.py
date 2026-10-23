@@ -2506,7 +2506,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
     SettingsCategoryId.TOOLS: (
         (
             "Affected config",
-            "[tools] gates, [mcp] enable/expose controls, and MCP permission-store Tool policy",
+            "[tools] and [console] tool gates, [mcp] enable/expose controls, MCP permission-store Tool policy, and saved MCP server definitions",
         ),
         (
             "Recovery",
