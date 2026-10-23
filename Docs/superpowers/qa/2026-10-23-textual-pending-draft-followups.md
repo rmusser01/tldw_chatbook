@@ -1,6 +1,6 @@
 # Pending draft follow-ups: TASK-36454 through TASK-36458
 
-Status: implementation independently reviewed; targeted local evidence and hosted CI findings recorded. PR #3228 CI rerun pending after the Dictionary fixture readiness repair.
+Status: all five implementation tasks complete with targeted acceptance evidence and independent Superpowers approval. Final hosted delivery results are recorded in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228), whose live check rollup identifies the exact tested head.
 
 ## Scope and ownership
 
@@ -28,7 +28,7 @@ Tests use enabled mounted child controls and explicitly witness accepted input b
 | `Tests/UI/test_parakeet_install_selection_retention.py` | 9 |
 | Total | 56 |
 
-All 56 have passing local coverage across the final relevant selections, with iterations qualified below. They are appended as exact parameterized node IDs: the 664 inherited entries remain in their original order, floor 720, 13 shards, and unchanged time limits. The required CI will execute the full new set on the PR head; collection alone is not counted as execution.
+All 56 have passing local coverage across the final relevant selections, with iterations qualified below. They are appended as exact parameterized node IDs: the 664 inherited entries remain in their original order, floor 720, 13 shards, and unchanged time limits. The required CI selection includes the full new set on the PR head; collection alone is not counted as execution.
 
 Qualified RED controls reproduce later-key/clear/cross-lane loss in both Basic lanes; create/update false-clean acknowledgement and Advanced clobber; held older semantic publication losing actual `xy`; Dictionary name/description/raw budget/strategy/enabled clobber; Theme palette/name/dark loss and its delayed Saved handoff; Parakeet provider, precision and folder replacement. Matched ordinary and definite-failure controls distinguish normal successful completion and retry.
 
@@ -69,3 +69,5 @@ After import deferral, the mounted ordinary/provider-change Parakeet controls an
 [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed on rebased implementation head `6c0d5255cd`. The corresponding [Derived Artifacts run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015317) found one Dictionary fixture readiness race in UI shard 3 (168 passed, one failed): the fixture selected an old Character row before the asynchronous Dictionary list replacement finished. It failed before Save or pending-draft input began. The selected numeric ID alone could not distinguish Character 1 from Dictionary 1.
 
 The fixture now waits for the exact kind-qualified Dictionary row, highlights its existing kind/identity, and requires selected kind, ID and mounted detail. All 12 case bodies and parameter IDs remain unchanged; no timeout, census entry or production contract changes. The formerly failing reverted-name case and ordinary, queued-name and raw-name/Stay guard controls pass (4/4, 123.997 seconds). Scoped Ruff, formatting and diff checks pass. Independent Superpowers review approved this fixture-only repair with no findings; it preserves actual selection dispatch, test bodies and guard assertions. Required current-head CI remains the final delivery check.
+
+Task statuses were set to Done through the Backlog CLI after acceptance, targeted verification, documentation and independent review completed. Final task/documentation metadata is bundled before the delivery CI run, so its result covers the complete submission. Current-head hosted checks remain the delivery gate; their final run links and review disposition are recorded in the PR description rather than creating another metadata-only CI cycle. The final backlog hygiene checks cover 5,700 readable task files with no duplicate IDs or incompatible paths.

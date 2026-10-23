@@ -1,7 +1,7 @@
 ---
 id: TASK-36456
 title: Keep later Basic Prompt input while the first block mounts
-status: In Progress
+status: Done
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -20,7 +20,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 20:37
+updated_date: 2026-10-23 21:47
 ---
 
 ## Description
@@ -59,6 +59,12 @@ ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/
 Reason: bounded stale projection repair inside the existing Prompt canvas; no storage or service boundary changes.
 <!-- SECTION:PLAN:END -->
 
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented and independently reviewed in PR #3228; targeted acceptance evidence complete. Final hosted CI is followed in the PR. Existing task/ADR links retained; no new ADR.
+<!-- SECTION:FINAL_SUMMARY:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
@@ -67,5 +73,7 @@ Reason: bounded stale projection repair inside the existing Prompt canvas; no st
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Basic first-block reconciliation re-reads both enabled TextAreas after structural waits and updates every captured Advanced card on the existing block identities. Later keys, clears and cross-lane input stay coherent across raw Basic controls, canonical blocks and actual Advanced children, including an already populated other lane. The editor remains mounted with stable metadata/order and no duplicate block; persistence/provider boundaries are unchanged.
 
-All10 first-mount cases pass across the final targeted selections, including both populated-other-lane variants added after Superpowers review exposed the one-card projection gap. Those cases switch to Advanced and persist the retained text through real SQLite. The shared Save structural-mount regression also passes;11 neighboring Prompt controls pass. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for original RED/GREEN evidence and excluded fixture attempts. Existing ADR-033 application state and ADR-040/076 apply; no new ADR. Independent review approved the fix; required current-head PR #3228 CI is pending, so the task stays In Progress.
+All 10 first-mount cases pass across the final targeted selections, including both populated-other-lane variants added after Superpowers review exposed the one-card projection gap. Those cases switch to Advanced and persist the retained text through real SQLite. The shared Save structural-mount regression also passes; 11 neighboring Prompt controls pass. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for original RED/GREEN evidence and excluded fixture attempts. Existing ADR-033 application state and ADR-040/076 apply; no new ADR. Independent review approved the fix.
+
+Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -77,8 +77,8 @@ ADR required: no. Existing ADR-014/025/050/033 application state and ADR-011 app
 
 ## Integration and delivery
 
-- [ ] Inspect all diffs, update relevant architecture docs and task notes, add exact regression selectors to required PR lanes without moving inherited slots.
-- [ ] Run targeted UI/service/static/governance verification; inspect diagnostic inventory statement delta before regeneration if necessary.
-- [ ] Commit explicit files, request fresh-context Superpowers code review, verify and fix actionable feedback.
-- [ ] Mark tasks Done through CLI only when AC/evidence/review checks hold; push and create/attach PR against dev.
-- [ ] Check all CI and paginated review feedback on the current head; address failures/feedback and report PR state.
+- [x] Inspect all diffs, update relevant architecture docs and task notes, add exact regression selectors to required PR lanes without moving inherited slots.
+- [x] Run targeted UI/service/static/governance verification; inspect diagnostic inventory statement delta before regeneration if necessary.
+- [x] Commit explicit files, request fresh-context Superpowers code review, verify and fix actionable feedback.
+- [x] Mark tasks Done through CLI only when AC/evidence/review checks hold; push and create/attach PR against dev.
+Delivery gate: check all CI and paginated review feedback on the current head, address failures/feedback, and record final exact-head results in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). The task/documentation closure is bundled before that run to avoid a second CI cycle solely for status metadata. CI completion is tracked by the PR check rollup and final description, rather than a subsequent source commit.
