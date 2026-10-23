@@ -1,7 +1,7 @@
 ---
 id: TASK-36458
 title: Keep later Import transcription choices when Parakeet installation finishes
-status: To Do
+status: In Progress
 created_date: 2026-10-23 16:40
 labels:
 - textual
@@ -29,6 +29,9 @@ documentation:
 - backlog/decisions/033-application-session-state-ownership.md
 - backlog/decisions/011-chatbook-workbench-ui-system.md
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
+assignee:
+- '@codex'
+updated_date: 2026-10-23 19:31
 ---
 
 ## Description
@@ -51,12 +54,36 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Completion of an earlier managed Parakeet install cannot replace later accepted provider, model-folder or precision choices, including choices for a changed source/batch.
-- [ ] #2 An unchanged current request retains successful Parakeet INT8 automatic selection. Installation and consented artifact activation/preference policy can finish even when its original form selection is obsolete.
-- [ ] #3 Current form values, visible controls and success/status copy agree; an obsolete completion never claims to have selected the current batch when that batch choice was retained.
-- [ ] #4 Bounded mounted controls retain the actual install button, consent modal, background worker and original UI publication owner, covering ordinary and later-choice cases while stubbing only external acquisition boundaries without downloads or inference.
+- [x] #1 Completion of an earlier managed Parakeet install cannot replace later accepted provider, model-folder or precision choices, including choices for a changed source/batch.
+- [x] #2 An unchanged current request retains successful Parakeet INT8 automatic selection. Installation and consented artifact activation/preference policy can finish even when its original form selection is obsolete.
+- [x] #3 Current form values, visible controls and success/status copy agree; an obsolete completion never claims to have selected the current batch when that batch choice was retained.
+- [x] #4 Bounded mounted controls retain the actual install button, consent modal, background worker and original UI publication owner, covering ordinary and later-choice cases while stubbing only external acquisition boundaries without downloads or inference.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace the existing managed-install request, consent, worker and UI publication against real source and option change ownership.
+2. Add mounted regression controls for unchanged success and later accepted provider, precision, model-folder and source/batch choices, including queued Changed delivery; stub only external acquisition boundaries.
+3. Capture the original selection context at the install request and fence only automatic form selection when newer intent supersedes it; allow consented install and managed preference to finish with honest status copy.
+4. Run focused RED/GREEN controls, relevant existing Parakeet/ingest tests and static checks; preserve receipts and record implementation evidence for root integration.
+ADR required: no
+ADR path: backlog/decisions/014-library-ingest-service-authority-and-recovery.md; backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md; backlog/decisions/050-external-parakeet-roots-with-managed-vad.md; backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/011-chatbook-workbench-ui-system.md
+Reason: Bounded callback ownership repair within existing screen, consent, artifact and preference contracts; no storage, routing or service-boundary change.
+<!-- SECTION:PLAN:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Managed Parakeet completion now captures its requesting form identity, accepted-edit generation, source path, transcription choices and live controls. It selects Parakeet INT8 only while that context remains current; obsolete completion retains current editors and gives honest retained-choice copy while consented installation/preference can finish. The original UI-thread callback and zero-argument installer seam remain. Existing completion body moved to UI/Library_Modules/parakeet_install_selection.py to reduce LibraryScreen size; no new service/storage/runtime boundary.
+
+Added nine mounted regression controls covering ordinary success, unchanged prior F32/folder override, later provider, precision, folder, source/batch, provider ABA and genuine queued Changed delivery. Final targeted verification: 34 passed (33 combined including 8 new +25 existing, plus the ninth unchanged-override case separately), 0 failures/errors/skips. Qualified RED independently measured provider overwrite, f32-to-int8 overwrite and folder removal. Actual install button, consent modal, background worker, real ingest preflight, event handlers and original call_from_thread publication retained. External plan/provision/preference and optional runtime availability are qualified seams; no downloads, package installation, inference, Start-import or real persistent preference proof claimed.
+
+Ruff format/check for new files and py_compile for modified Python files pass; tracked diff whitespace check passes. Existing legacy test-file unused App import is pre-existing F401; scoped lint ignoring F401 passes. Full suite not run. Detailed root cause, exact selectors, raw receipts, setup failures and limits: .test-tmp/task-36454-36458/parakeet-report.md. Root owns shared architecture docs, diagnostic inventory/census/CI integration, final review and Done status.
+
+ADR required: no. Existing ADRs 014, 025, 050, 033 and 011 apply (see Implementation Plan for paths). The change is a bounded callback ownership repair and preserves artifact policy, model routing and source preference contracts.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

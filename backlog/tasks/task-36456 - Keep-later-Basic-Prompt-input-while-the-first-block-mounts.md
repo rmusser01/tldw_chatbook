@@ -1,7 +1,7 @@
 ---
 id: TASK-36456
 title: Keep later Basic Prompt input while the first block mounts
-status: To Do
+status: In Progress
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -18,6 +18,9 @@ documentation:
 - backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md
 - backlog/decisions/076-library-lifecycle-progressive-disclosure.md
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
+assignee:
+- '@codex'
+updated_date: 2026-10-23 19:09
 ---
 
 ## Description
@@ -35,7 +38,7 @@ Related tasks: [TASK-19024](task-19024%20-%20Simplify-Library-Prompt-editing.md)
 
 ADR check: no new ADR expected for a bounded repair within existing owners and contracts. Applicable decisions: [033-application-session-state-ownership](../decisions/033-application-session-state-ownership.md), [040-versioned-prompt-artifacts-and-safe-improvement-transactions](../decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md), [076-library-lifecycle-progressive-disclosure](../decisions/076-library-lifecycle-progressive-disclosure.md). Re-evaluate if implementation changes a boundary.
 
-[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). This task does not claim the repair is implemented.
+[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). The audit records the pre-fix behavior; implementation evidence is recorded below.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -46,6 +49,24 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 - [ ] #4 Mounted controls cover no-later-input and queued later-key interleavings around the original structural reconciliation, witnessing delivery to the live child before releasing the earlier handler.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce mounted first-block reconciliation loss in both Basic lanes with actual child delivery, clear, and cross-lane controls.
+2. Reconcile newest live Basic text after structural awaits using the existing stable block identities; preserve metadata and incremental widgets.
+3. Verify canonical/Basic/Advanced agreement, unchanged controls, stable identities and subsequent edits with targeted regressions.
+ADR required: no
+ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md; backlog/decisions/076-library-lifecycle-progressive-disclosure.md
+Reason: bounded stale projection repair inside the existing Prompt canvas; no storage or service boundary changes.
+<!-- SECTION:PLAN:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+Basic first-block reconciliation now reads both live TextAreas after structural awaits and reconciles the newest accepted text on the existing block identities. Later keys, clear and cross-lane input remain consistent in canonical and Advanced state; the full stateful editor is retained.
+
+Eight mounted controls first produced two ordinary passes and six exact loss failures, then all eight passed after the repair and on the final relevant source. Subsequent editing preserves child/block identity, metadata and order. See Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md. Existing ADR-033 application state and ADR-040/076 govern this bounded repair; no new ADR. Independent review and hosted CI remain pending.
+<!-- SECTION:NOTES:END -->

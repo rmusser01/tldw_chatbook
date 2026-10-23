@@ -10,6 +10,10 @@ from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
     PersonaProfileEditorWidget,
 )
 from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
+from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
+    PersonasDictionaryDetailWidget,
+)
+from ...Widgets.Persona_Widgets.personas_library_pane import PersonasLibraryPane
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
@@ -116,3 +120,37 @@ async def finish_profile_save(
     screen._show_center("#ccp-persona-editor-view")
     screen._sync_title_and_console_actions()
     screen._notify("Persona saved.", "information")
+
+
+async def finish_dictionary_settings_save(
+    screen: PersonasScreen,
+    detail: PersonasDictionaryDetailWidget,
+    record: dict,
+    submitted_snapshot: dict,
+    entity_id: str,
+) -> None:
+    """Acknowledge saved settings and refresh their existing screen presentation.
+
+    Args:
+        screen: Incumbent screen that owns selection and optimistic-lock version.
+        detail: Mounted detail that owns the submitted and live settings forms.
+        record: Actual persisted dictionary returned by the scope service.
+        submitted_snapshot: Raw settings captured before awaiting persistence.
+        entity_id: Dictionary identity selected for this Save.
+    """
+    raw_version = record.get("version")
+    screen._selected_dictionary_version = (
+        int(raw_version) if raw_version is not None else None
+    )
+    screen.state.has_unsaved_changes = detail.mark_settings_saved(submitted_snapshot)
+    screen.state.selected_entity_name = str(record.get("name") or "")
+    screen.query_one(PersonasInspectorPane).show_selection(
+        name=screen.state.selected_entity_name, kind="dictionary"
+    )
+    await screen._refresh_dictionary_statistics(record)
+    detail.set_status("Saved.")
+    screen._update_title()
+    await screen._render_dictionary_rows(query=screen.state.search_query)
+    screen.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+    screen._sync_inspector_console_actions()
+    await screen._refresh_dictionary_versions()

@@ -1,7 +1,7 @@
 ---
 id: TASK-36457
 title: Keep newer Theme drafts when an earlier Save returns to the picker
-status: To Do
+status: In Progress
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -25,6 +25,9 @@ documentation:
 - backlog/decisions/150-design-token-system-and-design-language.md
 - backlog/decisions/161-component-pattern-library.md
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
+assignee:
+- '@codex'
+updated_date: 2026-10-23 19:40
 ---
 
 ## Description
@@ -47,12 +50,35 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Palette, name and dark-mode edits accepted while a Save is pending remain recoverable and honestly dirty after completion; only the submitted theme is written.
-- [ ] #2 The actual saved-file identity remains separate from a newer draft name. A subsequent explicit Save follows the existing target-resolution and overwrite rules and persists the retained draft.
-- [ ] #3 A successful Save with no later edits still returns to the picker. Existing explicit Back, category/destination leave, backup and quit protections remain effective.
-- [ ] #4 Mounted real-TOML controls cover ordinary Save, later palette/name/dark edits, definite failure, Save-as and next Save, witnessing actual enabled-control input before release and ordinary reopening behavior.
+- [x] #1 Palette, name and dark-mode edits accepted while a Save is pending remain recoverable and honestly dirty after completion; only the submitted theme is written.
+- [x] #2 The actual saved-file identity remains separate from a newer draft name. A subsequent explicit Save follows the existing target-resolution and overwrite rules and persists the retained draft.
+- [x] #3 A successful Save with no later edits still returns to the picker. Existing explicit Back, category/destination leave, backup and quit protections remain effective.
+- [x] #4 Mounted real-TOML controls cover ordinary Save, later palette/name/dark edits, definite failure, Save-as and next Save, witnessing actual enabled-control input before release and ordinary reopening behavior.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace the Theme editor Save completion, picker return, file identity and existing leave guards; reproduce pending-save draft loss in mounted real-TOML tests with enabled-control input witnessed before release.
+2. Preserve newer palette/name/dark raw input and dirty state in the existing editor owner, retain actual saved-file identity, and return to the picker only for the submitted unchanged draft; preserve Save-as and next-Save overwrite rules.
+3. Run the focused mounted regressions and existing Theme/leave/backup/quit controls, record RED/GREEN evidence and update the theme-system documentation and implementation notes.
+ADR required: no
+ADR path: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/033-settings-commit-models-three-honestly-labeled.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md
+Reason: bounded asynchronous completion repair within existing editor/picker ownership and file/leave contracts; no new boundary, storage model, dependency or visual token.
+<!-- SECTION:PLAN:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Save now retains later raw palette/name/dark edits visibly dirty and keeps the actual saved-file identity separate from a newer draft name. Save-as retargets only an unchanged Name box; next Save preserves existing file-resolution and overwrite rules. The existing Saved message carries session/raw-snapshot fencing through the actual picker handoff, including queued Changed input.
+
+Added Tests/UI/test_theme_pending_save_drafts.py (13 mounted real-TOML cases) and a narrow Editor Save completion section in Docs/Architecture/theme-system.md. All 13 new regressions pass on final code. Existing controls: 17 of 18 pass; 5 Reset controls pass. The fixed-pause Save-as highlight failure also reproduces on pristine HEAD while its catalog scan is pending; a final bounded scan witness preserves every original assertion and passes. Existing test file remains unchanged. Full RED/GREEN counts, excluded/qualified failures, source identities and exact receipts: .test-tmp/task-36454-36458/theme-report.md.
+
+Ruff check passes for both production modules/new test; ruff format --check new test and scoped git diff --check pass. Targeted tests only. Task stays In Progress for parent review/integration; no full sweep, commit, push or Done change.
+
+ADR required: no. Existing decisions: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/033-settings-commit-models-three-honestly-labeled.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md. Repair preserves existing owners and file/leave contracts; no new boundary, storage model, dependency or token.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -518,6 +518,10 @@ from ..Library_Modules.library_conversations_state import LibraryConversationsSt
 from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_ingest_state import LibraryIngestState
+from ..Library_Modules.parakeet_install_selection import (
+    apply_parakeet_install_result,
+    capture_parakeet_install_selection,
+)
 from ..Library_Modules.library_media_state import (
     LibraryMediaLinkReceipt,
     LibraryMediaState,
@@ -4102,6 +4106,7 @@ class LibraryScreen(BaseAppScreen):
         # a second trigger, matching the single busy notification already
         # shown to the user.
         self._parakeet_v2_install_worker: Worker | None = None
+        self._parakeet_v2_pending_selection: tuple[Any, ...] | None = None
         # TASK-1696: the immutable PreflightReport a completed preflight
         # worker handed to the consent modal -- read back by
         # ``_run_parakeet_v2_install`` (kept zero-argument; see
@@ -29267,6 +29272,7 @@ class LibraryScreen(BaseAppScreen):
                 severity="information",
             )
             return
+        self._parakeet_v2_pending_selection = capture_parakeet_install_selection(self)
         self._parakeet_v2_install_worker = self._run_parakeet_v2_preflight()
 
     @on(LibraryIngestCanvas.TranscribeCppGGUFRequested)
@@ -29436,6 +29442,7 @@ class LibraryScreen(BaseAppScreen):
         """Show the plan-driven consent modal, or a sanitized preflight failure."""
         self._parakeet_v2_install_worker = None
         if error is not None or report is None:
+            self._parakeet_v2_pending_selection = None
             self.app_instance.notify(
                 f"Parakeet v2 preflight failed: {error or 'unknown error'}",
                 severity="error",
@@ -29456,6 +29463,7 @@ class LibraryScreen(BaseAppScreen):
     def _confirm_parakeet_v2_install(self, confirmed: bool) -> None:
         """Start the installer worker after explicit confirmation."""
         if not confirmed:
+            self._parakeet_v2_pending_selection = None
             return
         worker = getattr(self, "_parakeet_v2_install_worker", None)
         if worker is not None and not worker.is_finished:
@@ -29510,51 +29518,8 @@ class LibraryScreen(BaseAppScreen):
         installed: Path | None,
         error: str | None,
     ) -> None:
-        """Populate the current batch form only after verified publication."""
-        self._parakeet_v2_install_worker = None
-        self._parakeet_v2_pending_report = None
-        self._parakeet_v2_install_progress = None
-        self._library_model_install_progress_label = ""
-        self._library_model_install_progress_owner = None
-        try:
-            self.query_one(
-                "#library-model-install-progress-label", Static
-            ).display = False
-            self.query_one(
-                "#library-model-install-progress", ModelInstallProgress
-            ).display = False
-        except NoMatches:
-            pass
-        if error is not None or installed is None:
-            self.app_instance.notify(
-                f"Parakeet v2 install failed: {error or 'unknown error'}",
-                severity="error",
-            )
-            return
-        try:
-            self.app_instance._ensure_parakeet_source_service().prefer_managed(
-                ParakeetSourceKey.V2_INT8
-            )
-        except Exception as exc:
-            logger.warning(
-                "Could not prefer the installed Library Parakeet source "
-                "(error_type={}).",
-                type(exc).__name__,
-            )
-            self.app_instance.notify(
-                "Parakeet v2 installed, but its source preference could not be updated.",
-                severity="error",
-            )
-            return
-        options = self._ingest_state.form.type_options.setdefault("audio_video", {})
-        options["transcription_provider"] = "parakeet-onnx"
-        options["transcription_precision"] = "int8"
-        options.pop("transcription_model_dir", None)
-        self.app_instance.notify(
-            "Parakeet v2 INT8 installed and selected for this batch.",
-            severity="information",
-        )
-        self.refresh(recompose=True)
+        """Publish installation through the original UI-thread callback owner."""
+        apply_parakeet_install_result(self, installed, error)
 
     def _invalidate_library_external_submission(self) -> None:
         """Fence and release any not-yet-enqueued external-root submission."""
