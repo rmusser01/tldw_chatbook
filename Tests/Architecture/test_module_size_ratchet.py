@@ -163,6 +163,11 @@ _BUDGETS: dict[str, int] = {
     # review's fix (the count yields before Delete, so Delete never drops)
     # adds +3 (928 -> 931).
     "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 931,
+    # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
+    # 5.10) for the items list that replaced the ListView and its pager,
+    # pinned at its measured size (727 on dev -> 1,223; owner decision
+    # 2026-10-19, "expand limits, never contort code"; applied 2026-10-23).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1223,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
