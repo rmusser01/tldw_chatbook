@@ -11,7 +11,7 @@ import hashlib
 import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -53,16 +53,34 @@ minimal = ast.Module(
     type_ignores=[],
 )
 ast.fix_missing_locations(minimal)
+config_sync_source = source.parents[1] / "Console_Modules/config_sync.py"
+config_sync = ModuleType("tldw_chatbook.UI.Console_Modules.config_sync")
+config_sync.__package__ = "tldw_chatbook.UI.Console_Modules"
+exec(compile(config_sync_source.read_bytes(), str(config_sync_source), "exec", dont_inherit=True), vars(config_sync))  # noqa: S102 - the same fixed-source compile as the screen's.
 namespace = {
+    # The cold FULL path's function-local `from ..Console_Modules.character_context
+    # import ...` resolves as in chat_screen. It loads the tldw_chatbook.UI
+    # package (and with it Textual), which the conftest has already imported.
+    "__package__": "tldw_chatbook.UI.Screens",
     "asyncio": asyncio,
     "time": time,
     "Any": Any,
     "QueryError": LookupError,
     "ConsoleSessionSurface": object,
     # The sync's entry classifies itself for the config-sync cadence
-    # (TASK-33620.15.1) before any refusal; these cases pin the refusals,
-    # not the cadence, and importing the real module would import Textual.
-    "config_sync": SimpleNamespace(begin_console_sync=lambda owner: None),
+    # (TASK-33620.15.1), and the cold FULL path hands its deferral to
+    # config_sync's replay. Its installed source is compiled like the screen's,
+    # so these cases run its real bodies without importing the module.
+    "config_sync": config_sync,
+    # Module globals the cold FULL path reads. The compiled class is not the
+    # installed ChatScreen, so its poll source is None, which is what
+    # run_controls returns for any other type. The real poll_source imports
+    # chat_screen, which the teardown check below forbids.
+    "ChatScreen": type("ChatScreen", (), {}),
+    "run_controls": SimpleNamespace(
+        poll_source=lambda _owner: None,
+        PreparingPollChanged=type("PreparingPollChanged", (RuntimeError,), {}),
+    ),
 }
 exec(compile(minimal, str(source), "exec", dont_inherit=True), namespace)  # noqa: S102 - compile only this fixed source fixture to test defining-body provenance.
 SourceScreen = namespace["CompiledSourceScreen"]
@@ -505,6 +523,11 @@ async def cold_full_schedules_its_pending_replay():
     owner._character_context = SimpleNamespace(refresh_if_scope_changed=settled)
     owner._workspace = SimpleNamespace(tick_workspace_build_scope=nullcontext)
     owner._sync_console_rail_and_controls = lambda: False
+
+    def ran_past_deferral():
+        raise AssertionError("the cold FULL sync ran past its deferred projection")
+
+    owner._sync_console_settings_recovery_surfaces = ran_past_deferral
     owner.surface.release.set()
     retries = []
     owner._request_console_control_bar_sync = lambda **kwargs: retries.append(kwargs)

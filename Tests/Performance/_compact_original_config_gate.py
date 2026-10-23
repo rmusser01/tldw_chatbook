@@ -13,6 +13,21 @@ from types import ModuleType
 from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 
 
+def _pinned(owner, name):
+    """Return ``owner.name`` statically; name both when the code moved it."""
+    try:
+        return inspect.getattr_static(owner, name)
+    except AttributeError:
+        if isinstance(owner, ModuleType):
+            where = owner.__name__
+        else:
+            where = f"{owner.__module__}.{owner.__qualname__}"
+        raise AssertionError(
+            f"compact gate pins {where}.{name}, which no longer exists there; "
+            "point the gate's attribute list at where the code moved it"
+        ) from None
+
+
 def coordinate_fixture_editor(source, selected, deadline):
     """Publish only the fixture comment under original finite config custody."""
     import hashlib
@@ -733,7 +748,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             (private_paths, "atomic_private_write_text"),
             (private_paths, "atomic_private_write_bytes"),
         ):
-            self.slots.append((owner, name, inspect.getattr_static(owner, name)))
+            self.slots.append((owner, name, _pinned(owner, name)))
         assert type(self.widget) is compact_model_bar.CompactModelBar
         assert (
             compact_model_bar.get_cli_providers_and_models
@@ -751,7 +766,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             (compact_model_bar.CompactModelBar, "on_mount", "mount_code"),
             (config, "get_cli_providers_and_models", "reader_code"),
         ):
-            function = inspect.getattr_static(owner, name)
+            function = _pinned(owner, name)
             setattr(self, label, self._pin(function))
             if label == "mount_code":
                 self.mount_namespace = function.__globals__
@@ -774,7 +789,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             (self.participants, "operation"),
             (self.raw, "_scope"),
         ):
-            function = inspect.getattr_static(owner, name)
+            function = _pinned(owner, name)
             self._pin(function)
             self.slots.append((owner, name, function))
             if hasattr(function, "__wrapped__"):
@@ -928,8 +943,8 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
 
         for module_name, class_name, names in (
             (
-                "tldw_chatbook.UI.Screens.chat_screen",
-                "ChatScreen",
+                "tldw_chatbook.UI.Console_Modules.context_spend",
+                "ConsoleContextSpendController",
                 (
                     "_build_console_settings_summary_state",
                     "_active_console_settings_context_estimate",
@@ -993,7 +1008,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
                 continue
             self.slots.append((module, class_name, owner))
             for name in names:
-                function = inspect.getattr_static(owner, name)
+                function = _pinned(owner, name)
                 code = self._pin(function)
                 self.slots.append((owner, name, function))
                 self.external_caller_sources[code] = (
@@ -1014,7 +1029,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             if type(module) is not ModuleType:
                 continue
             for name in names:
-                function = inspect.getattr_static(module, name)
+                function = _pinned(module, name)
                 code = self._pin(function)
                 self.slots.append((module, name, function))
                 self.external_caller_sources[code] = (
@@ -1040,7 +1055,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         )
         if type(presentation) is ModuleType:
             name = "provider_readiness_app_config"
-            function = inspect.getattr_static(presentation, name)
+            function = _pinned(presentation, name)
             code = self._pin(function)
             self.slots.append((presentation, name, function))
             self.external_caller_sources[code] = (
