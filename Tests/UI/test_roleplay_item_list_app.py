@@ -1281,6 +1281,54 @@ async def test_delete_stays_whole_and_clickable_when_the_count_cannot_fit(
         await settle(pilot)
 
 
+@styled_tiers
+@pytest.mark.parametrize("size", [(100, 24), (120, 24)], ids=["100x24", "120x24"])
+async def test_twelve_marks_at_24_rows_paint_the_count_and_a_whole_delete(
+    styled_tier, size, mock_app_instance, volume_348
+):
+    """At 100-120 columns and 24 rows the pane has two rows under its
+    controls. The list's three-row minimum pushed the marks bar below the
+    pane, where nothing of it painted (Task 5's re-review probe read it as
+    ""; new with B2a, whose bar this is). The list now takes the rows left,
+    so the bar paints the ladder's rung for its own width, count first, with
+    Delete whole inside it."""
+    async with open_styled_roleplay(
+        styled_tier, mock_app_instance, size=size, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[1:13])
+        assert len(screen._marked_rows) == 12
+        pane = screen.query_one("#personas-library-pane").content_region
+        bar = screen.query_one("#personas-library-marks")
+        item_list = screen.query_one(RoleplayItemList)
+        assert pane.contains_region(bar.region), (bar.region, pane)
+        assert pane.contains_region(item_list.region), (item_list.region, pane)
+        inside = bar.content_region
+        view = frame_state.marks_bar_view(12, 0, inside.width, can_export=True)
+        assert view.count_text.startswith("✓ 12"), (inside, view)
+        painted = view.count_text + "".join(
+            view.separator + label for label in view.labels
+        )
+        assert _bar(screen) == painted, (inside, view)
+        delete = screen.query_one("#personas-library-marks-delete")
+        region = delete.region
+        assert inside.x <= region.x and region.right <= inside.right, (region, inside)
+        row = painted_rows(screen)[inside.y]
+        assert row[region.x : region.right] == str(delete.label)
+        assert await pilot.click("#personas-library-marks-delete")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(pilot.app.screen, ConfirmationDialog)
+                and bool(pilot.app.screen.query("#confirm-button"))
+            ),
+            what="the delete modal",
+        )
+        assert _dialog_text(pilot.app.screen)[0] == "Delete 12 marked"
+        await pilot.press("escape")
+        await settle(pilot)
+
+
 @pytest.mark.parametrize(
     "focus_id",
     ["personas-delete", "personas-conversations-search"],

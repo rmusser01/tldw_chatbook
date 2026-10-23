@@ -1247,7 +1247,7 @@ class PersonasScreen(BaseAppScreen):
 
     #personas-library-rows {
         height: 1fr;
-        min-height: 3;
+        min-height: 1;
     }
 
     #personas-conversation-actions {

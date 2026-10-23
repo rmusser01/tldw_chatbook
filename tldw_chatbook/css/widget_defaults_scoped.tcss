@@ -1574,7 +1574,7 @@
 
     PersonasScreen #personas-library-rows {
         height: 1fr;
-        min-height: 3;
+        min-height: 1;
     }
 
     PersonasScreen #personas-conversation-actions {
