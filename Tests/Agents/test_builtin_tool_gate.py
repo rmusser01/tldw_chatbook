@@ -705,7 +705,10 @@ def test_tool_gate_breadcrumb_names_the_tool_gates_pane(monkeypatch):
         tool_gate_breadcrumb,
     )
 
-    assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+    # TASK-36387, rewritten on purpose: MCP is a Settings category now.
+    assert TOOL_GATES_PANE_PATH == (
+        "Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+    )
 
     _patch_gate_config(monkeypatch)
     everything_but_the_master_off = tool_gate_breadcrumb()

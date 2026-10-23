@@ -10023,12 +10023,12 @@ class SettingsScreen(BaseAppScreen):
             )
         if category is SettingsCategoryId.DREAMS:
             return (
-                "Applies immediately: the toggle, provider, model, region, and "
+                "Immediate actions: the toggle, provider, model, region, and "
                 "topic edits below save as you make them."
             )
         if category is SettingsCategoryId.GUARDIAN:
             return (
-                "Applies immediately: the toggle and every rule edit below "
+                "Immediate actions: the toggle and every rule edit below "
                 "save as you make them."
             )
         if category == SettingsCategoryId.IMAGE_GENERATION:
@@ -10791,7 +10791,7 @@ class SettingsScreen(BaseAppScreen):
             return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
-        return "Read-only here"
+        return "Read-only"
 
     def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
         """The category-scope half of the State banner (after the badge)."""

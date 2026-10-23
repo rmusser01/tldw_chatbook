@@ -14,7 +14,7 @@ It does not publish source or collection mutation, checking, briefing generation
 
 Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
 
-## What this screen is for
+## What this category is for
 
 MCP is not a screen of its own: **Settings ▸ Tools & MCP**, a Settings
 category, manages MCP servers, scoped tools, permissions, and history
@@ -283,8 +283,8 @@ If the local master is off, both the Permissions matrix's legend and the
 Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
 `web_crawl` and point to the direct Tools-mode control. Other disabled gates
 still report the total number of gates that are off, and the legend names
-where they live: **MCP ▸ Servers ▸ built-in row ▸ Tool gates** (this
-category's Servers mode).
+where they live: **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool
+gates**.
 
 ### `expand_document` and the Library consent boundary
 
@@ -501,8 +501,8 @@ cycle and every marker it can show:
 > Allow → Ask → Off
 
 When any registration gate is off, a second legend line names where the gates
-live — **MCP ▸ Servers ▸ built-in row ▸ Tool gates**, this category's Servers
-mode — since a gate-off tool
+live — **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates** —
+since a gate-off tool
 has no row here to find.
 
 ### The risk floor, and how an explicit Allow gets past it

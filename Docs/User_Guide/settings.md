@@ -98,7 +98,7 @@ Appearance.
 
 ## Features & controls
 
-### How saving works — five models, nine badges
+### How saving works — five models, eight badges
 
 ![A draft category with unsaved changes](images/settings/console-draft.svg)
 
@@ -117,12 +117,11 @@ when you set a field back by hand.
 | **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Web Search, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
-| **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | [My Profile](settings/personal-context-profile.md), Theme |
+| **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | [My Profile](settings/personal-context-profile.md), Theme, Agents, Schedules |
 | **Immediate actions** | Each action saves as you take it, with no category draft. On Tools & MCP, tool gates and permissions save as you change them; adding or editing a server opens a form that keeps your edits until its **Save** (or **Save and connect**), and **Cancel** discards them. An edit form's credential actions (add slot, set or clear a secret, delete a slot) apply as you press them, so **Cancel** does not undo them. The category list names the same save model. | Workspaces, Tool Profiles, Tools & MCP, Dreams, Guardian |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
-| **Read-only** | Nothing on the page changes anything; it names the destination that owns it. The category list names the same save model. | The six view-only Domain Defaults pages |
-| **Read-only here** | Nothing on the page changes anything. | Overview, Diagnostics, About |
+| **Read-only** | Nothing on the page changes anything; a view-only Domain Defaults page names the destination that owns it, and its category list status names the same save model. | Overview, Diagnostics, About, and the six view-only Domain Defaults pages |
 
 On the **Draft — save with s** categories an edit turns the banner into
 "State: Draft — save with s · 2 unsaved · revert with r | \<what saving
@@ -201,7 +200,7 @@ page links to each backend's setup guide and displays these restrictions.
 
 | Group | Category | What it configures | Save model |
 |---|---|---|---|
-| Core | **Overview** (view) | Readiness, storage, privacy, Console behavior, diagnostics. | Read-only here |
+| Core | **Overview** (view) | Readiness, storage, privacy, Console behavior, diagnostics. | Read-only |
 | Core | **Providers & Models** | Default provider, model, and readiness shared with Console. | Draft — save with s |
 | Core | **Web Search** | Shared basic/deep search default, backend credentials, local setup checks, and explicit saved-settings test. | Draft — save with s |
 | Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
@@ -213,8 +212,8 @@ page links to each backend's setup guide and displays these restrictions.
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Immediate actions |
 | Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |
 | Data & Privacy | **Privacy & Security** | Secrets, encryption, redaction, local privacy boundaries, and the raw CLI host-access gate. | Draft — save with s |
-| Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
-| Troubleshooting | **About** (view) | Version, license, and project links. | Read-only here |
+| Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only |
+| Troubleshooting | **About** (view) | Version, license, and project links. | Read-only |
 | Troubleshooting | **Agents** | Named sub-agent definitions the Console supervisor can spawn. | Applies immediately |
 | Expert | **Internal Prompts** | The system prompts the app uses internally (RAG, web search, agents, summarization, more). | Per-item Save/Reset |
 | Expert | **Advanced Config** | Raw TOML view and expert configuration editing. | Validate, then Save |
