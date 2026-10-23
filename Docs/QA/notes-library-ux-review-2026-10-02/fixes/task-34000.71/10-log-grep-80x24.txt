@@ -1,0 +1,9 @@
+$ grep -c Traceback /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live2/data/p1b_t5b/tldw_cli_app.log
+0
+$ grep -c 'Task was destroyed' /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live2/data/p1b_t5b/tldw_cli_app.log
+0
+$ grep -c 'Exception in callback' /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live2/data/p1b_t5b/tldw_cli_app.log
+0
+$ tail -2 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live2/data/p1b_t5b/tldw_cli_app.log
+2026-10-23 11:16:32 [INFO    ] tldw_chatbook.Utils.db_status_manager:651 - Stopped periodic DB size updates
+2026-10-23 11:16:32 [INFO    ] tldw_chatbook.app_lifecycle:651 - DB size update timer stopped during unmount.
