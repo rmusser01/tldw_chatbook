@@ -8868,7 +8868,20 @@ class LibraryScreen(BaseAppScreen):
         container = self.query_one_optional("#library-notes-list")
         if container is None:
             return []
-        return list(container.query(".library-notes-folder-row"))
+        rows = list(container.query(".library-notes-folder-row"))
+        # TASK-34000.14 (sharpened AC#3): the automatic Unfiled group carries
+        # the folder-row class too, so while the root folders slice had not
+        # loaded "g" was advertised and landed on Unfiled. Unfiled counts as
+        # a folder target only once the root slice is fresh and it is the
+        # only group there is; a tree whose folders are still loading (or
+        # were never requested) has no folder to go to, and the key's own
+        # gate -- the footer chip follows it (ADR-031) -- says so.
+        root_folders = self._notes_state.tree_branches.get(
+            NotesBranchKey(None, "folders")
+        )
+        if root_folders is not None and root_folders.freshness == "fresh":
+            return rows
+        return [row for row in rows if not row.has_class("library-notes-unfiled-row")]
 
     def action_library_notes_focus_folders(self) -> None:
         """``g``: jump to the folder tree beside the notes list.
@@ -18257,15 +18270,57 @@ class LibraryScreen(BaseAppScreen):
                 return False
         return True
 
-    async def _ensure_library_notes_tree_folder_loaded(self, folder_id: str) -> None:
-        """Load the two missing slices for one expansion, retaining fresh slices."""
+    async def _ensure_library_notes_tree_root_loaded(
+        self, *, await_load: bool = False
+    ) -> list[NotesBranchKey]:
+        """Request whichever root slice the database-notes tree still owes.
+
+        TASK-34000.14 (N-13): the tree projects folder rows only from
+        ``NotesBranchKey(None, "folders")`` and the Unfiled group only from
+        ``NotesBranchKey(None, "placements")``, and only the rail's Notes row
+        requested both. A Create arrival (the palette's New Note, the rail's
+        Create ▸ New note, ``n``) reached the list through the create
+        reconcile, whose locator loads root PLACEMENTS alone, so the tree
+        came back as Unfiled plus the new note, ``g`` landed on Unfiled and
+        the folder pickers (which read the loaded branches) had nothing to
+        list. This is the one seam that owes the root wherever the list is
+        shown: a slice that is absent, or that a mutation fence left
+        ``uninitialized`` and not loading, is requested; a ``fresh``,
+        ``stale`` or ``loading`` slice is left alone, so the call is
+        idempotent and costs two dict lookups when the tree is whole.
+
+        Args:
+            await_load: ``True`` awaits each load inline (the orchestration
+                tests' form); ``False`` schedules the slice worker -- the
+                create reconcile's and the editor return's form -- so the
+                existing "Loading folders…" pager row paints while it runs.
+                A sync caller schedules this coroutine (``call_later``);
+                the worker form returns as soon as the workers are queued.
+
+        Returns:
+            The keys this call requested, in request order.
+        """
+        requested: list[NotesBranchKey] = []
+        if (
+            getattr(self._notes_state, "source", LIBRARY_NOTES_SOURCE_DATABASE)
+            != LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            return requested
         for kind in ("folders", "placements"):
-            key = NotesBranchKey(folder_id, kind)
+            key = NotesBranchKey(None, kind)
             state = self._notes_state.tree_branches.get(key)
-            if state is None or state.freshness == "uninitialized":
+            if state is not None and (
+                state.loading or state.freshness != "uninitialized"
+            ):
+                continue
+            requested.append(key)
+            if await_load:
                 await LibraryScreen._load_library_notes_tree_slice(
                     self, key, direction="replace", offset=0
                 )
+            else:
+                LibraryScreen._request_library_notes_tree_slice(self, key)
+        return requested
 
     async def _locate_library_notes_tree_target(
         self,
@@ -19002,6 +19057,20 @@ class LibraryScreen(BaseAppScreen):
                 ):
                     filtered_selection = desired_target
                     self._notes_state.tree_selected_placement_id = desired_target
+
+        if operation == "note_create":
+            # TASK-34000.14: a create that arrived without a Notes visit has
+            # no root slices at all, and the locator below loads root
+            # PLACEMENTS alone, so the tree came back as Unfiled plus the
+            # new note. Owe the root here, before the locate, exactly as a
+            # rail entry would: the worker form, so the editor opens at
+            # once and the list shows "Loading folders…" until the slice
+            # lands. Behind the same visit fence as every other await.
+            if not visit_is_current():
+                return
+            await LibraryScreen._ensure_library_notes_tree_root_loaded(self)
+            if not visit_is_current():
+                return
 
         located = False
         if folder is not None and not folder.deleted:
@@ -31457,6 +31526,12 @@ class LibraryScreen(BaseAppScreen):
         def finish_list_projection() -> None:
             restore_after_projection()
             self._refresh_local_source_snapshot()
+            # TASK-34000.14: every editor-to-list return (a create, a deep
+            # link, a media "Note" action) shows a list that owes its root
+            # slices -- including one a mutation fence left ``uninitialized``
+            # mid-load; a whole tree costs two dict lookups here. The helper
+            # is a coroutine, so it is scheduled on the pump, not called.
+            self.call_later(LibraryScreen._ensure_library_notes_tree_root_loaded, self)
 
         _sync_library_canvas(self, "notes", then=finish_list_projection)
         return True

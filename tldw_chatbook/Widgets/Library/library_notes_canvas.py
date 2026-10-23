@@ -2743,6 +2743,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     if row.status_text:
                         label = f"{label}  {row.status_text}"
                     classes = "library-notes-folder-row"
+                    if row.kind == "unfiled":
+                        # TASK-34000.14: lets the screen's "g" gate tell the
+                        # automatic group from a real folder row without a
+                        # second query.
+                        classes += " library-notes-unfiled-row"
                     if row.semantic_status == "connected":
                         classes += " library-notes-tree-connected"
                     elif row.semantic_status == "needs_attention":
