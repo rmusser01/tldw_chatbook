@@ -57,6 +57,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import
 )
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
     build_models_url,
+    contract_refusal_reason,
     discover_openai_compatible_models,
     fingerprint_endpoint,
     supports_openai_compatible_model_discovery,
@@ -651,7 +652,9 @@ class LocalLLMProviderCatalogService:
                 status="unsupported",
                 error=ModelDiscoveryError(
                     kind="unsupported_endpoint",
-                    message="This endpoint is not a valid OpenAI-compatible models endpoint.",
+                    # TASK-36380: name the endpoint contract's reason where it has one.
+                    message=contract_refusal_reason(provider_key, endpoint)
+                    or "This endpoint is not a valid OpenAI-compatible models endpoint.",
                     recovery_hint="Configure an explicit http:// or https:// /v1 models endpoint before discovering models.",
                 ),
             )
