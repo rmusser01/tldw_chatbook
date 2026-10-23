@@ -17,10 +17,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 from textual import events
-from textual.app import App
+from textual.app import App, ComposeResult
+from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import Input, Static
 from textual.worker import WorkerState
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
@@ -130,6 +131,30 @@ async def test_an_insert_and_a_delete_ahead_then_the_end_keep_every_id_once(
         assert len(ids) == len(set(ids))
         assert list(ids) == _db_ids(volume_348)
         assert f"character:{doomed['id']}" not in ids
+
+
+async def test_deleting_the_cursor_row_past_row_200_leaves_the_cursor_on_its_neighbour(
+    mock_app_instance, volume_348
+):
+    """Spec 1.5.6 "Writes" and load-through: a delete reloads from the anchor,
+    every loaded row stays loaded, and the cursor takes the deleted row's
+    neighbour at the same index (never row 0)."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _to_the_end(pilot, screen)
+        before = visible_item_ids(screen)
+        doomed, neighbour = before[250], before[251]
+        await select_roleplay_item(pilot, screen, doomed, load=False)
+        record = volume_348.get_character_card_by_id(int(doomed.split(":")[1]))
+        volume_348.soft_delete_character_card(record["id"], record["version"])
+        await screen.refresh_character_library_list(None)
+        await settle(pilot)
+        after = visible_item_ids(screen)
+        assert len(after) == len(before) - 1 and doomed not in after
+        assert highlighted_item_id(screen) == neighbour
+        assert after.index(neighbour) == 250
 
 
 async def test_a_late_window_from_a_superseded_query_is_dropped(
@@ -419,6 +444,8 @@ async def test_bulk_delete_names_five_and_the_rest_and_deletes_only_the_marked(
         await settle(pilot)
         assert volume_348.count_character_cards() == 348 + 1
         assert len(screen._marked_rows) == 7
+        # Rung 0: Escape is the modal's safe negative; focus goes back to its opener.
+        assert pilot.app.focused is screen.query_one("#personas-library-marks-delete")
         assert await pilot.click("#personas-library-marks-delete")
         await wait_until(
             pilot,
@@ -615,6 +642,43 @@ def volume_db(request, tmp_path_factory, tmp_path):
     db = open_volume_db(tmp_path, volume_db_path(tmp_path_factory, request.param))
     yield db
     db.close_connection()
+
+
+class _RecomposeProbe(Widget):
+    """A widget whose reactive recomposes it: Textual's own recompose path."""
+
+    value = reactive(0, recompose=True)
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"value {self.value}")
+
+
+async def test_the_mount_and_recompose_counters_count_a_known_mount_and_recompose(
+    mock_app_instance, volume_348, work
+):
+    """Positive control for the "0 mounts, 0 recomposes" counts below (Task 8
+    review; Global 38): the same seams count a known mount and a known
+    recompose, so a zero there is a measurement, never a seam that is dead."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        work.armed = True
+        await screen.mount(Static("positive control"))
+        await settle(pilot)
+        work.armed = False
+        assert work.mounts >= 1 and work.recomposes == 0
+        probe = _RecomposeProbe()
+        await screen.mount(probe)
+        await settle(pilot)
+        work.reset()
+        work.armed = True
+        probe.value = 1
+        await settle(pilot)
+        work.armed = False
+        assert work.recomposes == 1
+        assert work.mounts >= 1  # the recompose mounts the probe's new child
+        assert str(probe.query_one(Static).render()) == "value 1"
 
 
 async def test_a_search_keystroke_reads_one_window_and_mounts_nothing(volume_db, work):
@@ -838,6 +902,7 @@ async def test_leaving_by_suspend_clears_the_marks_and_stops_the_window_worker(
         await app.switch_screen("roleplay")
         await settle(pilot)
         assert _bar(screen) == ""
+        assert _window_workers(app) == []  # the resume starts none either
         ids = visible_item_ids(screen)
         assert len(ids) == 200 and len(ids) == len(set(ids))  # the late window dropped
 
@@ -997,6 +1062,18 @@ async def test_a_modal_over_roleplay_starts_no_reload(mock_app_instance, volume_
         assert len(visible_item_ids(screen)) == 200
 
 
+def _keys_naming_marks(state) -> list[str]:
+    """Every key, at any depth of a ``save_state`` snapshot, that names marks."""
+    if isinstance(state, dict):
+        found = [key for key in state if "mark" in str(key).lower()]
+        for value in state.values():
+            found += _keys_naming_marks(value)
+        return found
+    if isinstance(state, (list, tuple)):
+        return [key for value in state for key in _keys_naming_marks(value)]
+    return []
+
+
 async def test_leaving_and_returning_clears_the_marks(volume_348, monkeypatch):
     """The real routes: Roleplay unmounts on leave today, and the hook runs then."""
     ended: list[PersonasScreen] = []
@@ -1011,6 +1088,8 @@ async def test_leaving_and_returning_clears_the_marks(volume_348, monkeypatch):
         app = pilot.app
         first = app.screen
         await _mark_rows(pilot, first, visible_item_ids(first)[:2])
+        assert len(first._marked_rows) == 2
+        assert not _keys_naming_marks(first.save_state())  # R16: never saved
         await pilot.press("ctrl+1")
         await wait_until(
             pilot,

@@ -10,12 +10,15 @@ contracts live in ``test_roleplay_item_list_app.py``.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
+import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+import tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane as pane_module
 from textual.app import ComposeResult
 from textual.widgets import Input
 
@@ -40,6 +43,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
     PersonaEntitySelected,
     PersonaMarksChanged,
 )
+from tldw_chatbook.Character_Chat import Character_Chat_Lib
 from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
@@ -576,6 +580,30 @@ def test_new_option_ids_keeps_the_first_copy_and_drops_present_ids():
     assert dropped == ("character:1", "character:2")
 
 
+def test_the_screen_keeps_the_list_seams_tests_patch():
+    """Spec 1.5.6: tests patch these names on ``personas_screen``, so they stay
+    importable there as the library's own objects (a re-export, never a copy
+    or a wrapper; the AC#8 counts patch ``get_character_page_for_ui`` there and
+    see every window read). The page size is now the window size."""
+    assert (
+        personas_screen_module.count_character_page
+        is Character_Chat_Lib.count_character_page
+    )
+    assert (
+        personas_screen_module.get_character_page_for_ui
+        is Character_Chat_Lib.get_character_page_for_ui
+    )
+    assert personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE == 200
+
+
+def test_the_items_list_uses_only_public_option_list_api():
+    """Spec 1.5.6: public ``OptionList`` API only. Textual's private line and
+    render caches (``_lines``, ``_clear_caches``) change between releases."""
+    source = Path(pane_module.__file__).read_text(encoding="utf-8")
+    for private in ("._lines", "._clear_caches", "._option_render_cache"):
+        assert private not in source, private
+
+
 def test_a_fence_differs_when_any_field_differs():
     fence = frame_state.ListFence(
         "characters", "isolde", "relevance", None, "local", None, 7
@@ -725,6 +753,43 @@ async def test_a_click_on_the_mark_column_marks_in_ascii_mode_too(ascii_mode):
         assert item_at(pilot.app.screen, "character:3").painted_mark
         assert not item_at(pilot.app.screen, "character:2").painted_mark
         assert pilot.app.selected == []
+
+
+async def test_arrows_move_the_cursor_and_never_load():
+    """I6: highlight never loads; only Enter or a click does."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 10))
+        item_list.focus()
+        await select_roleplay_item(pilot, pilot.app.screen, index=0, load=False)
+        await pilot.press("down", "down", "down", "up")
+        await pilot.pause()
+        assert highlighted_item_id(pilot.app.screen) == "character:3"
+        assert pilot.app.selected == []
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pilot.app.selected == ["3"]
+
+
+async def test_hovering_a_row_moves_no_row():
+    """I10 / spec 5.7.2 item 5: hover changes colour only, focused or not."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 10))
+        before = painted_option_rows(item_list)
+        content = item_list.content_region
+        for focused in (False, True):
+            if focused:
+                item_list.focus()
+            await pilot.hover(
+                item_list,
+                offset=(
+                    content.x - item_list.region.x + 6,
+                    before[2][0] - item_list.region.y,
+                ),
+            )
+            await pilot.pause()
+            assert item_list.is_mouse_over
+            assert painted_option_rows(item_list) == before, focused
+            assert first_list_item(pilot.app.screen).region.y == before[0][0]
 
 
 async def test_m_and_space_act_only_on_the_focused_list():

@@ -8,6 +8,10 @@ whole app), no ``@click`` meta on any painted cell, and clicking every painted
 copy of the name runs nothing. ``[/`` and ``[TODO] y`` pin the escaper choice:
 ``textual.markup.escape`` gets both wrong on Textual 8.2.8, while
 ``Utils.input_validation.escape_markup`` and literal ``Content`` get them right.
+
+Frame slice B2a extends it (AC#12) to the items list's two prompt lines and a
+cut name's hover tooltip, the list's border title (the active tag is
+untrusted) and the one delete modal (bulk and single).
 """
 
 from __future__ import annotations
@@ -16,10 +20,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.visual import visualize
 from textual.widgets import Static
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (bootstrap profile)
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
+import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 
@@ -29,8 +35,11 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.roleplay_frame_harness import (
     StyledRoleplayMockApp,
     click_meta_cells,
+    item_at,
     open_styled_roleplay,
+    painted_option_rows,
     painted_rows,
+    painted_text,
     seed_mock_characters,
     select_roleplay_item,
     settle,
@@ -49,6 +58,10 @@ from Tests.UI.test_personas_workbench import (
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Workbench.workbench_widgets import FittedText
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
+    RoleplayItemList,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditCharacterRequested,
     PersonaProfileSaveRequested,
@@ -350,3 +363,201 @@ async def test_a_persona_save_that_fails_validation_keeps_the_app_running(
         assert app.is_running
         service.create_persona_profile.assert_not_awaited()
         assert "[type=" in _painted(screen)
+
+
+# ---- Frame slice B2a: the items list, its border title, the delete modal ----
+
+
+def _painted_item(screen, option_id: str) -> list[str]:
+    """One row of the items list as the terminal shows it, gutter stripped."""
+    item_list = screen.query_one(RoleplayItemList)
+    rows = painted_option_rows(item_list)[item_list.get_option_index(option_id)]
+    content = item_list.content_region
+    gutter = len(frame_state.item_gutter(loaded=False, marked=False))
+    painted = painted_rows(screen)
+    return [painted[y][content.x + gutter : content.right].rstrip() for y in rows]
+
+
+def _painted_message(dialog: ConfirmationDialog) -> list[str]:
+    """The delete modal's message as painted, one stripped line per row."""
+    region = dialog.query_one(".dialog-message").region
+    return [line.strip() for line in painted_text(dialog, region).splitlines()]
+
+
+async def _assert_message_inert(pilot, dialog: ConfirmationDialog, name: str) -> None:
+    """No ``@click`` meta anywhere, and clicking each copy of ``name`` in the
+    message runs nothing and leaves the modal open (a click outside the
+    dialog box would close it, so the sweep stays inside the message)."""
+    app = pilot.app
+    await app.run_action("record('positive-control')")
+    assert app.recorded == ["positive-control"]
+    app.recorded.clear()
+    assert click_meta_cells(dialog) == []
+    region = dialog.query_one(".dialog-message").region
+    rows = painted_text(dialog, region).splitlines()
+    copies = [
+        (region.x + row.index(name), region.y + y)
+        for y, row in enumerate(rows)
+        if name in row
+    ]
+    assert copies, rows
+    for x, y in copies:
+        await pilot.click(offset=(x, y))
+        await pilot.pause()
+    assert app.recorded == []
+    assert app.screen is dialog
+
+
+async def _open_delete_modal(pilot, selector: str) -> ConfirmationDialog:
+    app = pilot.app
+    assert await pilot.click(selector)
+    await wait_until(
+        pilot,
+        lambda: (
+            isinstance(app.screen, ConfirmationDialog)
+            and bool(app.screen.query("#confirm-button"))
+        ),
+        what="the delete modal",
+    )
+    await pilot.pause()
+    return app.screen
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_items_list_paints_both_prompt_lines_and_the_tooltip_literally(
+    name, mock_app_instance, monkeypatch
+):
+    """B2a AC#12, the list prompts: line 1 (the name) and line 2 (the scent,
+    here ``<tag> · <description>``) as painted at 220x55 (2-line rows), and a
+    cut name's hover tooltip, which Textual renders as markup from a ``str``."""
+    long_name = f"{name} {'w' * 60}"
+    seed_mock_characters(
+        monkeypatch,
+        [
+            {"id": 1, "name": name, "description": "d", "tags": [name], "version": 1},
+            {"id": 2, "name": long_name, "description": "d", "version": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        character_handler_module, "_default_character_db", lambda: object()
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        assert item_list.density == 2
+        scent = item_at(screen, "character:1").meta  # line 2: the tag, cut to fit
+        assert scent is not None and scent.startswith(name[:3])
+        assert _painted_item(screen, "character:1") == [name, scent]
+        assert item_list.prompt_for("character:2").name_cut
+        row = painted_option_rows(item_list)[item_list.get_option_index("character:2")]
+        await pilot.hover(
+            item_list,
+            offset=(
+                item_list.content_region.x - item_list.region.x + 6,
+                row[0] - item_list.region.y,
+            ),
+        )
+        await pilot.pause()
+        assert item_list.tooltip is not None
+        assert visualize(item_list, item_list.tooltip).plain == long_name
+        # Both rows, the card and the Inspector.
+        await _assert_literal_and_inert(pilot, name, at_least=4)
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_items_border_title_paints_the_tag_literally(
+    name, mock_app_instance, monkeypatch
+):
+    """B2a AC#12, the border titles: ``Characters 2 of 2 · tag <tag>``. A
+    ``str`` border title is parsed as markup by Textual (``render_str``); the
+    bottom border's ``#N of M`` carries numbers only."""
+    seed_mock_characters(
+        monkeypatch,
+        [
+            {"id": 1, "name": "Abel", "description": "d", "tags": [name], "version": 1},
+            {"id": 2, "name": "Bree", "description": "d", "tags": [name], "version": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        character_handler_module, "_default_character_db", lambda: object()
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        await app.run_action("record('positive-control')")
+        assert app.recorded == ["positive-control"]
+        app.recorded.clear()
+        pane = screen.query_one("#personas-library-pane")
+        await screen._apply_tag_filter(name)
+        await settle(pilot)
+        expected = f"Characters 2 of 2 · tag {name}"
+        top = painted_rows(screen)[pane.region.y][pane.region.x : pane.region.right]
+        title = top[top.index("Characters") :].rstrip("╮").rstrip("─").rstrip()
+        if title.endswith("…"):  # cut to the border: the painted part is literal
+            assert expected.startswith(title[:-1]), (title, expected)
+        else:
+            assert title == expected
+        assert click_meta_cells(screen) == []
+        x = pane.region.x + top.index("Characters") + len(expected) - len(name)
+        if title == expected:
+            await pilot.click(offset=(x, pane.region.y))
+            await settle(pilot)
+        assert app.recorded == []
+        assert app.screen is screen and app.is_running
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_delete_modal_names_marked_and_open_items_literally(
+    name, mock_app_instance, monkeypatch
+):
+    """B2a AC#12, the one delete modal (R32): the marks bar's bulk Delete
+    lists every marked name; the Inspector's Delete names the open item.
+    Escape cancels; nothing is deleted."""
+    seed_mock_characters(
+        monkeypatch,
+        [
+            {"id": 1, "name": name, "description": "d", "version": 1},
+            {"id": 2, "name": f"{name} 2", "description": "d", "version": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        character_handler_module, "_default_character_db", lambda: object()
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        item_list.focus()
+        for option_id in ("character:1", "character:2"):
+            await select_roleplay_item(pilot, screen, option_id, load=False)
+            await pilot.press("m")
+        await settle(pilot)
+        assert len(screen._marked_rows) == 2
+        dialog = await _open_delete_modal(pilot, "#personas-library-marks-delete")
+        lines = _painted_message(dialog)
+        assert name in lines and f"{name} 2" in lines, lines
+        await _assert_message_inert(pilot, dialog, name)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.screen is screen and len(screen._marked_rows) == 2
+        await select_roleplay_item(pilot, screen, "character:1")
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_id == "1",
+            what="the open item",
+        )
+        await settle(pilot)
+        dialog = await _open_delete_modal(pilot, "#personas-delete")
+        lines = _painted_message(dialog)
+        # The modal wraps the sentence at a space; read it as one line.
+        assert " ".join(lines).strip() == f"Delete {name}? This cannot be undone here."
+        await _assert_message_inert(pilot, dialog, name)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.screen is screen

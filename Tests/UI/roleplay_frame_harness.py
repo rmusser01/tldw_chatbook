@@ -78,6 +78,30 @@ ISOLDE = "Captain Isolde Varga"
 #: Session templates by (pytest basetemp, count); see ``volume_db_path``.
 _VOLUME_TEMPLATES: dict[tuple[str, int], Path] = {}
 
+
+class NotYetDelivered(Exception):
+    """A journey step a later frame slice delivers (spec 5.7.3, RC-7).
+
+    A full-journey test is ``xfail(strict=True, raises=NotYetDelivered)`` and
+    raises this explicitly at each undelivered step, so a regression in a
+    delivered step fails the test instead of hiding in a plain ``xfail``. The
+    slice that delivers the last step removes the marker.
+    """
+
+
+def not_yet_delivered(step: str, owner: str) -> None:
+    """Raise ``NotYetDelivered`` for one journey step.
+
+    Args:
+        step: What the step does (``"/ focuses the items search"``).
+        owner: The frame slice that delivers it (``"B3"``).
+
+    Raises:
+        NotYetDelivered: Always.
+    """
+    raise NotYetDelivered(f"{step} (frame slice {owner})")
+
+
 #: Spec 5.7.1 geometry matrix for B1: 80x24 is the degrade check, the other
 #: three are the design centre. 60x24 joins with B7: B1's worst-case header
 #: (every chip, a server, the longest kind) fits from 65 columns, and the

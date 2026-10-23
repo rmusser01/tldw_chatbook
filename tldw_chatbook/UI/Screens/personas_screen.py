@@ -4772,6 +4772,11 @@ class PersonasScreen(BaseAppScreen):
         """Push the header view for the cached inputs; tolerate teardown races."""
         try:
             header = self.query_one("#personas-header", DestinationHeader)
+            # Under the same guard (frame slice B2a hardening, not reproduced:
+            # the children compose in the header's own block).
+            item = header.query_one("#personas-header-item", FittedText)
+            unsaved = header.query_one("#personas-header-unsaved", FittedText)
+            blocked = header.query_one("#personas-header-blocked", FittedText)
         except Exception:
             logger.opt(exception=True).debug("Could not update the personas header.")
             return
@@ -4780,10 +4785,9 @@ class PersonasScreen(BaseAppScreen):
         width = header.outer_size.width or self.size.width  # first paint: screen
         view = frame_state.build_header_view(self._header_inputs, width)
         header.sync_state(view.state)
-        header.query_one("#personas-header-item", FittedText).set_value(view.item)
-        chips = (("unsaved", view.unsaved_chip), ("blocked", view.blocked_chip))
-        for chip, text in chips:
-            header.query_one(f"#personas-header-{chip}", FittedText).set_value(text)
+        item.set_value(view.item)
+        unsaved.set_value(view.unsaved_chip)
+        blocked.set_value(view.blocked_chip)
 
     def _purpose_line_text(self) -> str:
         """Mode descriptor plus the live item count on one line (F-033).

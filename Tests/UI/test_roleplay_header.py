@@ -628,3 +628,20 @@ async def test_header_row_paints_ascii_markers_in_ascii_mode(
         unmapped = set(row) & (set(ASCII_GLYPH_FALLBACKS) | set(FRAME_GLYPH_FALLBACKS))
         assert not unmapped, (unmapped, row)
         assert "> Ser " in row and "..." in row, row
+
+
+@pytest.mark.parametrize("child", ["item", "unsaved", "blocked"])
+async def test_a_missing_header_child_never_escapes_the_header_paint(
+    child, mock_app_instance, roleplay_data
+):
+    """Hardening (frame slice B2a, from B1's pre-merge review): the item label
+    and the chips are looked up under the same guard as the header. Not
+    reproduced in the app: the children compose in the header's own block, so
+    this removes one by hand to show the guard holds."""
+    async with open_styled_roleplay("mock", mock_app_instance, size=(120, 36)) as pilot:
+        screen = pilot.app.screen
+        await screen.query_one(f"#personas-header-{child}").remove()
+        await pilot.pause()
+        screen._paint_header()
+        await settle(pilot)
+        assert pilot.app.is_running and pilot.app.screen is screen
