@@ -89,12 +89,16 @@ def build_test_app_config(
     once called.
 
     So do what the shipping app does: `app.py` assigns
-    ``self.app_config = load_settings()``. That is hermetic here because the
-    root conftest re-points ``TLDW_CONFIG_PATH``/``HOME``/``XDG_*`` at a
-    per-test sandbox before anything imports the app, so `load_settings()`
-    reads the *test's* config file -- the same file
-    `save_setting_to_cli_config` writes and `get_cli_setting` reads. One
-    config, one truth, for the app snapshot and for every later refresh.
+    ``self.app_config = load_settings()``, which reads the selected profile's
+    config file -- the same file `save_setting_to_cli_config` writes and
+    `get_cli_setting` reads. One config, one truth, for the app snapshot and
+    for every later refresh. The profile is selected once per process
+    (ADR-126): the root conftest binds config to the session's bootstrap
+    profile at import, so under a plain test's per-test ``TLDW_CONFIG_PATH``
+    redirect this call raises ``RecoveryRequired("raw_source_selection_
+    changed")`` (TASK-36381). A caller runs under ``@private_profile_test``
+    (a fresh profile in a child process) or ``bootstrap_profile`` (the shared
+    session profile, for tests that write no config).
 
     The dict is deliberately NOT deep-copied off `load_settings()`'s cache:
     production shares that object too (`load_settings` returns the cached

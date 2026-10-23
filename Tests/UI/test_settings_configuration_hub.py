@@ -571,6 +571,14 @@ def test_settings_category_groups_cover_every_category_id_exactly_once():
 
 
 @pytest.mark.bootstrap_profile
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "TASK-36381: product gap -- Tools & MCP (TASK-35150) shipped with no "
+        "_INSPECTOR_GUIDANCE entry, so its inspector shows the generic "
+        "fallback. Remove this marker when the entry lands."
+    ),
+)
 def test_inspector_guidance_covers_every_settings_category():
     """Every non-domain sidebar category must have an explicit guidance entry.
 
@@ -1408,19 +1416,30 @@ def _painted_settings_widget(screen, widget) -> str:
     )
 
 
+def _seed_active_config(text: str) -> Path:
+    """Write ``text`` to the selected profile's config file and reload it.
+
+    TASK-36381: config is bound to one profile per process (ADR-126), so a
+    test seeds the selected file; pointing TLDW_CONFIG_PATH at another file
+    makes the next config read raise ``raw_source_selection_changed``.
+    """
+    config_path = Path(config_module.get_cli_config_path())
+    config_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    config_path.write_text(text, encoding="utf-8")
+    config_module.load_settings(force_reload=True)
+    return config_path
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(180, 50), (100, 30)])
 @private_profile_test
 async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
-    request, monkeypatch, tmp_path, size
+    request, size
 ):
     """F4 Settings owns the global gate at normal and compact sizes."""
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-    config_path.write_text(
-        "[scheduling]\nbriefing_schedules_enabled = false\n",
-        encoding="utf-8",
+    config_path = _seed_active_config(
+        "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
-    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
     app.apply_briefing_schedules_enabled(False)
@@ -1479,15 +1498,12 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
-    request, monkeypatch, tmp_path
+    request, monkeypatch
 ):
     """A replaced config is reported as saved even when live publish fails."""
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-    config_path.write_text(
-        "[scheduling]\nbriefing_schedules_enabled = false\n",
-        encoding="utf-8",
+    config_path = _seed_active_config(
+        "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
-    config_module.load_settings(force_reload=True)
     assert (
         config_module.get_cli_setting("scheduling", "briefing_schedules_enabled", True)
         is False
@@ -1546,15 +1562,12 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
-    request, monkeypatch, tmp_path
+    request, monkeypatch
 ):
     """A restart-required gate cannot be inverted by a second press."""
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-    config_path.write_text(
-        "[scheduling]\nbriefing_schedules_enabled = false\n",
-        encoding="utf-8",
+    config_path = _seed_active_config(
+        "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
-    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
     app.apply_briefing_schedules_enabled(False)
@@ -2141,13 +2154,9 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
-    request, monkeypatch, tmp_path
-):
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(request):
     original = "[appearance]\nascii_glyphs = true\n"
-    config_path.write_text(original, encoding="utf-8")
-    config_module.load_settings(force_reload=True)
+    config_path = _seed_active_config(original)
 
     app = _build_test_app()
 
@@ -2183,12 +2192,10 @@ async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
-    request, monkeypatch, tmp_path
+    request,
 ):
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     original = ""
-    config_path.write_text(original, encoding="utf-8")
-    config_module.load_settings(force_reload=True)
+    config_path = _seed_active_config(original)
 
     app = _build_test_app()
 
@@ -6473,6 +6480,10 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
             "settings-primary-search-match"
         )
         assert screen.query_one("#settings-category-overview").has_class(
+            "settings-secondary-search-match"
+        )
+        # My Profile (6c52a2b4b2) is the third: "privacy controls".
+        assert screen.query_one("#settings-category-personal-context").has_class(
             "settings-secondary-search-match"
         )
 

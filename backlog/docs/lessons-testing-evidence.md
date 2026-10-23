@@ -706,6 +706,18 @@ A second trap in the same audit: a probe that slept 1 s inside the cached Consol
 
 **What to do.** To check whether a launch rewrites the config, compare the file's bytes before and after with nothing in config patched. To find the writer, patch a caller in another module (the way `Tests/ProductionApp/test_config_profile_isolation.py` patches `app_lifecycle.persist_cli_config_for_shutdown`), or read the mutation log. A byte-identical file proves nothing if the probe patched the writer.
 
+## A broad except can dress `RecoveryRequired` up as an egress block (TASK-36381, 2026-10-23)
+
+**Incident.** TASK-36381's description put six Settings hub probe failures ("unreachable: blocked by network policy") down to unstubbed egress. They probe `http://127.0.0.1:9099`, an IP literal that needs no DNS. The real cause was the egress check's config read (`_config_allowed_hosts` -> `get_cli_setting`) raising `RecoveryRequired: raw_source_selection_changed` under the per-test profile redirect; `probe_settings_endpoint`'s `except Exception` turned it into the network-policy summary. A DNS stub would not have fixed them; `bootstrap_profile` did. In the sibling probe file the egress diagnosis was right: with the profile fixed, 28 `https://example.test` nodes still failed until DNS was stubbed.
+
+**What to do.** When a test fails with a product's bounded failure copy, find the exception the `except` swallowed before choosing a stub: an IP-literal URL rules out DNS. A plain Tests/UI test that reaches a config read under a broad except fails this way, not with a traceback.
+
+## Stubbing `module.json.loads` patches every module's `json.loads` (TASK-36381, 2026-10-23)
+
+**Incident.** `test_probe_handles_recursive_json_as_bounded_failure` did `monkeypatch.setattr(local_discovery_module.json, "loads", stub)`. `local_discovery_module.json` is the stdlib module, so that replaced `json.loads` for the whole process. The probe's storage admission then read its control records with `json.loads(data, object_pairs_hook=...)` and failed with `TypeError` before the probe body ran. Replacing the module's own name (`monkeypatch.setattr(module, "json", SimpleNamespace(loads=stub))`) scoped the fake to the code under test. Other suites (`Tests/Sync_Interop/test_sync_crypto.py`, `Tests/Prompts_DB/test_prompts_db_retained_history.py`, `Tests/Agents/test_run_log_service_wiring.py`, `Tests/Image_Generation/test_comfyui_image_adapter.py`) use the same global pattern.
+
+**What to do.** Fake a stdlib function a module imported as a module by replacing the module's binding, not an attribute on the shared stdlib module.
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.

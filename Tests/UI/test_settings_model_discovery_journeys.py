@@ -196,7 +196,10 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(
     ["provider", "endpoint", "endpoint_roundtrip", "credential_env", "api_key"],
 )
 @pytest.mark.parametrize("failure", [False, True])
-async def test_late_discovery_cannot_publish_into_a_changed_form(change, failure):
+@private_profile_test
+async def test_late_discovery_cannot_publish_into_a_changed_form(
+    request, change, failure
+):
     app, scope = _app_scope(gate="discover", failure=failure)
     host = ProviderSettingsHarness(app, "settings")
     async with host.run_test(size=(170, 48)) as pilot:
@@ -328,7 +331,8 @@ async def test_discovery_operations_report_failure_and_allow_retry(request, oper
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
-async def test_late_clear_cannot_overwrite_a_changed_form(failure):
+@private_profile_test
+async def test_late_clear_cannot_overwrite_a_changed_form(request, failure):
     app, scope = _app_scope(gate="clear")
     host = ProviderSettingsHarness(app, "settings")
     async with host.run_test(size=(170, 48)) as pilot:
@@ -349,7 +353,8 @@ async def test_late_clear_cannot_overwrite_a_changed_form(failure):
 
 
 @pytest.mark.asyncio
-async def test_rebuild_keeps_selection_with_connection_drafts():
+@private_profile_test
+async def test_rebuild_keeps_selection_with_connection_drafts(request):
     app, scope = _app_scope()
     host = ProviderSettingsHarness(app, "settings")
     async with host.run_test(size=(170, 48)) as pilot:
@@ -393,7 +398,8 @@ def _ratio(first, second) -> float:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
-async def test_discovered_models_highlight_is_a_readable_bar(theme):
+@private_profile_test
+async def test_discovered_models_highlight_is_a_readable_bar(request, theme):
     """TASK-33003.6 review round 1: this SelectionList sits inside
     #settings-providers-models-card, so the card's highlight bar
     (components/_lists.tcss) restyles it too. The highlighted row reads as a
