@@ -495,7 +495,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # A static node (an AST walk, about 5-10 s with its private-profile child),
 # appended at the tail after TASK-35648's.
 # TASK-36360..36363 append48 nodes after the complete616-entry dev census.
-MINIMUM_FILES = 664
+# TASK-34000 P1-B batch (2026-10-23, rebased onto dev b20ed34ba6 after P1-A
+# merged as #3215) appends 5 files at the census tail so no existing entry
+# changes shard: .17's Add-from-files reopens on the chooser (5 boots,
+# ~22-27 s), .14's tree keeps folders after Create (4 boots, ~23 s), .12's
+# filter finds what you typed (2 boots, ~25 s), and .11's link picker and
+# in-app Preview links split in two (1 boot each, ~20 s / ~17 s):
+# 664 + 5 = 669.
+MINIMUM_FILES = 669
 
 
 def read_census(path: Path) -> list[str]:
