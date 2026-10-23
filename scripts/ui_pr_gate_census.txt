@@ -1107,3 +1107,6 @@ Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_late
 Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[batch_provider]
 Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[provider_aba]
 Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[queued_folder]
+Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-system]
+Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-user]
+Tests/UI/test_library_prompt_pending_drafts.py::test_save_ack_mount_refreshes_existing_other_lane

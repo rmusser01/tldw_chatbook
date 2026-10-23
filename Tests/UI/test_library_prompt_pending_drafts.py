@@ -40,7 +40,9 @@ def _host(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lane", ["system", "user"])
-@pytest.mark.parametrize("later", ["none", "key", "clear", "other-lane"])
+@pytest.mark.parametrize(
+    "later", ["none", "key", "clear", "other-lane", "other-lane-existing"]
+)
 @private_profile_test
 async def test_first_block_mount_keeps_live_input(
     request, tmp_path, monkeypatch, lane, later
@@ -53,7 +55,12 @@ async def test_first_block_mount_keeps_live_input(
     async def held_reconcile(editor, lane_id, *, previous_count):
         nonlocal held
         await reconcile(editor, lane_id, previous_count=previous_count)
-        if not held and lane_id == lane and previous_count == 0:
+        if (
+            not held
+            and lane_id == lane
+            and previous_count == 0
+            and editor.state.definition.lanes[0 if lane == "system" else 1].blocks
+        ):
             held = True
             entered.set()
             await asyncio.wait_for(release.wait(), 30)
@@ -69,6 +76,15 @@ async def test_first_block_mount_keeps_live_input(
             body = screen.query_one(f"#library-prompt-{lane}", TextArea)
             other_lane = "user" if lane == "system" else "system"
             other = screen.query_one(f"#library-prompt-{other_lane}", TextArea)
+            if later == "other-lane-existing":
+                other.text = "Other baseline"
+                await pilot.pause()
+                await _until(
+                    lambda: getattr(
+                        screen._prompts_state.block_state, f"compiled_{other_lane}"
+                    )
+                    == "Other baseline"
+                )
             body.focus()
             body.insert("a")
             await _until(entered.is_set)
@@ -83,10 +99,14 @@ async def test_first_block_mount_keeps_live_input(
             elif later == "clear":
                 body.clear()
                 assert body.text == ""
-            elif later == "other-lane":
+            elif later in {"other-lane", "other-lane-existing"}:
                 other.focus()
+                other.move_cursor((0, len(other.text)))
                 delivery = asyncio.create_task(pilot.press("z"))
-                await _until(lambda: other.text == "z")
+                await _until(
+                    lambda: other.text
+                    == ("Other baselinez" if later == "other-lane-existing" else "z")
+                )
             expected = "ab" if later == "key" else "" if later == "clear" else "a"
             release.set()
             if delivery is not None:
@@ -97,7 +117,13 @@ async def test_first_block_mount_keeps_live_input(
             assert screen.query_one(f"#library-prompt-{lane}", TextArea) is body
             state = screen._prompts_state.block_state
             assert getattr(state, f"compiled_{lane}") == expected
-            assert other.text == ("z" if later == "other-lane" else "")
+            assert other.text == (
+                "Other baselinez"
+                if later == "other-lane-existing"
+                else "z"
+                if later == "other-lane"
+                else ""
+            )
             assert getattr(state, f"compiled_{other_lane}") == other.text
             blocks = state.definition.lanes[0 if lane == "system" else 1].blocks
             assert len(blocks) == 1
@@ -108,6 +134,42 @@ async def test_first_block_mount_keeps_live_input(
                 {b.id for ln in state.definition.lanes for b in ln.blocks}
             ) == sum(len(ln.blocks) for ln in state.definition.lanes)
             assert editor._state.definition == state.definition
+            for ln in state.definition.lanes:
+                for block in ln.blocks:
+                    assert (
+                        editor._block_widgets[block.id]
+                        .query_one(".prompt-block-content", TextArea)
+                        .text
+                        == block.content
+                    )
+            if later == "other-lane-existing":
+                screen.query_one("#library-prompt-mode-advanced", Button).press()
+                await pilot.pause()
+                from tldw_chatbook.Widgets.Library.library_prompt_work_pane import (
+                    LibraryPromptWorkPane,
+                )
+
+                canvas = screen.query_one(LibraryPromptWorkPane)
+                assert (
+                    getattr(canvas.capture_live_block_state(), f"compiled_{other_lane}")
+                    == other.text
+                )
+                name = screen.query_one("#library-prompt-name")
+                name.value = f"cross-lane-{lane}"
+                screen.query_one("#library-prompt-save", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: screen._prompts_state.selected_prompt_id is not None
+                    and not screen._library_prompt_write_worker_is_active(),
+                    message="Cross-lane Save did not settle",
+                )
+                stored = db.fetch_prompt_details(
+                    screen._prompts_state.selected_prompt_id
+                )
+                assert stored[f"{other_lane}_prompt"] == "Other baselinez"
+                assert stored[f"{lane}_prompt"] == "a"
+                screen.query_one("#library-prompt-mode-basic", Button).press()
+                await pilot.pause()
             # A subsequent edit continues on the same child and block identity.
             body.focus()
             await pilot.press("end", "c")
@@ -364,4 +426,141 @@ async def test_save_keeps_newer_input_before_older_semantic_message(
     finally:
         release.set()
         semantic_release.set()
+        db.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_ack_mount_refreshes_existing_other_lane(
+    request, tmp_path, monkeypatch
+):
+    from tldw_chatbook.Widgets.Library.library_prompt_work_pane import (
+        LibraryPromptWorkPane,
+    )
+
+    db, service, host = _host(tmp_path)
+    prompt_id, _, _ = db.add_prompt(
+        name="ack-mount", author="", details="", system_prompt="System baseline"
+    )
+    save_entered, save_release = threading.Event(), threading.Event()
+    mount_entered, mount_release = asyncio.Event(), asyncio.Event()
+    save = service.save_prompt
+    reconcile = PromptBlockEditor._reconcile_lane
+    attempts = 0
+    held = False
+
+    async def held_save(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            save_entered.set()
+            assert save_release.wait(40)
+        return await save(*args, **kwargs)
+
+    async def held_reconcile(editor, lane_id, *, previous_count):
+        nonlocal held
+        await reconcile(editor, lane_id, previous_count=previous_count)
+        if (
+            not held
+            and save_entered.is_set()
+            and lane_id == "user"
+            and previous_count == 0
+            and editor.state.definition.lanes[1].blocks
+        ):
+            held = True
+            mount_entered.set()
+            await asyncio.wait_for(mount_release.wait(), 40)
+
+    monkeypatch.setattr(service, "save_prompt", held_save)
+    monkeypatch.setattr(PromptBlockEditor, "_reconcile_lane", held_reconcile)
+    try:
+        async with host.run_test(size=(170, 48)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            screen.query_one("#library-prompt-name").value = "ack-mount-edited"
+            await pilot.pause()
+            canvas = screen.query_one(LibraryPromptWorkPane)
+            editor = screen.query_one(PromptBlockEditor)
+            system = screen.query_one("#library-prompt-system", TextArea)
+            user = screen.query_one("#library-prompt-user", TextArea)
+            system_id = editor.state.definition.lanes[0].blocks[0].id
+            card_body = editor._block_widgets[system_id].query_one(
+                ".prompt-block-content", TextArea
+            )
+            screen.query_one("#library-prompt-save", Button).press()
+            await _wait_for_condition(
+                pilot, save_entered.is_set, message="Save did not enter writer"
+            )
+            # Hold the real Changed notifications at child publication, without
+            # blocking DOM lifecycle messages needed by the acknowledgement.
+            queued = []
+            publishers = {child: child.post_message for child in (system, user)}
+            for child, post in publishers.items():
+
+                def hold_changed(message, publish=post):
+                    if isinstance(message, TextArea.Changed):
+                        queued.append((publish, message))
+                        return True
+                    return publish(message)
+
+                monkeypatch.setattr(child, "post_message", hold_changed)
+            user.insert("New user")
+            assert user.text == "New user" and not user.read_only and not user.disabled
+            save_release.set()
+            await _until(mount_entered.is_set)
+            system.move_cursor((0, len(system.text)))
+            system.insert("z")
+            assert (
+                system.text == "System baselinez"
+                and not system.read_only
+                and not system.disabled
+            )
+            mount_release.set()
+            await _until(lambda: not screen._library_prompt_write_worker_is_active())
+            assert screen._prompts_state.block_state.compiled_system == system.text
+            assert editor.state.compiled_user == "New user"
+            assert (
+                card_body.text == "System baselinez"
+            ), "Save convergence left an existing Advanced card stale"
+            assert (
+                editor._block_widgets[system_id].query_one(
+                    ".prompt-block-content", TextArea
+                )
+                is card_body
+            )
+            assert screen._prompts_state.dirty
+            stored = db.fetch_prompt_details(prompt_id)
+            assert (
+                stored["system_prompt"] == "System baseline"
+                and not stored["user_prompt"]
+            )
+            assert stored["version"] == 2
+            assert len(queued) == 2
+            for publish, message in queued:
+                publish(message)
+            for child, post in publishers.items():
+                monkeypatch.setattr(child, "post_message", post)
+            await pilot.pause()
+            screen.query_one("#library-prompt-mode-advanced", Button).press()
+            await pilot.pause()
+            assert (
+                canvas.capture_live_block_state().compiled_system == "System baselinez"
+            )
+            screen.query_one("#library-prompt-save", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: attempts == 2
+                and not screen._library_prompt_write_worker_is_active(),
+                message="Second Save did not settle",
+            )
+            final = db.fetch_prompt_details(prompt_id)
+            assert final["version"] == 3
+            assert final["system_prompt"] == "System baselinez"
+            assert final["user_prompt"] == "New user"
+            assert screen._prompts_state.selected_prompt_id == prompt_id
+            assert not screen._prompts_state.dirty
+    finally:
+        save_release.set()
+        mount_release.set()
         db.close()

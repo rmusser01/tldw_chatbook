@@ -22,13 +22,13 @@ Tests use enabled mounted child controls and explicitly witness accepted input b
 
 | New regression module | Exact cases in required PR census |
 | --- | ---: |
-| `Tests/UI/test_library_prompt_pending_drafts.py` | 19 |
+| `Tests/UI/test_library_prompt_pending_drafts.py` | 22 |
 | `Tests/UI/test_dictionary_settings_pending_save_drafts.py` | 12 |
 | `Tests/UI/test_theme_pending_save_drafts.py` | 13 |
 | `Tests/UI/test_parakeet_install_selection_retention.py` | 9 |
-| Total | 53 |
+| Total | 56 |
 
-All 53 have passing local coverage across the final relevant selections, with iterations qualified below. They are appended as exact parameterized node IDs: the 664 inherited entries remain in their original order, floor 717, 13 shards, and unchanged time limits. The required CI will execute the full new set on the PR head; collection alone is not counted as execution.
+All 56 have passing local coverage across the final relevant selections, with iterations qualified below. They are appended as exact parameterized node IDs: the 664 inherited entries remain in their original order, floor 720, 13 shards, and unchanged time limits. The required CI will execute the full new set on the PR head; collection alone is not counted as execution.
 
 Qualified RED controls reproduce later-key/clear/cross-lane loss in both Basic lanes; create/update false-clean acknowledgement and Advanced clobber; held older semantic publication losing actual `xy`; Dictionary name/description/raw budget/strategy/enabled clobber; Theme palette/name/dark loss and its delayed Saved handoff; Parakeet provider, precision and folder replacement. Matched ordinary and definite-failure controls distinguish normal successful completion and retry.
 
@@ -54,4 +54,8 @@ The four new modules are independently runnable via targeted pytest; disposable 
 
 Original native commands, source snapshots, full logs and JUnit receipts are preserved under `.test-tmp/task-36360-36363/` and `.test-tmp/task-36454-36458/`; they are private working evidence and are not committed. The public tests, task notes, required CI logs and this report are the durable review surface.
 
-Independent review and hosted CI results will be recorded before final task closeout.
+Superpowers review of `7103ed34` found one Important/P1 issue: a two-lane Basic capture refreshed only the triggering Advanced card, leaving an already populated other lane stale. Switching to Advanced could then save its older text. The analogous Save-acknowledgement convergence used a blank block ID and refreshed no card. Both convergence loops now refresh every captured block, then recapture after structural awaits.
+
+Three additional mounted controls reproduce the actual stale Advanced TextArea before the repair and pass afterward (3/3, 104.872 seconds), including both lane directions, stable child/block identity, mode-switch capture and real SQLite Save/version checks. The acknowledgement control holds actual Changed notifications at child publication while allowing DOM lifecycle messages; it does not claim a naturally occurring race frequency. Initial fixture attempts paused empty lanes, waited on a two-key Pilot sequence behind a held parent, or blocked lifecycle work with the canvas pump; those setup/timeout failures are excluded. Their receipts remain private. The original 717 census slots remain unchanged, with these three appended.
+
+Focused follow-up review, neighboring Prompt verification and hosted CI remain pending before final task closeout.

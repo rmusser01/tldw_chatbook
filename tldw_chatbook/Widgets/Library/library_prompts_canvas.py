@@ -490,7 +490,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             # Keep input accepted in either presentation while that await ran.
             state = self.capture_live_block_state()
             while state != editor.state:
-                await editor.replace_block_state("", state)
+                for lane in state.definition.lanes:
+                    for block in lane.blocks:
+                        await editor.replace_block_state(block.id, state)
                 state = self.capture_live_block_state()
             self._sync_block_preview(state)
         source = editor_state.source.title()
@@ -1865,7 +1867,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         # First-block reconciliation awaits a mount. Re-read both enabled
         # children afterward; their Changed messages can still be queued here.
         while state != editor.state:
-            await editor.replace_block_state(block_id, state)
+            for live_lane in state.definition.lanes:
+                for block in live_lane.blocks:
+                    await editor.replace_block_state(block.id, state)
             state = self.capture_live_block_state()
         self._sync_block_preview(state)
         self.post_message(
