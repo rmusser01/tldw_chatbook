@@ -12147,14 +12147,11 @@ class ChatScreen(BaseAppScreen):
         )
         serialized = serialize_console_rail_stored_preferences(source)
         rail_state_config[selected_key.value] = serialized
-        if persist and source is None:
-            from ...Backup_Recovery.profile_open import unchanged_selected_config
-            from ...config import get_cli_config_path
-
-            # Mounting a recovered Console must not rewrite its verified config
-            # merely to serialize defaults; explicit rail edits still save below.
-            persist = not unchanged_selected_config(get_cli_config_path())
-        if persist:
+        # TASK-36385: an absent record already reads back as these defaults, so
+        # saving them would only rewrite config.toml (dropping its comments) on
+        # a launch that changed nothing. Copying a source record is the one-time
+        # migration and still saves; explicit rail edits save on their own.
+        if persist and source is not None:
             self._save_console_rail_preferences(
                 selected_key.value,
                 serialized,

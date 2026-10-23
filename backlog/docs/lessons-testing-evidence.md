@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## Wrapping config's file writer in a child app made the save fail, so the file looked untouched (TASK-36385, 2026-10-23)
+
+**Incident.** To find which code rewrote config.toml on a real boot and quit, a probe child replaced `tldw_chatbook.config._write_raw_cli_config_unlocked` with a logging wrapper. The file came back byte-identical on dev, which looked like "no rewrite". The wrapper's own log showed why: the Console rail save reached it and raised `RecoveryRequired: config_source_not_installed`, because the guarded writer refuses a patched module function. With no wrapper, the same boot on dev rewrote both a commented sparse file and the full shipped template.
+
+**What to do.** To check whether a launch rewrites the config, compare the file's bytes before and after with nothing in config patched. To find the writer, patch a caller in another module (the way `Tests/ProductionApp/test_config_profile_isolation.py` patches `app_lifecycle.persist_cli_config_for_shutdown`), or read the mutation log. A byte-identical file proves nothing if the probe patched the writer.
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.
