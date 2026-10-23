@@ -834,7 +834,6 @@ class _VllmDefaultPresentationSnapshot:
     endpoint_suppress_queue: tuple[str, ...]
     credential_env_var_suppress_queue: tuple[str, ...]
     api_key_suppress_queue: tuple[str, ...]
-    context_window_suppress_queue: tuple[str, ...]
     card_disabled: bool
     inputs: tuple[tuple[str, str, str | None, bool], ...]
     selects: tuple[tuple[str, object, bool], ...]
@@ -4069,7 +4068,6 @@ class SettingsScreen(BaseAppScreen):
         # The draft and provider Clear staged a removal for: an emptied field
         # then keeps that removal instead of dropping the edit.
         self._provider_api_key_cleared: tuple[SettingsDraft | None, str] | None = None
-        self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
         # TASK-33007.5: Model defaults opens expanded; Sampling stays closed.
@@ -14399,9 +14397,6 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_credential_env_var_suppress_queue
             ),
             api_key_suppress_queue=tuple(self._provider_api_key_suppress_queue),
-            context_window_suppress_queue=tuple(
-                self._provider_context_window_suppress_queue
-            ),
             card_disabled=card.disabled,
             inputs=inputs,
             selects=selects,
@@ -14489,9 +14484,6 @@ class SettingsScreen(BaseAppScreen):
             snapshot.credential_env_var_suppress_queue
         )
         self._provider_api_key_suppress_queue[:] = snapshot.api_key_suppress_queue
-        self._provider_context_window_suppress_queue[:] = (
-            snapshot.context_window_suppress_queue
-        )
 
         values = self._provider_setting_values_mapping()
         provider = str(values.get("provider") or "").strip()
@@ -15550,7 +15542,6 @@ class SettingsScreen(BaseAppScreen):
         self._provider_endpoint_suppress_queue.clear()
         self._provider_credential_env_var_suppress_queue.clear()
         self._provider_api_key_suppress_queue.clear()
-        self._provider_context_window_suppress_queue.clear()
 
     def _provider_catalog_model_default(self, provider: str) -> str:
         return next(iter(self._provider_saved_model_ids(provider)), "")
@@ -30617,10 +30608,6 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-model-context-window")
     def handle_model_context_window_changed(self, event: Input.Changed) -> None:
-        queue = self._provider_context_window_suppress_queue
-        if queue and event.value == queue[0]:
-            queue.pop(0)
-            return
         if self._syncing_provider_context_window:
             return
         if self._navigation_provider and self._provider_draft() is None:
