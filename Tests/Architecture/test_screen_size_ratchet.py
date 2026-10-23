@@ -1026,7 +1026,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: methods 1354 -> 1356 -- the Manage sync folders toolbar handler's body
     #: is extracted into ``_open_library_notes_sync_roots`` so the activation
     #: receipt's own ``ManageRootsRequested`` handler can share it.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37572, 1356),
+    #: 2026-10-22, TASK-34000.17 fix round 1 (same owner decision): 37572 ->
+    #: 37593 (+21), methods unchanged -- the rail route releases a held setup
+    #: review before leaving a lasting view (I-1), and the roots door names
+    #: its step through ``return_to_roots`` (M-4).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37593, 1356),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

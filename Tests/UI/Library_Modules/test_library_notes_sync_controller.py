@@ -3828,7 +3828,7 @@ async def test_every_runtime_status_labels_a_clean_root_honestly(
 @pytest.mark.parametrize(
     "phase", ("configure", "review", "receipt", "history", "roots")
 )
-async def test_begin_add_from_files_resets_every_settled_phase_and_keeps_a_running_one(
+async def test_begin_add_from_files_resets_every_settled_phase(
     phase: str,
 ) -> None:
     """TASK-34000.17: one entry means "start Add from files".

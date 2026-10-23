@@ -985,10 +985,15 @@ class LibraryNotesSyncController:
         self._review_plan = None
         # The chooser snapshot, keeping the durable things Manage sync folders
         # shows: the root rows, their paging and the write receipts. The
-        # snapshot's own validation rules out a typo'd phase.
+        # snapshot's own validation rules out a typo'd phase. Availability is
+        # re-read from the runtime, as ``choose_relationship`` and
+        # ``refresh_roots`` read it, so a runtime that became ready since the
+        # last chooser is offered rather than remembered as inert.
         self._state = replace(
             initial_lasting_sync_snapshot(
-                lasting_available=self._state.lasting_available
+                lasting_available=(
+                    self._runtime.snapshot().status in _SETUP_READY_STATUSES
+                )
             ),
             roots=self._state.roots,
             root_page=self._state.root_page,

@@ -556,7 +556,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-22, TASK-34000.17 (owner decision, same rule): 6484 -> 6489 --
     # Add from files begins on the chooser (one call into the sync
     # controller's ``begin_add_from_files`` and its four-line comment).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6489,
+    # 2026-10-22, TASK-34000.17 fix round 1 (same owner decision): 6489 ->
+    # 6500 -- a setup review still held on arrival is released before the
+    # chooser reset (I-1), with the comment that names the exits as the
+    # braces this belt sits behind.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6500,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -602,7 +606,9 @@ _BUDGETS: dict[str, int] = {
     # (+41) -- ``begin_add_from_files``, the one entry that resets the
     # lasting phase to the chooser unless a check or activation is running
     # (dev was already at 2394 before TASK-32451's +3; this stacks on it).
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2438,
+    # 2026-10-22, TASK-34000.17 fix round 1 (same owner decision): 2438 ->
+    # 2443 -- the chooser re-reads availability from the runtime (M-3).
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2443,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
