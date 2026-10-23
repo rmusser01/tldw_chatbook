@@ -449,13 +449,15 @@ async def test_a_running_check_is_shown_not_discarded(tmp_path: Path) -> None:
     The check runs the production way: the real Check changes press, whose
     screen handler awaits the runtime inline, so the screen's message pump is
     held for the whole check. What the user can observe while it runs is
-    exactly what is asserted: the phase is ``checking``, the footer names
-    ``wait current step``, and Escape is refused -- nothing else can be
-    pressed until the step settles (TASK-34000.72 tracks the blank work pane
-    the held pump leaves behind). ``begin_add_from_files``'s refusal while a
-    step runs is asserted as the controller contract it is, not as a user
-    gesture. Once the check settles into its review and the user leaves it,
-    the next open is the chooser, not that review.
+    exactly what is asserted: the phase is ``checking`` and the footer names
+    ``wait current step`` -- nothing else can be pressed until the step
+    settles (TASK-34000.72 tracks the blank work pane the held pump leaves
+    behind). Two refusals are asserted as the contracts they are, not as user
+    gestures: the screen guard's (``action_library_notes_escape`` is called
+    directly -- a real Escape key mid-check would queue behind the held pump
+    and land only after the step settled) and the controller's
+    (``begin_add_from_files``). Once the check settles into its review and
+    the user leaves it, the next open is the chooser, not that review.
     """
 
     started = asyncio.Event()
@@ -477,6 +479,8 @@ async def test_a_running_check_is_shown_not_discarded(tmp_path: Path) -> None:
         assert controller.snapshot.phase == "checking"
         assert screen._library_notes_footer_shortcuts() == (("wait", "current step"),)
 
+        # Screen-guard contract: the Escape action refuses to leave a running
+        # step. Called directly -- the held pump would queue a real keypress.
         await screen.action_library_notes_escape()
         assert screen._notes_state.view == "lasting_add"
         assert controller.snapshot.phase == "checking"
