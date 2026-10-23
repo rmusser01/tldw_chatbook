@@ -111,10 +111,15 @@ def _resolved_spec(model_id: str):
     raise ProjectProjectionRequired("project_embedding_provider_unsupported")
 
 
-def _settings_for_project_model(model_id: str) -> ProjectSemanticSettings:
-    """Build secret-free candidate settings; approval remains a separate act."""
-    spec, destination = _resolved_spec(model_id)
+def _settings_for_spec(model_id: str, spec, destination) -> ProjectSemanticSettings:
     safe_config = spec.model_dump(mode="json", exclude={"api_key", "cache_dir"})
+    if spec.provider == "huggingface":
+        selected_root = spec.cache_dir or os.environ.get("HF_HUB_CACHE")
+        safe_config["cache_root_fingerprint"] = (
+            _fingerprint("cache-root", str(Path(selected_root).expanduser().absolute()))
+            if selected_root
+            else None
+        )
     return ProjectSemanticSettings(
         provider_id=spec.provider,
         model_id=model_id,
@@ -124,6 +129,12 @@ def _settings_for_project_model(model_id: str) -> ProjectSemanticSettings:
         provider_ref="provider:v1:" + spec.provider,
         config_ref="model:v1:" + model_id,
     )
+
+
+def _settings_for_project_model(model_id: str) -> ProjectSemanticSettings:
+    """Build secret-free candidate settings; approval remains a separate act."""
+    spec, destination = _resolved_spec(model_id)
+    return _settings_for_spec(model_id, spec, destination)
 
 
 def _local_snapshot(spec) -> Path:
@@ -176,19 +187,10 @@ def _target(spec, destination) -> _Target:
     )
 
 
-def _issue_project_projection_scope(service, scope, settings, semantic_revision):
-    """Return one code-issued carrier with an actual retained project parent.
-
-    Callers retire native work before closing this carrier. A later operation`r`n    issues a fresh carrier; a compatible wrapper may keep its idle model but`r`n    no idle storage lease or cached carrier grants authority.
-    """
-    if (
-        type(scope) is not ProjectIndexScope
-        or type(settings) is not ProjectSemanticSettings
-        or type(semantic_revision) is not int  # noqa: E721 - reject bool revisions
-        or semantic_revision < 1
-    ):
-        raise ProjectProjectionRequired()
-    candidate = _settings_for_project_model(settings.model_id)
+def _require_current_catalog(settings: ProjectSemanticSettings):
+    """Return one current selected target only when its approved identity matches."""
+    spec, destination = _resolved_spec(settings.model_id)
+    candidate = _settings_for_spec(settings.model_id, spec, destination)
     if (
         settings.provider_id != candidate.provider_id
         or settings.provider_ref != candidate.provider_ref
@@ -199,6 +201,25 @@ def _issue_project_projection_scope(service, scope, settings, semantic_revision)
         != candidate.destination_fingerprint
     ):
         raise ProjectProjectionRequired("project_embedding_configuration_changed")
+    return spec, destination
+
+
+def _issue_project_projection_scope(service, scope, settings, semantic_revision):
+    """Return one code-issued carrier with an actual retained project parent.
+
+    Callers retire native work before closing this carrier. A later operation
+    issues a fresh carrier; a compatible wrapper may keep its idle model but
+    no idle storage lease or cached carrier grants authority.
+    """
+    if (
+        type(scope) is not ProjectIndexScope
+        or type(settings) is not ProjectSemanticSettings
+        or type(semantic_revision) is not int  # noqa: E721 - reject bool revisions
+        or semantic_revision < 1
+    ):
+        raise ProjectProjectionRequired()
+    service._require_projection_open(scope.key)
+    _require_current_catalog(settings)
     stack = ExitStack()
     try:
         stack.enter_context(service.registry_connection_scope())
@@ -218,7 +239,7 @@ def _issue_project_projection_scope(service, scope, settings, semantic_revision)
                     or state.semantic_revision != semantic_revision
                 ):
                     raise ProjectProjectionRequired()
-        spec, destination = _resolved_spec(settings.model_id)
+        spec, destination = _require_current_catalog(settings)
         target = _target(spec, destination)
         parent = _Parent(stack, pin, service._operation_local.operation)
         return _issue_carrier(

@@ -371,6 +371,32 @@ async def test_issued_scope_sync_entry_and_stale_revision_refuse(
             wrapper.rebind_execution_scope(issued)
         assert wrapper.create_embeddings(["synthetic text"]).shape == (1, 3)
         assert wrapper.create_embedding("synthetic text").shape == (3,)
+        from tldw_chatbook import config
+
+        original_config = config.load_cli_config_and_ensure_existence
+        monkeypatch.setattr(
+            config,
+            "load_cli_config_and_ensure_existence",
+            lambda: {
+                "embedding_config": {
+                    "models": {
+                        "openai-3-small": {
+                            "provider": "openai",
+                            "model_name_or_path": "synthetic-reroute",
+                            "base_url": "http://127.0.0.1:17779/v1",
+                            "api_key": "synthetic-key",
+                        }
+                    }
+                }
+            },
+        )
+        with pytest.raises(
+            PermissionError, match="project_embedding_configuration_changed"
+        ):
+            wrapper.create_embeddings(["synthetic text"])
+        monkeypatch.setattr(
+            config, "load_cli_config_and_ensure_existence", original_config
+        )
         with service._store(key) as store:
             changed = store.configure_semantic(
                 scope,
@@ -418,7 +444,13 @@ async def test_issued_scope_sync_entry_and_stale_revision_refuse(
         with pytest.raises(PermissionError):
             wrapper.rebind_execution_scope(changed_credential)
         changed_credential.close()
+        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+        closing = _issue_project_projection_scope(
+            service, scope, settings, resumed.semantic_revision
+        )
+        wrapper.rebind_execution_scope(closing)
         wrapper.close()
+        closing.close()
         import asyncio
 
         asyncio.run(service.aclose())
@@ -463,6 +495,261 @@ def test_selected_configured_catalog_entry_takes_precedence_and_rotates_credenti
     configured["provider"] = "unsupported"
     with pytest.raises(PermissionError):
         semantic._settings_for_project_model("openai-3-small")
+
+
+def test_selected_keyless_compatible_endpoint_and_default_key_requirement(monkeypatch):
+    from tldw_chatbook import config
+    from tldw_chatbook.Workspaces.project_index import semantic
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    selected = {
+        "provider": "openai",
+        "model_name_or_path": "synthetic-local",
+        "base_url": "http://127.0.0.1:17777/v1",
+        "api_key": None,
+    }
+    monkeypatch.setattr(
+        config,
+        "load_cli_config_and_ensure_existence",
+        lambda: {"embedding_config": {"models": {"selected": selected}}},
+    )
+    settings = semantic._settings_for_project_model("selected")
+    spec, destination = semantic._resolved_spec("selected")
+    target = semantic._target(spec, destination)
+    assert target.api_key is None
+    assert target.base_url == selected["base_url"]
+    assert settings.provider_ref == "provider:v1:openai"
+
+    selected.pop("base_url")
+    spec, destination = semantic._resolved_spec("selected")
+    with pytest.raises(
+        PermissionError, match="project_embedding_provider_setup_required"
+    ):
+        semantic._target(spec, destination)
+
+
+def test_selected_custom_cache_root_binds_actual_snapshot_and_settings(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    from tldw_chatbook import config
+    from tldw_chatbook.Workspaces.project_index import semantic
+
+    def complete_snapshot(cache, payload):
+        snapshot = cache / "models--synthetic--model" / "snapshots" / "revision1"
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "tokenizer.json").write_text("{}", encoding="utf-8")
+        (snapshot / "model.safetensors").write_bytes(payload)
+        return snapshot
+
+    global_cache = tmp_path / "global-cache"
+    selected_cache = tmp_path / "selected-cache"
+    global_snapshot = complete_snapshot(global_cache, b"global")
+    selected_snapshot = complete_snapshot(selected_cache, b"selected")
+    monkeypatch.setenv("HF_HUB_CACHE", str(global_cache))
+    selected = {
+        "provider": "huggingface",
+        "model_name_or_path": "synthetic/model",
+        "revision": "revision1",
+        "cache_dir": str(selected_cache),
+    }
+    monkeypatch.setattr(
+        config,
+        "load_cli_config_and_ensure_existence",
+        lambda: {"embedding_config": {"models": {"selected": selected}}},
+    )
+    chosen = semantic._settings_for_project_model("selected")
+    spec, destination = semantic._resolved_spec("selected")
+    target = semantic._target(spec, destination)
+    assert Path(target.model_name) == selected_snapshot
+    assert target.config["model_name_or_path"] == str(selected_snapshot)
+
+    selected["cache_dir"] = str(global_cache)
+    other = semantic._settings_for_project_model("selected")
+    assert chosen.config_fingerprint != other.config_fingerprint
+    other_target = semantic._target(*semantic._resolved_spec("selected"))
+    assert Path(other_target.model_name) == global_snapshot
+    assert target.artifact_fingerprint != other_target.artifact_fingerprint
+
+
+@private_profile_test
+async def test_failed_project_factory_close_retains_real_parent_until_retry(
+    tmp_path, monkeypatch, request
+):
+    def run():
+        import gc
+        import io
+        import weakref
+        import threading
+
+        from loguru import logger
+        from tldw_chatbook.Embeddings import Embeddings_Lib as lib
+        from tldw_chatbook.RAG_Search.projection_scope import ProjectProjectionRequired
+        from tldw_chatbook.Workspaces.project_index.models import (
+            ProjectIndexSearchAuthority,
+        )
+        from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
+        from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
+        from tldw_chatbook.Workspaces.project_index.semantic import (
+            _issue_project_projection_scope,
+            _settings_for_project_model,
+        )
+        from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
+
+        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+        root = tmp_path / "close-project"
+        root.mkdir()
+        (root / "a.txt").write_text("synthetic keyword evidence", encoding="utf-8")
+        chain = capture_directory_chain(root)
+        store_factory = _AdmittedStoreFactory()
+        key = ProjectIndexKey(
+            store_factory.identity,
+            "workspace",
+            "binding",
+            locator_fingerprint(root),
+            root_identity_fingerprint(chain),
+        )
+        authority = ProjectIndexAuthority(key, root, chain, (), 1)
+
+        @contextmanager
+        def fence(selected):
+            yield authority if selected == key else None
+
+        service = ProjectIndexService(
+            store_factory,
+            ProjectScanner(),
+            lambda selected: authority if selected == key else None,
+            fence,
+        )
+        initial = service.status(key)
+        scope = service.enable(
+            key,
+            ProjectIndexPolicy(("",), (".txt",)),
+            expected_scope=initial.scope,
+        ).scope
+        current = service.status(key)
+        service.refresh(
+            key,
+            expected_scope=scope,
+            expected_job_revision=current.job_revision,
+        )
+        for active_run in service._runs.values():
+            if active_run.supervisor is not None:
+                active_run.supervisor.join(30)
+                assert not active_run.supervisor.is_alive()
+        status = service.status(key)
+        assert status.state == "Ready" and status.indexed == 1
+        with service._store(key) as store:
+            lease = service._lifetime(store, key)
+            try:
+                candidate = _settings_for_project_model("openai-3-small")
+                settings = replace(
+                    candidate,
+                    approved_destination_fingerprint=candidate.destination_fingerprint,
+                )
+                state = store.configure_semantic(
+                    scope, settings, enabled=True, expected_semantic_revision=0
+                )
+            finally:
+                lease.close()
+        carrier = _issue_project_projection_scope(
+            service, scope, settings, state.semantic_revision
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "_ensure_embeddings_imported", lambda: True
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "EmbeddingFactory", lib.EmbeddingFactory
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "EmbeddingConfigSchema", lib.EmbeddingConfigSchema
+        )
+        monkeypatch.setattr(lib, "_embeddings_rag_available", lambda: True)
+        wrapper = embeddings_wrapper.EmbeddingsServiceWrapper(
+            model_name=carrier.model_name,
+            api_key=carrier.api_key,
+            base_url=carrier.base_url,
+            execution_scope=carrier,
+        )
+        factory = wrapper.factory
+        close_calls = []
+        secret = "credential-and-private-path-sentinel"
+
+        def model_close():
+            close_calls.append(1)
+            if len(close_calls) == 1:
+                raise RuntimeError(secret)
+
+        factory._cache["default"] = {
+            "embed": lambda texts, as_list=False: [[1.0, 1.0, 1.0]],
+            "close": model_close,
+            "last": 0.0,
+            "refs": 0,
+        }
+        capture = io.StringIO()
+        sink = logger.add(capture)
+        try:
+            with pytest.raises(
+                RuntimeError, match="project_embedding_close_failed"
+            ) as failure:
+                wrapper.close()
+        finally:
+            logger.remove(sink)
+        assert failure.value.__cause__ is None
+        assert secret not in capture.getvalue()
+        assert wrapper.factory is factory
+        assert factory._cache["default"]["close"] is model_close
+        with pytest.raises(ProjectProjectionRequired):
+            carrier.close()
+        with pytest.raises(PermissionError):
+            wrapper.create_embedding("synthetic text")
+        with pytest.raises(
+            ProjectProjectionRequired, match="project_embedding_close_pending"
+        ):
+            _issue_project_projection_scope(
+                service, scope, settings, state.semantic_revision
+            )
+        with pytest.raises(
+            ProjectProjectionRequired, match="project_embedding_close_pending"
+        ):
+            wrapper.rebind_execution_scope(carrier)
+        keyword = ProjectIndexSearchAuthority(
+            scope,
+            authority.root,
+            chain,
+            (),
+            1,
+            lambda: True,
+            None,
+            lambda candidate: service._scanner.capture_file(
+                authority, candidate.relative_path, stop=threading.Event()
+            ),
+        )
+        found = service.search(keyword, "keyword")
+        assert found.status == "ready"
+        assert len(found.hits) == 1
+        assert found.hits[0].excerpt == "synthetic keyword evidence"
+        carrier_ref = weakref.ref(carrier)
+        wrapper_ref = weakref.ref(wrapper)
+        del carrier, wrapper
+        gc.collect()
+        assert carrier_ref() is not None
+        assert wrapper_ref() is not None
+        with pytest.raises(
+            RuntimeError, match="project_embedding_close_pending"
+        ) as pending:
+            asyncio.run(asyncio.wait_for(service.aclose(), timeout=3))
+        assert secret not in str(pending.value)
+        wrapper_ref().close()
+        assert close_calls == [1, 1]
+        assert wrapper_ref().factory is None
+        carrier_ref().close()
+        assert not service._operations
+        asyncio.run(service.aclose())
+
+    await asyncio.to_thread(run)
 
 
 def test_library_wrapper_cannot_be_upgraded_by_rebind(monkeypatch):
