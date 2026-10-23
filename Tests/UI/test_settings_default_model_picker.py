@@ -38,13 +38,22 @@ from Tests.UI.test_settings_connect_rows import _until
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from Tests.UI.test_settings_provider_key_check import _Provider, _route_discovery_to
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_setup_persistence import (
+    MAX_MODEL_ID_CHARS,
+    persist_provider_settings_atomic,
+)
 from tldw_chatbook.config import get_cli_providers_and_models
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
     ModelDiscoveryResult,
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, SettingsScreen
-from tldw_chatbook.Widgets.model_search_picker import CURRENT_MARK, ModelSearchPicker
+from tldw_chatbook.UI.Wizards.first_run_setup_state import validate_first_run_model_id
+from tldw_chatbook.Widgets.model_search_picker import (
+    CURRENT_MARK,
+    ModelSearchPicker,
+    normalize_custom_model_id,
+)
 
 _SIZE = (211, 44)
 _FAKE_KEY = "sk-proj-abcdefghijklmnop1234"
@@ -489,6 +498,137 @@ async def test_rolling_back_to_a_bracketed_model_id_names_it_literally(request):
         kept = f"Invalid model ID not kept; the model is still {model}."
         toast = next(n for n in host._notifications if str(n.message) == kept)
         assert not toast.markup  # the message is the same with markup on
+
+
+#: TASK-35712: one more than the save writes, and a zero-width space -- a
+#: character the old 256-character check let through and the save refuses.
+_UNWRITABLE_IDS = ("m" * (MAX_MODEL_ID_CHARS + 1), "gpt\u200b4")
+_INVALID_ID_STATUS = (
+    "Invalid model ID. Use a single-line value of at most "
+    f"{MAX_MODEL_ID_CHARS} characters, with no invisible or control characters."
+)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "vendor/model",
+        "m" * MAX_MODEL_ID_CHARS,
+        *_UNWRITABLE_IDS,
+        "gpt\u00a04",  # no-break space
+        "local\u202eq4",  # right-to-left override
+        "a\x7fb",
+        "a\u2028b",  # line separator
+    ],
+)
+def test_custom_id_and_the_combined_save_refuse_the_same_ids(monkeypatch, model_id):
+    """TASK-35712 AC#3: Custom ID held ids of up to 256 characters that the
+    combined save refuses past 120 (and some characters it refuses at any
+    length). One limit and one check now serve both: an id Custom ID holds
+    is one the save writes, and an id it refuses is one the save refuses.
+    The first-run wizard, which feeds the same save, had its own copy of the
+    check (review of TASK-35712); it agrees through the same predicate."""
+    writes = _capture_provider_settings_mutations(monkeypatch)
+    held = normalize_custom_model_id(model_id) == model_id
+    try:
+        wizard_held = validate_first_run_model_id(model_id) == model_id
+    except ValueError:
+        wizard_held = False
+    assert wizard_held == held, model_id
+    try:
+        persist_provider_settings_atomic(
+            None,
+            provider="openai",
+            model=model_id,
+            # The one section a save may write with no connection change.
+            section_values={"api_settings.openai": {"model_defaults": {}}},
+            delete_keys={},
+        )
+    except ValueError as exc:
+        assert str(exc) == "Provider settings model is invalid."
+        assert not held, model_id
+    else:
+        assert held and writes, model_id
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_custom_id_the_save_cannot_write_is_refused_as_it_is_typed(request):
+    """TASK-35712 AC#1: an id the save cannot write is refused in the Custom
+    ID field, with the save's limit named, before s is pressed; the longest
+    id it writes is still taken."""
+    app = _app("openai", "gpt-4o", catalog=("gpt-4o",))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        picker, field, _results, adapter = _widgets(screen)
+        status = picker.query_one("#model-search-picker-status", Static)
+        field.focus()
+        await pilot.pause()
+        await pilot.press("tab", "enter")
+        await pilot.pause()
+        assert picker.custom_mode and host.focused is field
+
+        longest = "m" * MAX_MODEL_ID_CHARS
+        field.value = longest
+        await pilot.pause()
+        assert adapter.value == picker.value == longest
+        assert screen._provider_setting_values_mapping()["model"] == longest
+
+        for model_id in _UNWRITABLE_IDS:
+            field.value = model_id
+            await pilot.pause()
+            assert picker.value is None, model_id
+            assert adapter.value == "", model_id
+            assert str(status.renderable) == _INVALID_ID_STATUS, model_id
+            assert not screen._provider_setting_values_mapping().get("model")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("route", ["staged-model", "saved-model"])
+async def test_an_id_the_save_refuses_is_named_as_the_cause_not_config_access(
+    request, monkeypatch, route
+):
+    """TASK-35712 AC#2: an id the save cannot write can still reach s: one
+    written straight to the form's model field, as a hand-edited draft
+    would be, or one already in config.toml when another field is saved.
+    s blamed the endpoint ("review the endpoint and model") or config access
+    ("the file was not written ... check config access and retry"); the
+    save refused the id before touching the file, so the message says so."""
+    unwritable = _UNWRITABLE_IDS[0]
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    saved = unwritable if route == "saved-model" else "gpt-4o"
+    app = _app("openai", saved, catalog=("gpt-4o",))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        _picker, _field, _results, adapter = _widgets(screen)
+        if route == "staged-model":
+            adapter.value = unwritable
+        else:
+            temperature = "#settings-model-profile-temperature"
+            screen.query_one(temperature, Input).value = "0.42"
+        await pilot.pause()
+        assert adapter.value == unwritable
+        assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+        screen.set_focus(None)
+        await pilot.press("s")
+        await _settle(host, pilot)
+
+        result = screen._provider_save_result
+        assert result == (
+            "Provider settings not saved: the model ID is invalid. Use a "
+            f"single-line value of at most {MAX_MODEL_ID_CHARS} characters, "
+            "with no invisible or control characters. Draft retained."
+        )
+        assert result in [str(n.message) for n in host._notifications]
+        assert mutations == []
+        assert PROVIDERS_MODELS in screen._settings_drafts
 
 
 @pytest.mark.asyncio

@@ -122,9 +122,11 @@ from ...Chat.provider_readiness import (
     required_base_url_target,
 )
 from ...Chat.provider_setup_persistence import (
+    MAX_MODEL_ID_CHARS,
     ProviderSetupDraft,
     build_provider_setup_mutation,
     canonical_provider_key,
+    is_writable_model_id,
     persist_provider_settings_atomic,
     provider_setup_draft_identity,
     resolve_remembered_provider_model,
@@ -1890,7 +1892,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
 SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
     ("Settings", "edits saved defaults; changes apply after you save"),
     ("Console", "live chat and run controls stay on the Console screen"),
-    ("MCP", "tool servers are managed on the MCP screen"),
+    ("MCP", "tool servers are managed in Settings ▸ Tools & MCP"),
     ("ACP", "agent runtime and sessions are managed on the ACP screen"),
     ("Sync & workspaces", "status shown here is read-only"),
 )
@@ -2420,7 +2422,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ("Recovery", "open the specific category before changing values"),
         (
             "Boundary",
-            "runtime MCP, ACP, and tool control stay in their own destinations",
+            "MCP and tools are in Settings ▸ Tools & MCP; ACP is on the ACP screen",
         ),
     ),
     SettingsCategoryId.PROVIDERS_MODELS: (
@@ -8496,14 +8498,6 @@ class SettingsScreen(BaseAppScreen):
             return draft.values["tool_result_display_chars"]
         return self._loaded_tool_result_display_chars()
 
-    def _tool_result_display_chars_label(self) -> str:
-        value = self._tool_result_display_chars_value()
-        try:
-            chars = self._normalise_tool_result_display_chars(value)
-        except ValueError:
-            return f"Invalid value: {value}"
-        return f"{chars} characters"
-
     def _update_console_paste_summary(self) -> None:
         try:
             summary = self.query_one(
@@ -10784,7 +10778,9 @@ class SettingsScreen(BaseAppScreen):
             return "Applies immediately"
         if category is SettingsCategoryId.TOOL_PROFILES:
             return "Reviewed actions"
-        if category is SettingsCategoryId.AGENTS:
+        if category is SettingsCategoryId.TOOLS:  # the category list's own words
+            return TOOLS_HUB_CATEGORY_SUMMARY.status
+        if category in (SettingsCategoryId.AGENTS, SettingsCategoryId.GUARDIAN):
             return "Applies immediately"
         if category is SettingsCategoryId.THEME:
             # Use/Try/Revert act at once; the banner stays hidden for Theme,
@@ -10796,11 +10792,7 @@ class SettingsScreen(BaseAppScreen):
             return "Pending — save with s"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
-        if category is SettingsCategoryId.SCHEDULES:
-            return "Applies immediately"
-        if category is SettingsCategoryId.DREAMS:
-            return "Applies immediately"
-        if category is SettingsCategoryId.GUARDIAN:
+        if category in (SettingsCategoryId.SCHEDULES, SettingsCategoryId.DREAMS):
             return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
@@ -10848,6 +10840,8 @@ class SettingsScreen(BaseAppScreen):
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
             return "Each action reversible: unarchive, rename again, or set active."
+        if category is SettingsCategoryId.TOOLS:
+            return "Gates and permissions save at once; a server form has its own Save."
         if category is SettingsCategoryId.TOOL_PROFILES:
             return (
                 "Imports stay unbound; MCP owns policy editing; removal permanently "
@@ -16132,17 +16126,6 @@ class SettingsScreen(BaseAppScreen):
             )
             # Review note 11: nothing to return to while the window is unknown.
             reset.display = state.effective_tokens is not None
-
-    def _set_provider_context_window_input_value(
-        self,
-        context_window_input: Input,
-        value: str,
-    ) -> None:
-        """Assign a context value and queue its deferred change once."""
-        if context_window_input.value == value:
-            return
-        self._provider_context_window_suppress_queue.append(value)
-        context_window_input.value = value
 
     def _refresh_generation_support_summary(self, provider: str, model: str) -> None:
         """Re-say Model defaults' title, Source words, help and Sampling line."""
@@ -23532,7 +23515,7 @@ class SettingsScreen(BaseAppScreen):
             "Mode: <title>", with the runtime disclaimer only on Overview.
         """
         if summary.category is SettingsCategoryId.OVERVIEW:
-            return f"Mode: {summary.title} | Runtime controls stay in MCP and ACP"
+            return f"Mode: {summary.title} | Runtime controls are in Tools & MCP and ACP"
         return f"Mode: {summary.title}"
 
     def _render_impact_pane_header(self) -> ComposeResult:
@@ -33401,6 +33384,18 @@ class SettingsScreen(BaseAppScreen):
                     "#settings-provider-save-result", self._provider_save_result
                 )
                 self.app.notify("No Settings changes to save.", severity="information")
+                return
+            if model and not is_writable_model_id(model):  # TASK-35712
+                # The save refuses it before touching the file; say why.
+                self._provider_save_result = (
+                    "Provider settings not saved: the model ID is invalid. Use a "
+                    f"single-line value of at most {MAX_MODEL_ID_CHARS} characters, "
+                    "with no invisible or control characters. Draft retained."
+                )
+                self._set_static_text(
+                    "#settings-provider-save-result", self._provider_save_result
+                )
+                self.app.notify(self._provider_save_result, severity="error")
                 return
             alias_mode_sections = self._qwencloud_alias_mode_sections()
             qwencloud_mode_requires_canonical_save = bool(

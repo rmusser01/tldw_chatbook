@@ -20,6 +20,10 @@ from textual.widgets.input import Selection
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_setup_persistence import (
+    MAX_MODEL_ID_CHARS,
+    is_writable_model_id,
+)
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
@@ -71,6 +75,20 @@ def normalize_model_id(value: object | None) -> str | None:
     ):
         return None
     return text
+
+
+def normalize_custom_model_id(value: object | None) -> str | None:
+    """Return a typed Custom ID, or None unless Settings' save writes it.
+
+    TASK-35712: this picker's only host is Settings ▸ Providers & Models, and
+    the combined provider save refuses some ids ``normalize_model_id``
+    admits: one over ``MAX_MODEL_ID_CHARS`` characters, or one holding a
+    character the save cannot write. Typed ids get the save's own check, so
+    they are refused as they are typed instead of when s is pressed. A
+    listed or saved id keeps the plain check, so it still shows.
+    """
+    model = normalize_model_id(value)
+    return model if model is not None and is_writable_model_id(model) else None
 
 
 def _count(count: int, noun: str) -> str:
@@ -308,7 +326,7 @@ class ModelSearchPicker(Widget):
     def value(self) -> str | None:
         """Return the committed catalog model or current custom model ID."""
         if self._custom_mode and self.is_mounted:
-            return self._normalize_model(
+            return normalize_custom_model_id(
                 self.query_one("#model-search-picker-input", Input).value
             )
         return self._selected_model
@@ -477,7 +495,7 @@ class ModelSearchPicker(Widget):
     def set_custom_value(self, model_id: str | None) -> None:
         """Synchronize a custom model draft from a compatibility adapter."""
         self._custom_mode = True
-        self._selected_model = self._normalize_model(model_id)
+        self._selected_model = normalize_custom_model_id(model_id)
         self._set_input_value(self._selected_model or "")
         self._sync_custom_button()
         self._hide_results()
@@ -598,7 +616,7 @@ class ModelSearchPicker(Widget):
         """Toggle the explicit custom-ID escape hatch."""
         if self._custom_mode:
             self._custom_mode = False
-            self._selected_model = self._normalize_model(
+            self._selected_model = normalize_custom_model_id(
                 self.query_one("#model-search-picker-input", Input).value
             )
             self._model_before_custom = self._selected_model
@@ -683,10 +701,11 @@ class ModelSearchPicker(Widget):
         if self._custom_mode:
             if self.is_mounted:
                 custom_value = self.query_one("#model-search-picker-input", Input).value
-                if custom_value and self._normalize_model(custom_value) is None:
+                if custom_value and normalize_custom_model_id(custom_value) is None:
                     self._set_status(
                         "Invalid model ID. Use a single-line value of at most "
-                        f"{MODEL_ID_MAX_LENGTH} characters."
+                        f"{MAX_MODEL_ID_CHARS} characters, with no invisible or "
+                        "control characters."
                     )
                     return
             self._set_status(
@@ -1053,7 +1072,7 @@ class ModelSearchPicker(Widget):
         if self._suppress_input_events:
             return
         if self._custom_mode:
-            self._selected_model = self._normalize_model(event.value)
+            self._selected_model = normalize_custom_model_id(event.value)
             self._hide_results()
             self._render_catalog_status()
             self.post_message(self.ModelValueChanged(self._selected_model, custom=True))
@@ -1063,7 +1082,7 @@ class ModelSearchPicker(Widget):
     @on(Input.Submitted, "#model-search-picker-input")
     def _input_submitted(self, event: Input.Submitted) -> None:
         if self._custom_mode:
-            self._selected_model = self._normalize_model(event.value)
+            self._selected_model = normalize_custom_model_id(event.value)
             self.post_message(self.ModelValueChanged(self._selected_model, custom=True))
             return
         query = event.value.strip().lower()

@@ -34,7 +34,9 @@ from .provider_endpoint_contract import (
 )
 from .provider_test_evidence import CredentialSource, ProviderDraftIdentity
 
-_MAX_MODEL_CHARS = 120
+#: The longest model id the provider save writes. Settings names it where an
+#: id is typed (TASK-35712), so the two cannot disagree.
+MAX_MODEL_ID_CHARS = 120
 _MAX_SECRET_CHARS = 8192
 _MAX_CONFIG_PROVIDERS = 256
 _MAX_IDENTITY_COUNTER = 2**63 - 1
@@ -1108,7 +1110,7 @@ def persist_provider_settings_atomic(
     """Validate and persist one combined provider Settings mutation."""
 
     ownership = _ownership_for(provider)
-    if type(model) is not str or (model and _safe_model(model) != model):
+    if type(model) is not str or (model and not is_writable_model_id(model)):
         raise ValueError("Provider settings model is invalid.")
     _validate_combined_provider_settings_mutation(
         setup_mutation,
@@ -1924,7 +1926,7 @@ def _safe_model(value: object) -> str | None:
     model = value.strip()
     if (
         not model
-        or len(model) > _MAX_MODEL_CHARS
+        or len(model) > MAX_MODEL_ID_CHARS
         or not model.isprintable()
         or any(
             unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
@@ -1933,6 +1935,17 @@ def _safe_model(value: object) -> str | None:
     ):
         return None
     return model
+
+
+def is_writable_model_id(model: str) -> bool:
+    """Whether the combined provider save writes ``model`` exactly as given.
+
+    The one model-id check: ``persist_provider_settings_atomic`` refuses an id
+    that fails it, and Settings refuses the same id as it is typed
+    (TASK-35712). It fails an empty or padded id, one over
+    ``MAX_MODEL_ID_CHARS``, and text that is not printable on one line.
+    """
+    return _safe_model(model) == model
 
 
 def _validate_credential_value(value: str) -> None:

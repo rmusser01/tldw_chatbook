@@ -455,10 +455,7 @@ def join_pick(
     if not model or pending_pick(screen) != model:
         return ListJoin()
     from ... import config
-    from ...Chat.provider_setup_persistence import (
-        canonical_provider_key,
-        saved_model_list_admits,
-    )
+    from ...Chat import provider_setup_persistence as setup
     from ...LLM_Provider_Catalog.model_discovery_persistence import (
         append_models_to_provider_list,
     )
@@ -491,20 +488,23 @@ def join_pick(
         return ListJoin(pending=True)  # added elsewhere since: nothing to write
     updated = append_models_to_provider_list({list_key: read}, list_key, [model])
     try:
-        owner = canonical_provider_key(provider)
+        owner = setup.canonical_provider_key(provider)
     except ValueError:
         owner = ""  # the save itself refuses this provider
     # The combined save's own check (review rounds 1 and 2): a list it would
     # refuse would refuse the default with it.
-    if not saved_model_list_admits(list_key, updated[list_key], model, owner):
+    if not setup.saved_model_list_admits(list_key, updated[list_key], model, owner):
         # Each cause on its own (review round 3): "m" is an id the check
         # admits, so it tests the key alone; then the model alone.
-        cannot = "Settings cannot write (empty, over 120 characters, or not plain text)"
+        cannot = (
+            f"Settings cannot write (empty, over {setup.MAX_MODEL_ID_CHARS} "
+            "characters, or not plain text)"
+        )
         if model not in updated[list_key]:
             why = "it is a sample id older versions shipped, which saved lists ignore"
-        elif not saved_model_list_admits(list_key, ["m"], "m", owner):
+        elif not setup.saved_model_list_admits(list_key, ["m"], "m", owner):
             why = f'the [providers] key "{list_key}" is not one Settings can write'
-        elif not saved_model_list_admits(list_key, [model], model, owner):
+        elif not setup.saved_model_list_admits(list_key, [model], model, owner):
             why = f"it is an id {cannot}"
         else:
             why = f"the list holds an id {cannot}"

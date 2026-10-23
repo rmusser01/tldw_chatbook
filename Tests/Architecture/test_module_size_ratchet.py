@@ -284,7 +284,10 @@ _BUDGETS: dict[str, int] = {
     # other code to make it fit", 2026-10-04): dev 7700c63a68's 35662 -> 35668
     # (+6) -- the audio_cpp fence's QueryError arm says why it refused a nav
     # switch instead of rolling back silently.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35668,
+    # TASK-35647: the Tools & MCP badge branch (+2) folds two identical badge
+    # branches (-2). TASK-35712: s names a model id the save refuses (+14);
+    # two methods nothing calls go (-19): 35,663.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35663,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
