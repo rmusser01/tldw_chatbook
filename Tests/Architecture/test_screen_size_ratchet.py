@@ -1045,7 +1045,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-23, TASK-34000.11 fix round 1 (same owner decision): 37753 ->
     #: 37757 (+4), methods 1360 -> 1361 -- the picker row-click delegator;
     #: the follow-picker key branch is synchronous.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37757, 1361),
+    #: 2026-10-23, TASK-34000.11 fix round 5 (same owner decision): 37757 ->
+    #: 37761 (+4), methods unchanged -- ``on_resize`` closes the open ``[[``
+    #: picker first, on the earliest resize the screen sees (one call).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37761, 1361),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

@@ -503,7 +503,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import re
-import time
 from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
 from pathlib import Path
@@ -598,7 +597,6 @@ from ...Widgets.Library.library_note_link_picker import (
     MAX_VISIBLE_ROWS as LIBRARY_NOTE_LINK_PICKER_ROWS,
     LibraryNoteLinkPicker,
     LinkCandidate,
-    LinkPickerSettle,
 )
 from ...Utils.fts5_match_forms import (
     NOTES_FILTER_MIN_PREFIX_CHARS as LIBRARY_NOTE_LINK_PICKER_MIN_QUERY,
@@ -3900,6 +3898,11 @@ class LibraryNotesController:
             and picker.mode == "insert"
             and body is not None
             and self.focused is body
+            # Fix round 5: a Tab right behind a terminal resize (before the
+            # screen's batched Resize closed the picker) moves focus as if
+            # no picker were open -- the same rule the body's ``on_key``
+            # applies to Enter.
+            and not body.link_picker_terminal_changed()
         )
 
     def _close_library_note_link_picker(self, body: NoteEditorTextArea | None) -> None:
@@ -3909,6 +3912,7 @@ class LibraryNotesController:
         if body is not None:
             body.link_picker_open = False
             body.link_picker_has_rows = False
+            body.link_picker_terminal = None
 
     def _sync_library_note_link_picker(self, body: NoteEditorTextArea | Any) -> None:
         """Open, narrow, or close the picker for the caret's ``[[`` context.
@@ -3969,9 +3973,10 @@ class LibraryNotesController:
             return None
         return (x, y)
 
-    def _dismiss_library_note_link_picker(self, body: NoteEditorTextArea) -> None:
-        """Close the picker and supersede any load in flight (R3-2, R4-3):
-        the one close path for a caret the user cannot see."""
+    def _dismiss_library_note_link_picker(self, body: NoteEditorTextArea | None) -> None:
+        """Close the picker and supersede any load in flight (R3-2, R4-3,
+        fix round 5): the one close path for a caret the user cannot see
+        and for a resize."""
         self._library_notes_link_picker_generation += 1
         self._close_library_note_link_picker(body)
 
@@ -3997,168 +4002,42 @@ class LibraryNotesController:
             on_caret_lost=lambda: self._dismiss_library_note_link_picker(body),
         )
 
-    def _library_note_link_picker_is_seen(
-        self, picker: LibraryNoteLinkPicker, body: NoteEditorTextArea
-    ) -> bool:
-        """Whether the open box is one the user can see right now: painted
-        (not veiled), inside the terminal as it is NOW, beside a caret on the
-        body's content region (R4-1).
+    def close_library_note_link_picker_on_resize(self) -> None:
+        """Close the open INSERT picker on the screen's ``Resize`` (fix round 5).
 
-        Textual batches an app resize behind a 1/120 s timer, so a key
-        that arrives right behind the terminal shrink meets a box laid out
-        for the old size -- ``app.size`` already says 80 columns while the
-        box still sits at x=106 (measured: 14/14 such presses inserted).
+        A terminal resize moves the caret on screen and restages the Notes
+        layout over several refreshes; keeping a completion box alive
+        through that took four rounds of timing machinery (settle chains,
+        a veil, a wall-clock floor) that froze the UI and let keys fall
+        through. The durable rule: a resize closes the picker, through the
+        one close path (generation bump, the body's routing flags reset),
+        before any frame paints the box detached from the caret. Nothing is
+        inserted; a key after the close is the editor's own. The user
+        reopens it by typing or moving within the ``[[`` context, as after
+        Escape (no latch is set). The follow-mode picker is anchored to the
+        Preview region, not a caret, and keeps re-anchoring (R3-4).
+
+        Called on EVERY Library resize frame, so it costs nothing while no
+        picker is open: the editor-armed flag gates the DOM query, and a
+        closed picker is not touched.
         """
-        if not picker.is_open or picker.is_veiled:
-            return False
-        if self._library_note_caret_cell(body) is None:
-            return False
-        try:
-            region = picker.region
-            width, height = self.app.size
-        except Exception:  # noqa: BLE001 - a detached picker has no region
-            return False
-        return (
-            region.width > 0
-            and region.height > 0
-            and region.x >= 0
-            and region.y >= 0
-            and region.right <= width
-            and region.bottom <= height
-        )
-
-    #: Fix round 4 (R4-2): the chain's judgement waits until the body has
-    #: held still for this many consecutive refreshes ...
-    _LINK_PICKER_RESIZE_STABLE_REFRESHES = 2
-    #: ... AND this much wall-clock time has passed since the newest resize
-    #: (round 3's hop bound burnt out in ~33 ms, before the compact restage's
-    #: own body resize had landed ~190 ms after the terminal's).
-    _LINK_PICKER_RESIZE_SETTLE_SECONDS = 0.15
-    #: A body that never stops moving is judged anyway after this long since
-    #: the newest resize (close at worst -- never an invisible accept).
-    _LINK_PICKER_RESIZE_SETTLE_CAP_SECONDS = 2.0
-
-    def _begin_library_note_link_picker_settle(
-        self, picker: LibraryNoteLinkPicker, body: NoteEditorTextArea
-    ) -> None:
-        """Start the resize settle chain, or restart the one in flight.
-
-        Fix round 4 (R4-1/R4-2). The box is veiled at once (its rows are
-        anchored to geometry that is already wrong) and stays veiled until
-        the single judgement. A resize that lands while a chain is pending
-        supersedes it: the token bumps, the settle clock restarts, and the
-        old chain's next step stops itself.
-        """
-        if not picker.is_open or picker.mode != "insert":
+        if not self._library_note_editor_armed:
             return
-        now = time.monotonic()
-        settle = picker.settle
-        if settle is None:
-            settle = picker.settle = LinkPickerSettle(token=1, last_resize_at=now)
-        else:
-            settle.token += 1
-            settle.last_resize_at = now
-            settle.stable_hops = 0
-        picker.veil()
-        self.call_after_refresh(
-            partial(self._settle_library_note_link_picker_after_resize, body, settle.token)
-        )
-
-    def _library_note_link_picker_settle_for(
-        self, picker: LibraryNoteLinkPicker | None, token: int
-    ) -> LinkPickerSettle | None:
-        """The settle a chain step may still act on, or ``None`` when the
-        step was superseded by a newer resize or the picker is no longer an
-        open insert-mode one."""
-        if picker is None or picker.settle is None or picker.settle.token != token:
-            return None
-        if not picker.is_open or picker.mode != "insert":
-            picker.settle = None
-            picker.unveil()
-            return None
-        return picker.settle
-
-    def _settle_library_note_link_picker_after_resize(
-        self, body: NoteEditorTextArea, token: int = 0
-    ) -> None:
-        """Step one of the resize chain: scroll the caret into view (Textual's
-        ``TextArea`` does not on a resize), then measure after the next
-        refresh against the body size this step saw."""
         picker = self._library_note_link_picker_or_none()
-        if self._library_note_link_picker_settle_for(picker, token) is None:
+        if picker is None or not picker.is_open or picker.mode != "insert":
             return
-        size = body.size
-        try:
-            body.scroll_cursor_visible()
-        except Exception:  # noqa: BLE001 - a detached body cannot scroll
-            pass
-        self.call_after_refresh(
-            partial(self._finish_library_note_link_picker_resize, body, size, token)
-        )
+        self._dismiss_library_note_link_picker(self._library_note_body_or_none())
 
-    def _finish_library_note_link_picker_resize(
-        self, body: NoteEditorTextArea, size: Any, token: int
-    ) -> None:
-        """Step two: judge only once the body has stopped moving.
+    def _reanchor_library_note_link_picker(self, body: NoteEditorTextArea) -> None:
+        """Re-anchor the open insert-mode picker after a body scroll.
 
-        The shrink to 80 columns restages the Notes layout over several
-        refreshes; measured mid-restage the body was 6 columns wide with its
-        scroll reset, and a judge there read a visible caret as off-screen
-        and closed the picker before the final layout's own resize could
-        reopen it. A refresh on which the body's size differs from the one
-        step one saw, or its content region is degenerate, resets the
-        stable count; the judgement needs the count AND the wall-clock
-        floor since the newest resize (R4-2), with a hard cap for a body
-        that never settles. While only the clock is short the chain waits
-        on a timer rather than hot-looping. Then: scroll the caret into
-        view and judge in the same tick -- anchor beside the visible caret
-        and unveil the box, or close it (a box the user cannot see must
-        never take Enter, R3-2).
-        """
-        picker = self._library_note_link_picker_or_none()
-        settle = self._library_note_link_picker_settle_for(picker, token)
-        if picker is None or settle is None:
-            return
-        content = body.content_region
-        transient = body.size != size or content.width < 4 or content.height < 1
-        settle.stable_hops = 0 if transient else settle.stable_hops + 1
-        waited = time.monotonic() - settle.last_resize_at
-        held_still = settle.stable_hops >= self._LINK_PICKER_RESIZE_STABLE_REFRESHES
-        floor = self._LINK_PICKER_RESIZE_SETTLE_SECONDS
-        if waited < self._LINK_PICKER_RESIZE_SETTLE_CAP_SECONDS and not (
-            held_still and waited >= floor
-        ):
-            step = partial(self._settle_library_note_link_picker_after_resize, body, token)
-            if held_still:
-                picker.set_timer(max(0.01, floor - waited), step)
-            else:
-                self.call_after_refresh(step)
-            return
-        picker.settle = None
-        self._reanchor_library_note_link_picker(body, scroll_caret_into_view=True)
-        # A no-op when the judgement closed the box (``hide`` lifts the veil).
-        picker.unveil()
-
-    def _reanchor_library_note_link_picker(
-        self, body: NoteEditorTextArea, *, scroll_caret_into_view: bool
-    ) -> None:
-        """Re-anchor the open insert-mode picker after a scroll or a resize.
-
-        Fix round 3. On a resize the caret is first scrolled into view
-        (Textual's ``TextArea`` does not do that itself, so the picker used
-        to follow an off-screen caret and take Enter invisibly, R3-2). On a
-        body scroll the user's scroll is honoured: the picker follows the
-        caret while the caret row is still on the body and closes once it
-        is not (R3-3). One anchor pass per refresh either way.
+        Fix round 3 (R3-3): the user's scroll is honoured -- the picker
+        follows the caret while the caret row is still on the body and
+        closes once it is not. One anchor pass per refresh.
         """
         picker = self._library_note_link_picker_or_none()
         if picker is None or not picker.is_open or picker.mode != "insert":
             return
-        if scroll_caret_into_view:
-            try:
-                body.scroll_cursor_visible()
-            except Exception:  # noqa: BLE001 - a detached body cannot scroll
-                pass
         self._anchor_library_note_link_picker(picker, body)
 
     async def _load_library_note_link_candidates(self, query: str, generation: int) -> None:
@@ -4209,6 +4088,8 @@ class LibraryNotesController:
         self._anchor_library_note_link_picker(picker, body)
         body.link_picker_open = picker.is_open
         body.link_picker_has_rows = picker.has_rows
+        # Fix round 5: the terminal size the rows are laid out for.
+        body.link_picker_terminal = tuple(self.app.size) if picker.is_open else None
         if picker.accept_pending_for == generation:
             # I-2: Enter arrived while this load was in flight; it was held
             # rather than accepting the previous query's rows. Fix round 2
@@ -4236,30 +4117,19 @@ class LibraryNotesController:
         key = message.key
         if key == "scroll":
             # Fix round 3 (R3-3): follow the caret, or close once it is off.
-            # While a resize chain is settling, the scrolls are its own.
-            if picker.resize_chains == 0:
-                self._reanchor_library_note_link_picker(body, scroll_caret_into_view=False)
+            self._reanchor_library_note_link_picker(body)
         elif key == "resize":
-            # Fix round 3 (R3-2): the settle chain. The shrink to 80 columns
-            # resizes the body TWICE (the terminal, then the compact
-            # restage); judged on the half-laid-out body, a caret the user
-            # would see read as off-screen and the picker closed for
-            # nothing. The chain scrolls the caret into view against each
-            # refresh's geometry and judges once the body has held still --
-            # anchoring the box beside the visible caret, or closing it.
-            # Fix round 4 (R4-2): ONE chain; a new resize restarts it.
-            self._begin_library_note_link_picker_settle(picker, body)
+            # Fix round 5: the body's own resize (a pane toggle; a terminal
+            # resize already closed the picker on the screen's Resize) or a
+            # key that outran the screen's batched Resize -- either way the
+            # rows are laid out for geometry that is gone. Close; nothing
+            # is inserted.
+            self._dismiss_library_note_link_picker(body)
         elif key == "blur":
             # Fix round 1 (M-4): the focus left the body.
             self._library_notes_link_picker_generation += 1
             self._close_library_note_link_picker(body)
         elif key in {"up", "down"}:
-            if picker.settle is not None:
-                # Fix round 4 (R4-1): the rows are veiled while a resize
-                # settles. The highlight is NOT moved on rows the user
-                # cannot see (the move is dropped, not queued): the box
-                # comes back with the highlight where they last saw it.
-                return
             if picker.generation != self._library_notes_link_picker_generation:
                 # Fix round 2 (R2-1): a move over STALE rows. The user is
                 # not seeing the set the next answer brings, so any accept
@@ -4286,20 +4156,6 @@ class LibraryNotesController:
         """
         picker = self._library_note_link_picker_or_none()
         if picker is None:
-            return
-        if picker.settle is not None:
-            # Fix round 4 (R4-1): a resize is settling and the box is
-            # veiled. The accept is refused outright -- not held, not a
-            # newline, not a focus move (the body already stopped the key):
-            # the user cannot see the row it would land on.
-            return
-        if not self._library_note_link_picker_is_seen(picker, body):
-            # Fix round 4 (R4-1): the terminal already changed but the
-            # body's own resize has not landed yet, so the box is off the
-            # screen or beside an unseen caret. Refuse the accept and start
-            # the settle now: it veils the box and brings it back beside
-            # the visible caret -- or closes it.
-            self._begin_library_note_link_picker_settle(picker, body)
             return
         current = self._library_notes_link_picker_generation
         if picker.generation != current:

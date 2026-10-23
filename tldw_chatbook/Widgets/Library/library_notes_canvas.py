@@ -958,6 +958,14 @@ class NoteEditorTextArea(DetachSafeTextArea):
     #: are NOT intercepted, so the editor inserts its newline / moves focus
     #: and the context change closes the picker; Escape is still claimed.
     link_picker_has_rows: bool = False
+    #: Fix round 5: the terminal size the open picker was armed at. A
+    #: resize closes the picker, through the screen's own ``Resize`` --
+    #: but the App batches that behind a 1/120 s timer, so a key pressed
+    #: right behind the terminal's resize reaches ``on_key`` first, while
+    #: ``app.size`` already says the new size. That key is handled as if
+    #: no picker were open (Enter is the editor's newline), never routed
+    #: to a box laid out for a terminal that no longer exists.
+    link_picker_terminal: tuple[int, int] | None = None
 
     class LinkPickerKey(Message):
         """One of ``LINK_PICKER_KEYS`` pressed while the picker is open."""
@@ -985,11 +993,30 @@ class NoteEditorTextArea(DetachSafeTextArea):
         """
         if not self.link_picker_open or event.key not in self.LINK_PICKER_KEYS:
             return
+        if self.link_picker_terminal_changed():
+            # Fix round 5: the terminal has already changed size; the
+            # screen's Resize (and the close it does) is still in the
+            # App's 1/120 s batch. The key is the editor's own, and the
+            # close is the controller's (routed, like every other close).
+            self.link_picker_open = False
+            self.link_picker_has_rows = False
+            self.post_message(self.LinkPickerKey(self, "resize"))
+            return
         if event.key != "escape" and not self.link_picker_has_rows:
             return
         event.stop()
         event.prevent_default()
         self.post_message(self.LinkPickerKey(self, event.key))
+
+    def link_picker_terminal_changed(self) -> bool:
+        """Whether the terminal is a different size from the one the open
+        picker was armed at (fix round 5)."""
+        if not self.link_picker_open or self.link_picker_terminal is None:
+            return False
+        try:
+            return tuple(self.app.size) != self.link_picker_terminal
+        except Exception:  # noqa: BLE001 - no active app: nothing to compare
+            return False
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Fix round 3 (R3-3): a body scroll re-anchors the open picker, or
@@ -1002,11 +1029,12 @@ class NoteEditorTextArea(DetachSafeTextArea):
             self.post_message(self.LinkPickerKey(self, "scroll"))
 
     def on_resize(self, event: Resize) -> None:
-        """Fix round 3 (R3-2): on a resize the controller scrolls the caret
-        into view before the picker re-anchors, and closes the picker when
-        the caret still is not visible (Textual's ``TextArea`` does not
-        scroll the caret into view on resize). ``TextArea._on_resize`` still
-        runs after this (the MRO walk)."""
+        """Fix round 5: a resize of the body closes the open picker (its
+        anchor geometry is gone), routed as the pseudo-key ``"resize"`` so
+        the controller owns the one close path. A terminal resize closes it
+        earlier, on the screen's own ``Resize``; this is the body-only case
+        (a pane toggle). ``TextArea._on_resize`` still runs after this (the
+        MRO walk)."""
         if self.link_picker_open:
             self.post_message(self.LinkPickerKey(self, "resize"))
 

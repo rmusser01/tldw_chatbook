@@ -586,7 +586,12 @@ _BUDGETS: dict[str, int] = {
     # single judgement, Enter/Tab refused while it settles or while the box
     # is off the terminal as it is now, and the picker's own caret-lost
     # close routed through the controller's dismiss path.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7229,
+    # 2026-10-23, TASK-34000.11 fix round 5 (same owner decision): 7229 ->
+    # 7085 (-144) -- the resize settle chain, its token / wall-clock floor /
+    # cap, the veil and the is_seen accept gate are GONE; a resize closes
+    # the picker on the screen's own Resize through the one dismiss path
+    # (`close_library_note_link_picker_on_resize`).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7085,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

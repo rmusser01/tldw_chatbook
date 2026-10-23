@@ -39,28 +39,6 @@ class LinkCandidate:
     title: str
 
 
-@dataclass
-class LinkPickerSettle:
-    """The ONE resize settle chain in flight (fix round 4, R4-2).
-
-    A new resize does not stack a second chain: it bumps ``token`` (the
-    running chain's next step sees the mismatch and stops) and restarts
-    the settle clock. Round 3 stacked them -- one shrink ran 3 chains and
-    3 judgements, a drag 5 chains and 13.
-
-    Attributes:
-        token: The generation of the chain steps that may still act.
-        last_resize_at: ``time.monotonic()`` of the newest resize; the
-            judgement waits for a wall-clock floor past it.
-        stable_hops: Consecutive refreshes on which the body's size held
-            and its content region was not degenerate.
-    """
-
-    token: int
-    last_resize_at: float
-    stable_hops: int = 0
-
-
 class _CandidateOption(Option):
     """OptionList row carrying its ``LinkCandidate``.
 
@@ -110,16 +88,6 @@ class LibraryNoteLinkPicker(Widget):
         #: same-rows re-show plus the controller's reposition) drifted the
         #: box off screen (fix round 2: offset (-72, -57) measured).
         self._anchor_pass_pending = False
-        #: Fix round 3 (R3-2) / round 4 (R4-2): the resize settle chain in
-        #: flight, or ``None``. A body scroll that arrives while it settles
-        #: belongs to the chain (the caret is being scrolled into view
-        #: against new geometry), not to the scroll rule that would close
-        #: the box on a half-laid-out read; Enter and Tab are refused while
-        #: it is pending (R4-1). One at a time: see ``LinkPickerSettle``.
-        self.settle: LinkPickerSettle | None = None
-        #: Fix round 4 (R4-1): the box is veiled (not painted, rows kept)
-        #: from the moment a settle chain starts until its judgement.
-        self._veiled = False
         #: Fix round 4 (R4-3): what to call when a re-anchor pass finds the
         #: caret gone -- the controller's close path, so the generation
         #: bumps and the body's routing flag resets.
@@ -158,56 +126,6 @@ class LibraryNoteLinkPicker(Widget):
     def has_rows(self) -> bool:
         """Whether a real (acceptable) row is on show, not a hint row."""
         return bool(self._candidates)
-
-    @property
-    def resize_chains(self) -> int:
-        """How many resize settle chains are pending: 0 or 1 (R4-2)."""
-        return 0 if self.settle is None else 1
-
-    @property
-    def is_veiled(self) -> bool:
-        """Whether the open box is hidden from paint while a resize settles."""
-        return self._veiled
-
-    def veil(self) -> None:
-        """Hide the box from paint but keep its rows and its open state.
-
-        Fix round 4 (R4-1): from the moment a resize settle chain starts
-        until its judgement the rows are anchored to stale geometry, so the
-        user must neither see them nor accept from them. ``visibility:
-        hidden`` rather than ``display: none``: the box keeps its layout
-        region, so the anchor math that re-derives the flow slot from
-        ``region - last offset`` still holds when it is shown again.
-        """
-        if not self.is_open or self._veiled:
-            return
-        self._veiled = True
-        self.visible = False
-
-    #: Where an unveiled box waits for the one refresh that gives it a layout
-    #: region again: off the screen. A ``visibility: hidden`` widget is not
-    #: in the compositor's map at all, so its flow slot cannot be read while
-    #: veiled -- measured: the pass guessed an absolute offset instead and
-    #: the first visible frame landed the box at y=72 on a 45-row screen.
-    _PARKED_OFFSET: tuple[int, int] = (0, -10_000)
-
-    def unveil(self) -> None:
-        """Show the box again after the settle's judgement anchored it.
-
-        The box comes back parked off-screen; after the next refresh its
-        region is known again and the anchor pass derives the flow slot
-        from ``region - parked offset`` and lands it beside the caret. No
-        frame paints it anywhere else.
-        """
-        if not self._veiled:
-            return
-        self._veiled = False
-        self.visible = True
-        self._anchor_offset = self._PARKED_OFFSET
-        self.styles.offset = self._PARKED_OFFSET
-        if not self._anchor_pass_pending:
-            self._anchor_pass_pending = True
-            self.call_after_refresh(self._anchor_pass)
 
     def show_candidates(
         self,
@@ -271,16 +189,12 @@ class LibraryNoteLinkPicker(Widget):
         self.call_after_refresh(self._apply_anchor)
 
     def hide(self) -> None:
-        """Hide the picker and drop its rows -- and any settle in flight."""
+        """Hide the picker and drop its rows."""
         self.display = False
         self._candidates = []
         self._empty_text = None
         self.accept_pending_for = None
         self.moved_on_stale = False
-        self.settle = None
-        if self._veiled:
-            self._veiled = False
-            self.visible = True
 
     def move_highlight(self, delta: int) -> None:
         """Move the highlight by ``delta`` rows, wrapping at both ends."""
@@ -372,11 +286,8 @@ class LibraryNoteLinkPicker(Widget):
     def _apply_anchor(self) -> None:
         """Request an anchor pass: synchronous while the box has no laid-out
         region yet (the first frame's absolute guess), else once after the
-        next refresh, however many requests arrive in between. A veiled
-        box has no region to anchor from; ``unveil`` runs the pass."""
+        next refresh, however many requests arrive in between."""
         if self.parent is None or not self.is_open or self._anchor_bounds is None:
-            return
-        if self._veiled:
             return
         if self.region.height <= 0:
             self._anchor_pass()
@@ -389,8 +300,6 @@ class LibraryNoteLinkPicker(Widget):
     def _anchor_pass(self) -> None:
         self._anchor_pass_pending = False
         if self.parent is None or not self.is_open or self._anchor_bounds is None:
-            return
-        if self._veiled:
             return
         try:
             if self._anchor_widget is not None:
@@ -440,4 +349,4 @@ class LibraryNoteLinkPicker(Widget):
             logger.warning(f"LibraryNoteLinkPicker.reposition failed: {exception!r}")
 
 
-__all__ = ["LibraryNoteLinkPicker", "LinkCandidate", "LinkPickerSettle", "MAX_VISIBLE_ROWS"]
+__all__ = ["LibraryNoteLinkPicker", "LinkCandidate", "MAX_VISIBLE_ROWS"]
