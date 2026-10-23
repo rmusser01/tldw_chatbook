@@ -1,13 +1,14 @@
 """P3a Task 4: PersonasScreen library-scale wiring — mounted integration
 against a REAL CharactersRAGDB.
 
-Proves the character library is now page-at-a-time (Task 1 DB seam + Task 3
-pane controls wired through the screen):
+Proves the character library reads the database in windows (B2a,
+TASK-33910.3, spec 1.5.6; it replaced P3a's pager and page offset):
 
-- first page shows PERSONAS_LIBRARY_PAGE_SIZE rows + a "1-50 of N" page bar,
-- next page is disjoint from the first,
-- a tag filter narrows the count and resets the page offset,
-- a sort change resets the page offset,
+- the first window holds PERSONAS_LIBRARY_PAGE_SIZE (200) rows, and End
+  appends the rest once, every id once, the first window untouched,
+- a tag filter narrows the count and the loaded rows,
+- a sort change reloads the whole list from row 0,
+- appending a window for an unchanged filter does not recount,
 - importing a card whose name conflicts with an OFF-PAGE character reports
   "already existed" (drives the count-based pre-import existence check that
   replaced the page-cache membership snapshot).
