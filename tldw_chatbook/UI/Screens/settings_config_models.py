@@ -110,6 +110,34 @@ class SettingsCategorySummary:
     status: str = ""
 
 
+#: TASK-36387: the category-list statuses that say how a category's edits
+#: save. The category list and the State badge both read this one table, so
+#: the two cannot name different save models.
+LISTED_SAVE_MODELS: dict[SettingsCategoryId, str] = {
+    **dict.fromkeys(
+        (
+            SettingsCategoryId.WORKSPACES,
+            SettingsCategoryId.TOOL_PROFILES,
+            SettingsCategoryId.TOOLS,
+            SettingsCategoryId.DREAMS,
+            SettingsCategoryId.GUARDIAN,
+        ),
+        "Immediate actions",
+    ),
+    **dict.fromkeys(
+        (
+            SettingsCategoryId.ARTIFACTS,
+            SettingsCategoryId.PERSONAS,
+            SettingsCategoryId.SKILLS,
+            SettingsCategoryId.WATCHLISTS,
+            SettingsCategoryId.WORKFLOWS,
+            SettingsCategoryId.ACP_DEFAULTS,
+        ),
+        "Read-only",
+    ),
+}
+
+
 @dataclass(frozen=True)
 class SettingsOwnershipRecord:
     """Ownership boundary for a Settings category."""

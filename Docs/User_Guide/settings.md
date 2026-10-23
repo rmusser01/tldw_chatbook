@@ -26,8 +26,10 @@ See [Goal runs](console/agent-runs-and-tools.md#goal-runs) for launch and review
 ## What this screen is for
 
 Settings edits **saved defaults**. It is not a control room: nothing here starts
-a run, drives a chat, or manages a live server — those stay on
-[Console](console.md), MCP, and ACP. Reach for it to point the app at a provider
+a run, drives a chat, or manages a live agent — those stay on
+[Console](console.md) and ACP. MCP servers, tools, and permissions are the one
+exception: they are managed in place in the **[Tools & MCP](mcp.md)** category
+(**Ctrl+9** opens it). Reach for it to point the app at a provider
 and model, pick its default voice, change how it looks, move where your
 databases live, create workspaces, or repair a broken configuration.
 
@@ -96,7 +98,7 @@ Appearance.
 
 ## Features & controls
 
-### How saving works — five models, eight badges
+### How saving works — five models, nine badges
 
 ![A draft category with unsaved changes](images/settings/console-draft.svg)
 
@@ -115,11 +117,12 @@ when you set a field back by hand.
 | **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Web Search, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
-| **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | Workspaces, [My Profile](settings/personal-context-profile.md), Theme |
-| **Immediate actions** | Tool gates and permissions save as you change them, with no category draft. Adding or editing a server opens a form that keeps your edits until its **Save** (or **Save and connect**); **Cancel** discards them. An edit form's credential actions (add slot, set or clear a secret, delete a slot) apply as you press them, so **Cancel** does not undo them. The category list names the same save model. | Tools & MCP |
+| **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | [My Profile](settings/personal-context-profile.md), Theme |
+| **Immediate actions** | Each action saves as you take it, with no category draft. On Tools & MCP, tool gates and permissions save as you change them; adding or editing a server opens a form that keeps your edits until its **Save** (or **Save and connect**), and **Cancel** discards them. An edit form's credential actions (add slot, set or clear a secret, delete a slot) apply as you press them, so **Cancel** does not undo them. The category list names the same save model. | Workspaces, Tool Profiles, Tools & MCP, Dreams, Guardian |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
-| **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Diagnostics, and the eight view-only Domain Defaults pages |
+| **Read-only** | Nothing on the page changes anything; it names the destination that owns it. The category list names the same save model. | The six view-only Domain Defaults pages |
+| **Read-only here** | Nothing on the page changes anything. | Overview, Diagnostics, About |
 
 On the **Draft — save with s** categories an edit turns the banner into
 "State: Draft — save with s · 2 unsaved · revert with r | \<what saving
@@ -207,7 +210,7 @@ page links to each backend's setup guide and displays these restrictions.
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
-| Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Applies immediately |
+| Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Immediate actions |
 | Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |
 | Data & Privacy | **Privacy & Security** | Secrets, encryption, redaction, local privacy boundaries, and the raw CLI host-access gate. | Draft — save with s |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
@@ -217,7 +220,7 @@ page links to each backend's setup guide and displays these restrictions.
 | Expert | **Advanced Config** | Raw TOML view and expert configuration editing. | Validate, then Save |
 | Domain Defaults | **RAG** → [own page](settings/rag.md) | Source search, retrieval, citations, snippets, and Console evidence defaults. | Draft — save with s |
 | Domain Defaults | **Image Gen** | Image generation backend defaults for SwarmUI, OpenRouter, and other backend models. | Draft — save/revert below |
-| Domain Defaults | eight **(view)** pages | Defaults owned by another destination — [table below](#domain-defaults--the-eight-view-only-pages). | Read-only here |
+| Domain Defaults | six **(view)** pages | Defaults owned by another destination — [table below](#domain-defaults--the-six-view-only-pages). | Read-only |
 
 ### Core — Overview
 
@@ -1628,7 +1631,7 @@ unlock Off also disarms and starts bounded cleanup of any active raw command.
 
 Unlocking and arming also makes the model-facing `shell_exec` tool eligible,
 but only while local tools are enabled and the global model-tool kill switch is
-Off. This is not a silent model grant: MCP ▸ Tools exposes raw shell as **Ask or
+Off. This is not a silent model grant: Tools & MCP's Tools mode exposes raw shell as **Ask or
 Off only**, and even a hand-edited Allow value is treated as Ask. Each model
 command must show its full command and host-authority warning for **Run once**,
 **All shell · session** (one grant covering every later raw command in this
@@ -1773,9 +1776,9 @@ rather than the inspector pair.
 | **Generation defaults** | Batch size, variant caps, and the context-LLM options. |
 | **Style templates** | A read-only count in this version. |
 
-### Domain Defaults — the eight view-only pages
+### Domain Defaults — the six view-only pages
 
-Eight categories exist so the destination is findable from Settings. Each is a
+Six categories exist so the destination is findable from Settings. Each is a
 read-only page saying "Settings mode: View only - shows current defaults and
 status" and "Writes allowed: No - change this in \<Destination\> instead", plus
 a note on what would have to exist before Settings could own a default.
@@ -1785,10 +1788,8 @@ a note on what would have to exist before Settings could own a default.
 | **Artifacts** (view) | [Artifacts](artifacts.md) 🚧 | Export/default controls wait on a persisted preference contract. |
 | **Roleplay** (view) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) | Display/browsing preferences only — never which user profile is active. |
 | **Skills** (view) | Skills — now [Library ▸ Skills](library/skills.md) | Defaults wait on a persisted import/attach policy. |
-| **Schedules** (view) | [Schedules](schedules.md) 🚧 | Waits on a dedicated settings adapter. |
 | **Watchlists** (view) | [Watchlists](watchlists.md) 🚧 | Waits on persisted polling/notification settings. |
 | **Workflows** (view) | [Workflows](workflows.md) 🚧 | Waits on a persisted execution-safety contract. |
-| **MCP Defaults** (view) | [MCP](mcp.md) 🚧 | Server-first defaults only; tools stay in MCP. |
 | **ACP Defaults** (view) | [ACP](acp.md) 🚧 | Waits on a persisted runtime/session preference contract. |
 
 ## Common tasks

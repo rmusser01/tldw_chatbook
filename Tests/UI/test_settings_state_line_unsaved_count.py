@@ -188,7 +188,8 @@ async def test_categories_without_a_draft_keep_todays_badge(request) -> None:
     screen = SettingsScreen(_build_test_app())
     expected = {
         SettingsCategoryId.NETWORK: "Pending — save with s",
-        SettingsCategoryId.WORKSPACES: "Applies immediately",
+        # TASK-36387, rewritten on purpose: the category list's own words.
+        SettingsCategoryId.WORKSPACES: "Immediate actions",
         SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
         SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
         # Capture finding 3 (TASK-33007), rewritten on purpose: at rest a

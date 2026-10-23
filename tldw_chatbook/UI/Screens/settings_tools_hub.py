@@ -26,6 +26,7 @@ from textual.widgets import Button, Static
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 from .settings_config_models import (
+    LISTED_SAVE_MODELS,
     SettingsCategorySummary,
     SettingsCategoryId,
     SettingsOwnershipRecord,
@@ -73,7 +74,7 @@ TOOLS_HUB_CATEGORY_SUMMARY = SettingsCategorySummary(
     SettingsCategoryId.TOOLS,
     "Tools & MCP",
     "What your agents can use, what asks first, and what they did.",
-    "Immediate actions",
+    LISTED_SAVE_MODELS[SettingsCategoryId.TOOLS],
 )
 
 TOOLS_HUB_OWNERSHIP_RECORD = SettingsOwnershipRecord(
@@ -114,8 +115,8 @@ TOOL_PROFILES_OWNERSHIP_RECORD = SettingsOwnershipRecord(
     writes_allowed=True,
     runtime_owner="ToolPackService (immediate reviewed actions)",
     boundary_copy=(
-        "Settings manages profile lifecycle; MCP Permissions owns policy editing. "
-        "Tool Packs never install tools."
+        "Tool Profiles manages profile lifecycle; Tools & MCP owns policy "
+        "editing. Tool Packs never install tools."
     ),
     recovery_copy=(
         "Re-inspect stale imports and remove only profiles with no active or "

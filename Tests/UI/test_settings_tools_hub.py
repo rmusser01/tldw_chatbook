@@ -134,6 +134,54 @@ def test_overview_rows_and_tools_badge_name_only_registered_destinations():
     )
 
 
+@pytest.mark.bootstrap_profile
+def test_state_badge_names_the_save_model_the_category_list_names():
+    """TASK-36387: Workspaces, Dreams and Guardian were listed "Immediate
+    actions" but badged "Applies immediately", Tool Profiles badged "Reviewed
+    actions", and six "Read-only" categories badged "Read-only here"."""
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    badges = {s.category: screen._persistence_badge(s.category) for s in summaries}
+    # A list status names a save model when it is a save-model list word or
+    # any badge's words ("Guided", "Local", "Console" name none).
+    save_models = {"Immediate actions", "Read-only", *badges.values()}
+    listed = {s.category: s.status for s in summaries if s.status in save_models}
+    assert set(listed) >= {
+        SettingsCategoryId.WORKSPACES,
+        SettingsCategoryId.TOOL_PROFILES,
+        SettingsCategoryId.TOOLS,
+        SettingsCategoryId.DREAMS,
+        SettingsCategoryId.GUARDIAN,
+        SettingsCategoryId.ARTIFACTS,
+        SettingsCategoryId.PERSONAS,
+        SettingsCategoryId.SKILLS,
+        SettingsCategoryId.WATCHLISTS,
+        SettingsCategoryId.WORKFLOWS,
+        SettingsCategoryId.ACP_DEFAULTS,
+    }
+    assert {category: badges[category] for category in listed} == listed
+
+
+@pytest.mark.bootstrap_profile
+def test_tool_profiles_copy_sends_policy_editing_to_tools_and_mcp():
+    """TASK-36387: Tool Profiles still said "MCP owns policy editing" and "MCP
+    Permissions" after task-35150 folded the MCP screen into Settings."""
+    screen = SettingsScreen(_build_test_app())
+    titles = [summary.title for summary in screen._category_summaries()]
+    category = SettingsCategoryId.TOOL_PROFILES
+    texts = [
+        screen._category_state_scope_text(category),
+        screen._guided_action_message(category),
+        screen._ownership_record(category).boundary_copy,
+        *(f"{label}: {value}" for label, value in screen._inspector_guidance(category)),
+    ]
+    for text in texts:
+        # "MCP" alone named the retired screen; the place is "Tools & MCP".
+        assert not re.search(r"(?<!Tools & )\bMCP\b", text), text
+        assert _unregistered_destinations(text, titles) == [], text
+    assert any("Tools & MCP" in text for text in texts)
+
+
 # task-35597: every test that mounts a harness app or a _build_test_app
 # product keeps the collection-time bootstrap profile. The workbench and
 # its reload workers read config through the guarded loader; under
