@@ -237,11 +237,14 @@ async def test_database_notes_capability_inventory_and_modes(
             return permitted
 
         refresh_roots = Mock()
+        return_to_roots = Mock()
         revisit_receipt = Mock()
         task_screen = SimpleNamespace(
             _library_notes_mutation_fenced=lambda: False,
             _flush_library_note_save=flush,
-            _library_notes_sync_controller=SimpleNamespace(refresh_roots=refresh_roots),
+            _library_notes_sync_controller=SimpleNamespace(
+                refresh_roots=refresh_roots, return_to_roots=return_to_roots
+            ),
             _library_note_import_controller=SimpleNamespace(
                 revisit_receipt=revisit_receipt
             ),
@@ -251,8 +254,15 @@ async def test_database_notes_capability_inventory_and_modes(
             ),
             _apply_library_notes_footer_context=Mock(),
         )
+        # TASK-34000.17 extracted the body behind both roots doors into
+        # ``_open_library_notes_sync_roots`` (named through ``self`` by the
+        # handler) and made it name its step through ``return_to_roots``.
+        task_screen._open_library_notes_sync_roots = lambda: (
+            LibraryScreen._open_library_notes_sync_roots(task_screen)
+        )
         await LibraryScreen.handle_library_notes_manage_sync_folders(task_screen, event)
-        refresh_roots.assert_called_once_with()
+        return_to_roots.assert_called_once_with()
+        refresh_roots.assert_not_called()
         assert task_screen._notes_state.view == "lasting_roots"
         assert len(sync_calls) == 1
         await LibraryScreen.handle_library_notes_import_receipt(task_screen, event)
@@ -582,7 +592,9 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
             f"The task row shrank from {width_with_discard} to "
             f"{task_actions.region.width} when Discard new note disappeared."
         )
-        assert discard.display is True, "Discard must keep its cells (visibility, not display)"
+        assert discard.display is True, (
+            "Discard must keep its cells (visibility, not display)"
+        )
         assert discard not in screen.focus_chain, "a hidden Discard is Tab-reachable"
         assert discard not in screen._compositor.visible_widgets
 

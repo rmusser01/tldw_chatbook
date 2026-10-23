@@ -1030,13 +1030,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 37593 (+21), methods unchanged -- the rail route releases a held setup
     #: review before leaving a lasting view (I-1), and the roots door names
     #: its step through ``return_to_roots`` (M-4).
-    #: 2026-10-22, TASK-34000.14 (same owner decision): 37593 -> 37668 (+75),
+    #: 2026-10-22, TASK-34000.14 (same owner decision): 37593 -> 37675 (+82),
     #: methods unchanged -- the dead ``_ensure_library_notes_tree_folder_
     #: loaded`` becomes ``_ensure_library_notes_tree_root_loaded`` (the one
     #: seam that owes the root slices), the ``note_create`` reconcile and the
-    #: editor-to-list return call it, and the ``g`` gate tells Unfiled from a
-    #: real folder row.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37668, 1356),
+    #: editor-to-list return call it (fix round 1: after the locate, and
+    #: never against a suspended screen), and the ``g`` gate tells Unfiled
+    #: from a real folder row.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37675, 1356),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

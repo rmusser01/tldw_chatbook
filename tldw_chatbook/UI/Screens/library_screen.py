@@ -18287,7 +18287,12 @@ class LibraryScreen(BaseAppScreen):
         shown: a slice that is absent, or that a mutation fence left
         ``uninitialized`` and not loading, is requested; a ``fresh``,
         ``stale`` or ``loading`` slice is left alone, so the call is
-        idempotent and costs two dict lookups when the tree is whole.
+        idempotent and costs two dict lookups when the tree is whole. A root
+        slice whose FIRST load failed is still ``uninitialized`` (with its
+        ``error`` set and a "Couldn’t load folders · Retry" pager row), so
+        it is requested again here: a create or an editor return is a
+        reasonable moment to retry, and the Retry row stays if it fails
+        again (fix round 1 ruling, M-3).
 
         Args:
             await_load: ``True`` awaits each load inline (the orchestration
@@ -19058,20 +19063,6 @@ class LibraryScreen(BaseAppScreen):
                     filtered_selection = desired_target
                     self._notes_state.tree_selected_placement_id = desired_target
 
-        if operation == "note_create":
-            # TASK-34000.14: a create that arrived without a Notes visit has
-            # no root slices at all, and the locator below loads root
-            # PLACEMENTS alone, so the tree came back as Unfiled plus the
-            # new note. Owe the root here, before the locate, exactly as a
-            # rail entry would: the worker form, so the editor opens at
-            # once and the list shows "Loading folders…" until the slice
-            # lands. Behind the same visit fence as every other await.
-            if not visit_is_current():
-                return
-            await LibraryScreen._ensure_library_notes_tree_root_loaded(self)
-            if not visit_is_current():
-                return
-
         located = False
         if folder is not None and not folder.deleted:
             located = await LibraryScreen._locate_library_notes_tree_target(
@@ -19093,6 +19084,19 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.tree_pending_target_placement_id = ""
         if filtered_selection:
             self._notes_state.tree_selected_placement_id = filtered_selection
+        if operation == "note_create":
+            # TASK-34000.14: a create that arrived without a Notes visit has
+            # no root slices at all, and the locator above loads root
+            # PLACEMENTS alone, so the tree came back as Unfiled plus the
+            # new note. Owe the root here, exactly as a rail entry would:
+            # the worker form, so the editor opens at once and the list
+            # shows "Loading folders…" until the slice lands. After the
+            # locate (fix round 1, M-1), so the placements slice it just
+            # loaded is found fresh and only the FOLDERS slice is fetched.
+            # Behind the same visit fence as every other await.
+            if not visit_is_current():
+                return
+            await LibraryScreen._ensure_library_notes_tree_root_loaded(self)
 
     def _invalidate_library_notes_tree_for_unmount(self) -> None:
         """Synchronously revoke every Notes page authority for this visit."""
@@ -31530,7 +31534,10 @@ class LibraryScreen(BaseAppScreen):
             # link, a media "Note" action) shows a list that owes its root
             # slices -- including one a mutation fence left ``uninitialized``
             # mid-load; a whole tree costs two dict lookups here. The helper
-            # is a coroutine, so it is scheduled on the pump, not called.
+            # is a coroutine, so it is scheduled on the pump, not called --
+            # and never against a suspended screen (TASK-31521).
+            if self._library_screen_suspended:
+                return
             self.call_later(LibraryScreen._ensure_library_notes_tree_root_loaded, self)
 
         _sync_library_canvas(self, "notes", then=finish_list_projection)
