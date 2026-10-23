@@ -19,6 +19,8 @@ import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testi
 import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 import tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane as pane_module
+from rich.style import Style
+from textual import events
 from textual.app import ComposeResult
 from textual.widgets import Input
 
@@ -350,6 +352,19 @@ def test_book_scents_use_plural_words():
     assert frame_state.dictionary_scent(150) == "150 rules"
 
 
+@pytest.mark.parametrize("builder", ["_dictionary_row", "_lore_row"])
+def test_a_book_with_a_count_that_is_not_a_number_still_lists(builder):
+    """B2a's final review (M10): dev only formatted ``entry_count``; B2a's
+    plural scent took ``int()`` of it, so one odd value failed the whole book
+    render. New with B2a; fixed here: the row lists without a count."""
+    row_for = getattr(personas_screen_module.PersonasScreen, builder)
+    odd = row_for({"id": 7, "name": "Odd Book", "entry_count": "n/a"})
+    assert (odd.item_id, odd.name, odd.meta) == ("7", "Odd Book", None)
+    assert odd.short is None
+    fine = row_for({"id": 8, "name": "Fine Book", "entry_count": "3"})
+    assert fine.meta in ("3 rules", "3 entries")
+
+
 # ---- border titles and the loaded row's position (spec 1.5.1, RC-10) ----
 
 
@@ -651,6 +666,8 @@ class _PaneHost(ConsolidatedCSSApp):
         self.selected: list[str] = []
         self.marks: list[tuple[tuple[str, str, str], ...]] = []
         self.wanted: list[tuple[str, str | None]] = []
+        self.actions: list[str] = []
+        self.toggled: list[tuple[str | None, str | None]] = []
 
     def compose(self) -> ComposeResult:
         yield Input(id="host-input")
@@ -658,6 +675,11 @@ class _PaneHost(ConsolidatedCSSApp):
 
     def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
         self.selected.append(message.entity_id)
+
+    def on_persona_action_requested(self, message: PersonaActionRequested) -> None:
+        self.actions.append(message.action)
+        if message.action == "toggle_enabled":
+            self.toggled.append((message.entity_kind, message.entity_id))
 
     def on_persona_marks_changed(self, message: PersonaMarksChanged) -> None:
         self.marks.append(message.marks)
@@ -733,6 +755,34 @@ async def test_focus_never_moves_the_first_row():
         assert first_list_item(pilot.app.screen).region == before
 
 
+def _painted_name_style(item_list: RoleplayItemList, index: int) -> tuple:
+    """The background and emphasis the compositor paints on one row's first name cell."""
+    y = painted_option_rows(item_list)[index][0]
+    x = item_list.content_region.x + len(
+        frame_state.item_gutter(loaded=False, marked=False)
+    )
+    style = item_list.screen.get_style_at(x, y)
+    return style.bgcolor, bool(style.bold), bool(style.underline)
+
+
+async def test_the_cursor_is_painted_only_while_the_list_has_focus():
+    """Spec 1.5.3 (RP-062): "Cursor, list not focused: not painted". The app's
+    global OptionList rule paints the highlighted row bold and underlined
+    whatever has focus; the Roleplay sheet's rest rule clears that, and only
+    the focused list paints its cursor (its own background, bold underline)."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 3))
+        pilot.app.query_one("#host-input", Input).focus()
+        await select_roleplay_item(pilot, pilot.app.screen, "character:2", load=False)
+        assert not item_list.has_focus
+        assert _painted_name_style(item_list, 1) == _painted_name_style(item_list, 0)
+        item_list.focus()
+        await pilot.pause()
+        cursor = _painted_name_style(item_list, 1)
+        assert cursor[0] != _painted_name_style(item_list, 0)[0]
+        assert cursor[1:] == (True, True)
+
+
 async def test_a_click_on_the_mark_column_marks_and_never_loads():
     async with _PaneHost().run_test(size=(120, 36)) as pilot:
         await _host(pilot, _rows(1, 3))
@@ -752,6 +802,37 @@ async def test_a_click_on_the_mark_column_marks_in_ascii_mode_too(ascii_mode):
         assert item_at(pilot.app.screen, "character:3").marked
         assert item_at(pilot.app.screen, "character:3").painted_mark
         assert not item_at(pilot.app.screen, "character:2").painted_mark
+        assert pilot.app.selected == []
+
+
+async def test_a_mark_column_click_on_a_row_that_just_left_does_nothing():
+    """B2a's final review (M5): a click's ``option`` meta can be a frame stale
+    after ``set_options`` shrank the list. Reading that index raised
+    ``OptionDoesNotExist``, which Textual turns into an app exit. New with
+    B2a (dev's ListView had no mark column); fixed here."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 3))
+        await pane.update_rows(_rows(1, 1), total=1, noun="characters")
+        await pilot.pause()
+        x = item_list.gutter.left + frame_state.gutter_mark_columns().start
+        y = item_list.gutter.top
+        stale = events.Click(
+            item_list,
+            x,
+            y,
+            0,
+            0,
+            1,
+            False,
+            False,
+            False,
+            screen_x=item_list.region.x + x,
+            screen_y=item_list.region.y + y,
+            style=Style(meta={"option": 2}),
+        )
+        item_list.on_click(stale)
+        await pilot.pause()
+        assert item_list.marked_ids() == frozenset()
         assert pilot.app.selected == []
 
 
@@ -793,20 +874,30 @@ async def test_hovering_a_row_moves_no_row():
 
 
 async def test_m_and_space_act_only_on_the_focused_list():
-    """RP-033: a letter on a toolbar button is inert; on the list it marks."""
+    """RP-033: ``m`` and Space on a toolbar button are inert; on the list ``m``
+    marks the cursor row and Space asks to turn its book on or off."""
     async with _PaneHost().run_test(size=(120, 36)) as pilot:
-        _pane, item_list = await _host(pilot, _rows(1, 3))
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        pane.set_mode("lore")
+        _pane, item_list = await _host(pilot, _rows(1, 3, kind="lore"))
+        await select_roleplay_item(pilot, pilot.app.screen, index=0, load=False)
         pilot.app.query_one("#personas-library-new").focus()
-        await pilot.press("m")
+        await pilot.press("m", "space")
         await pilot.pause()
         assert not item_list.marked_ids()
         assert not item_at(pilot.app.screen, 0).painted_mark
+        assert pilot.app.actions == []
         item_list.focus()
-        await select_roleplay_item(pilot, pilot.app.screen, index=0, load=False)
+        await pilot.pause()
+        assert highlighted_item_id(pilot.app.screen) == "lore:1"
         await pilot.press("m")
         await pilot.pause()
-        assert item_list.marked_ids() == frozenset({"character:1"})
+        assert item_list.marked_ids() == frozenset({"lore:1"})
         assert item_at(pilot.app.screen, 0).painted_mark
+        await pilot.press("space")
+        await pilot.pause()
+        assert pilot.app.actions == ["toggle_enabled"]
+        assert pilot.app.toggled == [("lore", "1")]
 
 
 async def test_the_cursor_comes_back_by_id_after_set_options():
@@ -989,13 +1080,6 @@ class _MarksHost(_PaneHost):
     """The pane wide enough for the marks bar's full form (spec 1.5.5)."""
 
     CSS = "#personas-library-pane { width: 60; }"
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.actions: list[str] = []
-
-    def on_persona_action_requested(self, message: PersonaActionRequested) -> None:
-        self.actions.append(message.action)
 
 
 def _bar_text(pilot) -> str:

@@ -585,6 +585,18 @@ async def _wait_at_most(worker: Worker, seconds: float) -> None:
     await asyncio.wait({waiter}, timeout=seconds)
 
 
+def _whole_count(value: Any) -> int | None:
+    """A book's entry count as a number, or None when the record's value is not one.
+
+    Dev only formatted the value; B2a's plural scents need a number, and one
+    odd value must not fail the whole book list (B2a's final review, M10).
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _character_import_filters() -> Any:
     """Build the file-picker filters for the Character Cards import dialog.
 
@@ -4455,12 +4467,13 @@ class PersonasScreen(BaseAppScreen):
         count = record.get("entry_count")
         if count is None:
             count = len(record.get("entries") or [])
+        rules = _whole_count(count)
         state = "on" if record.get("enabled", record.get("is_active", True)) else "off"
         return LibraryRow(
             item_id=str(record.get("id")),
             kind="dictionary",
             name=str(record.get("name") or "Unnamed"),
-            meta=frame_state.dictionary_scent(int(count)),
+            meta=frame_state.dictionary_scent(rules) if rules is not None else None,
             state=state,
         )
 
@@ -4542,15 +4555,15 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _lore_row(record: dict) -> LibraryRow:
-        count = int(record.get("entry_count") or 0)
+        count = _whole_count(record.get("entry_count") or 0)
         state = "on" if record.get("enabled", True) else "off"
         return LibraryRow(
             item_id=str(record.get("id")),
             kind="lore",
             name=str(record.get("name") or "Unnamed"),
-            meta=frame_state.lore_scent(count),
+            meta=frame_state.lore_scent(count) if count is not None else None,
             state=state,
-            short=str(count),
+            short=str(count) if count is not None else None,
         )
 
     @staticmethod

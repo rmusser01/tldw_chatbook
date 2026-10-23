@@ -536,7 +536,8 @@ class RoleplayItemList(OptionList):
         """A click on the gutter's mark column toggles the mark and never loads (spec 4.10)."""
         index = event.style.meta.get("option")
         offset = event.get_content_offset(self)
-        if index is None or offset is None:
+        # The meta can be a frame stale after set_options shrank the list.
+        if index is None or offset is None or not 0 <= index < self.option_count:
             return
         if offset.x not in frame_state.gutter_mark_columns():
             return

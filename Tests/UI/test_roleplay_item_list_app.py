@@ -732,6 +732,27 @@ async def test_end_reaches_the_last_book_after_a_partial_character_list(
         assert not item_list.more_available
 
 
+async def test_a_dictionary_whose_count_is_not_a_number_still_lists(
+    mock_app_instance, volume_348
+):
+    """B2a's final review (M10): one non-numeric ``entry_count`` failed the
+    whole dictionaries render. New with B2a (dev only formatted the value);
+    fixed here: that row lists without a count, and every other row lists."""
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service(
+        ("Odd Rules", "n/a"), ("Plain Rules", 3)
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#personas-mode-dictionaries")
+        await settle(pilot)
+        item_list = screen.query_one(RoleplayItemList)
+        assert visible_item_ids(screen) == ("dictionary:1", "dictionary:2")
+        assert item_list.row("dictionary:1").meta is None
+        assert item_list.row("dictionary:2").meta == "3 rules"
+
+
 # ---- CI counts per settled keystroke, 348 and 5,000 (AC#8, AC#10; Task 8) ----
 #
 # Spec 5.2 B2a (a): deterministic counts, never a wall-clock threshold taken
