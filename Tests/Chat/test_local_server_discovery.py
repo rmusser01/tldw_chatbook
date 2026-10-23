@@ -1,6 +1,7 @@
 """Pure local-server discovery tests (task-188) using httpx.MockTransport."""
 
 import errno
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -473,7 +474,11 @@ async def test_probe_handles_recursive_json_as_bounded_failure(monkeypatch) -> N
     def recursive_loads(body: bytes) -> object:
         raise RecursionError("secret recursive decoder detail")
 
-    monkeypatch.setattr(local_discovery_module.json, "loads", recursive_loads)
+    # Replace only this module's json: patching json.loads itself also broke
+    # the storage admission's control-record read (object_pairs_hook).
+    monkeypatch.setattr(
+        local_discovery_module, "json", SimpleNamespace(loads=recursive_loads)
+    )
 
     result = await probe_models_endpoint(
         "http://127.0.0.1:9099",
