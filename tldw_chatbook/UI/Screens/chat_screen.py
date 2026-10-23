@@ -11713,8 +11713,11 @@ class ChatScreen(BaseAppScreen):
                     save_setting_to_cli_config(
                         "console.rail_state", flush_key, flush_value
                     )
-                except Exception:  # noqa: BLE001 -- the record's own save still runs
-                    logger.warning("Failed to persist Console rail seed defaults")
+                except Exception as exc:  # noqa: BLE001 -- the record still saves
+                    logger.warning(  # noqa: PLE1205 - Loguru brace format
+                        "Failed to persist Console rail seed defaults (error_type={})",
+                        type(exc).__name__,
+                    )
             latest: Any = serialized
             app_config = getattr(self.app_instance, "app_config", None)
             if isinstance(app_config, Mapping):

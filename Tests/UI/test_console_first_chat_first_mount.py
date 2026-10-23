@@ -28,7 +28,10 @@ from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import _test_cli_setting
-from tldw_chatbook.Chat.console_rail_state import build_console_rail_preference_key
+from tldw_chatbook.Chat.console_rail_state import (
+    build_console_rail_preference_key,
+    serialize_console_rail_stored_preferences,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import (
     get_cli_config_path,
@@ -40,6 +43,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     HandoffChannel,
 )
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_COMPLETED_KEY,
@@ -293,3 +297,82 @@ async def test_a_per_workspace_edit_leaves_the_global_rail_layout_at_its_default
             await pilot.pause(0.5)
             assert app.screen._current_console_rail_state().conversations_open is True
             assert _saved_rail_layout().get("conversations_open") is True
+
+
+async def _mounted_console_recording_rail_saves(app, pilot, monkeypatch):
+    """Console mounted on Global, with every rail-state file write recorded."""
+    await _wait_until(
+        pilot, lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted
+    )
+    await pilot.pause(0.5)
+    writes: list[tuple[str, dict]] = []
+    real_save = chat_screen_module.save_setting_to_cli_config
+
+    def record(section: str, key: str, value: dict) -> bool:
+        saved = real_save(section, key, value)
+        writes.append((key, dict(value)))  # once the file holds it
+        return saved
+
+    monkeypatch.setattr(chat_screen_module, "save_setting_to_cli_config", record)
+    return app.screen, writes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_held_shared_defaults_are_written_before_the_workspace_record(
+    monkeypatch, request
+) -> None:
+    """TASK-36385 review 2: the save worker writes held seed defaults before
+    its own record, so that record can never be on disk without them."""
+    _persist_setup()
+    defaults = serialize_console_rail_stored_preferences(None)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            console, writes = await _mounted_console_recording_rail_saves(
+                app, pilot, monkeypatch
+            )
+            assert console._console_rail_unsaved_seeds == {_SHARED_RAIL_KEY: defaults}
+
+            app.app_config["console"]["rail_layout_scope"] = "workspace"
+            context = console._workspace._current_console_workspace_context()
+            workspace_key = build_console_rail_preference_key(
+                workspace_id=context.active_workspace_id, layout_scope="workspace"
+            ).value
+            console.query_one(
+                "#console-rail-section-toggle-conversations", Button
+            ).press()
+            # The workspace seed's copy and the edit each save the record.
+            await _wait_until(pilot, lambda: len(writes) == 3)
+
+            assert writes[0] == (_SHARED_RAIL_KEY, defaults)
+            assert [key for key, _ in writes[1:]] == [workspace_key, workspace_key]
+            assert writes[-1][1]["conversations_open"] is False
+            assert _saved_rail_layout() == defaults
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_held_seed_the_user_edits_after_it_was_queued_keeps_the_edit(
+    monkeypatch, request
+) -> None:
+    """TASK-36385 review 2: the queued defaults land before the edit's own
+    write, never after it, so a restart shows the edit."""
+    _persist_setup()
+    defaults = serialize_console_rail_stored_preferences(None)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            console, writes = await _mounted_console_recording_rail_saves(
+                app, pilot, monkeypatch
+            )
+            # Queued by another record's save whose worker has not run yet;
+            # then the user edits the held record itself.
+            edited = {**defaults, "model_open": True}
+            console._console_rail_state_config()[_SHARED_RAIL_KEY] = edited
+            console._console_rail_seed_flush.append((_SHARED_RAIL_KEY, defaults))
+            console._save_console_rail_preferences(_SHARED_RAIL_KEY, edited)
+            await _wait_until(pilot, lambda: len(writes) == 2)
+
+            assert [value["model_open"] for _, value in writes] == [False, True]
+            assert _saved_rail_layout()["model_open"] is True
