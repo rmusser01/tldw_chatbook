@@ -39,7 +39,7 @@ The census has grown from 430 to 664 entries since TASK-35834 re-dealt it on 202
 <!-- AC:BEGIN -->
 - [x] #1 The files that make the at-cap shards heavy are dealt over several shards, re-ordered by measured times from recent PR runs' shard logs
 - [x] #2 Every test the lane ran before the change still runs on it
-- [ ] #3 Over at least three PR runs after the change, every UI Fast Lane job keeps at least 3 minutes under its 20-minute cap
+- [ ] #3 Over at least three PR runs after the change, no UI Fast Lane job reaches its 20-minute cap; the 3 minutes of headroom a hung test's report needs is carried by TASK-36514 (owner ruling 2026-10-23)
 <!-- AC:END -->
 
 ## Implementation Plan
