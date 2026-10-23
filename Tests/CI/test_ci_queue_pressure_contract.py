@@ -488,13 +488,12 @@ ADMISSION_2_TARGETS = (
     # quit persistence (whole file; bootstrap_profile by Tests/conftest.py's
     # test_config_ rule) and its real-app quit, whose app runs in a subprocess
     # with its own profile. Tests/ProductionApp/conftest.py patches
-    # tldw_chatbook.app at setup, which imports the app there, under the
-    # per-test redirect, when nothing collected has imported it: as a lone
-    # file that is RecoveryRequired('raw_source_selection_changed'). This
-    # step imports the app at collection (test_settings_image_gen_panel.py
-    # does at module level), so the node passes here. Then TASK-35578's
-    # listed-pick note on the Model step (bootstrap_profile, 5 cases) and its
-    # real setup save (a private-profile child).
+    # tldw_chatbook.app by name at setup, which imports the app there; under
+    # the per-test redirect that is RecoveryRequired when nothing collected has
+    # imported it, so the node is marked bootstrap_profile (as the definition
+    # row's subtitle above) and passes without any neighbour importing the app.
+    # Then TASK-35578's listed-pick note on the Model step (bootstrap_profile,
+    # 5 cases) and its real setup save (a private-profile child).
     "Tests/test_config_persistence_owner.py",
     "Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config",
     "Tests/Wizards/test_first_run_setup_wizard.py::test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list",
