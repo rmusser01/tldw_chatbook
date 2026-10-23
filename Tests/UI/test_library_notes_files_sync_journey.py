@@ -541,6 +541,8 @@ async def test_activating_a_lasting_root_refreshes_a_seeded_notes_list(
             await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
             assert "3 applied · listed under Receipts" in _painted_text(host)
             assert database.count_notes() == 5
+            # TASK-34000.17 AC#4: the receipt's bar routes onward.
+            assert screen.query_one("#notes-sync-manage-roots", Button)
 
             screen.query_one("#notes-sync-back", Button).press()
             await _wait_for_condition(

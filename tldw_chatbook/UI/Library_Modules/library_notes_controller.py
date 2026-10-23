@@ -5169,6 +5169,11 @@ class LibraryNotesController:
         # ``_show_library_file_notes`` -- Add from files is the other
         # workflow the critique caught a stale delete receipt surviving.
         self._library_note_delete_receipt = None
+        # TASK-34000.17: one entry means "start Add from files". The return is
+        # ignored on purpose -- while a check or activation is running the
+        # canvas paints that step's own progress (AC#2); once it settles and
+        # the user leaves, the next open resets to the chooser.
+        self._library_notes_sync_controller.begin_add_from_files()
         self._library_notes_lasting_origin = "setup"
         self._library_notes_view = "lasting_add"
         self._apply_library_notes_footer_context()

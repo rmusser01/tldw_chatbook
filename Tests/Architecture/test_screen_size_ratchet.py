@@ -1022,7 +1022,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-22, P1-A final review C-1 (same owner decision): 37559 -> 37560
     #: (+1), the ``_library_media_selected_backing_id`` docstring says the
     #: Reader target is the loaded item whatever the view. Methods 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37560, 1354),
+    #: 2026-10-22, TASK-34000.17 (same owner decision): 37560 -> 37572 (+12),
+    #: methods 1354 -> 1356 -- the Manage sync folders toolbar handler's body
+    #: is extracted into ``_open_library_notes_sync_roots`` so the activation
+    #: receipt's own ``ManageRootsRequested`` handler can share it.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37572, 1356),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

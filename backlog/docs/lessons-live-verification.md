@@ -952,6 +952,24 @@ affordance → *the thing it opens*.
 
 ---
 
+## A lasting-sync folder under the harness run dir is refused as "inside Chatbook's own data directory" (TASK-34000.17, 2026-10-22)
+
+**What happened.** The live plan said to write the three Markdown files for Keep a folder
+synced under `$R/runs/<socket>/cwd/sync-folder/`. The configure form accepted the folder,
+but Check changes answered "That folder is inside Chatbook's own data directory. Pick a
+folder outside it, then Check again." and no review ever came: the run dir holds the
+profile's `config.toml` and `data/`, and the rule fences the whole profile tree, not only
+`data_dir`. The first "receipt" capture of the session was that refusal, named as a
+receipt, before the status line was read. Moving the folders to
+`$R/fixtures/<socket>/sync-folder/` (outside every run dir) let the same walk reach
+"3 safe · 0 need attention" and activate. The harness's own `seed_t4_sync_root.py` is not
+a counter-example: it writes its root straight into the state DB, which is why that seeded
+`VSync` root then reads "✕ Blocked · Next: Review settings" in Manage sync folders.
+
+**What to do.** Put any folder a live lasting-sync walk will activate OUTSIDE
+`$R/runs/<socket>/` (a `$R/fixtures/<socket>/` subfolder is fine), and read the
+configure form's status line before trusting a wait that only timed out.
+
 ## Isolate the profile before touching runtime state
 
 **What happened.** The runtime-policy state file (which records local vs. server mode)

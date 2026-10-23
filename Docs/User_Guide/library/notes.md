@@ -690,7 +690,9 @@ because Enter there goes back rather than creating anything.
 **Add from files…** first asks what relationship you want. Until you choose,
 the header names neither relationship — one heading, "Add files to Library
 notes.", over a status line that says nothing has been chosen yet, and its
-next action is to pick one.
+next action is to pick one. It opens on that chooser every time, whatever the
+previous Add from files or Manage sync folders step ended on; only a check or
+activation that is still running is shown instead, until it settles.
 
 Each option names the difference that matters most and is easiest to miss:
 **Import once** reproduces your folder structure as Library folders, while
@@ -1319,7 +1321,9 @@ The receipt is then on screen. Tab stays inside Import once throughout —
    again** instead. **Manage sync folders** appears in the notes toolbar once
    a root is active. The receipt reads "N applied · listed under Receipts" and
    names where to see them (task-32545; was "N applied · durable receipt
-   recorded"). Choosing **Back** returns to a Notes list that already
+   recorded"). The receipt's bar offers **Manage sync folders** and
+   **‹ Notes**; a second folder is set up from **Add from files…** again.
+   Choosing **‹ Notes** returns to a Notes list that already
    counts the synced notes and shows them under a **⇄ Sync managed** folder
    named after the display name — no restart needed (task-32518).
 
