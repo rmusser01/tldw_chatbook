@@ -146,6 +146,7 @@ jobs:
             Tests/Library/test_library_rag_answer_provider_resolution.py \
             Tests/Library/test_library_note_field_tidy.py \
             Tests/Chatbooks/test_chatbook_keywords_round_trip.py \
+            Tests/Utils/test_notes_filter_match.py \
             Tests/Library/test_library_media_source_link.py \
             Tests/Library/test_library_notes_canvas_pending_lookup.py \
             Tests/Architecture/test_notes_sync_binding_profile_commits.py \

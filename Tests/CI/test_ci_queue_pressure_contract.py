@@ -84,6 +84,10 @@ FAST_LANE_TARGETS = (
     # them; real tmp SQLite through the real creator and importer, about
     # four seconds.
     "Tests/Chatbooks/test_chatbook_keywords_round_trip.py",
+    # TASK-34000.12: the Library Notes list filter's matching rule as a
+    # table (any order, a partial last word, quotes for a phrase, FTS
+    # operators never honoured); pure, no Hypothesis, under a second.
+    "Tests/Utils/test_notes_filter_match.py",
     # TASK-34000.25: the ``[<title>](media://<uuid>)`` source line a note
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).

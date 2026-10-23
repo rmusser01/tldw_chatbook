@@ -32,7 +32,34 @@ from tldw_chatbook.Notes.note_folder_models import (
     join_normalized_folder_path,
     normalize_folder_name,
 )
-from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
+from tldw_chatbook.Utils.fts5_match_forms import build_notes_filter_match
+
+#: TASK-34000.12: the Notes list filter's "matching notes" CTE body. One leg
+#: per typed word (``_NOTES_FILTER_MATCH_LEG_SQL``), AND-ed: the word is in
+#: the title or body (``notes_fts``) OR in one of the note's live keywords
+#: (``keywords_fts`` through ``note_keywords``). Parameters only -- the
+#: expressions come from ``build_notes_filter_match`` and nothing else is
+#: ever interpolated; ``_notes_filter_match_sql(n)`` repeats the FIXED leg
+#: ``n`` times, so the statement text depends on the word COUNT alone.
+#: No index is added for this: the FTS legs are MATCH-driven and the
+#: keyword leg walks the existing ``idx_notekw_kw`` (plan pinned in
+#: ``Tests/Notes/test_note_folder_repository.py``).
+_NOTES_FILTER_MATCH_SQL = "SELECT n.id FROM notes AS n WHERE n.deleted = 0{legs}"
+_NOTES_FILTER_MATCH_LEG_SQL = """
+  AND ( n.rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)
+     OR n.id IN (SELECT nk.note_id FROM note_keywords AS nk
+                 JOIN keywords AS k ON k.id = nk.keyword_id
+                 WHERE k.deleted = 0
+                   AND k.id IN (SELECT rowid FROM keywords_fts
+                                WHERE keywords_fts MATCH ?)) )"""
+
+
+def _notes_filter_match_sql(expression_count: int) -> str:
+    """The filter CTE body for ``expression_count`` words (``2 * n`` params)."""
+    return _NOTES_FILTER_MATCH_SQL.format(
+        legs=_NOTES_FILTER_MATCH_LEG_SQL * max(1, int(expression_count))
+    )
+
 
 _FOLDER_COLUMNS = (
     "id, parent_id, name, normalized_name, path, normalized_path, version, deleted, "
@@ -785,8 +812,16 @@ class LocalNoteFolderRepository:
     ) -> NotePlacementPage:
         """Return one coherent exact page of content/path-matched placements.
 
+        The note leg is the Notes LIST filter's rule (TASK-34000.12,
+        ``build_notes_filter_match``): every typed word must appear in the
+        title, the body or one of the note's live keywords, in any order,
+        the last word as a prefix; a quoted input is one phrase. The folder
+        path leg (``instr`` on the normalized path), the Unfiled leg, the
+        order, the paging and the total are unchanged.
+
         Args:
-            query: Plain text matched against note FTS and normalized folder paths.
+            query: Plain text matched against note FTS, note keywords and
+                normalized folder paths.
             limit: Maximum placements to return.
             offset: Zero-based placement offset.
 
@@ -799,7 +834,7 @@ class LocalNoteFolderRepository:
         normalized_query = _normalize_folder_search_query(query)
         _validate_int_bound("limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE)
         _validate_int_bound("offset", offset, minimum=0)
-        fts_query = build_phrase_match_query(query)
+        match = build_notes_filter_match(query)
 
         with self.db.transaction() as cursor:
             if not normalized_query:
@@ -811,13 +846,17 @@ class LocalNoteFolderRepository:
                     next_offset=None,
                 )
 
-            if fts_query:
-                matching_notes_sql = (
-                    "SELECT n.id FROM notes_fts "
-                    "JOIN notes AS n ON n.rowid = notes_fts.rowid "
-                    "WHERE notes_fts MATCH ? AND n.deleted = 0"
+            if match is not None:
+                matching_notes_sql = _notes_filter_match_sql(len(match.expressions))
+                # each leg binds its expression twice: notes_fts, keywords_fts
+                query_params: tuple[object, ...] = (
+                    *[
+                        expression
+                        for expression in match.expressions
+                        for _ in (0, 1)
+                    ],
+                    normalized_query,
                 )
-                query_params: tuple[object, ...] = (fts_query, normalized_query)
             else:
                 matching_notes_sql = "SELECT id FROM notes WHERE 0"
                 query_params = (normalized_query,)

@@ -382,7 +382,7 @@ both stay closed until you choose to reopen one.
 
 | Control | What it does |
 |---|---|
-| "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
+| "Filter notes… (Enter)" | Type words in any order and press Enter; the last word may be the start of a word (`Lisb` finds "Trip planning: Lisbon"); every word must appear in the title, the body or one of the note's keywords; wrap words in double quotes to match them as an exact phrase. The status line then reads "filter: \<text\> · N results"; with no match it says "No notes match “\<text\>” in titles, bodies or keywords. Try fewer words, or clear the filter." |
 | "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
