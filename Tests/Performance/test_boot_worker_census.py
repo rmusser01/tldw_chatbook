@@ -144,8 +144,9 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ),
         ("build_worker", "console-changed-files"),
         ("load", "console-prompt-history"),
-        # Rail-preference persistence: observed on the FIRST boot of a fresh
-        # profile (initial state write); allowlisted, not asserted present.
+        # Rail-preference persistence: a one-time seed copied from an older
+        # record (a fresh profile's defaults are not written, TASK-36385);
+        # allowlisted, not asserted present.
         ("_save_console_rail_preferences", "default"),
         ("_prune_console_rail_preferences", "default"),
         ("_persist_sidebar_state_off_loop", "sidebar-state-persist"),

@@ -516,14 +516,19 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
                 selected_key, workspace_key
             )
 
+            # TASK-36385: copying a source record is saved once; a seed with no
+            # source only latches in memory, since absent reads as defaults.
+            expected_writes = (
+                [(selected_key.value, expected, False)] if source_snapshot else []
+            )
             assert seeded == expected
             assert records[selected_key.value] == expected
-            assert writes == [(selected_key.value, expected, False)]
+            assert writes == expected_writes
             for source_key, source_payload in source_snapshot.items():
                 assert records[source_key] == source_payload
 
             console._ensure_console_rail_scope_seed(selected_key, workspace_key)
-            assert writes == [(selected_key.value, expected, False)]
+            assert writes == expected_writes
 
         writes.clear()
         existing = {**defaults, "model_open": False}
@@ -577,7 +582,15 @@ async def test_console_rail_writes_cannot_finish_with_stale_seed(monkeypatch):
         await pilot.app.workers.wait_for_complete()
 
         shared_key = build_console_rail_preference_key(layout_scope="global")
-        app.app_config["console"] = {"rail_layout_scope": "global", "rail_state": {}}
+        # A source record to copy: a seed with none is not saved (TASK-36385).
+        context = console._workspace._current_console_workspace_context()
+        workspace_key = build_console_rail_preference_key(
+            workspace_id=context.active_workspace_id, layout_scope="workspace"
+        )
+        app.app_config["console"] = {
+            "rail_layout_scope": "global",
+            "rail_state": {workspace_key.value: {"left_open": True}},
+        }
         seed_started = threading.Event()
         release_seed = threading.Event()
         mutation_finished = threading.Event()

@@ -3,17 +3,22 @@
 Every older handoff test opens the wizard over a Console that is already
 mounted, so Console's "seed what is missing" rail-scope write never lands
 between stage and consume (lessons-live-verification, TASK-33001.5 entry).
-On a fresh profile that write advances the global config generation, and the
+On a fresh profile that write advanced the global config generation, and the
 old generation fence released a perfectly good handoff with "Provider settings
 changed before Console opened. Review setup and try again." (8 of 8 live runs,
 entry-exit-handoff-04). These tests start on Home so Console has never been
 mounted, stage the handoff exactly as Start chatting does, and then let the
 app's own wizard-result route open Console for the first time.
+
+TASK-36385 stopped that mount write (its defaults were never a change). The
+fence still meets other writes in that window, so
+``Tests/Wizards/test_first_run_setup_integration.py`` makes one by hand.
 """
 
 from __future__ import annotations
 
 import time
+import tomllib
 from collections.abc import Callable
 
 import pytest
@@ -24,7 +29,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import _test_cli_setting
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import (
-    get_runtime_config_snapshot,
+    get_cli_config_path,
     save_settings_to_cli_config,
 )
 from tldw_chatbook.Constants import TAB_CHAT
@@ -111,7 +116,6 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
             assert not any(isinstance(s, ChatScreen) for s in app.screen_stack)
-            staged_at = get_runtime_config_snapshot().generation
             assert SetupWizardContainer(app)._stage_console_first_chat_handoff()
             revision = _staged_revision(app)
 
@@ -125,9 +129,6 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
             console = app.screen
             await pilot.pause(1.0)
 
-            # The race this test exists for really happened: Console's first
-            # mount published a config write after the handoff was staged.
-            assert get_runtime_config_snapshot().generation > staged_at
             assert [text for text, severity in notices if severity == "warning"] == []
             assert not any("Provider settings changed" in text for text, _ in notices)
             await _wait_until(pilot, lambda: _handoff_status(app, revision) == "settled")
@@ -194,3 +195,39 @@ async def test_a_default_changed_after_start_chatting_names_the_model_in_use(
             assert "model-a" not in changed[0]
             shown = console._session._ensure_active_console_session_settings()
             assert shown.model == "model-b"
+
+
+def _saved_shared_rail_layout() -> dict:
+    data = tomllib.loads(get_cli_config_path().read_text(encoding="utf-8"))
+    rail_state = data.get("console", {}).get("rail_state", {})
+    return rail_state.get("console_rail_state:global:shared-layout-v1", {})
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_consoles_first_mount_leaves_config_alone_and_a_rail_toggle_saves(
+    request,
+) -> None:
+    """TASK-36385: mounting Console saved its default rail layout, which
+    rewrote config.toml and dropped its comments. A real toggle still saves."""
+    _persist_setup()
+    config_path = get_cli_config_path()
+    commented = b"# a note the user wrote\n" + config_path.read_bytes()
+    config_path.write_bytes(commented)
+    app = _build_test_app(first_run_setup_completed=True)
+
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            await pilot.pause(1.0)
+            assert config_path.read_bytes() == commented, (
+                "Console's mount rewrote config.toml"
+            )
+
+            assert await pilot.click("#console-rail-section-toggle-model")
+            await _wait_until(
+                pilot, lambda: _saved_shared_rail_layout().get("model_open") is True
+            )
