@@ -78,7 +78,12 @@ _BUDGETS: dict[str, int] = {
     # first-send modules, which must run in the post-UI-ready pass itself.
     # Re-measured 2026-10-20 on origin/dev 0fef489ece (app.py 5,707 there):
     # 5,710 -> 5,711.
-    "tldw_chatbook/app.py": 5711,
+    # 2026-10-23, TASK-34000.71 fix round 1 (owner decision: a fix over a
+    # size ratchet raises the row): 5711 -> 5712 (+1) -- the
+    # ``_notes_sync_runtime_lazy_start_task`` slot beside the start-task
+    # slot, so the Library's bounded settle wait can tell the task it
+    # scheduled from boot's own (M-1).
+    "tldw_chatbook/app.py": 5712,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -98,7 +103,12 @@ _BUDGETS: dict[str, int] = {
     # for the lazy non-forced start through boot's own start-task
     # bookkeeping (its docstring carries the deadlock it breaks), plus the
     # done-callback's no-screen-stack guard and two imports.
-    "tldw_chatbook/app_service_wiring.py": 3633,
+    # 2026-10-23, TASK-34000.71 fix round 1 (same owner decision): 3633 ->
+    # 3690 (+57) -- the entry point re-arms a failed or cancelled start
+    # while the owner still reports "starting" (M-2), tolerates a sync or
+    # Future-returning ``start`` (M-3), records the lazy task (M-1); three
+    # module helpers carry those predicates.
+    "tldw_chatbook/app_service_wiring.py": 3690,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved

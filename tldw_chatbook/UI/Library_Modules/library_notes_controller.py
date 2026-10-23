@@ -5750,17 +5750,32 @@ class LibraryNotesController:
         ``_NOTES_SYNC_START_SETTLE_SECONDS`` through a shield, so a timeout
         never cancels the start itself. A failed start is the done-callback's
         to log; here it only means the chooser reads the honest status.
+
+        Fix round 1. M-1: only the task the LAZY path scheduled is waited
+        on (``_notes_sync_runtime_lazy_start_task``) -- boot's own start is
+        repainted by its done-callback, so holding the screen pump for the
+        bound would buy nothing. M-4: the start being cancelled is read as
+        its status (return); this handler being cancelled is re-raised.
         """
+        app_instance = self.app_instance
         ensure_started = getattr(
-            self.app_instance, "ensure_notes_sync_runtime_started", None
+            app_instance, "ensure_notes_sync_runtime_started", None
         )
         task = ensure_started() if callable(ensure_started) else None
         if task is None or task.done():
+            return
+        if task is not getattr(
+            app_instance, "_notes_sync_runtime_lazy_start_task", None
+        ):
             return
         try:
             await asyncio.wait_for(
                 asyncio.shield(task), timeout=_NOTES_SYNC_START_SETTLE_SECONDS
             )
+        except asyncio.CancelledError:
+            if task.cancelled():
+                return
+            raise
         except Exception:  # noqa: BLE001 - the timeout, or the start's own failure
             return
     @on(Button.Pressed, "#library-notes-add-from-files")

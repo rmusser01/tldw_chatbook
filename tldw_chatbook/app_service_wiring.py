@@ -57,6 +57,7 @@ import asyncio
 import contextlib
 import functools  # noqa: F401 - retained original importing/patch slot
 import hashlib  # noqa: F401 - retained original importing/patch slot
+import inspect
 import os
 import threading
 import time
@@ -580,6 +581,34 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
     return row is not None
 
 
+def _task_ended_without_result(task: "asyncio.Task[None]") -> bool:
+    """True when ``task`` is done and was cancelled or raised (TASK-34000.71 M-2)."""
+
+    if not task.done():
+        return False
+    if task.cancelled():
+        return True
+    return task.exception() is not None
+
+
+def _owner_still_starting(owner: Any) -> bool:
+    """True when the owner's projection still reports ``"starting"``."""
+
+    snapshot = getattr(owner, "snapshot", None)
+    if not callable(snapshot):
+        return False
+    try:
+        return getattr(snapshot(), "status", None) == "starting"
+    except Exception:  # noqa: BLE001 - a double's projection must not crash the gate
+        return False
+
+
+async def _await_notes_sync_start(pending: Any) -> None:
+    """Await a non-coroutine awaitable ``start()`` result (TASK-34000.71 M-3)."""
+
+    await pending
+
+
 def _notes_sync_boot_start_evidence(app: Any) -> bool:
     """The TASK-21112 start gate, shared by start() and boot construction.
 
@@ -1097,29 +1126,57 @@ class ServiceWiringMixin(
         exactly like a boot-started one. Must be called on the event-loop
         thread: without a running loop nothing is scheduled.
 
+        Fix round 1:
+
+        - M-1: a task THIS path scheduled is also recorded on
+          ``_notes_sync_runtime_lazy_start_task``; the Library's bounded
+          settle wait applies only to that one, never to boot's own.
+        - M-2: a recorded task that ended with an exception or was cancelled
+          (a ``RecoveryRequired`` refusal from a paused producer, say) while
+          the owner still reports ``"starting"`` is the original defect in
+          another coat -- setup would stay inert for the session -- so one
+          call re-arms exactly one new start. Bounded: a permanently failing
+          start retries once per call (one per user action), never in a
+          loop, and a task that failed after the owner settled elsewhere is
+          left as history.
+        - M-3: ``start()`` may be a synchronous double; a non-awaitable
+          result schedules nothing (the docstring's "doubles are a no-op" is
+          then true in code), and an awaitable that is not a coroutine is
+          awaited through a wrapper.
+
         Returns:
             The start task (new or existing), or None when nothing was
             scheduled.
         """
         existing = getattr(self, "_notes_sync_runtime_start_task", None)
-        if existing is not None:
+        if existing is not None and not _task_ended_without_result(existing):
             return existing
         owner = self._read_notes_sync_runtime_owner_safe()
         start = getattr(owner, "start", None)
         if owner is None or not callable(start):
-            return None
+            return existing
+        if existing is not None and not _owner_still_starting(owner):
+            return existing
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return None
+            return existing
         lock = getattr(self, "_notes_sync_runtime_owner_lock", None)
         with lock if lock is not None else contextlib.nullcontext():
-            existing = getattr(self, "_notes_sync_runtime_start_task", None)
-            if existing is not None:
+            recorded = getattr(self, "_notes_sync_runtime_start_task", None)
+            if recorded is not existing:
+                # A racing caller already re-armed (or scheduled) under the
+                # lock; one new start per call is the bound.
+                return recorded
+            pending = start()
+            if not inspect.isawaitable(pending):
                 return existing
-            task = loop.create_task(start(), name="start_notes_sync_runtime")
+            if not inspect.iscoroutine(pending):
+                pending = _await_notes_sync_start(pending)
+            task = loop.create_task(pending, name="start_notes_sync_runtime")
             task.add_done_callback(self._observe_notes_sync_runtime_start)
             self._notes_sync_runtime_start_task = task
+            self._notes_sync_runtime_lazy_start_task = task
         return task
 
     def _build_rag_admin_services(self) -> None:
