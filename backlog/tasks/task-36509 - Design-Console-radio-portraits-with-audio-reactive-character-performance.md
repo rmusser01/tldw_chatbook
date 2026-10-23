@@ -13,6 +13,7 @@ labels:
 documentation:
 - Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md
 - backlog/decisions/242-console-radio-portrait-performance.md
+- Docs/superpowers/reviews/2026-10-23-console-radio-portraits-design-review.md
 ---
 
 ## Description
@@ -27,7 +28,7 @@ Define the first version of a living character portrait in the Console sidebar, 
 - [x] #2 The design defines the six-frame generation/import/preview/Apply workflow, safe ownership and persistence, compatibility, and provider capability boundaries.
 - [x] #3 A linked ADR records the new performance-artwork and speech-timing contracts, alternatives and consequences.
 - [x] #4 The spec has been checked for contradictions, placeholders, broken local links and scope, with future automated and live verification specified.
-- [ ] #5 The user has reviewed the written spec before implementation planning begins.
+- [ ] #5 The user has reviewed the written spec and acknowledged material review corrections before implementation planning begins.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,8 +67,25 @@ changed. The system Python was too old for the path validator; rerunning with
 the existing Python 3.12 virtual environment succeeded.
 
 Documentation-only work: no product implementation, migration, image generation,
-live audio, full test suite or implementation plan. User review remains pending;
-AC #5 is intentionally unchecked and this design task remains In Progress.
+live audio, full test suite or implementation plan. AC #5 remains unchecked and
+this design task remains In Progress pending acknowledgement of the revised spec.
+
+The user reviewed the original spec, then requested a source-anchored issue review
+before continuing. Docs/superpowers/reviews/2026-10-23-console-radio-portraits-design-review.md
+records six concrete gaps, all corrected in the spec and ADR where applicable:
+persisted local-source admission rather than unsaved artwork/numeric ID alone;
+explicit hands-free/guarded-preview/transport-pause contracts; committed
+performance-revision cache invalidation; separate source/device audio clocks and
+bounded observation; a raw silence gate independent of release smoothing; and
+offline six-pose alignment preview with disclosed provider request counts.
+The original feature scope and local-only portability decision are unchanged.
+Stdlib calculations show an allowed old smoothing interpretation could take
+138.6 ms (dBFS) or 443.0 ms (amplitude) before window/paint delay to close on a
+nonzero quiet background. These are design counterexamples, not a product fix
+or measured audible timing. Implementation planning has not started.
+Review-document checks pass for all four artifacts and 14 local links; full
+task-file readability and isolated TASK-36509 ID checks pass. Product code and
+live hardware/provider behavior remain untested because this is a design review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

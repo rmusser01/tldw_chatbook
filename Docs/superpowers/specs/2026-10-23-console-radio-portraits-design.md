@@ -1,7 +1,8 @@
 # Console radio portraits and audio-reactive character performance
 
 Date: 2026-10-23
-Status: Agreed in conversation; written spec awaiting user review
+Status: Revised after source review; awaiting acknowledgement before planning
+Revision: 2026-10-23 source-anchored review corrections; see the [review](../reviews/2026-10-23-console-radio-portraits-design-review.md)
 Task: [TASK-36509](../../../backlog/tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
 Decision: [ADR-242](../../../backlog/decisions/242-console-radio-portrait-performance.md)
 
@@ -37,6 +38,8 @@ existing seams, not claims that the new behavior has been implemented:
 | Character editing and expression generation | `UI/Screens/personas_screen.py`, `Widgets/Persona_Widgets/personas_character_editor_widget.py`, `Character_Chat/expression_generation.py` |
 | Image-reference capability and request validation | `Image_Generation/capabilities.py`, `Image_Generation/worker.py` |
 | Speech ownership and start/stop/failure | `Event_Handlers/TTS_Events/tts_events.py`, `Chat/console_speech.py` |
+| Manual/automatic Speak integration | `UI/Console_Modules/message.py` |
+| Hands-free utterance integration | `UI/Console_Modules/hands_free.py`, `Chat/reply_sentence_sequencer.py` |
 | Streaming output and format eligibility | `Audio/streaming_sink.py`, `TTS/pcm_stream.py` |
 | External file playback | `TTS/audio_player.py` |
 | Character rail geometry and full-size viewer | `UI/Screens/chat_screen.py`, `Widgets/Console/console_image_viewer_modal.py` |
@@ -114,21 +117,46 @@ mouth closure is promised. Silence/closure rules below describe prepared sets.
 
 ## Prepare portrait performance
 
-Expose the action beside artwork controls in the existing character editor. A
-saved character is required before applying a performance. The preparation view
-shows the captured source image and expression, six named pose slots, a live
+Expose the action beside artwork controls in the existing character editor. This
+first version prepares only saved, locally owned characters in the active local
+profile. Reuse the existing local-action/authority capture and revalidation gates;
+an integer character ID is not sufficient authority. Server-owned characters stay
+read-only, and profile/service replacement invalidates the whole draft and its
+Console cache. Revalidate authority when admitting each new provider request;
+already admitted work follows the cancellation caveat below.
+
+Preparation uses persisted, currently active artwork. If the editor has an unsaved
+replacement/removal of that portrait or an unpublished visual binding, require
+Save/Apply of that source first; never save it implicitly. Unrelated dirty text
+fields need not block preparation. This avoids spending generation requests on a
+portrait whose subsequent editor Cancel would discard the source. The preparation
+view shows the captured source image and expression, six named pose slots, a live
 preview, and Generate, Import/Replace, Regenerate selected, Apply and Cancel
 actions using existing component conventions.
 
-1. Capture the character/editor identity, resolved expression, source bytes/hash,
-   active visual binding/version where present, and current performance revision.
+1. Capture the exact local profile/service/database authority, character/editor
+   identity, resolved expression, persisted source bytes/hash, active visual
+   binding/version where present, and current performance revision. Keep the
+   original source digest as the attachment key. For an animated source, extract
+   its first fully composited frame through existing bounded validation to obtain
+   one still reference for generation; do not replace or rehash the original asset.
 2. Generate six poses from the captured portrait, or assign individual ready-made
    images to the six slots. Both paths populate the same disposable draft.
-3. Inspect the individual frames and the looping idle/blink preview. An explicit
+3. Inspect individual frames and a deterministic six-pose cycle at the actual
+   Console image-box size, with a toggle back to the source for comparison. This
+   offline preview exercises mouth/blink combinations without TTS and exposes
+   background or face-position jumps; equal pixel dimensions alone do not prove
+   alignment. Also provide the normal idle/blink preview. An explicit
    Play TTS sample action speaks a short fixed preview phrase through the selected
    character's existing TTS resolution and playback owner. It does not create a
-   conversation message or trigger automatic replies. It does not speak on opening
-   the view, and unavailable TTS does not prevent importing or applying artwork.
+   conversation message or trigger automatic replies. Use the existing guarded
+   app-owned utterance seam (`speak_guarded_utterance`), selected-character voice
+   resolution and destination-authority checks; do not fabricate a trusted
+   message snapshot. Expose only this preview's presentation owner. Closing,
+   cancelling, changing source or superseding the preview stops that exact owner
+   through the existing scoped stop path, never a bare global Stop that could
+   silence a newer request. It does not speak on opening the view, and unavailable
+   TTS does not prevent importing or applying artwork.
 4. Apply validates and atomically publishes all six frames. The existing artwork
    stays active throughout preparation. Cancel discards the draft.
 
@@ -139,7 +167,12 @@ text-only generation or silently select another provider. Reuse engine request,
 output, size, path and secret-handling validation. No API keys, source bytes or
 reference paths enter routine logs.
 
-Each request references the captured source and asks to preserve identity,
+The batch action says Generate 6 frames and discloses six image-edit requests,
+plus the selected destination, before submission. Regenerate selected submits one
+request. Do not silently regenerate successful draft slots or automatically retry
+a paid request after an uncertain provider outcome.
+
+Each request references the captured still source and asks to preserve identity,
 framing, pose, background and lighting, changing only mouth and eyelids for the
 named role. Dispatch sequentially and retain successful draft slots when another
 fails. Regeneration replaces only the chosen draft slot; it never publishes early.
@@ -174,6 +207,14 @@ revision. Each child owns one unique role, validated PNG bytes, dimensions and
 digest. One active set per character/expression is sufficient. Replacing it checks
 the expected revision and publishes the parent and all six frames in one existing
 database transaction. Do not write frame files beside immutable pack assets.
+
+Apply and Remove publish a local performance-revision invalidation only after the
+database transaction commits. Include the local authority, source identity/hash
+and performance revision (including an explicit absent-set identity) in the
+Console request/spec/preparation cache keys. A same-source replacement must become
+visible without changing session, reaction or portrait bytes. A failed transaction
+does not invalidate the visible set. Removed/replaced sets reject late preparation
+results and paints from their predecessor; no frame path queries SQLite.
 
 This is a schema change: allocate the next live schema version during
 implementation, increment `_CURRENT_SCHEMA_VERSION`, and add an executed SQL
@@ -216,10 +257,28 @@ override smoothing; closing does not wait for another text chunk or a release ra
 Only confirmed player pause/resume events change Paused status. Never offer resume
 semantics more precise than the actual player supports.
 
+The present `TTSPlaybackLifecycle` and Console message presentation accept
+generating/playing/stopped/failed, not paused. Do not feed a new paused string into
+those closed state machines. Carry confirmed transport pause/resume and progress
+in the optional presentation snapshot while keeping the existing completion and
+speech-admission state machines intact. No new pause/resume UI or transport
+capability is required by this feature.
+
 Manual Speak, automatic reply speech, and hands-free TTS use the same presentation
 contract. A hands-free reply has request ownership plus sequential utterance
 identity, so one sentence's late terminal signal cannot stop the next sentence's
 portrait. Preparing the next sentence cannot hide an already audible sentence.
+
+Hands-free `speak_utterance` currently accepts text plus `on_finished` and creates
+its own synthetic ID; it does not receive the message-owned playback lifecycle.
+Extend that entry and the existing generation/sink/file paths with an optional
+presentation owner/observer, captured by the hands-free caller from the exact
+reply, session, character authority and sequencer token. Report real start and
+terminal/progress through it, preserving cooldown bypass, quiet/failure handling,
+one-voice displacement, current voice/provider selection, and exactly-once
+`on_finished`. Do not reroute partial sentences through Manual Speak, whose
+trusted message snapshot requires a completed speakable message. Terminal cleanup
+still settles the exact owner even after its visible-session validator is stale.
 
 Preserve current manual and explicit/historical expression precedence. A manual
 reaction changes the mood without stopping audio; use its matching performance if
@@ -239,22 +298,46 @@ may continue or stop according to existing speech policy, but it cannot animate
 the new character. Replay of a message attributable to another character is
 status-only. Preview playback is scoped to its preparation view and cannot animate
 an unrelated Console portrait. Supersession, hide/show and unmount reject stale
-updates and release visual resources without adding an independent audio-stop rule.
+updates and release visual resources without adding an independent audio-stop rule
+for Console-owned speech. The disposable editor sample is the scoped-stop exception
+described above.
 
 ## Audio timing and mouth selection
 
 Derive the mouth from the audio being played, not text, estimated text duration,
 network chunk arrival or time since synthesis started. Extend the existing playback
 boundary with an ephemeral, coalesced presentation snapshot: owner identity,
-playback generation, confirmed state, monotonic output position, envelope level,
-and whether that level/timing is trustworthy. PCM buffers and audio contents do not
-cross into widgets, message metadata, logs or the database.
+playback generation, confirmed transport state, output-timed envelope level and
+timing validity. Keep separate counters for source frames consumed and device
+frames presented: an output underrun advances the device clock with inserted
+silence but consumes no source audio. The producer maps source-envelope windows
+to device-output ranges; the widget receives the level for the range actually
+audible now, not a source position advanced by wall-clock underrun duration.
+Include a monotonic sample/publication time for freshness, and invalidate the
+timing map on transport restart, discontinuity or generation replacement. PCM
+buffers and audio contents do not cross into widgets, message metadata, logs or
+the database.
 
 For the existing PCM sink, prepare bounded energy windows alongside queued audio
 outside the realtime callback. The callback exposes only minimal consumed-frame
 and output-timing state; it does no image, database, UI, blocking queue or provider
 work. Presentation follows output consumption and accounts for inserted underrun
-silence and available device timing. Do not fire a UI event for every sample.
+silence and available device timing. The callback currently ignores its backend
+time argument; use the available output-DAC timestamp with a validated mapping
+to the presentation monotonic clock instead of equating buffer fill with audible
+output. Partial blocks must map their zero-padded suffix to silence even if no
+public SinkUnderrun event was emitted. Missing/invalid device timing makes the
+mouth timing unavailable, rather than silently substituting callback wall time.
+Do not fire a UI event for every sample.
+
+Bound queued envelope metadata by the existing queued-audio capacity plus a
+one-second device-tail reserve, and keep only the latest presentation snapshot
+for readers. Retain a window until its mapped device-output range has passed the
+DAC timeline, not merely until source samples leave the software queue. A missing
+or larger unverified device horizon makes timing unavailable. Stop/replacement
+clears the old generation. Slow or hidden UI consumers must not grow a notification
+backlog, block audio, or cause samples to be dropped. Presentation failure disables
+its observer, not speech playback.
 
 For supported PCM16 WAV artifacts, reuse `sink_plan` and the existing PCM sink
 when available so complete-file speech can also have an observed sample clock.
@@ -266,13 +349,24 @@ does not qualify. If the sink/decoder/position capability is absent, retain work
 audio with the explicitly described visual fallback. Do not install a dependency
 or change a user's speech provider to obtain animation.
 
-Initial internal tuning uses 20 ms RMS windows in normalized dBFS, attack/release
-smoothing of 40/100 ms, closed below -45 dBFS, small from -45 to -24 dBFS, and open
-above -24 dBFS, with 3 dB hysteresis on downward changes. Digital silence always
-selects closed. Missing trustworthy progress for more than 100 ms also closes the
-mouth and empties the meter. These are initial signal-processing constants, not
-user controls; calibrate them against quiet, loud and pause-heavy real samples and
-record any adjustment in implementation notes and deterministic tests.
+Initial internal tuning uses 20 ms RMS windows converted to normalized dBFS.
+Digital zero, inserted underrun silence, confirmed pause and terminal states force
+closed immediately. Two consecutive raw windows below -45 dBFS (40 ms) close the
+mouth and empty the meter regardless of the smoothed value. Speech reopens on a
+raw window at or above -42 dBFS. This separate silence gate prevents the release
+filter from holding the mouth open over a quiet background or a natural pause.
+Missing trustworthy progress for more than 100 ms also forces closed.
+Closing resets the filter; reopening seeds it from the first finite speech window,
+so digital-zero negative infinity cannot enter its smoothing state.
+
+While the speech gate is open, smooth dBFS with exponential attack/release time
+constants of 40/100 ms using the window's actual duration. Select small or open at
+-24 dBFS, returning from open to small below -27 dBFS. These are initial internal
+signal-processing constants, not user controls. Calibrate against quiet, loud,
+nonzero-background and pause-heavy real samples; record adjustments in
+implementation notes and deterministic tests. A loud-to-quiet nonzero-background
+test must prove closure within the same 100 ms output-timeline target, including
+windowing and the next paint; a digital-zero-only test is insufficient.
 
 The presentation ceiling remains 30 paints/second. Target visible onset and
 silence response within 100 ms of the observed output timeline on a qualified
@@ -299,8 +393,9 @@ budget is free. Do not add an unbounded per-expression cache.
 
 Hidden avatars pause visual work. On reveal, sample the current speech owner and
 resume from its present state without replaying hidden time. Unmount, source
-change, geometry change, session change or motion-preference change invalidates
-outstanding preparation. Resizing may rebuild fitted renderables; it cannot restart
+change, performance revision/removal, local authority replacement, geometry change,
+session change or motion-preference change invalidates outstanding preparation.
+Resizing may rebuild fitted renderables; it cannot restart
 audio, change the selected expression or cause rail geometry oscillation.
 
 Respect existing Dynamic/Static, animations-enabled, Reduce motion, automatic
@@ -323,13 +418,13 @@ Implementation verification must cover:
 
 | Area | Required evidence |
 | --- | --- |
-| Artwork and migration | Six-role validation, normalized-size caps, transaction rollback, stale-source/revision rejection, legacy data unchanged, soft-delete/restore and permanent purge |
-| Draft workflow | Generate/import use the same draft; partial failure and per-slot retry; explicit TTS preview; Cancel; successful Apply; character switch during generation; fresh editor reopen |
-| Motion logic | Known waveform with silence, quiet/loud speech, hysteresis, exact zero, underrun, stale progress, independent blinking and immediate terminal closure |
-| Ownership | Manual Speak, automatic replies, hands-free sentence handoff, older-message replay/restore, preview isolation, cross-character replay, session switching and late events |
-| Output capability | Actual sink-consumption timeline, supported WAV artifact path, external-player timing refusal, sink failure/fallback without double audio, confirmed pause/resume |
+| Artwork and migration | Six-role validation, normalized-size caps, transaction rollback, persisted-source/save gate, local/server/profile authority isolation, stale-source/revision rejection, legacy data unchanged, soft-delete/restore and permanent purge |
+| Draft workflow | Generate/import use the same draft; disclosed six-call batch and one-slot retry; offline six-pose preview at Console size; partial failure; guarded/destination-checked TTS sample with exact-owner cancellation; Cancel; successful Apply; character switch during generation; fresh editor reopen |
+| Motion logic | Known waveform with exact zero and nonzero quiet background, measured silence-gate response, loud/small hysteresis, partial/full underrun, stale progress, independent blinking and immediate terminal closure |
+| Ownership | Manual Speak, automatic replies, optional hands-free observer plus unchanged exactly-once completion/voice selection, sentence handoff, older-message replay/restore, preview isolation, cross-character replay, session switching and late terminal acknowledgement |
+| Output capability | Distinct source/device clocks, output-DAC mapping and retained device-tail metadata, resumed speech after inserted silence, partial zero padding, bounded metadata and stalled-reader behavior, supported WAV artifact path, external-player timing refusal, sink failure/fallback without double audio, confirmed transport pause/resume without changing legacy state machines |
 | Mounted UI | Actual changed portrait pixels, mood retention, reduced/static motion, hide/show, resize, focus and narrow/tall rail stability with production CSS |
-| Persistence | Restart retains applied sets; remove restores original; full-profile backup/restore retains frames and retires stale presentation; portable formats unchanged |
+| Persistence | Restart retains applied sets; same-source Apply/Remove refreshes visible caches immediately after commit; stale predecessor workers cannot repaint; full-profile backup/restore retains frames and retires stale presentation; portable formats unchanged |
 | Static checks | Targeted lint/format/type checks as applicable, token governance, CSS bundle sync, migration packaging and Backlog guards |
 
 Live qualification uses an isolated profile, one real image-edit backend, imported
@@ -343,11 +438,15 @@ requested.
 
 ## Review status and next step
 
-The user approved the artwork workflow, radio framing and playback behavior in
-conversation and requested this written design. The local-storage choice, explicit
-portability limit, numerical tuning and concrete timing contract are now presented
-for review as part of the written spec. No product code, migrations, generation
-requests, audio runs or implementation plan have been produced for this feature.
+The user approved the artwork workflow, radio framing and playback behavior, then
+reviewed the written spec and requested a source-anchored issue review before
+continuing. The linked review records the original gaps and the targeted
+corrections now incorporated here. Local-only performance storage, ordinary
+portable exports, six roles and the agreed user-facing feature scope are retained.
+Revised authority, preview ownership, cache invalidation, hands-free lifecycle,
+output timing and silence-gate details are presented for acknowledgement before
+planning. No product code, migrations, generation requests, audio runs or
+implementation plan have been produced for this feature.
 
 After the user reviews this spec, use the writing-plans skill to create the
 implementation plan and atomic Backlog work. Every plan must link ADR-242 and
