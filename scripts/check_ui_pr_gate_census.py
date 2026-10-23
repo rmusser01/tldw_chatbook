@@ -495,11 +495,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # A static node (an AST walk, about 5-10 s with its private-profile child),
 # appended at the tail after TASK-35648's.
 # TASK-36360..36363 append48 nodes after the complete616-entry dev census.
-# TASK-36382 raised it by 7, to 623: four Tests/UI files no lane ran (focus
+# TASK-36382 raised it by 7: four Tests/UI files no lane ran (focus
 # contracts, Evals skill eval, the llama.cpp refresh gate, the CSS staleness
 # manifest) and three node ids of test_modal_wide_tier.py, whose whole file
 # is over the 60 s per-file rule. Appended at the tail.
-# TASK-36382 review raised it by 2, to 625: that file's two remaining static
+# TASK-36382 review raised it by 2: that file's two remaining static
 # contracts (the renamed-modal-id guard over every anchor, and the block
 # check), well under 1 s together. Appended at the tail.
 MINIMUM_FILES = 673
