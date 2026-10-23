@@ -3693,9 +3693,18 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
                 scan_started.is_set,
                 "initial root scan did not start",
             )
-            # TASK-36383: the painted row is fitted after a refresh, to 11
-            # cells at 60x20 ("Chec...otes"); read the copy it is fitted from.
+            # TASK-36383: a deferred refresh fits the painted row to 11 cells
+            # at 60x20 ("Chec...otes"). That width is a known defect: the
+            # always-shown "Review recovered pairing…" button takes 27 cells
+            # (QA N-37), and the 60x20 case of
+            # test_file_notes_linked_root_leads_with_friendly_folder_identity
+            # is red for it. TASK-34000.30 AC#10 covers the no-folder state
+            # only; this linked row is TASK-36513. Until that lands, check the
+            # row's copy and the tooltip set with it, neither of which the fit
+            # rewrites.
+            root_status = workspace.query_one("#file-notes-root-status", Static)
             assert "Checking" in workspace._root_status_summary
+            assert "Checking" in str(root_status.tooltip)
             authority = _static_text(workspace, "#file-notes-authority")
             assert "Checking folder" in authority
             assert "Folder: notes" in authority
