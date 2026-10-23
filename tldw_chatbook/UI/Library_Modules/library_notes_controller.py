@@ -3951,22 +3951,115 @@ class LibraryNotesController:
             group="library_note_link_picker",
         )
 
+    @staticmethod
+    def _library_note_caret_cell(body: NoteEditorTextArea) -> tuple[int, int] | None:
+        """The caret's screen cell, or ``None`` when it is not visible inside
+        the body's content region (scrolled off, or off the screen) -- the
+        R3-2 rule: a picker is never anchored to a caret the user cannot see.
+        """
+        try:
+            offset = body.cursor_screen_offset
+            content = body.content_region
+        except Exception:  # noqa: BLE001 - a detached body has no screen cell
+            return None
+        x, y = int(offset.x), int(offset.y)
+        if not (content.y <= y < content.bottom and content.x <= x <= content.right):
+            return None
+        return (x, y)
+
     def _anchor_library_note_link_picker(
         self, picker: LibraryNoteLinkPicker, body: NoteEditorTextArea
     ) -> None:
-        """Put the picker's top-left under the caret, inside the editor pane."""
+        """Put the picker's top-left under the caret, inside the editor pane,
+        or close it when the caret is not visible (R3-2)."""
         try:
             pane = self.query_one("#library-note-editor-region")
         except NoMatches:
             pane = body
-        def _caret_cell() -> tuple[int, int] | None:
-            try:
-                offset = body.cursor_screen_offset
-                return (int(offset.x), int(offset.y))
-            except Exception:  # noqa: BLE001 - a detached body has no screen cell
-                return None
+        cell = self._library_note_caret_cell(body)
+        if cell is None:
+            self._library_notes_link_picker_generation += 1
+            self._close_library_note_link_picker(body)
+            return
+        picker.reposition(
+            pane, cell=cell, cell_provider=lambda: self._library_note_caret_cell(body)
+        )
 
-        picker.reposition(pane, cell=_caret_cell(), cell_provider=_caret_cell)
+    #: Fix round 3 (R3-2): refreshes a resize chain may wait for the body's
+    #: geometry to stop changing before it judges the caret's visibility.
+    _LINK_PICKER_RESIZE_SETTLE_ROUNDS = 8
+
+    def _settle_library_note_link_picker_after_resize(
+        self, body: NoteEditorTextArea, attempts: int = 0
+    ) -> None:
+        """Step one of the resize chain: scroll the caret into view (Textual's
+        ``TextArea`` does not on a resize), then judge after the next refresh
+        with the body size this step saw."""
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not picker.is_open or picker.mode != "insert":
+            if picker is not None:
+                picker.resize_chains = max(0, picker.resize_chains - 1)
+            return
+        size = body.size
+        try:
+            body.scroll_cursor_visible()
+        except Exception:  # noqa: BLE001 - a detached body cannot scroll
+            pass
+        self.call_after_refresh(
+            partial(self._finish_library_note_link_picker_resize, body, size, attempts)
+        )
+
+    def _finish_library_note_link_picker_resize(
+        self, body: NoteEditorTextArea, size: Any, attempts: int
+    ) -> None:
+        """Step two: judge only once the body has stopped moving.
+
+        The shrink to 80 columns restages the Notes layout over several
+        refreshes; measured mid-restage the body was 6 columns wide with its
+        scroll reset, and a judge there read a visible caret as off-screen
+        and closed the picker before the final layout's own resize could
+        reopen it. While the body's size still differs from the one step one
+        saw, or its content region is degenerate, the chain goes round again
+        (bounded). Then: scroll the caret into view and judge in the same
+        tick -- anchor beside the visible caret, or close (a box the user
+        cannot see must never take Enter, R3-2).
+        """
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not picker.is_open or picker.mode != "insert":
+            if picker is not None:
+                picker.resize_chains = max(0, picker.resize_chains - 1)
+            return
+        content = body.content_region
+        transient = body.size != size or content.width < 4 or content.height < 1
+        if transient and attempts < self._LINK_PICKER_RESIZE_SETTLE_ROUNDS:
+            self.call_after_refresh(
+                partial(self._settle_library_note_link_picker_after_resize, body, attempts + 1)
+            )
+            return
+        picker.resize_chains = max(0, picker.resize_chains - 1)
+        self._reanchor_library_note_link_picker(body, scroll_caret_into_view=True)
+
+    def _reanchor_library_note_link_picker(
+        self, body: NoteEditorTextArea, *, scroll_caret_into_view: bool
+    ) -> None:
+        """Re-anchor the open insert-mode picker after a scroll or a resize.
+
+        Fix round 3. On a resize the caret is first scrolled into view
+        (Textual's ``TextArea`` does not do that itself, so the picker used
+        to follow an off-screen caret and take Enter invisibly, R3-2). On a
+        body scroll the user's scroll is honoured: the picker follows the
+        caret while the caret row is still on the body and closes once it
+        is not (R3-3). One anchor pass per refresh either way.
+        """
+        picker = self._library_note_link_picker_or_none()
+        if picker is None or not picker.is_open or picker.mode != "insert":
+            return
+        if scroll_caret_into_view:
+            try:
+                body.scroll_cursor_visible()
+            except Exception:  # noqa: BLE001 - a detached body cannot scroll
+                pass
+        self._anchor_library_note_link_picker(picker, body)
 
     async def _load_library_note_link_candidates(self, query: str, generation: int) -> None:
         """Ask the service for the rows and show them -- unless superseded.
@@ -4041,7 +4134,22 @@ class LibraryNotesController:
             body.link_picker_open = False
             return
         key = message.key
-        if key == "blur":
+        if key == "scroll":
+            # Fix round 3 (R3-3): follow the caret, or close once it is off.
+            # While a resize chain is settling, the scrolls are its own.
+            if picker.resize_chains == 0:
+                self._reanchor_library_note_link_picker(body, scroll_caret_into_view=False)
+        elif key == "resize":
+            # Fix round 3 (R3-2): a two-refresh settle chain. The shrink to
+            # 80 columns resizes the body TWICE (the terminal, then the
+            # compact restage); judged on the half-laid-out body, a caret the
+            # user would see read as off-screen and the picker closed for
+            # nothing. After the first refresh the caret is scrolled into
+            # view against the new geometry; after the second its
+            # visibility is judged and the box anchored -- or closed.
+            picker.resize_chains += 1
+            self.call_after_refresh(partial(self._settle_library_note_link_picker_after_resize, body))
+        elif key == "blur":
             # Fix round 1 (M-4): the focus left the body.
             self._library_notes_link_picker_generation += 1
             self._close_library_note_link_picker(body)
@@ -4121,15 +4229,21 @@ class LibraryNotesController:
         picker = self._library_note_link_picker_or_none()
         if picker is None or not picker.is_open or not picker.has_rows:
             return
+        index = int(getattr(event, "option_index", 0) or 0)
+        if picker.mode == "follow":
+            # Fix round 3 (R3-1): no load is ever in flight for the follow
+            # picker -- its rows are the note's own links -- so the
+            # stale-row guard below is INSERT mode's alone (it used to run
+            # first and swallow every follow-row click once the controller
+            # generation was non-zero).
+            picker.query_one(OptionList).highlighted = index
+            self.handle_library_note_follow_picker_key("enter")
+            return
         if picker.generation != self._library_notes_link_picker_generation:
             # Fix round 2 (R2-1): the clicked row belongs to a set a load in
             # flight is about to replace -- nothing is inserted.
             return
-        index = int(getattr(event, "option_index", 0) or 0)
         picker.query_one(OptionList).highlighted = index
-        if picker.mode == "follow":
-            self.handle_library_note_follow_picker_key("enter")
-            return
         body = self._library_note_body_or_none()
         if body is not None:
             self._accept_library_note_link_picker(body)
@@ -4267,7 +4381,11 @@ class LibraryNotesController:
         except NoMatches:
             return
         picker.show_candidates(
-            [LinkCandidate(note_id, label) for label, note_id in links], mode="follow"
+            [LinkCandidate(note_id, label) for label, note_id in links],
+            mode="follow",
+            # An honest stamp (R3-1): these rows are the note's own links,
+            # never a query's answer, so they are current by definition.
+            generation=self._library_notes_link_picker_generation,
         )
         picker.reposition(region)
 

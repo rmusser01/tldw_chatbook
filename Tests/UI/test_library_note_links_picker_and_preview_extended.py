@@ -647,3 +647,211 @@ async def test_a_held_enter_with_no_rows_keeps_the_picker_open_on_the_hint(tmp_p
         await pilot.press("enter")
         await _until(pilot, lambda: body.text == "[[Liszz\n", "the next Enter to be the editor's")
         await _until(pilot, lambda: not _picker_open(screen), "the picker to close")
+
+
+# ---------------------------------------------------------------------------
+# Fix round 3 pins
+# ---------------------------------------------------------------------------
+
+LONG_BODY = "\n".join(f"Line {i:03d} of the long body" for i in range(120))
+
+
+def _picker_geometry(app, screen):
+    picker = _picker_or_none(screen)
+    body = screen.query_one("#library-note-body", TextArea)
+    caret = body.cursor_screen_offset
+    region = picker.region
+    return {
+        "caret": (caret.x, caret.y),
+        "picker": tuple(region),
+        "covers": region.y <= caret.y < region.bottom,
+        "attached": region.y == caret.y + 1 or region.bottom == caret.y,
+        "inside_screen": region.x >= 0
+        and region.y >= 0
+        and region.right <= app.size.width
+        and region.bottom <= app.size.height,
+        "caret_visible": body.content_region.y <= caret.y < body.content_region.bottom,
+        "open": bool(picker.display),
+        "painted": _painted(app, screen, "#library-note-link-picker"),
+    }
+
+
+async def test_a_follow_picker_row_click_opens_the_link_after_the_body_was_touched(
+    tmp_path, monkeypatch
+) -> None:
+    """R3-1 (regression from R2-1): the stale-row guard ran before the
+    follow-mode branch, and the follow picker shows with generation 0 while
+    the controller's generation is non-zero after any body interaction --
+    so a mouse click on a follow row did nothing. Insert mode's guard is
+    untouched; follow mode opens the clicked link."""
+    app, profile = _app(tmp_path)
+    opened = _record_open_url(monkeypatch, app)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, TWO, profile.two_id)
+        # The user clicked into the body once (a caret move, no edit).
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        await pilot.press("end")
+        await pilot.pause(0.3)
+        assert screen._notes_controller._library_notes_link_picker_generation > 0
+        await _preview(screen, pilot, INDEX, app)
+        region = screen.query_one("#library-note-preview-region")
+        await _until(pilot, lambda: screen.focused is region, "Preview focus")
+        await pilot.press("enter")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", INDEX)
+        picker = _picker_or_none(screen)
+        offset = _painted_offset(app, picker.region, INDEX[:10])
+        assert offset is not None
+        await pilot.click(offset=offset)
+        await _armed_editor(screen, pilot, profile.index_id)
+        assert _title_value(screen) == INDEX
+        assert not _picker_open(screen)
+        assert opened == []
+
+
+async def test_a_shrink_that_scrolls_the_caret_off_screen_never_leaves_an_invisible_picker(
+    tmp_path, monkeypatch
+) -> None:
+    """R3-2: Textual's TextArea does not scroll the caret into view on a
+    resize. Caret on the last row, 160x45 -> 80x24: the re-anchor used to
+    follow the off-screen caret, the picker painted nothing but stayed open,
+    and Enter inserted a link invisibly. Ruling: scroll the caret into view
+    first; if it still is not visible, close the picker. Never accept from a
+    picker the user cannot see."""
+    from tldw_chatbook.Notes.note_import_plan_models import stored_note_link
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    note_id = profile.db.add_note("Long body", LONG_BODY)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Long body", note_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        await pilot.press("ctrl+end")
+        await pilot.pause(0.3)
+        await _type(pilot, "[[Lis")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        await pilot.resize_terminal(80, 24)
+        await _until(
+            pilot,
+            lambda: not _picker_open(screen)
+            or (
+                _picker_geometry(app, screen)["caret_visible"]
+                and _picker_geometry(app, screen)["inside_screen"]
+                and _picker_geometry(app, screen)["painted"]
+            ),
+            "the picker to close or to be visible beside a visible caret",
+            timeout=10.0,
+        )
+        geometry = _picker_geometry(app, screen)
+        assert geometry["caret_visible"], geometry
+        if geometry["open"]:
+            assert geometry["inside_screen"] and geometry["painted"] and not geometry["covers"], geometry
+            await pilot.press("enter")
+            # Row 0 for "Lis" is "Reading list" (rank ties, title order) --
+            # the highlighted row the user SEES is what Enter inserts.
+            expected_tail = stored_note_link("Reading list", profile.other_id)
+            await _until(
+                pilot,
+                lambda: body.document.get_line(body.document.line_count - 1).endswith(expected_tail),
+                "the visible picker to insert its highlighted row",
+            )
+        else:
+            # Closed: Enter is the editor's own newline, nothing is inserted.
+            await pilot.press("enter")
+            await _until(pilot, lambda: body.document.line_count == 121, "the newline")
+            assert "note://" not in body.text
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause(0.3)
+
+
+async def test_a_body_scroll_re_anchors_or_closes_the_picker_and_idle_makes_no_passes(
+    tmp_path, monkeypatch
+) -> None:
+    """R3-3: at 80x24 with the caret mid-body, a wheel scroll of +3 left the
+    picker where it was -- covering the caret row. The picker follows the
+    caret on a body scroll; when the scroll takes the caret off the body it
+    closes. Idle costs nothing: 0 anchor passes while nothing changes."""
+    from tldw_chatbook.Widgets.Library.library_note_link_picker import LibraryNoteLinkPicker
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    note_id = profile.db.add_note("Long body", LONG_BODY)
+    passes = {"n": 0}
+    real_pass = LibraryNoteLinkPicker._anchor_pass
+
+    def _counted(self):
+        passes["n"] += 1
+        return real_pass(self)
+
+    monkeypatch.setattr(LibraryNoteLinkPicker, "_anchor_pass", _counted)
+    async with app.run_test(size=COMPACT) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Long body", note_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        body.move_cursor((60, 0), center=True)
+        await pilot.pause(0.3)
+        await _type(pilot, "[[Lis")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        await pilot.pause(0.4)
+        before = _picker_geometry(app, screen)
+        assert before["attached"] and not before["covers"], before
+        # Idle: nothing changes, no anchor pass.
+        idle_start = passes["n"]
+        await pilot.pause(1.0)
+        assert passes["n"] == idle_start, f"{passes['n'] - idle_start} anchor passes while idle"
+        # A scroll that keeps the caret visible: the picker follows it. (+1,
+        # not the reviewer's +3: with the caret two rows under the body's
+        # top border, +3 puts it ON the border row -- not visible -- and
+        # closing is then the right answer, pinned below.)
+        body.scroll_relative(y=1, animate=False)
+        await _until(
+            pilot,
+            lambda: _picker_geometry(app, screen)["attached"]
+            and not _picker_geometry(app, screen)["covers"]
+            and _picker_geometry(app, screen)["caret"] != before["caret"],
+            f"the picker to follow the caret after a +1 scroll (was {before})",
+        )
+        after = _picker_geometry(app, screen)
+        assert after["caret_visible"] and after["open"], after
+        # A scroll that takes the caret off the body: the picker closes.
+        body.scroll_relative(y=12, animate=False)
+        await _until(pilot, lambda: not _picker_open(screen), "the picker to close once the caret is off the body")
+        assert body.link_picker_open is False
+        assert "[[Lis" in body.text and "note://" not in body.text
+
+
+async def test_the_follow_picker_sits_at_the_preview_top_left_after_a_resize(
+    tmp_path, monkeypatch
+) -> None:
+    """R3-4: follow mode passes no cell provider, so a re-anchor kept the
+    160x45 cell -- after 160x45 -> 80x24 the follow picker sat 40 cells right
+    of the Preview's top-left. It is recomputed from the Preview region: the
+    box sits one cell in and one row down from the region's top-left (the
+    round-1 placement), at every size."""
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        await _open_note(screen, pilot, TWO, profile.two_id)
+        await _preview(screen, pilot, INDEX, app)
+        region = screen.query_one("#library-note-preview-region")
+        await _until(pilot, lambda: screen.focused is region, "Preview focus")
+        await pilot.press("enter")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", INDEX)
+        picker = _picker_or_none(screen)
+        for size in ((80, 24), SIZE, (80, 24)):
+            await pilot.resize_terminal(*size)
+            await _until(
+                pilot,
+                lambda: picker.region.x == region.region.x + 1
+                and picker.region.y == region.region.y + 1,
+                f"the follow picker at the Preview's top-left after {size} "
+                f"(picker {picker.region}, preview {region.region})",
+                timeout=10.0,
+            )
+            assert INDEX in _painted(app, screen, "#library-note-link-picker")
+        await pilot.resize_terminal(*SIZE)
