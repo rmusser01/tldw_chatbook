@@ -11975,7 +11975,13 @@ def legacy_human_config(tmp_path, monkeypatch):
 
 
 class TestBulkLibraryActions:
-    """F-040: the library pane's mark set drives bulk delete/export."""
+    """F-040: the library pane's mark set drives bulk delete/export.
+
+    Re-pinned for B2a (TASK-33910.3, spec 1.5.5, 3.6, 3.7): on dev the marks
+    retargeted the Inspector's Delete and Export JSON at the marked rows; since
+    B2a those act on the open item only, and the marks bar under the list
+    carries bulk Export and Delete, through the one delete modal (R32).
+    """
 
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -12007,9 +12013,12 @@ class TestBulkLibraryActions:
             await pilot.pause()
         return screen
 
-    async def test_marks_retarget_delete_and_export_affordances(
+    async def test_marks_show_bulk_actions_in_the_marks_bar_not_the_inspector(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
+        """Was test_marks_retarget_delete_and_export_affordances (dev's F-040
+        retargeting, which B2a retires): marks change none of the Inspector's
+        gates, and the marks bar shows the count, Export and Delete."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._mount_with_marks(pilot, (0, 1))
@@ -12017,15 +12026,22 @@ class TestBulkLibraryActions:
             delete = inspector.query_one("#personas-delete", Button)
             export_json = inspector.query_one("#personas-export-json", Button)
             export_png = inspector.query_one("#personas-export-png", Button)
+            # F-031 auto-selected row 1: the Inspector keeps its selection gates.
+            assert screen.state.selected_entity_id == "1"
             assert delete.disabled is False
-            assert delete.tooltip == "Delete the 2 marked items."
+            assert delete.tooltip is None
             assert export_json.disabled is False
-            assert export_json.tooltip == "Export the 2 marked items as JSON."
-            assert export_png.disabled is True
-            assert export_png.tooltip == "Bulk export is JSON only."
-            # Clearing the marks restores the selection-owned gates.
+            assert export_png.disabled is False
+            bar = screen.query_one("#personas-library-marks")
+            assert bar.display is True
+            count = screen.query_one("#personas-library-marks-count", Static)
+            assert "2 marked" in str(count.render())
+            assert screen.query_one("#personas-library-marks-export", Button).display
+            assert screen.query_one("#personas-library-marks-delete", Button).display
+            # Clearing the marks hides the bar; the Inspector is unchanged.
             screen.query_one("#personas-library-pane").clear_marks()
             await pilot.pause()
+            assert bar.display is False
             assert export_png.disabled is False
             assert delete.tooltip is None
 
@@ -12051,8 +12067,8 @@ class TestBulkLibraryActions:
         )
         confirm_calls: list[str] = []
 
-        async def _confirm(name: str) -> bool:
-            confirm_calls.append(name)
+        async def _confirm(copy) -> bool:
+            confirm_calls.append(copy.title)
             return True
 
         app = PersonasTestApp(mock_app_instance)
@@ -12060,12 +12076,12 @@ class TestBulkLibraryActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._mount_with_marks(pilot, (0, 1))
             screen._confirm_delete = _confirm
-            screen.query_one("#personas-delete", Button).press()
+            screen.query_one("#personas-library-marks-delete", Button).press()
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             # One confirm for the whole batch; each item deleted once.
-            assert confirm_calls == ["2 characters"]
+            assert confirm_calls == ["Delete 2 marked"]
             assert sorted(deleted) == [("1", 1), ("2", 1)]
             assert not visible_item_ids(screen)
             assert screen.state.selected_entity_id is None
@@ -12088,7 +12104,7 @@ class TestBulkLibraryActions:
             lambda: [dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)],
         )
 
-        async def _confirm(name: str) -> bool:
+        async def _confirm(copy) -> bool:
             return True
 
         app = PersonasTestApp(mock_app_instance)
@@ -12096,7 +12112,7 @@ class TestBulkLibraryActions:
             # F-031 auto-selected row 1; only row 2 is marked for deletion.
             screen = await self._mount_with_marks(pilot, (1,))
             screen._confirm_delete = _confirm
-            screen.query_one("#personas-delete", Button).press()
+            screen.query_one("#personas-library-marks-delete", Button).press()
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -12117,7 +12133,7 @@ class TestBulkLibraryActions:
             screen = await self._mount_with_marks(pilot, (0, 1))
             screen._export_character_json_sync = _fake_export
             pilot.app.push_screen_wait = AsyncMock(return_value=str(tmp_path))
-            screen.query_one("#personas-export-json", Button).press()
+            screen.query_one("#personas-library-marks-export", Button).press()
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -12150,7 +12166,7 @@ class TestBulkLibraryActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._mount_with_marks(pilot, (0, 1))
             pilot.app.push_screen_wait = AsyncMock(side_effect=_fake_push_screen_wait)
-            screen.query_one("#personas-export-json", Button).press()
+            screen.query_one("#personas-library-marks-export", Button).press()
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()

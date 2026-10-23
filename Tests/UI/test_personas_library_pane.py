@@ -501,7 +501,13 @@ async def test_m_key_marks_rows_and_posts_marks_changed():
         assert not item_at(pilot.app.screen, 0).painted_mark
 
 
-async def test_marks_prune_when_rows_vanish_on_refresh():
+async def test_marks_survive_rows_vanishing_on_refresh():
+    """A refresh that hides a marked row keeps the mark (spec 1.5.5).
+
+    On dev a refresh pruned marks to the rendered rows, so a search or a page
+    change dropped them (RP-039); since frame slice B2a marks are kept by id
+    and only a delete removes one.
+    """
     received = []
 
     class CaptureApp(LibraryPaneApp):
@@ -519,17 +525,25 @@ async def test_marks_prune_when_rows_vanish_on_refresh():
         await pilot.press("m")
         await pilot.pause()
         assert received[-1] == (("character", "1", "Detective Sam"),)
-        # A refresh that no longer contains the marked row drops the mark.
+        # A refresh that no longer contains the marked row keeps the mark.
         await pane.update_rows(
             (LibraryRow(item_id="2", kind="character", name="Lab Assistant"),),
             total=1,
             noun="characters",
         )
         await pilot.pause()
-        assert received[-1] == ()
+        assert received[-1] == (("character", "1", "Detective Sam"),)
+        await _two_character_rows(pane)
+        await pilot.pause()
+        assert item_at(pilot.app.screen, "character:1").marked
 
 
-async def test_marks_clear_on_mode_switch():
+async def test_marks_are_kept_per_kind_on_mode_switch():
+    """A kind switch shows that kind's marks and keeps the others (spec R16).
+
+    On dev a mode switch cleared every mark; since frame slice B2a marks are
+    kept per kind for the visit and cleared only when the visit ends.
+    """
     received = []
 
     class CaptureApp(LibraryPaneApp):
@@ -550,6 +564,9 @@ async def test_marks_clear_on_mode_switch():
         pane.set_mode("dictionaries")
         await pilot.pause()
         assert received[-1] == ()
+        pane.set_mode("characters")
+        await pilot.pause()
+        assert received[-1] == (("character", "2", "Lab Assistant"),)
 
 
 async def test_s_key_cycles_sort_only_when_sort_applies():

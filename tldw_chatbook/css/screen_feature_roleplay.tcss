@@ -484,3 +484,23 @@ $ds-conversation-menu-width: 30;
     padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
 }
+
+/* Frame slice B2a: the marks bar (spec 1.5.5), the items pane's bottom row
+   while marks exist. Its words and actions size to their labels; the bar
+   degrades its text by width (roleplay_frame_state.marks_bar_view), never by
+   clipping. */
+#personas-library-marks {
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#personas-library-marks-count,
+.personas-library-marks-sep,
+.personas-library-marks-action {
+    width: auto;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}

@@ -746,6 +746,8 @@ class MarksBarView:
     count_tooltip: str
     labels: tuple[str, ...]
     separator: str
+    #: The action each label belongs to (``export``, ``delete``, ``clear``).
+    actions: tuple[str, ...]
 
 
 def marks_bar_view(
@@ -755,33 +757,42 @@ def marks_bar_view(
 
     Full form ``✓ 2 marked · Export… · Delete… · Clear esc``. When it does not
     fit the bar degrades in a fixed order: the separators and the ``esc`` hint
-    go, then ``marked``, then the hidden count; the actions never drop (the
-    tooltip keeps the full count). Export applies to characters and personas.
+    go, then ``marked``, then the hidden count (the tooltip keeps the full
+    count). Narrower still, whole actions drop and none is ever cut: Clear
+    first (Escape on the list clears the marks too), then Export; then the
+    count yields to Delete (it moves into Delete's tooltip, empty
+    ``count_text``). Delete never drops while marks exist: it is the bulk
+    path (R32). ``width`` is the bar's own content width. Export applies to
+    characters and personas.
     """
     if count <= 0:
         return None
     mark = resolve_glyph(_MARK_GLYPH)
     dot = f" {resolve_glyph(_SEPARATOR)} "
     hidden_part = f" ({hidden} hidden)" if hidden else ""
-    long_labels = (
-        ("Export…", "Delete…", "Clear esc") if can_export else ("Delete…", "Clear esc")
-    )
-    short_labels = ("Export", "Delete", "Clear") if can_export else ("Delete", "Clear")
+    actions = ("export", "delete", "clear") if can_export else ("delete", "clear")
+    long_labels = {"export": "Export…", "delete": "Delete…", "clear": "Clear esc"}
+    short_labels = {"export": "Export", "delete": "Delete", "clear": "Clear"}
     tooltip = f"{count} marked" + (
         f", {hidden} hidden by the search or tag" if hidden else ""
     )
+    short = f"{mark} {count}"
     ladder = (
-        (f"{mark} {count} marked{hidden_part}", long_labels, dot),
-        (f"{mark} {count} marked{hidden_part}", short_labels, " "),
-        (f"{mark} {count}{hidden_part}", short_labels, " "),
-        (f"{mark} {count}", short_labels, " "),
+        (f"{short} marked{hidden_part}", actions, long_labels, dot),
+        (f"{short} marked{hidden_part}", actions, short_labels, " "),
+        (f"{short}{hidden_part}", actions, short_labels, " "),
+        (short, actions, short_labels, " "),
+        (short, tuple(a for a in actions if a != "clear"), short_labels, " "),
+        (short, ("delete",), short_labels, " "),
     )
-    for text, labels, separator in ladder:
+    for text, shown, names, separator in ladder:
+        labels = tuple(names[action] for action in shown)
         cells = cell_len(text) + sum(cell_len(separator + label) for label in labels)
         if cells <= width:
-            return MarksBarView(text, tooltip, labels, separator)
-    text, labels, separator = ladder[-1]
-    return MarksBarView(text, tooltip, labels, separator)
+            return MarksBarView(text, tooltip, labels, separator, shown)
+    # Too narrow for the count beside Delete: the count yields (its tooltip
+    # moves onto Delete), never Delete, even narrower than its own label.
+    return MarksBarView("", tooltip, (short_labels["delete"],), "", ("delete",))
 
 
 @dataclass(frozen=True)

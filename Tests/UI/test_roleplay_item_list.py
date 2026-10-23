@@ -25,6 +25,8 @@ from Tests.UI.roleplay_frame_harness import (
     first_list_item,
     highlighted_item_id,
     item_at,
+    painted_option_rows,
+    painted_rows,
     select_roleplay_item,
     visible_item_ids,
 )
@@ -34,6 +36,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
     RoleplayItemList,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
+    PersonaActionRequested,
     PersonaEntitySelected,
     PersonaMarksChanged,
 )
@@ -394,7 +397,9 @@ def test_hidden_marks_count_only_while_a_filter_narrows_the_list():
         (41, "✓ 3 marked (2 hidden)", ("Export", "Delete", "Clear"), " "),
         (35, "✓ 3 (2 hidden)", ("Export", "Delete", "Clear"), " "),
         (24, "✓ 3", ("Export", "Delete", "Clear"), " "),
-        (12, "✓ 3", ("Export", "Delete", "Clear"), " "),
+        (22, "✓ 3", ("Export", "Delete"), " "),
+        (12, "✓ 3", ("Delete",), " "),
+        (9, "", ("Delete",), ""),
     ],
 )
 def test_marks_bar_degrades_in_a_fixed_order(
@@ -406,7 +411,76 @@ def test_marks_bar_degrades_in_a_fixed_order(
         expected_labels,
         expected_separator,
     )
+    assert view.actions == tuple(
+        label.split()[0].rstrip("…").lower() for label in expected_labels
+    )
     assert view.count_tooltip == "3 marked, 2 hidden by the search or tag"
+
+
+@pytest.mark.parametrize("can_export", [True, False])
+def test_marks_bar_never_needs_more_cells_than_it_has(can_export):
+    """Spec 1.5.5: the bar degrades by width; an action it shows is never cut.
+
+    Below the narrowest three-action form whole actions drop, Clear first
+    (Escape on the list clears too), then Export; then the count yields, so
+    Delete never leaves the bar while marks exist. No form is the count
+    alone: that left no bulk path at all at 80x24 (Task 5 review).
+    """
+    every = ("export", "delete", "clear") if can_export else ("delete", "clear")
+    for width in range(cell_len("Delete"), 61):
+        view = frame_state.marks_bar_view(12, 0, width, can_export=can_export)
+        cells = cell_len(view.count_text) + sum(
+            cell_len(view.separator + label) for label in view.labels
+        )
+        assert cells <= width, (width, view)
+        assert len(view.actions) == len(view.labels)
+        assert "delete" in view.actions, (width, view)
+        if "clear" in view.actions:
+            assert view.actions == every
+    narrowest = frame_state.marks_bar_view(12, 0, 11, can_export=can_export)
+    assert (narrowest.count_text, narrowest.actions) == ("✓ 12", ("delete",))
+
+
+@pytest.mark.parametrize("count", [10, 12, 100])
+def test_the_count_yields_before_delete_at_ten_cells(count):
+    """80x24 gives the bar 10 content cells, and ``✓ 10 Delete`` needs 11.
+
+    The count moves into Delete's tooltip, so bulk Delete stays reachable
+    (the R32 path). The Task 5 review found the bar showing the count alone
+    at 10 marks and more, with no action.
+    """
+    view = frame_state.marks_bar_view(count, 0, 10, can_export=True)
+    assert (view.count_text, view.labels, view.separator, view.actions) == (
+        "",
+        ("Delete",),
+        "",
+        ("delete",),
+    )
+    assert view.count_tooltip == f"{count} marked"
+    # Given exactly the cells the count and Delete need, the count comes back.
+    roomy = frame_state.marks_bar_view(
+        count, 0, cell_len(f"✓ {count} Delete"), can_export=True
+    )
+    assert (roomy.count_text, roomy.actions) == (f"✓ {count}", ("delete",))
+
+
+def test_the_count_yields_before_delete_in_ascii_mode(ascii_mode):
+    """ASCII mode's mark is ``[x]``: ``[x] 2 Delete`` needs 12 cells, not 10."""
+    assert frame_state.marks_bar_view(2, 0, 12, can_export=True).count_text == "[x] 2"
+    view = frame_state.marks_bar_view(2, 1, 10, can_export=True)
+    assert (view.count_text, view.labels, view.actions) == (
+        "",
+        ("Delete",),
+        ("delete",),
+    )
+    assert view.count_tooltip == "2 marked, 1 hidden by the search or tag"
+
+
+def test_delete_never_drops_while_marks_exist():
+    """Narrower than ``Delete`` itself the bar still offers Delete alone."""
+    for width in range(cell_len("Delete")):
+        view = frame_state.marks_bar_view(3, 0, width, can_export=True)
+        assert (view.count_text, view.actions) == ("", ("delete",)), (width, view)
 
 
 def test_marks_bar_is_absent_without_marks_and_drops_export_for_books():
@@ -414,6 +488,7 @@ def test_marks_bar_is_absent_without_marks_and_drops_export_for_books():
     view = frame_state.marks_bar_view(2, 0, 60, can_export=False)
     assert view.count_text == "✓ 2 marked"
     assert view.labels == ("Delete…", "Clear esc")
+    assert view.actions == ("delete", "clear")
 
 
 # ---- the one delete modal (R32) ----
@@ -813,3 +888,136 @@ async def test_set_sort_label_and_set_tag_label():
         pane.set_tag_label("Tag: villain")
         assert str(app.query_one("#personas-library-sort").label) == "Sort: Recent"
         assert str(app.query_one("#personas-library-tag").label) == "Tag: villain"
+
+
+# ==== Marks by id and the marks bar (spec 1.5.5; B2a plan Task 5) ====
+
+
+class _MarksHost(_PaneHost):
+    """The pane wide enough for the marks bar's full form (spec 1.5.5)."""
+
+    CSS = "#personas-library-pane { width: 60; }"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.actions: list[str] = []
+
+    def on_persona_action_requested(self, message: PersonaActionRequested) -> None:
+        self.actions.append(message.action)
+
+
+def _bar_text(pilot) -> str:
+    """The marks bar's row exactly as painted ("" while it is hidden)."""
+    bar = pilot.app.query_one("#personas-library-marks")
+    if not bar.display:
+        return ""
+    region = bar.content_region
+    row = painted_rows(pilot.app.screen)[region.y]
+    return row[region.x : region.right].rstrip()
+
+
+async def _mark(pilot, *option_ids: str) -> None:
+    for option_id in option_ids:
+        await select_roleplay_item(pilot, pilot.app.screen, option_id, load=False)
+        await pilot.press("m")
+    await pilot.pause()
+
+
+async def test_the_marks_bar_shows_only_while_marks_exist():
+    async with _MarksHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 10))
+        assert _bar_text(pilot) == ""
+        item_list.focus()
+        await _mark(pilot, "character:2")
+        assert _bar_text(pilot) == "✓ 1 marked · Export… · Delete… · Clear esc"
+        await _mark(pilot, "character:2")
+        assert _bar_text(pilot) == ""
+
+
+async def test_marks_survive_a_search_and_count_the_hidden_ones():
+    """AC#5: marks are kept by id; a filter that hides two says so."""
+    async with _MarksHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 10))
+        item_list.focus()
+        await _mark(pilot, "character:1", "character:2", "character:3")
+        await pane.update_rows(_rows(3, 10), total=10, noun="characters", filtered=True)
+        await pilot.pause()
+        assert _bar_text(pilot).startswith("✓ 3 marked (2 hidden) · Export…")
+        assert item_at(pilot.app.screen, "character:3").marked
+        await pane.update_rows(_rows(1, 10), total=10, noun="characters")
+        await pilot.pause()
+        assert _bar_text(pilot).startswith("✓ 3 marked · Export…")
+        assert [item_at(pilot.app.screen, i).marked for i in range(4)] == [
+            True,
+            True,
+            True,
+            False,
+        ]
+
+
+async def test_the_marks_bar_takes_the_bottom_row_and_moves_no_row_above_it():
+    """Spec 1.5.5 / I10: the bar appears below the list; no row above it moves."""
+    async with _MarksHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 10))
+        before = painted_option_rows(item_list)
+        item_list.focus()
+        await _mark(pilot, "character:1")
+        bar = pilot.app.query_one("#personas-library-marks")
+        assert bar.region.y == item_list.region.bottom
+        assert bar.region.height == 1
+        assert bar.region.bottom <= pane.content_region.bottom
+        after = painted_option_rows(item_list)
+        assert {i: before[i] for i in after} == after
+
+
+async def test_marks_are_kept_per_kind_across_a_kind_switch():
+    async with _MarksHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 10))
+        item_list.focus()
+        await _mark(pilot, "character:4")
+        pane.set_mode("lore")
+        await pane.update_rows(_rows(1, 3, kind="lore"), total=3, noun="lore books")
+        await pilot.pause()
+        assert _bar_text(pilot) == ""
+        assert pilot.app.marks[-1] == ()
+        pane.set_mode("characters")
+        await pane.update_rows(_rows(1, 10), total=10, noun="characters")
+        await pilot.pause()
+        assert _bar_text(pilot).startswith("✓ 1 marked")
+        assert pilot.app.marks[-1] == (("character", "4", "Row 0004"),)
+
+
+async def test_books_offer_no_bulk_export():
+    async with _MarksHost().run_test(size=(120, 36)) as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        pane.set_mode("lore")
+        _pane, item_list = await _host(pilot, _rows(1, 3, kind="lore"))
+        item_list.focus()
+        await _mark(pilot, "lore:2")
+        assert _bar_text(pilot) == "✓ 1 marked · Delete… · Clear esc"
+
+
+async def test_export_and_delete_post_their_intents():
+    async with _MarksHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 10))
+        item_list.focus()
+        await _mark(pilot, "character:1")
+        assert await pilot.click("#personas-library-marks-export")
+        assert await pilot.click("#personas-library-marks-delete")
+        await pilot.pause()
+        assert pilot.app.actions == ["export_marked", "delete_marked"]
+
+
+async def test_clear_hides_the_bar_and_focus_lands_on_the_list():
+    """I1: the bar hides under its own focused button; focus goes to the list."""
+    async with _MarksHost().run_test(size=(120, 36)) as pilot:
+        _pane, item_list = await _host(pilot, _rows(1, 10))
+        item_list.focus()
+        await _mark(pilot, "character:1", "character:2")
+        clear = pilot.app.query_one("#personas-library-marks-clear")
+        clear.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _bar_text(pilot) == ""
+        assert not item_list.marked_ids()
+        assert pilot.app.focused is item_list

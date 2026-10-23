@@ -246,6 +246,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
     LibraryRow,
     PersonasLibraryPane,
     RoleplayItemList,
+    option_id_for,
 )
 from ...Widgets.Persona_Widgets.personas_messages import (
     ActorPackImportRequested,
@@ -5323,13 +5324,13 @@ class PersonasScreen(BaseAppScreen):
 
     @on(PersonaMarksChanged)
     def _handle_marks_changed(self, message: PersonaMarksChanged) -> None:
-        """Track the library's marked set and re-gate bulk actions (F-040)."""
+        """Track the list's marks of the current kind (the marks bar acts on them).
+
+        Frame slice B2a (spec 3.6, 3.7): bulk Export and Delete live in the
+        marks bar, so the Inspector no longer retargets at marks.
+        """
         message.stop()
         self._marked_rows = message.marks
-        try:
-            self.query_one(PersonasInspectorPane).set_marked_count(len(message.marks))
-        except QueryError:
-            pass
 
     async def _fetch_server_character(self, entity_id: str) -> tuple[str, dict] | None:
         """Fetch one server card and prove its source target and numeric ID."""
@@ -7734,10 +7735,16 @@ class PersonasScreen(BaseAppScreen):
         elif message.action == "toggle_enabled":
             if self.state.active_mode == "dictionaries" and message.entity_id:
                 await self._toggle_dictionary_enabled(message.entity_id)
-        # Delete is wired via the generic Inspector "#personas-delete" seam
-        # (_begin_delete_selection / _delete_entity), same as dictionaries -
-        # not this action-requested handler. The rest are wired in follow-up
-        # tasks.
+        elif message.action == "delete_marked":
+            # The marks bar's Delete… (spec 1.5.5, R32): one modal that names
+            # the marked items; the unsaved guard first, as for every delete.
+            if self._marked_rows:
+                await self._run_guarded(self._begin_delete_marked)
+        elif message.action == "export_marked":
+            self._begin_export_marked()
+        # The open item's Delete is the Inspector's "#personas-delete"
+        # (_begin_delete_selection / _delete_entity). The rest are wired in
+        # follow-up tasks.
 
     async def _begin_create_character(self, *, actor_pack: bool = False) -> None:
         if not self._local_character_actions_allowed():
@@ -14709,23 +14716,32 @@ class PersonasScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
+        """The Inspector's Export JSON exports the open item only (spec 3.6).
+
+        On dev an active mark set silently retargeted this button at the
+        marked rows (RP-039); bulk Export now lives in the marks bar.
+        """
         event.stop()
         if (
             self.state.selected_entity_kind == "character"
             and not self._local_character_actions_allowed()
         ):
             return
-        # F-040: an active mark set retargets Export JSON at the marked rows.
-        if self._marked_rows:
-            if self._io_dialog_active:
-                return
-            self._io_dialog_active = True
-            self.run_worker(
-                self._export_marked_json_worker(tuple(self._marked_rows)),
-                group="personas-io",
-            )
-            return
         self._open_export_dialog("json")
+
+    def _begin_export_marked(self) -> None:
+        """The marks bar's Export…: each marked character or persona as its own JSON file."""
+        marks = tuple(self._marked_rows)
+        if not marks or self._io_dialog_active:
+            return
+        if marks[0][0] == "character" and not self._local_character_actions_allowed():
+            self._notify(_SERVER_READ_ONLY_TOOLTIP, "warning")
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._export_marked_json_worker(marks),
+            group="personas-io",
+        )
 
     async def _export_marked_json_worker(
         self, marks: tuple[tuple[str, str, str], ...]
@@ -15072,17 +15088,15 @@ class PersonasScreen(BaseAppScreen):
         # routes through the unsaved guard so a dirty session shows the
         # discard dialog FIRST, then the delete confirm. Two dialogs in
         # sequence is deliberate: the user explicitly approves both losses.
-        # F-040: an active mark set retargets Delete at the marked rows.
-        if self._marked_rows:
-            await self._run_guarded(self._begin_delete_marked)
-            return
+        # Frame slice B2a (spec 3.6): this button acts on the open item only.
+        # On dev an active mark set silently retargeted it at the marked rows
+        # (RP-039); bulk Delete now lives in the marks bar.
         await self._run_guarded(self._begin_delete_selection)
 
     async def _begin_delete_marked(self) -> None:
         """Validate the marked set and launch the bulk delete-confirm worker."""
         marks = tuple(self._marked_rows)
         if not marks:
-            await self._begin_delete_selection()
             return
         if marks[0][0] == "character" and not self._local_character_actions_allowed():
             self._notify(_SERVER_READ_ONLY_TOOLTIP, "warning")
@@ -15107,11 +15121,14 @@ class PersonasScreen(BaseAppScreen):
     async def _delete_marked_worker(
         self, marks: tuple[tuple[str, str, str], ...]
     ) -> None:
-        """One confirmation, then each marked item's backend delete (F-040)."""
+        """One modal naming the marked items (R32), then each item's backend delete."""
         try:
             kind = marks[0][0]
             noun = self._BULK_NOUNS.get(kind, "items")
-            if not await self._confirm_delete(f"{len(marks)} {noun}"):
+            copy = frame_state.delete_modal_copy(
+                kind, [name for _kind, _id, name in marks], bulk=True
+            )
+            if not await self._confirm_delete(copy):
                 return
             if kind == "character" and not self._local_character_actions_allowed():
                 return
@@ -15137,7 +15154,8 @@ class PersonasScreen(BaseAppScreen):
                 except QueryError:
                     pass
                 self._show_center(None)
-            self.query_one(PersonasLibraryPane).clear_marks()
+            # Deleted ids leave the marks; a failed one stays marked.
+            self._forget_deleted_marks(kind, deleted_ids)
             await self._refresh_rows_after_delete(kind)
             self._sync_title_and_console_actions()
             if failed:
@@ -15299,7 +15317,8 @@ class PersonasScreen(BaseAppScreen):
         try:
             if kind == "character" and not self._local_character_actions_allowed():
                 return
-            if not await self._confirm_delete(name):
+            copy = frame_state.delete_modal_copy(kind, [name], bulk=False)
+            if not await self._confirm_delete(copy):
                 return
             if kind == "character" and not self._local_character_actions_allowed():
                 return
@@ -15307,13 +15326,18 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._delete_dialog_active = False
 
-    async def _confirm_delete(self, name: str) -> bool:
-        """True when the user confirmed the delete (requires a worker context)."""
+    async def _confirm_delete(self, copy: frame_state.DeleteModalCopy) -> bool:
+        """The one delete modal (R32): True when confirmed (requires a worker context).
+
+        ``ConfirmationDialog`` paints its title and message with markup off,
+        so every name it lists is literal (R33); Cancel is focused and Escape
+        cancels, the safe negative (spec 4.4 rung 0).
+        """
         dialog = ConfirmationDialog(
-            title="Delete",
-            message=f"Delete {name}? This cannot be undone here.",
-            confirm_label="Delete",
-            cancel_label="Cancel",
+            title=copy.title,
+            message=copy.message,
+            confirm_label=copy.confirm_label,
+            cancel_label=copy.cancel_label,
         )
         try:
             return bool(await self.app.push_screen_wait(dialog))
@@ -15377,6 +15401,7 @@ class PersonasScreen(BaseAppScreen):
                 )
                 self._notify(f"Delete failed: {exc}", "error")
                 return
+            self._forget_deleted_marks(kind, {entity_id})
             self._advance_persona_buddy_session()
             self.state.clear_selection()
             self.state.has_unsaved_changes = False
@@ -15417,6 +15442,7 @@ class PersonasScreen(BaseAppScreen):
             if not ok:
                 self._notify(conflict_copy.format(noun="lore book"), "error")
                 return
+            self._forget_deleted_marks(kind, {entity_id})
             self._advance_persona_buddy_session()
             self.state.clear_selection()
             self.state.has_unsaved_changes = False
@@ -15461,7 +15487,18 @@ class PersonasScreen(BaseAppScreen):
                 return
             if mode == "local":
                 await self._refresh_persona_buddy_lifecycle(entity_id)
+        self._forget_deleted_marks(kind, {entity_id})
         await self._after_delete(kind)
+
+    def _forget_deleted_marks(self, kind: str, entity_ids: set[str]) -> None:
+        """Deleted ids leave the marks (spec 4.11, Delete rows); others stay marked."""
+        if not entity_ids:
+            return
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        library.forget_marks([option_id_for(kind, item_id) for item_id in entity_ids])
 
     async def _refresh_persona_buddy_lifecycle(self, persona_id: str) -> None:
         """Re-resolve the explicitly selected local Persona after a durable change."""
@@ -16446,6 +16483,8 @@ class PersonasScreen(BaseAppScreen):
         cancel message routes through the unsaved guard; never bypassed).
         Transcript open -> back to the card, focus the conversations list.
         Search focused -> move focus to the library list.
+        Items list or its marks bar focused -> clear this kind's marks (spec
+        1.5.5, Q-2); from any other focus Escape leaves the marks alone.
         """
         if self.conversations.cancel_resume():
             return
@@ -16473,6 +16512,20 @@ class PersonasScreen(BaseAppScreen):
         focused = self.app.focused
         if focused is not None and focused.id == "personas-library-search":
             self._focus_library_list(force=True)
+            return
+        # Frame slice B2a: the marks bar's "Clear esc" (spec 1.5.5). It sits
+        # below every context above, where B3's Escape ladder puts it, and
+        # acts only with focus on the list or in its marks bar.
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        if focused is None or not (
+            focused is library.item_list
+            or any(node.id == "personas-library-marks" for node in focused.ancestors)
+        ):
+            return
+        library.clear_marks()
 
     async def action_personas_mode(self, mode: str) -> None:
         """Single-letter mode keys (c/p/d/l): same guarded path as the mode chips."""

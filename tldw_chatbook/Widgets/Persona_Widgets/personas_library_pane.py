@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from loguru import logger
+from rich.cells import cell_len
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -406,7 +407,7 @@ class RoleplayItemList(OptionList):
     def _position_changed(self) -> None:
         pane = self._pane()
         if pane is not None:
-            pane.refresh_position()
+            pane.list_changed()
 
     # ---- windows ----
 
@@ -685,8 +686,9 @@ class PersonasLibraryPane(Vertical):
         self._sync_control_layout()
 
     def on_resize(self, event: Resize) -> None:
-        """Re-wrap the toolbar bars when the pane width changes (F-030)."""
+        """Re-fit the toolbar bars (F-030) and the marks bar to the pane's width."""
         self._sync_control_layout()
+        self._sync_marks_bar()
 
     def _required_toolbar_row_width(self) -> int:
         """Widest single-row width the currently visible bar buttons need.
@@ -733,10 +735,12 @@ class PersonasLibraryPane(Vertical):
         self.set_class(width < required, "personas-library-stacked-controls")
 
     def compose(self) -> ComposeResult:
-        """Compose the Library pane header, search controls, and rows.
+        """Compose the Library pane header, search controls, rows and marks bar.
 
         The counts live in the pane's border titles (spec 1.5.1): the kind and
-        its count on the top border, the loaded row's ``#N of M`` on the bottom.
+        its count on the top border, the loaded row's ``#N of M`` on the
+        bottom. The marks bar takes the pane's bottom row only while marks
+        exist (spec 1.5.5), so the rows above it never move.
 
         Returns:
             Textual compose result for the Library pane.
@@ -811,12 +815,35 @@ class PersonasLibraryPane(Vertical):
         status.display = False
         yield status
         yield RoleplayItemList(id="personas-library-rows")
+        marks = Horizontal(id="personas-library-marks")
+        marks.display = False
+        with marks:
+            yield Static("", id="personas-library-marks-count", markup=False)
+            for action, label in (
+                ("export", "Export…"),
+                ("delete", "Delete…"),
+                ("clear", "Clear esc"),
+            ):
+                yield Static(
+                    "",
+                    id=f"personas-library-marks-sep-{action}",
+                    classes="personas-library-marks-sep",
+                    markup=False,
+                )
+                yield Button(
+                    Content(label),
+                    id=f"personas-library-marks-{action}",
+                    classes="personas-library-marks-action",
+                    compact=True,
+                )
 
     def set_mode(self, mode: str) -> None:
         """Gate the library toolbar's buttons for the active workbench mode.
 
         Import and Duplicate render for characters/dictionaries/lore (with a
         mode-appropriate Import tooltip); personas mode hides both (task-443).
+        Marks are kept per kind for the visit (spec R16): a kind switch shows
+        that kind's marks and never drops another kind's.
 
         Args:
             mode: The active workbench mode id (``characters``/``personas``/
@@ -855,9 +882,8 @@ class PersonasLibraryPane(Vertical):
         self.query_one("#personas-library-tag", Button).display = mode == "characters"
         # Which buttons render changed, so the single-row fit changed too.
         self._sync_control_layout()
-        # Marks are mode-scoped: a mode switch drops them (F-040).
-        self.clear_marks()
         self.item_list.set_kind(frame_state.KIND_FOR_MODE.get(mode, "character"))
+        self.marks_changed()
 
     async def update_rows(
         self,
@@ -873,6 +899,9 @@ class PersonasLibraryPane(Vertical):
         anchor: frame_state.ListAnchor | None = None,
     ) -> None:
         """Replace the visible rows (one ``set_options``) and the border titles.
+
+        Marks are kept by id (spec 1.5.5): a row a search, sort or tag hides
+        stays marked, and the marks bar counts it as hidden.
 
         Args:
             rows: Selectable library rows to render when no recovery state is
@@ -924,13 +953,6 @@ class PersonasLibraryPane(Vertical):
                 failed=bool(recovery_copy),
             )
         self.set_title(title)
-        # F-040: a mark never outlives its row - a refresh that drops a
-        # marked row drops the mark with it.
-        loaded = set(item_list.loaded_ids())
-        pruned = [oid for oid in item_list.marked_ids() if oid not in loaded]
-        if pruned:
-            item_list.drop_marks(pruned)
-            self._post_marks_changed()
 
     async def _sync_status(self, status: tuple[str, str] | None) -> None:
         """Show the empty or recovery copy; mount only when the state changes."""
@@ -1000,6 +1022,74 @@ class PersonasLibraryPane(Vertical):
             frame_state.loaded_position(index, self._list_total)
         )
 
+    def list_changed(self) -> None:
+        """Rows or the loaded row changed: re-read ``#N of M`` and the hidden-mark count."""
+        self.refresh_position()
+        self._sync_marks_bar()
+
+    def _sync_marks_bar(self) -> None:
+        """Show the one-row marks bar while this kind has marks (spec 1.5.5).
+
+        Its text degrades with the pane's width (``marks_bar_view``); it reads
+        no data and mounts nothing. When it hides while it holds focus, focus
+        moves to the list, never to ``None`` (I1).
+        """
+        try:
+            bar = self.query_one("#personas-library-marks", Horizontal)
+        except Exception:
+            return  # still composing
+        item_list = self.item_list
+        marked = item_list.marked_ids()
+        can_export = item_list.kind in ("character", "persona")
+        view = frame_state.marks_bar_view(
+            len(marked),
+            frame_state.hidden_mark_count(
+                marked, item_list.loaded_ids(), filtered=self._filtered
+            ),
+            # The bar's own content width: the pane's, less the bar's padding.
+            # Read from its styles, so it holds before the bar is first shown.
+            self.content_size.width - bar.styles.gutter.width,
+            can_export=can_export,
+        )
+        was_shown = bar.display
+        if view is None:
+            focused = self.app.focused if self.is_attached else None
+            had_focus = focused is not None and bar in focused.ancestors
+            bar.display = False
+            if had_focus:
+                item_list.focus()
+            return
+        count = self.query_one("#personas-library-marks-count", Static)
+        count.update(view.count_text)
+        count.tooltip = Content(view.count_tooltip)
+        # The narrowest form drops the count, never Delete: Delete then
+        # carries the count's words in its tooltip (literal Content, R33).
+        count.display = bool(view.count_text)
+        self.query_one("#personas-library-marks-delete", Button).tooltip = (
+            None if view.count_text else Content(view.count_tooltip)
+        )
+        labels = dict(zip(view.actions, view.labels))
+        for action in ("export", "delete", "clear"):
+            shown = action in labels
+            button = self.query_one(f"#personas-library-marks-{action}", Button)
+            separator = self.query_one(f"#personas-library-marks-sep-{action}", Static)
+            button.display = separator.display = shown
+            if shown:
+                label = labels[action]
+                button.label = Content(label)
+                # Exactly the label's cells, unpadded: the separators carry
+                # the spaces. Textual 8.2.8's Button adds two cells to an auto
+                # width and pads its label (line-pad), and its CSS parser
+                # refuses `line-pad: 0`, so both are set here.
+                # ds-runtime: the measured cell width of the label shown now.
+                button.styles.width = cell_len(label)
+                button.styles.line_pad = 0
+                separator.update(view.separator)
+        bar.display = True
+        if not was_shown:
+            # The bar takes the pane's bottom row: keep the cursor row in view.
+            item_list.call_after_refresh(item_list.scroll_to_highlight)
+
     def focus_first_result(self) -> None:
         """Into the list with the cursor on the first row (Enter in the search box)."""
         item_list = self.item_list
@@ -1026,13 +1116,19 @@ class PersonasLibraryPane(Vertical):
         self.post_message(PersonaMarksChanged(marks))
 
     def marks_changed(self) -> None:
-        """The list's marks changed (``m``, a mark-column click, Clear)."""
+        """The list's marks changed (``m``, a mark-column click, Clear, a kind switch)."""
+        self._sync_marks_bar()
         self._post_marks_changed()
 
     def clear_marks(self) -> None:
-        """Drop every mark of the list's kind (or after a bulk action consumes them)."""
+        """Drop every mark of the list's kind (Clear, Escape)."""
         if self.item_list.clear_marks():
             self.marks_changed()
+
+    def forget_marks(self, option_ids: Sequence[str]) -> None:
+        """Deleted rows leave the marks (spec 4.11, Delete rows); others stay marked."""
+        self.item_list.drop_marks(option_ids)
+        self.marks_changed()
 
     def action_cycle_sort(self) -> None:
         """s: cycle the list sort order where sorting applies (F-040)."""
@@ -1090,6 +1186,21 @@ class PersonasLibraryPane(Vertical):
         # Highlight never loads (I6); it also fires on every programmatic
         # cursor restore, so it stays a no-op.
         event.stop()
+
+    @on(Button.Pressed, "#personas-library-marks-export")
+    def _marks_export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="export_marked"))
+
+    @on(Button.Pressed, "#personas-library-marks-delete")
+    def _marks_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="delete_marked"))
+
+    @on(Button.Pressed, "#personas-library-marks-clear")
+    def _marks_clear_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.clear_marks()
 
     @on(Button.Pressed, "#personas-library-new")
     def _new_pressed(self, event: Button.Pressed) -> None:

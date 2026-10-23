@@ -21,14 +21,18 @@ import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testi
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 from Tests.UI.roleplay_frame_harness import (
     highlighted_item_id,
+    item_at,
     open_styled_roleplay,
     open_volume_db,
+    painted_rows,
     select_roleplay_item,
     settle,
+    styled_tiers,
     visible_item_ids,
     volume_db_path,
     wait_until,
 )
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
     RoleplayItemList,
 )
@@ -292,6 +296,332 @@ async def test_enter_in_the_search_box_lands_on_the_first_match_before_the_debou
             lambda: highlighted_item_id(screen) == f"character:{target['id']}",
             what="the first match under the cursor",
         )
+        assert screen.focused is screen.query_one(RoleplayItemList)
+
+
+# ---- Marks by id, the marks bar and the one delete modal (AC#5, R32; Task 5) ----
+
+
+def _option_id(db, name: str) -> str:
+    return f"character:{db.get_character_card_by_name(name)['id']}"
+
+
+async def _mark_rows(pilot, screen, option_ids) -> None:
+    screen.query_one(RoleplayItemList).focus()
+    for option_id in option_ids:
+        await select_roleplay_item(pilot, screen, option_id, load=False)
+        await pilot.press("m")
+    await settle(pilot)
+
+
+def _bar(screen) -> str:
+    """The marks bar's row as painted ("" while it is hidden)."""
+    bar = screen.query_one("#personas-library-marks")
+    if not bar.display:
+        return ""
+    region = bar.content_region
+    return painted_rows(screen)[region.y][region.x : region.right].rstrip()
+
+
+def _dialog_text(dialog: ConfirmationDialog) -> tuple[str, str, str]:
+    title = str(dialog.query_one(".dialog-title").render())
+    message = str(dialog.query_one(".dialog-message").render())
+    confirm = str(dialog.query_one("#confirm-button").label)
+    return title, message, confirm
+
+
+async def test_marks_survive_search_and_sort_and_count_the_hidden_ones(
+    mock_app_instance, volume_348
+):
+    """AC#5: on dev a search or a page change dropped every mark (RP-039)."""
+    marked = [_option_id(volume_348, f"Character {n:04d}") for n in (1, 2, 3)]
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(220, 55), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, marked)
+        assert _bar(screen).startswith("✓ 3 marked")
+        screen.query_one("#personas-library-search", Input).value = "Character 0003"
+        await wait_until(
+            pilot,
+            lambda: visible_item_ids(screen) == (marked[2],),
+            what="the narrowed list",
+        )
+        await settle(pilot)
+        assert _bar(screen).startswith("✓ 3 marked (2 hidden)")
+        screen.query_one("#personas-library-search", Input).value = ""
+        await wait_until(
+            pilot, lambda: len(visible_item_ids(screen)) == 200, what="the full list"
+        )
+        screen.query_one(RoleplayItemList).focus()
+        await pilot.press("s")
+        await settle(pilot)
+        assert screen.state.sort_key != "name_asc"
+        assert _bar(screen).startswith("✓ 3 marked")
+        assert screen._marked_rows and len(screen._marked_rows) == 3
+
+
+async def test_bulk_delete_names_five_and_the_rest_and_deletes_only_the_marked(
+    mock_app_instance, volume_348
+):
+    """R32: one modal names up to 5 items plus "and N more"; Cancel keeps all."""
+    names = [f"Character {n:04d}" for n in range(1, 8)]
+    marked = [_option_id(volume_348, name) for name in names]
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, marked)
+        assert await pilot.click("#personas-library-marks-delete")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(pilot.app.screen, ConfirmationDialog)
+                and bool(pilot.app.screen.query("#confirm-button"))
+            ),
+            what="the delete modal",
+        )
+        title, message, confirm = _dialog_text(pilot.app.screen)
+        assert title == "Delete 7 marked"
+        assert confirm == "Delete 7 marked"
+        assert message.splitlines() == [
+            "Delete these 7 characters? This cannot be undone here.",
+            "",
+            *[f"  {name}" for name in names[:5]],
+            "  and 2 more",
+        ]
+        await pilot.press("escape")
+        await settle(pilot)
+        assert volume_348.count_character_cards() == 348 + 1
+        assert len(screen._marked_rows) == 7
+        assert await pilot.click("#personas-library-marks-delete")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(pilot.app.screen, ConfirmationDialog)
+                and bool(pilot.app.screen.query("#confirm-button"))
+            ),
+            what="the delete modal again",
+        )
+        assert await pilot.click("#confirm-button")
+        await wait_until(
+            pilot,
+            lambda: volume_348.count_character_cards() == 348 + 1 - 7,
+            what="the seven deletes",
+        )
+        await settle(pilot)
+        assert screen._marked_rows == ()
+        assert _bar(screen) == ""
+        assert not set(marked) & set(visible_item_ids(screen))
+        # R-120 (I1): the bar hid under its own Delete button; focus stays on
+        # the list (spec 4.11: "Delete, other rows only" -> stays on the list).
+        assert screen.focused is screen.query_one(RoleplayItemList)
+
+
+async def test_the_inspector_delete_acts_on_the_open_item_only(
+    mock_app_instance, volume_348
+):
+    """On dev an active mark set silently retargeted the Inspector's Delete
+    at the marked rows (RP-039); bulk Delete now lives in the marks bar."""
+    opened = _option_id(volume_348, "Character 0010")
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await select_roleplay_item(pilot, screen, opened)
+        await settle(pilot)
+        await _mark_rows(
+            pilot,
+            screen,
+            [_option_id(volume_348, f"Character {n:04d}") for n in (1, 2)],
+        )
+        assert await pilot.click("#personas-delete")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(pilot.app.screen, ConfirmationDialog)
+                and bool(pilot.app.screen.query("#confirm-button"))
+            ),
+            what="the delete modal",
+        )
+        assert _dialog_text(pilot.app.screen) == (
+            "Delete",
+            "Delete Character 0010? This cannot be undone here.",
+            "Delete",
+        )
+        await pilot.press("escape")
+        await settle(pilot)
+        assert len(screen._marked_rows) == 2
+        assert item_at(screen, opened).active
+
+
+async def test_escape_clears_the_marks(mock_app_instance, volume_348):
+    """The bar advertises "Clear esc"; Escape on the list clears this kind's marks."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[:2])
+        assert _bar(screen)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert _bar(screen) == ""
+        assert screen._marked_rows == ()
+        assert screen.focused is screen.query_one(RoleplayItemList)
+
+
+@styled_tiers
+@pytest.mark.parametrize("size", [(120, 36), (80, 24)], ids=["120x36", "80x24"])
+async def test_the_marks_bar_paints_every_action_it_shows_whole(
+    styled_tier, size, mock_app_instance, volume_348
+):
+    """Spec 1.5.5: the bar degrades by width, never by clipping.
+
+    The bar's content is two cells narrower than the pane's (its padding), so
+    a ladder fed the pane's width cut Clear to "Clea" at 120x36 and painted no
+    Delete or Clear at 80x24. Every action shown lies inside the bar with its
+    whole label painted, and Delete, which stays down to the count alone,
+    opens the one delete modal at both sizes.
+    """
+    async with open_styled_roleplay(
+        styled_tier, mock_app_instance, size=size, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[1:3])
+        bar = screen.query_one("#personas-library-marks")
+        inside = bar.content_region
+        row = painted_rows(screen)[inside.y]
+        shown = [
+            button
+            for button in screen.query(".personas-library-marks-action")
+            if button.display
+        ]
+        assert _bar(screen).startswith("✓ 2")
+        for button in shown:
+            label = str(button.label)
+            region = button.region
+            assert inside.x <= region.x and region.right <= inside.right, (
+                label,
+                region,
+                inside,
+            )
+            assert row[region.x : region.right] == label
+        assert "personas-library-marks-delete" in [button.id for button in shown]
+        assert await pilot.click("#personas-library-marks-delete")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(pilot.app.screen, ConfirmationDialog)
+                and bool(pilot.app.screen.query("#confirm-button"))
+            ),
+            what="the delete modal",
+        )
+        assert _dialog_text(pilot.app.screen)[0] == "Delete 2 marked"
+        await pilot.press("escape")
+        await settle(pilot)
+
+
+@styled_tiers
+@pytest.mark.parametrize(
+    ("marks", "ascii_glyphs"),
+    [(12, False), (2, True)],
+    ids=["12-marks", "ascii-2-marks"],
+)
+async def test_delete_stays_whole_and_clickable_when_the_count_cannot_fit(
+    styled_tier, marks, ascii_glyphs, mock_app_instance, volume_348
+):
+    """At 80x24 the bar has 10 content cells; the count yields before Delete.
+
+    ``✓ 12 Delete`` needs 11 cells and ``[x] 2 Delete`` needs 12, so the
+    count moves into Delete's tooltip and Delete stays, whole and clickable.
+    The Task 5 review found the count alone there, with no bulk action at
+    the standard terminal size.
+    """
+    async with open_styled_roleplay(
+        styled_tier,
+        mock_app_instance,
+        size=(80, 24),
+        ascii_glyphs=ascii_glyphs,
+        character_db=volume_348,
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[1 : 1 + marks])
+        inside = screen.query_one("#personas-library-marks").content_region
+        delete = screen.query_one("#personas-library-marks-delete")
+        assert delete.display
+        region = delete.region
+        assert inside.x <= region.x and region.right <= inside.right, (region, inside)
+        assert painted_rows(screen)[inside.y][region.x : region.right] == "Delete"
+        assert _bar(screen) == "Delete"
+        assert str(delete.tooltip) == f"{marks} marked"
+        assert await pilot.click("#personas-library-marks-delete")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(pilot.app.screen, ConfirmationDialog)
+                and bool(pilot.app.screen.query("#confirm-button"))
+            ),
+            what="the delete modal",
+        )
+        assert _dialog_text(pilot.app.screen)[0] == f"Delete {marks} marked"
+        await pilot.press("escape")
+        await settle(pilot)
+
+
+@pytest.mark.parametrize(
+    "focus_id",
+    ["personas-delete", "personas-conversations-search"],
+    ids=["inspector-button", "inspector-input"],
+)
+async def test_escape_away_from_the_list_keeps_the_marks(
+    focus_id, mock_app_instance, volume_348
+):
+    """Spec Q-2: Escape clears marks only on the items list or its marks bar.
+
+    Escape in the Inspector, on a button or in an input other than the
+    library's search box, never clears them (the Task 5 review found it
+    clearing every mark from any focus).
+    """
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await select_roleplay_item(
+            pilot, screen, _option_id(volume_348, "Character 0010")
+        )
+        await settle(pilot)
+        await _mark_rows(
+            pilot,
+            screen,
+            [_option_id(volume_348, f"Character {n:04d}") for n in (1, 2)],
+        )
+        target = screen.query_one(f"#{focus_id}")
+        target.focus()
+        await settle(pilot)
+        assert screen.focused is target
+        await pilot.press("escape")
+        await settle(pilot)
+        assert len(screen._marked_rows) == 2
+        assert _bar(screen).startswith("✓ 2 marked")
+
+
+async def test_escape_on_the_marks_bar_clears_the_marks_and_focus_lands_on_the_list(
+    mock_app_instance, volume_348
+):
+    """The marks bar is the list's own context: Escape there clears too (I1)."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[:2])
+        delete = screen.query_one("#personas-library-marks-delete")
+        delete.focus()
+        await settle(pilot)
+        assert screen.focused is delete
+        await pilot.press("escape")
+        await settle(pilot)
+        assert _bar(screen) == ""
+        assert screen._marked_rows == ()
         assert screen.focused is screen.query_one(RoleplayItemList)
 
 
