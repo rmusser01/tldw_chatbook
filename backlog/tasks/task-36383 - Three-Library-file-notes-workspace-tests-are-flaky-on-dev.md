@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 22:12
+updated_date: 2026-10-23 22:57
 labels:
 - follow-up
 - tests
@@ -50,7 +50,7 @@ Test-only fix in `Tests/UI/test_library_file_notes_workspace.py`. No product cod
 
 **Failure modes (AC#1)**
 - `test_file_notes_navigation_and_key_guidance_use_one_phrase`: `run_test` re-raised `WorkerFailed: NoMatches('#file-notes-path-label')`. The body ended after one `pilot.pause()` while the workspace's `_initialize` worker was still in its `_build_runtime` thread. Teardown removed the workspace's children before its Unmount cancelled the worker. The worker resumed in that gap, and `_update_controls()` queried a removed control. Fix: wait for `workspace.initialized` before asserting.
-- `test_initial_root_scan_projects_checking_authority_while_actions_are_gated`: `assert 'Checking' in 'Chec...otes'`. `_update_root_surface` paints the full summary, then `call_after_refresh(_fit_root_status)` elides it to the status's width. At 60x20 that width is 11 cells, because the root row always shows "Review recovered pairing…" (27 cells, added by b5251e9a6e). The test passed only when it read the row before the deferred fit ran. No wait can fix this: after the fit settles, the painted row never contains "Checking". Fix: assert on `_root_status_summary`, the copy the row is fitted from (the sibling linked-root test already reads `_root_status_detail`).
+- `test_initial_root_scan_projects_checking_authority_while_actions_are_gated`: `assert 'Checking' in 'Chec...otes'`. `_update_root_surface` paints the full summary, then `call_after_refresh(_fit_root_status)` elides it to the status's width. At 60x20 that width is only 11 cells, and that is a known product defect, not intended layout: the root row always shows the 27-cell "Review recovered pairing…" button (added by b5251e9a6e), QA finding N-37. TASK-34000.30 AC#10 covers only the no-folder case; this linked-folder row is tracked as TASK-36513. The 60x20 case of `test_file_notes_linked_root_leads_with_friendly_folder_identity` is red on dev for the same cause. So the old red here was a true positive. The test passed only when it read the row before the deferred fit ran, and no wait can fix that while the defect stands. Fix: assert "Checking" in `_root_status_summary`, the copy the row is fitted from, and in the status's tooltip. Both are set in the same synchronous step, and the fit rewrites neither. The tooltip is the user-visible check that cannot race; a temporary source edit that dropped the state word from the tooltip turned the new assertion red, and restoring it turned it green. The painted-row check belongs back here once TASK-36513 is fixed.
 - `test_create_move_delete_protect_and_restore_use_real_service`: `run_test` re-raised `WorkerFailed: MountError("Can't mount widget(s) before ListView(id='file-notes-git-rows') is mounted")`. The last wait was "the restored file exists on disk". That is true as soon as `restore_file` returns, while `_restore_file` is still rescanning (`_rescan_after_action` -> `_apply_scan` -> `_refresh_session_changes` -> git `mark_stale` -> `_replace_rows`). `TldwCli._shutdown` sets `app._exit = True` before it drains app-owned lifecycles, and Textual's `is_attached` is False under `_exit`. So the row-render worker's `extend()` raised during that drain. A diagnostic plugin caught five failures. In all five, `_replace_rows` came from `_render_scan_state` after `_exit` was set, and the one full stack captured names `_restore_file`. Fix: wait until the restore reopens the file and `_replacing_rows` clears. The fixed `pilot.pause()` before pressing Restore is now a wait for Restore to be displayed and enabled (a press on a hidden or disabled button is a silent no-op).
 
 **Negative controls (AC#3).** A scratch script (not committed) applies one temporary edit per test to either form, then reverts it with `git checkout`:
@@ -58,7 +58,7 @@ Test-only fix in `Tests/UI/test_library_file_notes_workspace.py`. No product cod
 - NC2: the scan thread reports its start 0.3 s late.
 - NC3: the restore's rescan starts when `app._exit` is set (1 s cap), and the app's File Notes shutdown drain is 0.3 s slower.
 
-Delaying only the producer's start did not reproduce NC1 or NC3: Textual cancels a node's workers at its Unmount. Results, 10 serial runs per form:
+Delaying the producer alone did not reproduce NC1 or NC3. A late init worker is cancelled when its node unmounts, and a late rescan lands after the drain, when pruning makes the mount a silent no-op. Results from the final batch, 10 serial runs per form. An earlier 5-run batch of the same controls failed the old form 4 of 5 times for NC1 and NC3 and 5 of 5 for NC2.
 | Test | Old form | New form |
 |---|---|---|
 | navigation | 5 of 10 failed, each the recorded NoMatches | 10 of 10 passed |
@@ -71,5 +71,11 @@ Under the one-window idle probe with 12 parallel loops, base failed test 3 at ra
 
 The file is not in `scripts/ui_pr_gate_census.txt` or any CI lane (see the TASK-33370 note in `Tests/conftest.py`). Preflight passes. The Ruff lint count is unchanged from base (24), and the file is format-clean.
 
-Files: `Tests/UI/test_library_file_notes_workspace.py`, `backlog/docs/lessons-testing-evidence.md` (new entry on teardown WorkerFailed and holding the producer's result).
+Files: `Tests/UI/test_library_file_notes_workspace.py`, `backlog/docs/lessons-testing-evidence.md` (new entry on teardown-state WorkerFailed and pinning the producer to the teardown step).
+
+Review round 1 (2026-10-23):
+- Test 2 regained a user-visible check: the status tooltip is set in the same step as the summary.
+- The comment and the AC#1 record now name the 11-cell width as the known N-37 / TASK-34000.30 defect.
+- The lesson is scoped to teardown-state failures, and its control counts match this table.
+- Re-verified: test 2 passed 20 of 20 serial runs. The whole file with `-n 4` gave 152 passed and 10 failed, the same 10 pre-existing failures. Preflight passes.
 
