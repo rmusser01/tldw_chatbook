@@ -461,28 +461,95 @@ def test_kobold_generate_the_endpoint_contract_refuses_is_not_eligible(endpoint)
     assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is False
 
 
-def test_kobold_uppercase_generate_is_a_prefix_root_that_generic_rules_refuse():
-    """TASK-35832: the contract matches the route case and all, so it reads
-    /API/V1/GENERATE as a plain prefix root (Switch model would probe
-    /API/V1/GENERATE/v1/models). It is not the native route, so Discover
-    applies its generic path rules, which list no unknown prefix root for any
-    provider."""
+@pytest.mark.parametrize(
+    ("endpoint", "models_url"),
+    [
+        ("http://127.0.0.1:5001", "http://127.0.0.1:5001/v1/models"),
+        ("http://localhost:5001/", "http://localhost:5001/v1/models"),
+        ("localhost:5001", "http://localhost:5001/v1/models"),
+        ("http://127.0.0.1:5001/kobold", "http://127.0.0.1:5001/kobold/v1/models"),
+        (
+            "https://kobold.example.test/proxy/",
+            "https://kobold.example.test/proxy/v1/models",
+        ),
+        # The contract matches the native route case and all, so this is a
+        # prefix root too.
+        (
+            "http://127.0.0.1:5001/API/V1/GENERATE",
+            "http://127.0.0.1:5001/API/V1/GENERATE/v1/models",
+        ),
+    ],
+)
+def test_kobold_root_and_prefix_roots_list_where_switch_model_probes(
+    endpoint, models_url
+):
+    """TASK-36380 AC#1, rewritten on purpose (TASK-35832 pinned the prefix
+    roots refused): Switch model probes a koboldcpp root's or prefix root's
+    /v1/models, and Discover lists from that same URL."""
     from tldw_chatbook.Chat.provider_endpoint_contract import (
+        ConnectionProbeAvailability,
+        connection_probe_availability,
         resolve_provider_endpoint,
     )
 
-    endpoint = "http://127.0.0.1:5001/API/V1/GENERATE"
-    resolution = resolve_provider_endpoint("koboldcpp", endpoint)
-    assert resolution.errors == ()
-    assert resolution.models_url == f"{endpoint}/v1/models"
-    assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is False
-    # The same generic rule refuses a lower-case prefix root.
-    assert (
-        supports_openai_compatible_model_discovery(
-            "koboldcpp", "http://127.0.0.1:5001/kobold"
-        )
-        is False
+    assert connection_probe_availability("koboldcpp", endpoint) is (
+        ConnectionProbeAvailability.MODELS_ROUTE
     )
+    assert resolve_provider_endpoint("koboldcpp", endpoint).models_url == models_url
+    assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is True
+    assert build_models_url(endpoint, "koboldcpp") == models_url
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://localhost:5001",
+        "http://localhost:5001/v1",
+        "http://localhost:5001/v1/models",
+        "http://localhost:5001/v1/chat/completions",
+        "http://localhost:5001/api/v1/generate",
+        "http://localhost:5001/kobold",
+        # The generic rules read these two as models routes; the contract
+        # reads /models as a prefix root and refuses /v1/openai.
+        "http://localhost:5001/models",
+        "http://localhost:5001/v1/openai",
+        "http://localhost:5001/v1/api/v1/generate",
+        "http://localhost:5001/v1?key=secret",
+        "http://[fe80::1%25eth0]:5001/v1",
+        "ftp://localhost:5001/v1",
+    ],
+)
+def test_kobold_discovery_lists_exactly_where_switch_model_probes(endpoint):
+    """TASK-36380: one source of truth. koboldcpp's Discover models is
+    eligible exactly when Switch model's probe is, at the contract's URL."""
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        ConnectionProbeAvailability,
+        connection_probe_availability,
+        resolve_provider_endpoint,
+    )
+
+    probes = connection_probe_availability("koboldcpp", endpoint) is (
+        ConnectionProbeAvailability.MODELS_ROUTE
+    )
+    assert supports_openai_compatible_model_discovery("koboldcpp", endpoint) is probes
+    if probes:
+        assert build_models_url(endpoint, "koboldcpp") == (
+            resolve_provider_endpoint("koboldcpp", endpoint).models_url
+        )
+
+
+def test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason():
+    """TASK-36380 AC#2: Settings names why the contract refuses a koboldcpp
+    endpoint. Other providers keep their own rules, so no reason for them."""
+    reason = openai_compatible_model_discovery.contract_refusal_reason
+
+    ambiguous = "http://localhost:5001/v1/api/v1/generate"
+    assert reason("koboldcpp", ambiguous) == "Endpoint path has ambiguous API suffixes."
+    assert reason("koboldcpp", "http://localhost:5001/v1?key=x") == (
+        "Endpoint URL must not include a query."
+    )
+    assert reason("koboldcpp", "http://localhost:5001") is None
+    assert reason("vllm", ambiguous) is None
 
 
 def test_kobold_with_explicit_v1_endpoint_is_eligible():
