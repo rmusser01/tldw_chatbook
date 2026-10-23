@@ -49,35 +49,54 @@ def project_index_registry_connections(database):
 
     if type(database) is not WorkspaceDB or database.is_memory_db:
         with operation_owned_connection(database):
-            yield
+            yield lambda: None
         return
     previous = _core_cached_connection(
         database, getattr(database._thread_local, "conn", None)
     )
-    owned = None
+    owned = []
+
+    def prove_closed(connection):
+        retired = _core_cached_connection(database, connection) is None
+        try:
+            sqlite3.Connection.in_transaction.__get__(connection)
+        except sqlite3.ProgrammingError:
+            native_closed = True
+        except Exception:
+            native_closed = False
+        else:
+            native_closed = False
+        if not retired or not native_closed:
+            raise ProjectIndexRetirementUnproven("index_registry_retirement_unproven")
+
+    def retire_for_model():
+        from tldw_chatbook.RAG_Search.projection_scope import ProjectProjectionRequired
+
+        current = _core_cached_connection(
+            database, getattr(database._thread_local, "conn", None)
+        )
+        if previous is not None:
+            # A caller-owned handle is never ours to close for model work.
+            raise ProjectProjectionRequired("project_embedding_borrowed_registry_connection")
+        if current is None:
+            return
+        if current not in owned:
+            owned.append(current)
+        database.close()
+        prove_closed(current)
+
     try:
         with operation_owned_connection(database):
             try:
-                yield
+                yield retire_for_model
             finally:
                 current = getattr(database._thread_local, "conn", None)
                 if current is not None and current is not previous:
-                    owned = current
+                    if current not in owned:
+                        owned.append(current)
     finally:
-        if owned is not None:
-            retired = _core_cached_connection(database, owned) is None
-            try:
-                sqlite3.Connection.in_transaction.__get__(owned)
-            except sqlite3.ProgrammingError:
-                native_closed = True
-            except Exception:
-                native_closed = False
-            else:
-                native_closed = False
-            if not retired or not native_closed:
-                raise ProjectIndexRetirementUnproven(
-                    "index_registry_retirement_unproven"
-                )
+        for connection in owned:
+            prove_closed(connection)
 
 
 class _DataAuthorityPin:

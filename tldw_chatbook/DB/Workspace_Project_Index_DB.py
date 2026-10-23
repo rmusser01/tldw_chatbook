@@ -48,6 +48,9 @@ from tldw_chatbook.Workspaces.project_index.models import (
     ProjectIndexStatus,
     ProjectSemanticSettings,
     ProjectSemanticState,
+    ProjectSemanticGeneration,
+    ProjectSemanticMember,
+    SemanticSourceChunk,
     ScanPage,
 )
 
@@ -202,6 +205,10 @@ _MUTATING_METHODS = frozenset(
         "suspend_job",
         "configure",
         "configure_semantic",
+        "semantic_claim",
+        "semantic_append",
+        "semantic_publish",
+        "semantic_fail",
         "claim_job",
         "admit_job",
         "replace_retired_job",
@@ -822,6 +829,405 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 ),
             )
         return self.load_semantic_state(scope)
+
+    @staticmethod
+    def _semantic_live(
+        conn, scope, generation_id, claim_token, *, require_manifest=True
+    ):
+        """Check the captured source and consent before one generation unit."""
+        keyword = conn.execute("SELECT * FROM control WHERE singleton=1").fetchone()
+        control = conn.execute(
+            "SELECT * FROM semantic_control WHERE singleton=1"
+        ).fetchone()
+        generation = conn.execute(
+            "SELECT * FROM semantic_generations WHERE generation_id=?",
+            (generation_id,),
+        ).fetchone()
+        if not keyword or not control or not generation:
+            return None
+        if (
+            keyword["namespace"] != scope.key.namespace
+            or keyword["epoch"] != scope.epoch
+            or keyword["processing_revision"] != scope.processing_revision
+            or not keyword["enabled"]
+            or (
+                require_manifest
+                and keyword["manifest_revision"] != generation["manifest_revision"]
+            )
+            or control["namespace"] != scope.key.namespace
+            or control["epoch"] != scope.epoch
+            or not control["enabled"]
+            or control["state"] != "Building"
+            or control["semantic_revision"] != generation["semantic_revision"]
+            or generation["namespace"] != scope.key.namespace
+            or generation["epoch"] != scope.epoch
+            or generation["processing_revision"] != scope.processing_revision
+            or generation["claim_token"] != claim_token
+            or generation["state"] != "Building"
+        ):
+            return None
+        settings = ProjectSemanticSettings(**json.loads(control["settings_json"]))
+        if (
+            generation["provider_id"] != settings.provider_id
+            or generation["model_id"] != settings.model_id
+            or generation["destination_fingerprint"] != settings.destination_fingerprint
+            or generation["config_fingerprint"] != settings.config_fingerprint
+            or settings.approved_destination_fingerprint
+            != settings.destination_fingerprint
+        ):
+            return None
+        return generation
+
+    @_activated
+    def semantic_claim(
+        self,
+        scope: ProjectIndexScope,
+        state: ProjectSemanticState,
+        *,
+        manifest_revision: int,
+        artifact_fingerprint: str,
+        claim_token: str,
+    ) -> str:
+        """Start staging under one real binding job lifetime."""
+        if (
+            state.scope != scope
+            or not state.enabled
+            or state.settings is None
+            or type(manifest_revision) is not int  # noqa: E721
+            or manifest_revision < 0
+            or not isinstance(artifact_fingerprint, str)
+            or not artifact_fingerprint.startswith("sha256:v1:")
+            or not isinstance(claim_token, str)
+            or not 0 < len(claim_token) <= 256
+            or self._owned_lifetime is None
+        ):
+            raise ValueError("invalid_semantic_claim")
+        self._owned_lifetime.assert_live()
+        with self.transaction(semantic=True) as conn:
+            row = self._current(conn, scope)
+            control = conn.execute(
+                "SELECT * FROM semantic_control WHERE singleton=1"
+            ).fetchone()
+            if (
+                row is None
+                or not row["enabled"]
+                or row["manifest_revision"] != manifest_revision
+                or control is None
+                or control["epoch"] != scope.epoch
+                or not control["enabled"]
+                or control["semantic_revision"] != state.semantic_revision
+                or ProjectSemanticSettings(**json.loads(control["settings_json"]))
+                != state.settings
+            ):
+                raise ValueError("stale_semantic_claim")
+            if conn.execute("SELECT 1 FROM active_job LIMIT 1").fetchone():
+                raise ValueError("job_active")
+            # The exclusive native binding lifetime proves a prior claimant has
+            # physically retired; stale staging is never resumed implicitly.
+            conn.execute(
+                "UPDATE semantic_generations SET state='Interrupted',claim_token=NULL "
+                "WHERE claim_token IS NOT NULL"
+            )
+            generation_id = uuid4().hex
+            conn.execute(
+                "INSERT INTO semantic_generations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    generation_id,
+                    scope.key.namespace,
+                    scope.epoch,
+                    scope.processing_revision,
+                    state.semantic_revision,
+                    state.settings.provider_id,
+                    state.settings.model_id,
+                    state.settings.destination_fingerprint,
+                    state.settings.config_fingerprint,
+                    artifact_fingerprint,
+                    "float32-le-v1",
+                    0,
+                    manifest_revision,
+                    claim_token,
+                    None,
+                    "Building",
+                    0,
+                ),
+            )
+            conn.execute(
+                "UPDATE semantic_control SET state='Building',reason=NULL WHERE singleton=1"
+            )
+            return generation_id
+
+    def semantic_source_page(
+        self, scope: ProjectIndexScope, generation_id: str, claim_token: str, *, after: int
+    ) -> tuple[SemanticSourceChunk, ...]:
+        """Materialize at most 32 chunks and 1 MiB encoded source per page."""
+        if type(after) is not int or after < 0:  # noqa: E721
+            raise ValueError("invalid_semantic_cursor")
+        with self.connection() as conn:
+            generation = self._semantic_live(conn, scope, generation_id, claim_token)
+            if generation is None or after != (generation["checkpoint_chunk_id"] or 0):
+                raise ValueError("stale_semantic_page")
+            heads = conn.execute(
+                "SELECT c.id,f.path,f.identity,f.content_sha256,c.line_start,c.line_end,"
+                "length(CAST(c.text AS BLOB)) AS byte_count "
+                "FROM chunks c JOIN files f ON f.path=c.path "
+                "WHERE c.id>? ORDER BY c.id LIMIT 32",
+                (after,),
+            ).fetchall()
+            selected = []
+            total = 0
+            for head in heads:
+                if total + head[6] > 1024 * 1024:
+                    if not selected:
+                        raise ValueError("semantic_source_page_limit")
+                    break
+                selected.append(head)
+                total += head[6]
+            if not selected:
+                return ()
+            ids = tuple(row[0] for row in selected)
+            placeholders = ",".join("?" for _ in ids)
+            texts = dict(
+                conn.execute(
+                    f"SELECT id,text FROM chunks WHERE id IN ({placeholders})", ids
+                ).fetchall()
+            )
+            return tuple(
+                SemanticSourceChunk(*tuple(head)[:6], texts[head[0]])
+                for head in selected
+            )
+
+    @_activated
+    def semantic_append(
+        self, scope, generation_id, claim_token, rows, vectors
+    ) -> bool:
+        """Checkpoint one bounded page only if every source revision still matches."""
+        rows, vectors = tuple(rows), tuple(vectors)
+        if not rows or len(rows) > 32 or len(rows) != len(vectors):
+            raise ValueError("invalid_semantic_page")
+        if (
+            sum(len(row.text.encode("utf-8")) for row in rows) > 1024 * 1024
+            or sum(len(vector) for vector in vectors) > 1024 * 1024
+            or any(type(vector) is not bytes for vector in vectors)  # noqa: E721
+        ):
+            raise ValueError("semantic_page_limit")
+        from tldw_chatbook.Workspaces.project_index.semantic_vectors import decode_vector
+
+        dimension = len(vectors[0]) // 4
+        for vector in vectors:
+            decode_vector(vector, dimension)
+        ids = [row.chunk_id for row in rows]
+        if ids != sorted(set(ids)):
+            raise ValueError("invalid_semantic_page")
+        with self.transaction(semantic=True) as conn:
+            generation = self._semantic_live(conn, scope, generation_id, claim_token)
+            if generation is None or ids[0] <= (generation["checkpoint_chunk_id"] or 0):
+                return False
+            if generation["dimension"] not in (0, dimension):
+                return False
+            for row in rows:
+                source = conn.execute(
+                    "SELECT f.path,f.identity,f.content_sha256,c.line_start,c.line_end,c.text "
+                    "FROM chunks c JOIN files f ON f.path=c.path WHERE c.id=?",
+                    (row.chunk_id,),
+                ).fetchone()
+                if source is None or tuple(source) != (
+                    row.relative_path, row.identity, row.content_sha256,
+                    row.line_start, row.line_end, row.text,
+                ):
+                    return False
+            conn.executemany(
+                "INSERT INTO semantic_members VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        generation_id, row.chunk_id, row.relative_path, row.identity,
+                        row.content_sha256, row.line_start, row.line_end, vector,
+                    )
+                    for row, vector in zip(rows, vectors)
+                ],
+            )
+            conn.execute(
+                "UPDATE semantic_generations SET dimension=?,checkpoint_chunk_id=?,"
+                "chunk_count=chunk_count+? WHERE generation_id=?",
+                (dimension, ids[-1], len(rows), generation_id),
+            )
+            return True
+
+    @_activated
+    def semantic_publish(self, scope, generation_id, claim_token) -> bool:
+        """Atomically point Ready at a complete immutable source snapshot."""
+        with self.transaction(semantic=True) as conn:
+            generation = self._semantic_live(conn, scope, generation_id, claim_token)
+            if generation is None:
+                return False
+            count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            if count != generation["chunk_count"]:
+                return False
+            conn.execute(
+                "UPDATE semantic_generations SET state='Ready',claim_token=NULL "
+                "WHERE generation_id=?", (generation_id,)
+            )
+            conn.execute(
+                "UPDATE semantic_control SET state='Ready',reason=NULL,ready_generation_id=? "
+                "WHERE singleton=1", (generation_id,)
+            )
+            return True
+
+    @_activated
+    def semantic_fail(self, scope, generation_id, claim_token, *, reason: str) -> bool:
+        """Leave a compatible old Ready pointer intact after staging failure."""
+        if not re.fullmatch(r"[a-z_]{1,64}", reason):
+            raise ValueError("invalid_semantic_reason")
+        with self.transaction(semantic=True) as conn:
+            generation = self._semantic_live(
+                conn, scope, generation_id, claim_token, require_manifest=False
+            )
+            if generation is None:
+                return False
+            control = conn.execute(
+                "SELECT ready_generation_id FROM semantic_control WHERE singleton=1"
+            ).fetchone()
+            prior = (
+                conn.execute(
+                    "SELECT * FROM semantic_generations WHERE generation_id=?",
+                    (control[0],),
+                ).fetchone()
+                if control and control[0]
+                else None
+            )
+            compatible = bool(
+                prior
+                and prior["state"] == "Ready"
+                and prior["namespace"] == generation["namespace"]
+                and prior["epoch"] == generation["epoch"]
+                and prior["processing_revision"] == generation["processing_revision"]
+                and prior["semantic_revision"] == generation["semantic_revision"]
+                and prior["provider_id"] == generation["provider_id"]
+                and prior["model_id"] == generation["model_id"]
+                and prior["destination_fingerprint"] == generation["destination_fingerprint"]
+                and prior["config_fingerprint"] == generation["config_fingerprint"]
+                and prior["artifact_fingerprint"] == generation["artifact_fingerprint"]
+                and prior["format_id"] == "float32-le-v1"
+                and (prior["chunk_count"] == 0 or prior["dimension"] > 0)
+            )
+            conn.execute(
+                "UPDATE semantic_generations SET state='Error',claim_token=NULL "
+                "WHERE generation_id=?", (generation_id,)
+            )
+            conn.execute(
+                "UPDATE semantic_control SET state=?,reason=? WHERE singleton=1",
+                (
+                    "Ready" if compatible else "Error",
+                    "previous_index_refresh_failed_" + reason if compatible else reason,
+                ),
+            )
+            return True
+
+    @staticmethod
+    def _compatible_ready(conn, scope, state, artifact_fingerprint):
+        keyword = conn.execute("SELECT * FROM control WHERE singleton=1").fetchone()
+        control = conn.execute(
+            "SELECT * FROM semantic_control WHERE singleton=1"
+        ).fetchone()
+        if (
+            keyword is None
+            or keyword["namespace"] != scope.key.namespace
+            or keyword["epoch"] != scope.epoch
+            or keyword["processing_revision"] != scope.processing_revision
+            or not keyword["enabled"]
+            or control is None
+            or not control["enabled"]
+            or control["epoch"] != scope.epoch
+            or control["semantic_revision"] != state.semantic_revision
+            or not control["ready_generation_id"]
+            or state.settings is None
+            or ProjectSemanticSettings(**json.loads(control["settings_json"]))
+            != state.settings
+        ):
+            return None
+        generation = conn.execute(
+            "SELECT * FROM semantic_generations WHERE generation_id=?",
+            (control["ready_generation_id"],),
+        ).fetchone()
+        if (
+            generation is None
+            or generation["state"] != "Ready"
+            or generation["namespace"] != scope.key.namespace
+            or generation["epoch"] != scope.epoch
+            or generation["processing_revision"] != scope.processing_revision
+            or generation["semantic_revision"] != state.semantic_revision
+            or generation["provider_id"] != state.settings.provider_id
+            or generation["model_id"] != state.settings.model_id
+            or generation["destination_fingerprint"]
+            != state.settings.destination_fingerprint
+            or generation["config_fingerprint"] != state.settings.config_fingerprint
+            or generation["artifact_fingerprint"] != artifact_fingerprint
+            or generation["format_id"] != "float32-le-v1"
+        ):
+            return None
+        return generation
+
+    def semantic_ready_generation(
+        self, scope: ProjectIndexScope, state: ProjectSemanticState, artifact_fingerprint: str
+    ) -> ProjectSemanticGeneration | None:
+        """Project compatible Ready without invalidating on a later manifest alone."""
+        with self.connection() as conn:
+            row = self._compatible_ready(conn, scope, state, artifact_fingerprint)
+            if row is None:
+                return None
+            return ProjectSemanticGeneration(
+                row["generation_id"], scope, row["semantic_revision"],
+                row["provider_id"], row["model_id"],
+                row["destination_fingerprint"], row["config_fingerprint"],
+                row["artifact_fingerprint"], row["format_id"], row["dimension"],
+                row["manifest_revision"], row["claim_token"],
+                row["checkpoint_chunk_id"], row["state"], row["chunk_count"],
+            )
+
+    def semantic_member_page(
+        self, scope, state, artifact_fingerprint, exclusions, *, after: int
+    ) -> tuple[ProjectSemanticMember, ...] | None:
+        """Filter the current policy/run floor before a bounded vector page."""
+        if type(after) is not int or after < 0:  # noqa: E721
+            raise ValueError("invalid_semantic_cursor")
+        with self.connection() as conn:
+            generation = self._compatible_ready(conn, scope, state, artifact_fingerprint)
+            if generation is None:
+                return None
+            keyword = conn.execute("SELECT policy FROM control WHERE singleton=1").fetchone()
+            policy = ProjectIndexPolicy(*json.loads(keyword[0]))
+            conn.create_function(
+                "index_path_allowed", 1,
+                self._eligibility_predicate(policy, exclusions),
+            )
+            try:
+                heads = conn.execute(
+                    "SELECT ordinal,length(vector) FROM semantic_members "
+                    "WHERE generation_id=? AND ordinal>? "
+                    "AND index_path_allowed(relative_path)=1 "
+                    "ORDER BY ordinal LIMIT 32",
+                    (generation["generation_id"], after),
+                ).fetchall()
+            finally:
+                conn.create_function("index_path_allowed", 1, None)
+            selected = []
+            total = 0
+            for ordinal, length in heads:
+                if total + length > 1024 * 1024:
+                    if not selected:
+                        raise ValueError("semantic_vector_page_limit")
+                    break
+                selected.append(ordinal)
+                total += length
+            if not selected:
+                return ()
+            placeholders = ",".join("?" for _ in selected)
+            rows = conn.execute(
+                "SELECT generation_id,ordinal,relative_path,identity,content_sha256,"
+                "line_start,line_end,vector FROM semantic_members "
+                f"WHERE generation_id=? AND ordinal IN ({placeholders}) ORDER BY ordinal",
+                (generation["generation_id"], *selected),
+            ).fetchall()
+            return tuple(ProjectSemanticMember(*tuple(row)) for row in rows)
 
     def assert_native_lifetime(self) -> None:
         """Refuse unknown historical owners even after durable revocation."""

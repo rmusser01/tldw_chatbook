@@ -241,6 +241,7 @@ class ProjectSemanticState:
     reason: str | None = None
     ready_generation_id: str | None = None
     coverage: int | None = None
+    close_pending: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +277,19 @@ class ProjectSemanticMember:
     line_start: int
     line_end: int
     vector: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticSourceChunk:
+    """One immutable keyword-source revision prepared for embedding."""
+
+    chunk_id: int
+    relative_path: str
+    identity: str
+    content_sha256: str
+    line_start: int
+    line_end: int
+    text: str = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -486,10 +500,13 @@ class ProjectSearchResult:
     hits: tuple[ProjectIndexHit, ...]
     coverage: ProjectIndexStatus | None
     refresh_required: bool
+    semantic_status: str = "unavailable"
 
     def __post_init__(self):
         if self.status not in {"ready", "partial", "unavailable"}:
             raise ValueError("invalid_search_status")
+        if self.semantic_status not in {"ready", "unavailable"}:
+            raise ValueError("invalid_semantic_search_status")
 
 
 @dataclass(frozen=True, slots=True)

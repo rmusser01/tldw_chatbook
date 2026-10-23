@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:27'
-updated_date: '2026-10-23 17:47'
+updated_date: '2026-10-23 18:21'
 labels: []
 dependencies:
   - TASK-36421
@@ -43,4 +43,7 @@ Provide optional semantic project discovery with truthful readiness and keyword 
 ADR required: yes, existing amended ADR.
 ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md.
 Reason: direct implementation of accepted generation, allocation, source ownership and disclosure contracts; no new persistence owner. Report concrete need before any new schema, durable control or cross-owner mechanism.
+7. Retain a background semantic build owner through actual model close failure and expose only retry_semantic_close(job_id) as a same-owner retry signal under the existing ADR241 amendment. Verify wrong-job refusal, pending shutdown, keyword lookup and positive physical retirement; report the synchronous query close-failure disposition. No general executor or storage/control change.
+8. Superseding the earlier unimplemented job-id signature, retry_semantic_close(key) signals only owned pending build/query closes for the exact binding. Keep one nonblocking semantic query/service on the existing sync tool worker; persistent close failure retains that worker without a SQL/read-slot/gate/fence, and contention falls back to keywords. Verify same-owner positive retry, cancellation, wrong-key refusal and keyword availability.
+9. Use the existing runtime/service registry context yielded owner for finite newly owned/replacement WorkspaceDB retirement with actual native/core proof before semantic model/provider/close/retry waits. Preserve/refuse live borrowed caller handles before effects. Exact added path RAG_Search/projection_scope.py integrates current-state retirement; no generic DB or keyword behavior rewrite.
 <!-- SECTION:PLAN:END -->

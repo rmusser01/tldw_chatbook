@@ -170,6 +170,7 @@ class ProjectionExecutionScope:
                 self.scope.key
             ) as pin, pin.bind():
                 self._current_state()
+                service._retire_registry_for_model()
                 state = _ProjectExecution(self, current)
                 token = _active.set(state)
                 try:

@@ -798,7 +798,7 @@ async def test_valid_then_stale_exact_serialized_boundary(
         rig.enable()
         rig.refresh()
         scope = rig.settle().scope
-        texts = {"a.txt": "a" * 12000, "b.txt": "b" * 4130}
+        texts = {"a.txt": "a" * 12000, "b.txt": "b" * 4098}
         captures = {
             path: FileCapture(
                 path,
