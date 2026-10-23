@@ -505,8 +505,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # the tail -- Tests/UI/test_library_focus_never_lands_on_a_removed_widget.py
 # (three 80x24 boots of the real app, ~15 s locally) -- so no existing entry
 # changes shard: 666 -> 667.
-# TASK-36454..36458: append 53 exact mounted cases; all 664 inherited slots stay fixed.
-MINIMUM_FILES = 720
+# TASK-36454..36458: append 56 exact mounted cases; all 664 inherited slots stay fixed.
+MINIMUM_FILES = 723
 
 
 def read_census(path: Path) -> list[str]:
