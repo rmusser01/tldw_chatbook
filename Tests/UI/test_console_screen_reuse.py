@@ -151,7 +151,7 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         # TASK-36389: the reused Console re-arms the poll in its attach
         # reconcile's resume, which a reached screen does not imply.
-        assert await console_attach_ended(console), "the attach reconcile never ended"
+        await console_attach_ended(console)
         assert console._console_transcript_sync_timer is not None, (
             "resume must restart the transcript-sync poll while a run is "
             "in flight -- no other path restarts it"
@@ -161,7 +161,7 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
         console._stop_console_transcript_sync_timer()
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
-        assert await console_attach_ended(console), "the attach reconcile never ended"
+        await console_attach_ended(console)
         assert console._console_transcript_sync_timer is None
 
 

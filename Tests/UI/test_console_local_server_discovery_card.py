@@ -21,6 +21,7 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_model_switcher import line_with, list_lines
 from Tests.UI.test_console_switch_model_entry_points import _switcher_ready, _until
 from Tests.UI.test_console_switch_model_keys import _drain
@@ -851,6 +852,9 @@ async def test_a_card_resumed_with_nothing_detected_runs_discovery_again(
         assert len(app._discovery_calls) == 2
 
         await leave_and_come_back(pilot)
+        # TASK-36389: "no new look" means nothing only after the return's
+        # attach reconcile has run; the pauses then cover a started worker.
+        await console_attach_ended(console)
         for _ in range(10):
             await pilot.pause(0.05)
         assert len(app._discovery_calls) == 2
