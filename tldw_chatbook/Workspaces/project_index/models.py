@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ContextManager
 
@@ -198,24 +199,32 @@ class ProjectSemanticSettings:
     config_ref: str
 
     def __post_init__(self):
-        for value in (
-            self.provider_id,
-            self.model_id,
-            self.destination_fingerprint,
-            self.config_fingerprint,
-            self.provider_ref,
-            self.config_ref,
+        provider = (
+            re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.provider_id)
+            if isinstance(self.provider_id, str)
+            else None
+        )
+        model = (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.model_id)
+            if isinstance(self.model_id, str)
+            else None
+        )
+        digest = re.compile(r"sha256:v1:[0-9a-f]{64}\Z")
+        if not provider or not model:
+            raise ValueError("invalid_semantic_identifier")
+        if (
+            self.provider_ref != "provider:v1:" + self.provider_id
+            or self.config_ref != "model:v1:" + self.model_id
         ):
-            if not isinstance(value, str) or not 0 < len(value) <= 256:
-                raise ValueError("invalid_semantic_setting")
-            if "://" in value or "@" in value or any(ord(ch) < 32 for ch in value):
-                raise ValueError("credential_bearing_semantic_setting")
+            raise ValueError("invalid_semantic_reference")
+        if not all(
+            isinstance(value, str) and digest.fullmatch(value)
+            for value in (self.destination_fingerprint, self.config_fingerprint)
+        ):
+            raise ValueError("invalid_semantic_fingerprint")
         approved = self.approved_destination_fingerprint
         if approved is not None and (
-            not isinstance(approved, str)
-            or not 0 < len(approved) <= 256
-            or "://" in approved
-            or "@" in approved
+            not isinstance(approved, str) or not digest.fullmatch(approved)
         ):
             raise ValueError("invalid_approved_destination")
 

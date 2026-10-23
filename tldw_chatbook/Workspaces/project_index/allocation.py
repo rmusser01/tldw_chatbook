@@ -153,6 +153,14 @@ def allocation_store(group: Path, store: object):
         _ACTIVE.store = previous
 
 
+def assert_store_unoccupied(group: Path) -> None:
+    """Refuse peer preflight while another native store is still active."""
+    group = Path(group).absolute()
+    _live_gate(group)
+    if getattr(_ACTIVE, "store", None) is not None:
+        raise ValueError("index_allocation_overlapping_store")
+
+
 def retain_uncertain(group: Path, lease: BindingLifetime) -> None:
     """Quarantine a native gate after unproven rollback/close/inventory."""
     group = Path(group).absolute()
@@ -173,6 +181,25 @@ def register_owned_lifetime(group: Path, lease: BindingLifetime) -> None:
         raise ValueError("index_allocation_owner_refused")
     lease.assert_live()
     _ACTIVE.owned_lifetimes.append(lease)
+
+
+def legacy_namespace_paths(group: Path) -> tuple[Path, ...]:
+    """List validated existing databases without creating a missing group gate."""
+    group = Path(group).absolute()
+    return tuple(
+        sorted(
+            path
+            for path in _inventory(group)
+            if path.name == "workspace_project_index.db"
+        )
+    )
+
+
+def existing_namespace_paths(group: Path) -> tuple[Path, ...]:
+    """List validated existing namespace databases under the held group gate."""
+    group = Path(group).absolute()
+    _live_gate(group)
+    return legacy_namespace_paths(group)
 
 
 def verify_pre_open(path: Path, group: Path) -> None:

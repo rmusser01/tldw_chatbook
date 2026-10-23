@@ -1878,3 +1878,34 @@ async def test_failed_start_history_race_retires_unrecorded_production_pin(
                 pin.close()
         await close_project_index_service(app)
         registry.db.close()
+
+
+@private_profile_test
+async def test_status_building_without_lifetime_projects_interrupted_without_creating_it(
+    tmp_path, request
+):
+    from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime
+
+    rig = Rig(tmp_path)
+    try:
+        enabled = rig.enable()
+        store = rig.store(rig.key)
+        lock = index_store_path(rig.data, rig.key).parent.parent / rig.key.lifetime_name
+        lease = BindingLifetime.acquire(lock)
+        try:
+            store.claim_job(
+                enabled.scope,
+                owner_token="native-v1:" + rig.key.binding_namespace + ":orphan",
+                authority_revision=rig.live.authority_revision,
+                expected_job_revision=enabled.job_revision,
+            )
+        finally:
+            store.close_native()
+            lease.close()
+        lock.unlink()
+        assert not lock.exists()
+        for _ in range(2):
+            assert rig.service.status(rig.key).state == "Interrupted"
+            assert not lock.exists()
+    finally:
+        await rig.close()

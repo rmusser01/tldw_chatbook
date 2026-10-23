@@ -1,6 +1,7 @@
 """Independent project semantic consent and state."""
 
 import sys
+from hashlib import sha256
 
 import pytest
 
@@ -12,15 +13,19 @@ from tldw_chatbook.Workspaces.project_index.models import (
 )
 
 
+def digest(value):
+    return "sha256:v1:" + sha256(value.encode()).hexdigest()
+
+
 def settings(destination="local-model-a"):
     return ProjectSemanticSettings(
-        provider_id="local",
-        model_id="mini",
-        destination_fingerprint=destination,
-        config_fingerprint="config-a",
-        approved_destination_fingerprint=destination,
-        provider_ref="local",
-        config_ref="profile-semantic-a",
+        provider_id="huggingface",
+        model_id="e5-small-v2",
+        destination_fingerprint=digest(destination),
+        config_fingerprint=digest("config-a"),
+        approved_destination_fingerprint=digest(destination),
+        provider_ref="provider:v1:huggingface",
+        config_ref="model:v1:e5-small-v2",
     )
 
 
@@ -198,3 +203,63 @@ def test_fresh_service_status_projects_off_without_creating_cache_or_gate(tmp_pa
     assert status.state == "Off"
     assert status.scope.epoch == 0
     assert not (data / "project_index").exists()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"provider_id": "api_key=secret"},
+        {"model_id": "https://example.invalid/model"},
+        {"provider_ref": "api_key=secret"},
+        {"provider_ref": "provider:v1:other"},
+        {"config_ref": "model:v1:api_key=secret"},
+        {"config_ref": "model:v1:other"},
+        {"destination_fingerprint": "token=secret"},
+        {"config_fingerprint": "sha256:v1:" + "A" * 64},
+        {"approved_destination_fingerprint": "https://example.invalid"},
+    ],
+)
+def test_semantic_settings_refuse_credential_shapes_before_persistence(
+    tmp_path, change
+):
+    from dataclasses import replace
+
+    store = open_semantic_store(tmp_path)
+    key = make_index_key(tmp_path)
+    scope = store.load_status(key).scope
+    try:
+        with pytest.raises(ValueError) as error:
+            replace(settings(), **change)
+        assert "secret" not in str(error.value)
+        assert store.load_semantic_state(scope).semantic_revision == 0
+        with store.connection() as conn:
+            assert (
+                conn.execute("SELECT COUNT(*) FROM semantic_control").fetchone()[0] == 0
+            )
+    finally:
+        store.close_native()
+
+
+def test_semantic_settings_accept_versioned_refs_and_changed_approval(tmp_path):
+    store = open_semantic_store(tmp_path)
+    key = make_index_key(tmp_path)
+    scope = store.load_status(key).scope
+    selected = settings()
+    approved = ProjectSemanticSettings(
+        selected.provider_id,
+        selected.model_id,
+        selected.destination_fingerprint,
+        selected.config_fingerprint,
+        digest("previous-destination"),
+        selected.provider_ref,
+        selected.config_ref,
+    )
+    try:
+        state = store.configure_semantic(
+            scope, approved, enabled=True, expected_semantic_revision=0
+        )
+        assert state.state == "Paused"
+        assert state.reason == "destination_approval_required"
+        assert state.settings == approved
+    finally:
+        store.close_native()

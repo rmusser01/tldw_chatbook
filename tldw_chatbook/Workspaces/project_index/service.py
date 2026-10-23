@@ -227,8 +227,10 @@ class ProjectIndexService:
     def _binding_root(store):
         return store.db_path.parent.parent
 
-    def _lifetime(self, store, key):
-        lease = BindingLifetime.acquire(self._binding_root(store) / key.lifetime_name)
+    def _lifetime(self, store, key, *, existing_only=False):
+        lease = BindingLifetime.acquire(
+            self._binding_root(store) / key.lifetime_name, existing_only=existing_only
+        )
         store.bind_native_lifetime(lease)
         return lease
 
@@ -357,9 +359,11 @@ class ProjectIndexService:
             and (run is None or run.native_retired)
         ):
             try:
-                lease = self._lifetime(store, key)
+                lease = self._lifetime(store, key, existing_only=True)
             except LifetimeBusy:
                 pass
+            except FileNotFoundError:
+                result = replace(result, state="Interrupted")
             else:
                 try:
                     result = replace(result, state="Interrupted")
