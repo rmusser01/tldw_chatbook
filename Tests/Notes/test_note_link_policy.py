@@ -43,10 +43,10 @@ CONTROL_LADEN_HTTP = (
     "https://a.example/with space",
     "https://a.example/tab\there",
     "https://a.example/\x85nel",
-    "https://a.example/‮right-to-left",
-    "https://a.example/⁦isolate",
-    "https://a.example/‎mark",
-    "HTTP://a.example/‭bidi",
+    "https://a.example/\u202eright-to-left",
+    "https://a.example/\u2066isolate",
+    "https://a.example/\u200emark",
+    "HTTP://a.example/\u202dbidi",
 )
 
 NO_TARGET = ("#heading", "docs/a.md", "../up.md", "", "?query=1")
@@ -101,14 +101,14 @@ def test_the_notice_text_drops_c0_c1_and_bidi_controls() -> None:
     override that would make it read backwards."""
     assert link_notice_text("https://a.example/\x1b]0;x\x07") == "https://a.example/]0;x"
     assert link_notice_text("https://a.example/\x85nel") == "https://a.example/nel"
-    assert link_notice_text("abc‮‪‫‬‭def") == "abcdef"
-    assert link_notice_text("abc⁦⁧⁨⁩def") == "abcdef"
-    assert link_notice_text("abc‎‏def") == "abcdef"
+    assert link_notice_text("abc\u202e\u202a\u202b\u202c\u202ddef") == "abcdef"
+    assert link_notice_text("abc\u2066\u2067\u2068\u2069def") == "abcdef"
+    assert link_notice_text("abc\u200e\u200fdef") == "abcdef"
     assert link_notice_text("https://x.example/[b]bold[/]") == "https://x.example/[b]bold[/]"
 
 
 def test_the_bidi_control_set_is_exactly_the_eleven_ruled_on() -> None:
     expected = {chr(c) for c in range(0x202A, 0x202F)} | {chr(c) for c in range(0x2066, 0x206A)}
-    expected |= {"‎", "‏"}
+    expected |= {"\u200e", "\u200f"}
     assert BIDI_CONTROLS == frozenset(expected)
     assert len(BIDI_CONTROLS) == 11

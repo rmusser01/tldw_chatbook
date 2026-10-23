@@ -197,6 +197,14 @@ def test_bare_wikilink_titles_and_the_completion_context_are_pure():
     assert wikilink_completion_context("[[Lis]]", (0, 7)) is None
     assert wikilink_completion_context("[[Lis|al", (0, 8)) is None
     assert wikilink_completion_context("[[Lis[", (0, 6)) is None
+    # Final review C-1(a): a caret INSIDE an already-closed link -- bare or
+    # stored -- is no completion, so navigation keys can never open the
+    # picker over an existing link and rewrite it to another note.
+    stored = "See [[Trip planning: Lisbon]](note://x) today."
+    assert wikilink_completion_context(stored, (0, 10)) is None
+    assert wikilink_completion_context(stored, (0, 30)) is None
+    assert wikilink_completion_context("See [[Lisbon]] now", (0, 9)) is None
+    assert wikilink_completion_context("[[Lis]] then [[Tri", (0, 18)) == ("Tri", (0, 13))
     # Not an embed, not inside backticks on that line, not inside an open fence.
     assert wikilink_completion_context("![[Lis", (0, 6)) is None
     assert wikilink_completion_context("`[[Lis", (0, 6)) is None
