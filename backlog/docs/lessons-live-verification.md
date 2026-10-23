@@ -4586,3 +4586,9 @@ scrolling up and down; prior static-pair checks and timing review missed this.
 and at the exported viewing scale. Do not infer that a one-pixel shift is subtle.
 Keep codec portraits stationary; verify native painted pixels equal one of the
 prepared eye/mouth poses. An enlarged detail replay must not add displacement.
+
+## A redirected stdout or stderr leaves the tmux pane blank, not broken (TASK-34000.71, 2026-10-23)
+
+**Incident.** Two isolated launches of `python -m tldw_chatbook` inside `tmux -L p1b-t5-1` painted nothing for 30 s, while the profile's `tldw_cli_app.log` showed an ordinary boot. The first launch redirected stdout to a file (to keep a crash readable); the frames landed in that file, sized 80x24. The second redirected only stderr; the 160x45 frames landed in that file instead. Textual's driver writes the screen to whichever of those streams it is given, so either redirect takes the paint away from the pane and nothing in the pane says why. Two relaunches, about four minutes.
+
+**What to do.** Launch the TUI in tmux with no redirect on either stream. A crash is already readable: the profile's `tldw_cli_app.log` under `get_user_data_dir()` carries the traceback, and `tmux capture-pane` shows Textual's own crash screen. If stdout must go somewhere, read the file as the frame it is before concluding the app is hung.

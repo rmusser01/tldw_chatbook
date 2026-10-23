@@ -54,6 +54,7 @@ from .app_collections_wiring import (
 )
 
 import asyncio
+import contextlib
 import functools  # noqa: F401 - retained original importing/patch slot
 import hashlib  # noqa: F401 - retained original importing/patch slot
 import os
@@ -63,6 +64,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Mapping  # noqa: UP035
 
 from loguru import logger
+from textual.app import ScreenStackError
 from textual.worker import Worker
 
 from tldw_chatbook.Actor_Packs.activation import ActorPackActivationService
@@ -1067,6 +1069,58 @@ class ServiceWiringMixin(
                 "will report a runtime error rather than feature-unavailable."
             )
             return None
+
+    def ensure_notes_sync_runtime_started(self) -> "asyncio.Task[None] | None":
+        """Schedule the owner's NON-forced ``start()`` when boot's gate skipped it.
+
+        TASK-34000.71: on a profile with no lasting-sync root, ``on_mount``
+        neither constructs nor starts the runtime (TASK-21247), and the
+        Library screen later builds the owner lazily without starting it --
+        so it sits at its constructor status ``"starting"``, which the setup
+        gate refuses, while the one force-start that would move it
+        (``review_setup``) is reachable only through the option that gate
+        refuses. The Library side calls this once it holds the owner. A
+        non-forced start runs the same TASK-21112 evidence probe boot would
+        have: with no root it defers to ``"not_configured"`` WITHOUT opening
+        the state store (the status first-time setup is offered from), and
+        with a configured root it is the full start boot would have run.
+
+        Idempotent, and a no-op in every case where there is nothing to do:
+        a start task already recorded (boot's own, or an earlier call here)
+        is returned as-is, so a configured user's in-flight boot start is
+        never doubled or re-reported; a build failure (``safe reader``) and
+        an owner double without ``start`` schedule nothing. The task slot is
+        written under the owner-construction lock, so a racing first reader
+        cannot schedule two starts over one owner, and it carries the boot
+        path's task name and done-callback (``_observe_notes_sync_runtime_
+        start``), which is what makes a lazily started runtime stop at exit
+        exactly like a boot-started one. Must be called on the event-loop
+        thread: without a running loop nothing is scheduled.
+
+        Returns:
+            The start task (new or existing), or None when nothing was
+            scheduled.
+        """
+        existing = getattr(self, "_notes_sync_runtime_start_task", None)
+        if existing is not None:
+            return existing
+        owner = self._read_notes_sync_runtime_owner_safe()
+        start = getattr(owner, "start", None)
+        if owner is None or not callable(start):
+            return None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        lock = getattr(self, "_notes_sync_runtime_owner_lock", None)
+        with lock if lock is not None else contextlib.nullcontext():
+            existing = getattr(self, "_notes_sync_runtime_start_task", None)
+            if existing is not None:
+                return existing
+            task = loop.create_task(start(), name="start_notes_sync_runtime")
+            task.add_done_callback(self._observe_notes_sync_runtime_start)
+            self._notes_sync_runtime_start_task = task
+        return task
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).
@@ -3464,7 +3518,13 @@ class ServiceWiringMixin(
         if task.exception() is not None:
             logger.error("Notes sync runtime startup failed.")
             return
-        screen = self.screen
+        try:
+            screen = self.screen
+        except ScreenStackError:
+            # TASK-34000.71: the Library side can schedule a start on an app
+            # that is not running (a harness mounts the screen over an
+            # un-run app instance); a done-callback must not raise.
+            return
         refresh = getattr(screen, "refresh_notes_sync_runtime", None)
         if callable(refresh):
             self.call_after_refresh(refresh)

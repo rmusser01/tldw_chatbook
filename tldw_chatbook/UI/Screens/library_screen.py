@@ -3892,6 +3892,16 @@ class LibraryScreen(BaseAppScreen):
             )
         if app_lasting_runtime is not None:
             lasting_runtime = app_lasting_runtime
+            # TASK-34000.71: this is the first place the Library needs the
+            # owner. When boot's gate skipped the start (no root), the app
+            # schedules the non-forced start now, through its own start-task
+            # bookkeeping; on a no-root profile that settles to
+            # "not_configured" (setup offered) without opening the store.
+            ensure_started = getattr(
+                app_instance, "ensure_notes_sync_runtime_started", None
+            )
+            if callable(ensure_started):
+                ensure_started()
         elif getattr(
             app_instance, "_notes_sync_runtime_build_failure", None
         ) is not None:
