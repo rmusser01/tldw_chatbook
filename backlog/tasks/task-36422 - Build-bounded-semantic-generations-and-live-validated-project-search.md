@@ -1,11 +1,11 @@
 ---
 id: TASK-36422
 title: Build bounded semantic generations and live-validated project search
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:27'
-updated_date: '2026-10-23 20:03'
+updated_date: '2026-10-23 20:40'
 labels: []
 dependencies:
   - TASK-36421
@@ -23,12 +23,12 @@ Provide optional semantic project discovery with truthful readiness and keyword 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Build pages are at most32chunks and1MiB, total retained/queued source is at most4MiB, and one checked keyword manifest produces immutable generation membership with atomic compatible Ready publication.
-- [ ] #2 Interrupted/failed/quota-refused rebuild preserves the prior compatible Ready; stale scope, semantic revision, consent, destination or source cannot publish.
-- [ ] #3 Semantic ranking applies exact run/current exclusions and policy before top-k; RRF60 merges bounded candidates through the existing100candidate/10hit/16KiB live identity/hash/permission disclosure boundary.
-- [ ] #4 Semantic unavailable failures remain distinct from successful zero hits and always leave keyword-only search usable.
-- [ ] #5 Durable job ownership, repeated cancellation, Clear/detach and shutdown retain real native borrowers through physical retirement; data cannot cross identical-text bindings.
-- [ ] #6 Keyword lookup remains usable while actual embedding/provider work is held outside finite SQL units; binding-wide keyword/semantic job admission stays sequential and total retained/queued source across jobs stays at most4MiB.
+- [x] #1 Build pages are at most32chunks and1MiB, total retained/queued source is at most4MiB, and one checked keyword manifest produces immutable generation membership with atomic compatible Ready publication.
+- [x] #2 Interrupted/failed/quota-refused rebuild preserves the prior compatible Ready; stale scope, semantic revision, consent, destination or source cannot publish.
+- [x] #3 Semantic ranking applies exact run/current exclusions and policy before top-k; RRF60 merges bounded candidates through the existing100candidate/10hit/16KiB live identity/hash/permission disclosure boundary.
+- [x] #4 Semantic unavailable failures remain distinct from successful zero hits and always leave keyword-only search usable.
+- [x] #5 Durable job ownership, repeated cancellation, Clear/detach and shutdown retain real native borrowers through physical retirement; data cannot cross identical-text bindings.
+- [x] #6 Keyword lookup remains usable while actual embedding/provider work is held outside finite SQL units; binding-wide keyword/semantic job admission stays sequential and total retained/queued source across jobs stays at most4MiB.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,3 +61,10 @@ Ruling: The new explicit OpenAI session callback makes both existing idle and LR
 
 ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: retain the already-owned session across failure at both existing cache retirement entrances. Cost if wrong: safe failed embedding and retained resources until explicit existing close succeeds; never a lost native owner or false retirement.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented immutable bounded semantic generations in the existing project SQLite owner and ProjectIndexService, finite float32 exact cosine/RRF60 before live validation, separate consent/readiness and keyword fallback. Reused actual issued carriers and native lifetimes; same-owner pending-close retry, finite registry retirement, explicit OpenAI Session.close and close-before-eviction preserve real owners. The plan-named ProjectSemanticIndex class was intentionally replaced by methods on the existing service plus codec/ranking helpers; no additional owner, backend or Library setting mutation.
+Targeted realSQLite, allocator, manifest/CAS, artifact preflight, live tool/query cancellation, Clear/detach/exclusion/settings and actual cached MiniLM async/held HTTP controls passed with retained raw/hash/child evidence. Scoped lint, two new test-file format checks, compilation and diff checks passed. Initial independent review0C3I1M; all three Important findings fixed in538faa103e and fresh re-review reports0new issues. Source commits805701f9,5ad64a28,286be157,538faa103e. Intermittent scanner fixture startup, pre-fix aborts and inherited warning owners remain documented; no full suite or app relevance/20k claim. Existing ADR241 amended before owner-boundary corrections; architecture updated. Mounted consent and release quality/scale coverage remain a separate deliverable.
+<!-- SECTION:NOTES:END -->

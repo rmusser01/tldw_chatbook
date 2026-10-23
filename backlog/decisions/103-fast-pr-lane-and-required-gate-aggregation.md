@@ -286,3 +286,10 @@ makes thirteen the smallest evaluated layout below the 1020s acceptance cap
 logged to correct node attribution; unknown costs in older top-25 logs share
 only the unmeasured file remainder. Hosted qualification, including three
 post-change PR attempts, is recorded in the TASK-35834 QA report.
+
+
+## Consent/release required PR runtime coverage (2026-10-23, TASK-36423)
+
+The source-qualified project allocation positives need real SQLite3.49.1 with the recorded source/options/VFS envelope. Add one bounded project-index contract job to the existing derived-artifacts required aggregation, using Windows with exact Python3.12.10 and core/test dependencies only. Record actual runtime identity and run positive contracts; unsupported source must fail, never spoof or skip all positives. This candidate pin follows CPythonv3.12.10 PCbuild/get_externals.bat selecting sqlite-3.49.1.0; actual hosted execution remains required before claiming CI qualification. Keep the existing required context name/install-free artifact job, fail-closed needs/verdicts, current lane caps and13UIshards. The new job has a20-minute ceiling; measure selectors/setup plus one test-timeout headroom and runner variance before final membership. Nineteen current test runners become twenty, twenty-one including perf-guard; no general matrix or optionalML addition. Critical schema/settings/native/project-admission and missing-embedding keyword controls are explicit nonoverlapping targets. New mounted consent tests are deliberately classified by the governed UI census; measure placement rather than blindly appending costly work. Update exact Tests/CI/test_ci_queue_pressure_contract.py expectations only for this intentional boundary. Real cached-model/app/20k qualification is retained separately, not inferred from deterministic PR controls.
+
+References: https://raw.githubusercontent.com/python/cpython/v3.12.10/PCbuild/get_externals.bat ; https://github.com/actions/setup-python/blob/main/docs/advanced-usage.md . These are source/pin references, not a hosted runtime certificate.

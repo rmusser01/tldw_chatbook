@@ -110,15 +110,15 @@ Primary proof references: [SQLite3.49.1 release](https://www.sqlite.org/releasel
 
 ## Task 3: S2 generations and search — TASK36422
 
-**Consumes:** S1a records/allocation and S1b wrapper/issuer. **Produces:** `ProjectSemanticIndex` bounded builder/candidate outcome, service owned semantic jobs and `enable_semantic(key, settings, *, expected_epoch, expected_semantic_revision)` / `disable_semantic(key, *, expected_epoch, expected_semantic_revision)`; model-free separate state.
+**Consumes:** S1a records/allocation and S1b wrapper/issuer. **Produces:** bounded builder/candidate outcome on existing `ProjectIndexService`, with codec/ranking helpers, service owned semantic jobs and `enable_semantic(key, settings, *, expected_epoch, expected_semantic_revision)` / `disable_semantic(key, *, expected_epoch, expected_semantic_revision)`; model-free separate state.
 
 **Files:** Generations/search row; new `Tests/Workspaces/test_project_semantic_generations.py`, `test_project_semantic_search.py`, `Tests/Backup_Recovery/test_project_semantic_lifetime.py`; affected actual project tool/recovery controls.
 
-- [ ] Write real-SQLite deterministic-vector REDs for synonym corpus, failed rebuild/old Ready, mutation between pages/final CAS, same-dimension model changes, identical-text binding separation, ready-zero versus unavailable, corrupt/oversized/nonfinite vectors and quota refusal.
-- [ ] Hold actual work across repeated cancellation, Clear/detach/exclusion/settings changes, competing keyword build and app close; publication must fail and physical borrowers retire.
-- [ ] Implement immutable bounded keyset pages, <=4MiB total source ownership, finite float32 codec and heap100 exact cosine. Apply shared exact eligibility predicate before ranking, RRF60/dedup before unchanged live validation, 10hit/16384byte output. No full matrix, source replay scanner or per-tool asyncio.run.
-- [ ] Build uses actual async embedding pages on one owned job lifecycle with durable claim/checkpoint; synchronous query embeddings use the existing finite tool worker. Consent/config checks apply at service boundaries before UI exists. Register semantic jobs in the same close/revoke snapshots; sequential keyword/semantic writes.
-- [ ] Verify new files and directly affected tool/keyword/native controls, codec/rank/filter behavior, source guards/lint/diff; commit/report/review. Scale/real quality follows in S3 after source settles.
+- [x] Write real-SQLite deterministic-vector REDs for synonym corpus, failed rebuild/old Ready, mutation between pages/final CAS, same-dimension model changes, identical-text binding separation, ready-zero versus unavailable, corrupt/oversized/nonfinite vectors and quota refusal.
+- [x] Hold actual work across repeated cancellation, Clear/detach/exclusion/settings changes, competing keyword build and app close; publication must fail and physical borrowers retire.
+- [x] Implement immutable bounded keyset pages, <=4MiB total source ownership, finite float32 codec and heap100 exact cosine. Apply shared exact eligibility predicate before ranking, RRF60/dedup before unchanged live validation, 10hit/16384byte output. No full matrix, source replay scanner or per-tool asyncio.run.
+- [x] Build uses actual async embedding pages on one owned job lifecycle with durable claim/checkpoint; synchronous query embeddings use the existing finite tool worker. Consent/config checks apply at service boundaries before UI exists. Register semantic jobs in the same close/revoke snapshots; sequential keyword/semantic writes.
+- [x] Verify new files and directly affected tool/keyword/native controls, codec/rank/filter behavior, source guards/lint/diff; commit/report/review. Scale/real quality follows in S3 after source settles.
 
 ## Task 4: S3 consent and release — TASK36423
 
@@ -129,6 +129,8 @@ Primary proof references: [SQLite3.49.1 release](https://www.sqlite.org/releasel
 - [ ] Qualify actual cached local model through real production factory/issued scope and app: paraphrase discovery, refresh, failed rebuild, restart, semantic disable and full Clear/detach. Candidate snapshot: already cached MiniLM c9745ed...; artifact presence is not loader/quality proof. Missing sentence-transformers requires an isolated dependency setup, never modifying the shared environment or silently downloading model files.
 - [ ] Run one source-frozen semantic scale qualification on retained20k shapes, preserving corpora and analytical/native storage envelope; record model/config/dimension, bytes, throughput, memory, query latency and physical cancellation. Test keyword with missing embeddings independently. No favorable timing reruns or universal latency claim.
 - [ ] Retain raw RED/GREEN/native/provider/visual receipts as they retire, exact hashes/limitations/rulings and documentation; self review, independent task review, then one whole-branch review/fix wave. Close tasks only on actual evidence. User has not authorized auto-merging a future semantic PR and PR3204 Qodo waiver does not carry.
+
+- [ ] Gate critical semantic schema/settings/native/project-admission and current embeddings-free keyword regressions in a bounded required PR lane on an actually qualified SQLite runtime, with explicit UI census classification. Keep optional ML/20k work separate and existing lane caps/shards unchanged; update exact CI contracts and ADR103 before workflow changes. Parent owns external hosted qualification/PR actions.
 
 ## Delivery gate
 

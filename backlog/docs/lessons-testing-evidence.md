@@ -21554,7 +21554,7 @@ During optional keyword scanner qualification (TASK-36003, 2026-10-21), retainin
 
 During TASK-36132, a repository-wide guard run overlapped an implementer temporarily restoring baseline source for a redundant RED run in the same worktree. All four guards returned zero, but that scan could not certify one source snapshot. The final guard run had to be repeated after implementation handoff, with matching before/after source hashes.
 
-Serialize baseline reversals and shared scans. Private test profiles isolate storage, not the Python source checkout. Finish implementation handoff before repository-wide verification; record the reviewed source identity and verify it stays unchanged for the scan.
+During TASK-36422, task3-provider-registry-01 likewise overlapped a service source edit; it was retained as non-final evidence, then task3-final-exception-02 and exact final hash controls qualified the frozen paths. Serialize baseline reversals and shared scans. Private test profiles isolate storage, not the Python source checkout. Finish implementation handoff before repository-wide verification; record the reviewed source identity and verify it stays unchanged for the scan.
 
 ## A UI shard cancelled with no failing test ran out its own job cap; the gate only reports it (PR #3190, TASK-35660, 2026-10-22)
 
