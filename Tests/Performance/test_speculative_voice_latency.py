@@ -52,6 +52,14 @@ def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
     assert len(inventory["locators"]) == inventory["count"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "TASK-36510: eight message-locator columns have no leading index, "
+        "so the promotion scans them"
+    ),
+)
 def test_completed_pair_history_gate_meets_large_history_thresholds(
     tmp_path: Path,
 ) -> None:

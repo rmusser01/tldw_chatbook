@@ -720,6 +720,13 @@ async def _census(
         screen = pilot.app.screen
         context_spend_for_test(screen)._active_console_settings_context_estimate()
         context_spend_for_test(screen)._build_console_cost_state()
+        # TASK-36390: and what the composer's 0.2 s trailing refresh reads. A
+        # >0.2 s gap between presses fires it mid-burst. Its first
+        # context-presentation read after the fixture's back-door ingest is
+        # cold, and that read's publication is a full sync: 3 transcript
+        # snapshots. Paying it here leaves the burst only the warm read.
+        screen._sync_console_settings_summary()
+        screen._sync_console_cost_chip()
         if known_evidence:
             _settle_known_connection_evidence(pilot.app, screen)
             await _settle(pilot, passes=10)  # Its one refresh is not typing.

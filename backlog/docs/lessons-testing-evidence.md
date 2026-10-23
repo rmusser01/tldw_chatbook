@@ -2,9 +2,17 @@
 
 ## A test that was red from birth hides its next failure behind the first (TASK-36390, 2026-10-23)
 
-**Incident.** Five Tests/Performance files ran in no PR lane. Two had been red since the commit that added them (3e618d7119). The compact-setup gate listed a method that had already moved to `context_spend`. The tab-publication harness hit `NameError: run_controls`, which a later relative import turned into a `KeyError`. The voice history gate had been red since 38467b8fc6 began adding locators: its 1,000-row split no longer added up. In two of the three, fixing the first failure exposed a second one that had never run. 3 of 14 compact nodes failed a 100 ms loop probe under load, so they stayed off the lane. The voice gate then found 7 unindexed locator columns: promotion scanned them, and the median paired delta was 5.1 ms against a 2.0 ms limit. Separately, a diagnostic wrapper on `ChatScreen._sync_native_console_chat_ui` made the keystroke census fail 6 of 6 runs; `composer_run_controls.bind_preparing_screen_sources` records that method by identity. Wrapping `run_worker` and `_record_ui_worker_started` instead, with similar load, failed 5 of 12, and the fix was judged on those runs.
+**Incident.** Five Tests/Performance files ran in no PR lane. Two had been red since the commit that added them (3e618d7119): the compact-setup gate listed a method that had already moved to `context_spend`, and the tab-publication harness hit `NameError: run_controls`, which a later relative import turned into a `KeyError`. The voice history gate had been red since 38467b8fc6 began adding locators, because its 1,000-row split no longer added up. In three files, fixing the first failure exposed a second one that had never run:
+- The compact gate got past install, then 3 of 14 nodes failed a 100 ms loop probe under load.
+- The voice gate found 8 locator columns with no leading index. Promotion scans them: median paired delta 5.1 ms against a 2.0 ms limit (TASK-36510).
+- The keystroke census was changed to wait for in-flight publications, and the review still saw 3 of 9 serial runs fail. The composer's 0.2 s trailing refresh fires on any gap over 0.2 s between presses. Its context read was the first since the fixture's back-door ingest, so it was cold, and its publication was a full sync inside the burst. No settle can wait for work that does not exist yet.
 
-**What to do.** For a test that never passed, the first fix is not the last. Rerun the whole file, then repeat it under load, before calling it green or adding it to a lane. To diagnose Console timing, wrap a seam that no source-identity check records, and grep for `getattr_static`/`__code__ is` records of the method first.
+Separately, a diagnostic wrapper on `ChatScreen._sync_native_console_chat_ui` made the keystroke census fail 6 of 6 runs; `composer_run_controls.bind_preparing_screen_sources` records that method by identity. Wrapping `run_worker` and `_record_ui_worker_started` instead, under similar load, failed 5 of 12.
+
+**What to do.**
+- For a test that never passed, the first fix is not the last. Rerun the whole file, then repeat it under load, before calling it green or adding it to a lane.
+- In a call census, warm every read that the burst's own timers will make, not only the reads that are in flight. Then force each timer to fire mid-burst in a probe, so the warm is shown to cover it.
+- To diagnose Console timing, wrap a seam that no source-identity check records. Grep for `getattr_static`/`__code__ is` records of the method first.
 
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
