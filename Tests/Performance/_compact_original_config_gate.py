@@ -755,7 +755,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             is config.get_cli_providers_and_models
         )
         self.wrapper = config._load_settings_guarded
-        self.body = inspect.getattr_static(self.wrapper, "__wrapped__")
+        self.body = _pinned(self.wrapper, "__wrapped__")
         cells = dict(zip(self.wrapper.__code__.co_freevars, self.wrapper.__closure__))
         assert (
             cells["function"].cell_contents is self.body
@@ -847,7 +847,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
 
         self.widget_type = compact_model_bar.CompactModelBar
         self.message_pump_type = MessagePump
-        self.parent_descriptor = inspect.getattr_static(MessagePump, "_parent")
+        self.parent_descriptor = _pinned(MessagePump, "_parent")
         assert type(self.parent_descriptor) is property
         getter = self.parent_descriptor.fget
         self._pin(getter)
@@ -886,22 +886,22 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         ):
             if worker is None and name not in vars(compact_model_bar):
                 continue  # Baseline has no issued-worker eligibility route yet.
-            function = vars(compact_model_bar)[name]
+            function = _pinned(compact_model_bar, name)
             code = self._pin(function)
             self.slots.append((compact_model_bar, name, function))
             self.eligibility_codes[code] = role
             self.codes[code] = "original_compact_eligibility_" + role
             if role == "capture":
                 self.capture_code = code
-        sidebar = inspect.getattr_static(self.widget_type, "sync_from_sidebar")
+        sidebar = _pinned(self.widget_type, "sync_from_sidebar")
         self.sidebar_code = self._pin(sidebar)
         self.slots.append((self.widget_type, "sync_from_sidebar", sidebar))
         self.codes[self.sidebar_code] = "original_automatic_or_direct_sidebar_sync"
         self.codes[self.reader_code] = "original_public_reader"
         # Only already-loaded defining functions. No App/service imports and
         # no global exception/native-work event set.
-        operation = inspect.getattr_static(self.participants, "operation")
-        generator = inspect.getattr_static(operation, "__wrapped__")
+        operation = _pinned(self.participants, "operation")
+        generator = _pinned(operation, "__wrapped__")
         self.operation_stage_code = self._pin(generator)
         self.slots.append((operation, "__wrapped__", generator))
         self.lock_stage_lines = frozenset(
@@ -1003,9 +1003,11 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             module = sys.modules.get(module_name)
             if type(module) is not ModuleType:
                 continue
-            owner = vars(module).get(class_name)
-            if not isinstance(owner, type):
-                continue
+            owner = _pinned(module, class_name)
+            assert isinstance(owner, type), (
+                f"compact gate pins {module_name}.{class_name} as a class; "
+                "point the gate's attribute list at where the code moved it"
+            )
             self.slots.append((module, class_name, owner))
             for name in names:
                 function = _pinned(owner, name)

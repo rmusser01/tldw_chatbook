@@ -116,15 +116,17 @@ jobs:
       # TASK-36390: these ran in no PR lane and went red on dev unseen. The
       # tab-publication controls compile ChatScreen's own method bodies; the
       # voice latency gate runs on a synthetic clock; the locator inventory
-      # pins the voice-pair reconciler's schema census. About 2 s together.
-      # Not here: the completed-pair history node (red on dev: seven new
-      # locator columns have no index, so promotion scans them), and the
-      # compact-setup gates (their 100 ms loop probe flakes under load).
+      # pins the voice-pair reconciler's schema census. About 4 s together.
+      # The completed-pair history node is a strict xfail until TASK-36510:
+      # eight message-locator columns have no leading index, so promotion
+      # scans them. Its XPASS fails this step, so the fix removes the marker.
+      # Not here: the 14 compact-setup gate nodes. Their 100 ms loop probe
+      # fails while Console attach holds the UI thread 180-270 ms; they wait
+      # for TASK-36511 (owner ruling 2026-10-23: keep 100 ms, fix the attach).
       - name: Run Console tab-publication and voice gates
         run: |
           pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
-            "Tests/Performance/test_speculative_voice_latency.py::test_warm_speculative_voice_latency_distribution_meets_gate" \
-            "Tests/Performance/test_speculative_voice_latency.py::test_completed_pair_locator_inventory_is_complete_and_stable" \
+            Tests/Performance/test_speculative_voice_latency.py \
             -v --timeout=300
 
       # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
