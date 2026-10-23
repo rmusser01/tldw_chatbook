@@ -3882,7 +3882,7 @@ async def test_a_migration_review_with_a_refused_candidate_holds_activate_and_na
 @pytest.mark.parametrize(
     "phase", ("configure", "review", "receipt", "history", "roots")
 )
-async def test_begin_add_from_files_resets_every_settled_phase_and_keeps_a_running_one(
+async def test_begin_add_from_files_resets_every_settled_phase(
     phase: str,
 ) -> None:
     """TASK-34000.17: one entry means "start Add from files".

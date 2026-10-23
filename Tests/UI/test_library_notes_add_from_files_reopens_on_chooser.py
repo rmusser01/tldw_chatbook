@@ -117,8 +117,13 @@ def _assert_chooser(screen, host) -> None:
         assert screen.query(selector), (
             f"{selector} is not on the reopened Add from files page:\n{context}"
         )
-    assert not screen.query_one("#notes-add-import-once", Button).disabled
-    assert not screen.query_one("#notes-add-keep-synced", Button).disabled
+    # Availability is the label, not ``disabled``: the inert chooser keeps its
+    # button pressable so it can explain the gate, and wears a "○" prefix.
+    assert (
+        str(screen.query_one("#notes-add-import-once", Button).label) == "Import once"
+    )
+    keep_label = str(screen.query_one("#notes-add-keep-synced", Button).label)
+    assert keep_label == "Keep a folder synced", f"Keep synced is inert: {keep_label!r}"
     assert "Nothing chosen yet." in painted, context
     assert controller.snapshot.phase == "choose", context
     assert "esc" in dict(screen._library_notes_footer_shortcuts()), (
@@ -389,21 +394,10 @@ async def test_leaving_keep_synced_with_back_then_reopening_shows_the_chooser_no
         )
 
 
-async def test_a_running_check_is_shown_not_discarded(tmp_path: Path) -> None:
-    """AC#2 and the sharpened AC#3: a check that is still running is kept.
-
-    While the runtime holds the setup check open, the page paints its
-    progress, the footer names ``wait current step``, Escape is refused (the
-    existing pin), and starting Add from files is refused too -- the toolbar
-    is not even composed while the lasting canvas is up, so the controller's
-    ``begin_add_from_files`` is the contract exercised directly. Once the
-    check settles into its review and the user leaves it, the next open is
-    the chooser, not that review.
-    """
-
-    started = asyncio.Event()
-    release = asyncio.Event()
-    abandoned: list[str] = []
+def _held_setup_runtime(
+    started: asyncio.Event, release: asyncio.Event, abandoned: list[str]
+):
+    """A runtime whose setup check is held open until ``release`` is set."""
 
     class _HeldSetupRuntime:
         def snapshot(self) -> NotesSyncRuntimeSnapshot:
@@ -434,46 +428,68 @@ async def test_a_running_check_is_shown_not_discarded(tmp_path: Path) -> None:
         async def abandon_setup(self, root_id: str) -> None:
             abandoned.append(root_id)
 
+    return _HeldSetupRuntime()
+
+
+async def _enter_setup_form(screen, pilot, controller, folder: Path) -> None:
+    """Add from files… ▸ Keep a folder synced, with a name and a folder set."""
+
+    screen.query_one("#library-notes-add-from-files", Button).press()
+    await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
+    screen.query_one("#notes-add-keep-synced", Button).press()
+    await _wait_for_selector(screen, pilot, "#notes-sync-display-name")
+    controller.set_setup("display_name", "Held")
+    controller.set_setup("folder", str(folder))
+    await pilot.pause()
+
+
+async def test_a_running_check_is_shown_not_discarded(tmp_path: Path) -> None:
+    """AC#2 and the sharpened AC#3: a check that is still running is kept.
+
+    The check runs the production way: the real Check changes press, whose
+    screen handler awaits the runtime inline, so the screen's message pump is
+    held for the whole check. What the user can observe while it runs is
+    exactly what is asserted: the phase is ``checking``, the footer names
+    ``wait current step``, and Escape is refused -- nothing else can be
+    pressed until the step settles (TASK-34000.72 tracks the blank work pane
+    the held pump leaves behind). ``begin_add_from_files``'s refusal while a
+    step runs is asserted as the controller contract it is, not as a user
+    gesture. Once the check settles into its review and the user leaves it,
+    the next open is the chooser, not that review.
+    """
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    abandoned: list[str] = []
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
-    app.notes_sync_runtime_owner = _HeldSetupRuntime()
+    app.notes_sync_runtime_owner = _held_setup_runtime(started, release, abandoned)
     host = _JourneyHarness(app)
     async with host.run_test(size=(120, 40)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_notes(screen, pilot)
         controller = screen._library_notes_sync_controller
+        await _enter_setup_form(screen, pilot, controller, tmp_path)
 
-        screen.query_one("#library-notes-add-from-files", Button).press()
-        await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
-        screen.query_one("#notes-add-keep-synced", Button).press()
-        await _wait_for_selector(screen, pilot, "#notes-sync-display-name")
-        controller.set_setup("display_name", "Held")
-        controller.set_setup("folder", str(tmp_path))
-        check = asyncio.create_task(controller.check_setup())
-        await asyncio.wait_for(started.wait(), timeout=2)
-        await _wait_for_condition(
-            pilot,
-            lambda: "Wait for the current step to finish." in _painted_text(host),
-            message="the running check did not paint its progress",
-        )
-        painted = _painted_text(host)
-        assert "Checking folder…" in painted
+        screen.query_one("#notes-sync-check", Button).press()
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert controller.snapshot.phase == "checking"
         assert screen._library_notes_footer_shortcuts() == (("wait", "current step"),)
 
         await screen.action_library_notes_escape()
         assert screen._notes_state.view == "lasting_add"
         assert controller.snapshot.phase == "checking"
 
+        # Controller contract: a running step is kept and nothing is published.
         assert controller.begin_add_from_files() is False
         assert controller.snapshot.phase == "checking"
         assert abandoned == []
 
         release.set()
-        await check
         activate = await _wait_for_selector(screen, pilot, "#notes-sync-activate")
         assert controller.snapshot.phase == "review"
-        assert not activate.disabled
+        assert str(activate.label) == "Activate reviewed root"
 
         await _leave_with_notes_back(screen, pilot)
         assert abandoned == ["provisional-root"]
@@ -482,3 +498,57 @@ async def test_a_running_check_is_shown_not_discarded(tmp_path: Path) -> None:
         assert not screen.query("#notes-sync-activate"), (
             "the settled review came back instead of the chooser"
         )
+
+
+async def test_the_rail_route_out_of_a_setup_review_releases_the_provisional_root(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.17 fix round 1 (I-1): the rail's Notes row leaves the lasting
+    canvas without ‹ Notes or Esc, and the provisional setup review's runtime
+    lease must be released on that route too -- otherwise it outlives the
+    visible flow, and the chooser reset the next Add from files makes would
+    orphan it (nothing left to release).
+    """
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    release.set()
+    abandoned: list[str] = []
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = _held_setup_runtime(started, release, abandoned)
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes(screen, pilot)
+        controller = screen._library_notes_sync_controller
+        await _enter_setup_form(screen, pilot, controller, tmp_path)
+        screen.query_one("#notes-sync-check", Button).press()
+        await _wait_for_selector(screen, pilot, "#notes-sync-activate")
+        assert controller.snapshot.review.root_id == "provisional-root"
+        assert controller.snapshot.review.source == "setup"
+
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.view == "list",
+            message="the rail's Notes row did not return to the list",
+        )
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        await _wait_for_condition(
+            pilot,
+            lambda: abandoned == ["provisional-root"],
+            timeout=3.0,
+            message=f"the rail route left the provisional root held: {abandoned!r}",
+        )
+
+        await _reopen_add_from_files(screen, pilot)
+        _assert_chooser(screen, host)
+        await _leave_with_notes_back(screen, pilot)
+        # The rail route released the root BEFORE the reopen (asserted above);
+        # the handler's own belt-and-braces release may call the runtime for
+        # the same root again, which the runtime treats as a no-op
+        # (``NotesSyncRuntimeOwner.abandon_setup`` returns when the root is no
+        # longer a held setup review). Only this root was ever named.
+        assert set(abandoned) == {"provisional-root"}

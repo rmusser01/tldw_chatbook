@@ -5172,7 +5172,18 @@ class LibraryNotesController:
         # TASK-34000.17: one entry means "start Add from files". The return is
         # ignored on purpose -- while a check or activation is running the
         # canvas paints that step's own progress (AC#2); once it settles and
-        # the user leaves, the next open resets to the chooser.
+        # the user leaves, the next open resets to the chooser. Fix round 1
+        # (I-1): a setup review still held on arrival (a route that skipped
+        # ‹ Notes) is released FIRST -- the reset would otherwise drop the
+        # review's root id and orphan the runtime's provisional lease. The
+        # exits (‹ Notes, Esc, the rail, the receipt's Manage sync folders)
+        # release too; a repeat here is a runtime no-op for a root already
+        # released, so this is the belt behind those braces.
+        if self._library_notes_sync_controller.snapshot.phase not in {
+            "checking",
+            "activating",
+        }:
+            await self._library_notes_sync_controller.abandon_setup()
         self._library_notes_sync_controller.begin_add_from_files()
         self._library_notes_lasting_origin = "setup"
         self._library_notes_view = "lasting_add"

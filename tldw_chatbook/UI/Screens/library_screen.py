@@ -23004,6 +23004,17 @@ class LibraryScreen(BaseAppScreen):
         if self._artifacts_controller is not None:
             self._artifacts_controller.leave()
         self._advance_library_stage_interaction()
+        # TASK-34000.17 fix round 1 (I-1): a rail row leaves a lasting-sync
+        # canvas without passing ‹ Notes or Esc, so the provisional setup
+        # review's runtime lease would outlive the visible flow -- and the
+        # chooser reset the next Add from files makes would then have nothing
+        # left to release. A running check or activation is left alone, as
+        # its own exit is (the press waits on the held pump until it settles).
+        if self._notes_state.view in {"lasting_add", "lasting_roots"} and (
+            self._library_notes_sync_controller.snapshot.phase
+            not in {"checking", "activating"}
+        ):
+            await self._library_notes_sync_controller.abandon_setup()
         if self._try_switch_retained_library_notes_route(row_id):
             return
         if (
@@ -28668,7 +28679,17 @@ class LibraryScreen(BaseAppScreen):
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
-        self._library_notes_sync_controller.refresh_roots()
+        # TASK-34000.17 fix round 1 (M-4): the roots list shares the lasting
+        # status line, so after a chooser visit it read "Nothing chosen yet."
+        # ``return_to_roots`` refreshes the rows AND names the step ("Sync
+        # folders refreshed."); the receipt door also releases its finished
+        # setup review first, exactly as ‹ Notes from that receipt does.
+        if self._notes_state.view == "lasting_add" and (
+            self._library_notes_sync_controller.snapshot.phase
+            not in {"checking", "activating"}
+        ):
+            await self._library_notes_sync_controller.abandon_setup()
+        self._library_notes_sync_controller.return_to_roots()
         self._notes_state.lasting_origin = None
         self._notes_state.view = "lasting_roots"
         self._apply_library_notes_footer_context()

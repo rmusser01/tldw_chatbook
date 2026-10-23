@@ -970,6 +970,8 @@ a counter-example: it writes its root straight into the state DB, which is why t
 `$R/runs/<socket>/` (a `$R/fixtures/<socket>/` subfolder is fine), and read the
 configure form's status line before trusting a wait that only timed out.
 
+---
+
 ## Isolate the profile before touching runtime state
 
 **What happened.** The runtime-policy state file (which records local vs. server mode)

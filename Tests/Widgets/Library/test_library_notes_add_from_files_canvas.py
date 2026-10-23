@@ -325,8 +325,13 @@ async def test_an_unhandled_phase_renders_the_chooser_with_a_way_back(
         await pilot.pause()
         for selector in ("#notes-add-import-once", "#notes-add-keep-synced", "#notes-sync-back"):
             assert app.query(selector), f"{selector} missing for phase roots:\n{_frame(app)}"
-        assert app.query_one("#notes-add-import-once", Button).disabled is False
-        assert app.query_one("#notes-add-keep-synced", Button).disabled is False
+        # Availability is the label: the inert chooser's button stays pressable
+        # (so it can explain the gate) and wears a "○" prefix instead.
+        assert str(app.query_one("#notes-add-import-once", Button).label) == "Import once"
+        assert (
+            str(app.query_one("#notes-add-keep-synced", Button).label)
+            == "Keep a folder synced"
+        )
         frame = _frame(app)
         assert "Import once" in frame
         assert "Keep a folder synced" in frame
