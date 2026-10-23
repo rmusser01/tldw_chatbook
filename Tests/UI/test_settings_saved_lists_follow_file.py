@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 import pytest
 import toml
-from textual.widgets import Button, Collapsible, Input, SelectionList, Static
+from textual.widgets import Button, Collapsible, SelectionList
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
@@ -36,7 +36,6 @@ from Tests.UI.test_console_switcher_local_probe import (
     build,
     servers,  # noqa: F401 - the fixture the probe cases take
 )
-from Tests.UI.test_destination_shells import _static_text
 from Tests.UI.test_settings_default_model_picker import (
     _open_providers,
     _press_discover,
@@ -737,65 +736,6 @@ async def test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged
         "kobold-served-b",
     ]
     assert saved["api_settings"]["koboldcpp"]["api_url"] == native
-
-
-@private_profile_test
-async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
-    request, monkeypatch
-):
-    """TASK-36380 AC#1: Discover models for a saved koboldcpp root, then for
-    a prefix root typed into Endpoint, lists from the /v1/models Switch model
-    probes. AC#2: for an endpoint the contract refuses, the line beside
-    Discover names the contract's reason."""
-    from tldw_chatbook.Chat.provider_endpoint_contract import (
-        ConnectionProbeAvailability,
-        connection_probe_availability,
-        resolve_provider_endpoint,
-    )
-
-    root, prefix = "http://localhost:5001", "http://localhost:5001/kobold"
-    ambiguous = "http://localhost:5001/v1/api/v1/generate"
-    for endpoint in (root, prefix):  # Switch model probes both
-        assert connection_probe_availability("koboldcpp", endpoint) is (
-            ConnectionProbeAvailability.MODELS_ROUTE
-        )
-    _write(
-        {
-            "chat_defaults": {"provider": "koboldcpp", "model": ""},
-            "api_settings.koboldcpp": {"api_url": root},
-        }
-    )
-    app = _booted_app()
-    served = _listing("kobold-served")
-    _route_discovery_to(monkeypatch, served)
-    host = _SettingsCssHarness(app, "settings")
-    async with host.run_test(size=_SIZE) as pilot:
-        screen = await _open_providers(host, pilot)
-        await _settle(host, pilot)
-        assert screen._provider_widget_value() == "koboldcpp"
-        await _press_discover(host, pilot, screen)
-        field = screen.query_one("#settings-provider-endpoint-value", Input)
-        field.value = prefix
-        await _settle(host, pilot)
-        await _press_discover(host, pilot, screen)
-        field.value = ambiguous
-        await _settle(host, pilot)
-        screen.query_one("#settings-discover-provider-models", Button).focus()
-        await pilot.press("enter")
-        await pilot.pause()  # the press starts the worker _settle waits for
-        await _settle(host, pilot)
-        status = screen.query_one("#settings-model-discovery-status", Static)
-        shown = _static_text(status) if status.display else ""
-
-    probed = [
-        resolve_provider_endpoint("koboldcpp", e).models_url for e in (root, prefix)
-    ]
-    assert probed == [
-        "http://localhost:5001/v1/models",
-        "http://localhost:5001/kobold/v1/models",
-    ]
-    assert [str(sent.url) for sent in served.requests] == probed
-    assert shown.startswith("Endpoint path has ambiguous API suffixes. "), shown
 
 
 # --- Case 8 and D-a: what the locked write reports --------------------------

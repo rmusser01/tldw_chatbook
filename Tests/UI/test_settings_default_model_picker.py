@@ -23,7 +23,7 @@ from textual.widgets._collapsible import CollapsibleTitle
 from textual.widgets.input import Selection
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.test_destination_shells import _active_destination_screen
+from Tests.UI.test_destination_shells import _active_destination_screen, _static_text
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
@@ -885,3 +885,70 @@ async def test_a_click_below_an_open_list_lands_on_the_pressed_control_or_none(
         assert toggled <= {pressed.id}, toggled
         if held:
             assert toggled == set()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
+    request, monkeypatch
+):
+    """TASK-36380 AC#1: the real discovery service on a private profile,
+    only its transport stubbed. Discover models for a saved koboldcpp root,
+    then for a prefix root typed into Endpoint, lists from the /v1/models
+    Switch model probes. AC#2: for an endpoint the contract refuses, the line
+    beside Discover names the contract's reason, with a fix that keeps
+    koboldcpp's native send route."""
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        ConnectionProbeAvailability,
+        connection_probe_availability,
+        resolve_provider_endpoint,
+    )
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    root, prefix = "http://localhost:5001", "http://localhost:5001/kobold"
+    ambiguous = "http://localhost:5001/v1/api/v1/generate"
+    for endpoint in (root, prefix):  # Switch model probes both
+        assert connection_probe_availability("koboldcpp", endpoint) is (
+            ConnectionProbeAvailability.MODELS_ROUTE
+        )
+    assert save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": "koboldcpp", "model": ""},
+            "api_settings.koboldcpp": {"api_url": root},
+        }
+    )
+    app = _build_test_app()
+    app._init_providers_models()  # [providers] read from the file, as boot does
+    served = _Provider(httpx.Response(200, json={"data": [{"id": "kobold-served"}]}))
+    _route_discovery_to(monkeypatch, served)
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        assert screen._provider_widget_value() == "koboldcpp"
+        await _press_discover(host, pilot, screen)
+        field = screen.query_one("#settings-provider-endpoint-value", Input)
+        field.value = prefix
+        await _settle(host, pilot)
+        await _press_discover(host, pilot, screen)
+        field.value = ambiguous
+        await _settle(host, pilot)
+        screen.query_one("#settings-discover-provider-models", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()  # the press starts the worker _settle waits for
+        await _settle(host, pilot)
+        status = screen.query_one("#settings-model-discovery-status", Static)
+        shown = _static_text(status) if status.display else ""
+
+    probed = [
+        resolve_provider_endpoint("koboldcpp", e).models_url for e in (root, prefix)
+    ]
+    assert probed == [
+        "http://localhost:5001/v1/models",
+        "http://localhost:5001/kobold/v1/models",
+    ]
+    assert [str(sent.url) for sent in served.requests] == probed
+    assert shown == (
+        "Endpoint path has ambiguous API suffixes. Use the server's address, "
+        "such as http://localhost:5001, or its /api/v1/generate route."
+    ), shown
