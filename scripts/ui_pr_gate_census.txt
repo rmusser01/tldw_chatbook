@@ -1634,3 +1634,18 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-36381: Settings probe/discovery files no PR lane ran went red on dev
+# unseen. The endpoint probe file is pure (101 nodes, 10-20 s alone). One
+# discovery race node (a private-profile child, 13-22 s); the other 25
+# discovery nodes stay out for shard time. Six hub guards whose assertions
+# had gone stale (1-2 s each; the ownership one is a private-profile child,
+# ~8 s); the guidance one is a strict xfail until Tools & MCP gets an
+# inspector guidance entry. All eight: 40 s serial locally.
+Tests/UI/test_settings_endpoint_probe.py
+Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip]
+Tests/UI/test_settings_configuration_hub.py::test_settings_category_summaries_cover_every_category_id_exactly_once
+Tests/UI/test_settings_configuration_hub.py::test_settings_domain_categories_are_grouped_and_have_ownership_records
+Tests/UI/test_settings_configuration_hub.py::test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python
+Tests/UI/test_settings_configuration_hub.py::test_failure_status_text_keeps_type_name_only_copy_unchanged
+Tests/UI/test_settings_configuration_hub.py::test_failure_status_text_never_carries_raw_exception_text
+Tests/UI/test_settings_configuration_hub.py::test_inspector_guidance_covers_every_settings_category
