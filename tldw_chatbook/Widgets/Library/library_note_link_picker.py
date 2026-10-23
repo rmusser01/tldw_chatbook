@@ -16,7 +16,7 @@ while Preview shows, and follow mode has to paint over Preview.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from loguru import logger
 from rich.text import Text
@@ -73,6 +73,21 @@ class LibraryNoteLinkPicker(Widget):
         #: holds it (``accept_pending_for``) until the current answer lands.
         self.generation = 0
         self.accept_pending_for: int | None = None
+        #: Fix round 2 (R2-1): a highlight move made while the rows on show
+        #: were STALE. A held accept is cancelled by it -- the user never saw
+        #: the row they would get highlighted in the current set.
+        self.moved_on_stale = False
+        #: The widget whose region bounds the box and a callable for the
+        #: screen cell to sit under, re-read on every anchor pass (R2-5: a
+        #: resize changes both).
+        self._anchor_widget: Widget | None = None
+        self._anchor_cell_provider: Callable[[], tuple[int, int] | None] | None = None
+        #: One anchor pass per refresh. The offset math re-derives the flow
+        #: slot from ``region - last offset``, which is only right once the
+        #: region reflects that offset -- two passes in one frame (the
+        #: same-rows re-show plus the controller's reposition) drifted the
+        #: box off screen (fix round 2: offset (-72, -57) measured).
+        self._anchor_pass_pending = False
         self._desired_height = 0
         self._desired_width = MIN_WIDTH
         # region == flow_base + the last offset applied; the two together
@@ -133,9 +148,13 @@ class LibraryNoteLinkPicker(Widget):
         """
         rows = list(rows)
         self.generation = generation
+        self.moved_on_stale = False
         if self.is_open and self.mode == mode and rows == self._candidates and (
             rows or self._empty_text == empty_text
         ):
+            # Same rows: keep the highlight, but re-anchor -- the space beside
+            # the caret may have changed (R2-5).
+            self._apply_anchor()
             return
         if not rows and empty_text is None:
             self.hide()
@@ -171,6 +190,7 @@ class LibraryNoteLinkPicker(Widget):
         self._candidates = []
         self._empty_text = None
         self.accept_pending_for = None
+        self.moved_on_stale = False
 
     def move_highlight(self, delta: int) -> None:
         """Move the highlight by ``delta`` rows, wrapping at both ends."""
@@ -190,16 +210,26 @@ class LibraryNoteLinkPicker(Widget):
             return None
         return self._candidates[highlighted]
 
-    def reposition(self, anchor: Widget, *, cell: tuple[int, int] | None = None) -> None:
-        """Place the picker's top-left under ``cell``, clamped inside ``anchor``.
+    def reposition(
+        self,
+        anchor: Widget,
+        *,
+        cell: tuple[int, int] | None = None,
+        cell_provider: Callable[[], tuple[int, int] | None] | None = None,
+    ) -> None:
+        """Place the picker's top-left under the caret, clamped inside ``anchor``.
 
         Args:
             anchor: The widget whose screen region bounds the picker (the
                 body's editor region in insert mode, the Preview region in
-                follow mode).
+                follow mode). Its region is re-read on every anchor pass.
             cell: The screen cell to sit under -- the body's caret in insert
                 mode. ``None`` anchors at the region's own top-left.
+            cell_provider: Re-reads that cell on later passes (a resize moves
+                the caret on screen); wins over ``cell`` when it answers.
         """
+        self._anchor_widget = anchor
+        self._anchor_cell_provider = cell_provider
         region = anchor.region
         self._anchor_bounds = (region.x, region.y, region.right, region.bottom)
         if cell is None:
@@ -208,10 +238,54 @@ class LibraryNoteLinkPicker(Widget):
             self._anchor_cell = cell
         self._apply_anchor()
 
+    def reanchor(self) -> None:
+        """Re-run the anchor pass against the anchor widget's CURRENT region
+        and caret cell (fix round 2, R2-5: the note pane calls this on a
+        resize, so a box cut to fit beside the caret grows back when the
+        terminal does)."""
+        if self._anchor_widget is None or not self.is_open:
+            return
+        try:
+            region = self._anchor_widget.region
+        except Exception:  # noqa: BLE001 - a detached anchor has no region
+            return
+        if region.width <= 0 or region.height <= 0:
+            return
+        self._anchor_bounds = (region.x, region.y, region.right, region.bottom)
+        if self._anchor_cell_provider is not None:
+            cell = self._anchor_cell_provider()
+            if cell is not None:
+                self._anchor_cell = cell
+        elif self._anchor_cell == (0, 0):
+            self._anchor_cell = (region.x + 1, region.y)
+        self._apply_anchor()
+
+    def on_resize(self) -> None:
+        self.reanchor()
+
     def _apply_anchor(self) -> None:
+        """Request an anchor pass: synchronous while the box has no laid-out
+        region yet (the first frame's absolute guess), else once after the
+        next refresh, however many requests arrive in between."""
+        if self.parent is None or not self.is_open or self._anchor_bounds is None:
+            return
+        if self.region.height <= 0:
+            self._anchor_pass()
+            return
+        if self._anchor_pass_pending:
+            return
+        self._anchor_pass_pending = True
+        self.call_after_refresh(self._anchor_pass)
+
+    def _anchor_pass(self) -> None:
+        self._anchor_pass_pending = False
         if self.parent is None or not self.is_open or self._anchor_bounds is None:
             return
         try:
+            if self._anchor_widget is not None:
+                region = self._anchor_widget.region
+                if region.width > 0 and region.height > 0:
+                    self._anchor_bounds = (region.x, region.y, region.right, region.bottom)
             left, top, right, bottom = self._anchor_bounds
             cell_x, cell_y = self._anchor_cell
             width = self._desired_width
@@ -236,9 +310,10 @@ class LibraryNoteLinkPicker(Widget):
                 height = max(3, above)
                 y = cell_y - height
             y = max(y, 0)
-            if height != self._desired_height + 2:
-                # ds-runtime: the rows are cut to the space beside the caret.
-                self.set_styles(height=height)
+            # Always, not only when cutting (R2-5): a box once cut beside the
+            # caret has to grow back to its rows when the space returns.
+            # ds-runtime: the rows are cut to the space beside the caret.
+            self.set_styles(height=height)
             if self.region.height > 0:
                 flow_x = self.region.x - self._anchor_offset[0]
                 flow_y = self.region.y - self._anchor_offset[1]

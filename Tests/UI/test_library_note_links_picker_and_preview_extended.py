@@ -9,7 +9,7 @@ picker and lands in the inserted link.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import OptionList, TextArea
+from textual.widgets import Markdown, OptionList, TextArea
 
 from Tests.UI.library_note_links_support import (
     INDEX,
@@ -38,7 +38,6 @@ from Tests.UI.library_quit_guard_support import (
     _record_toasts,
     _type,
 )
-from textual.widgets import Markdown
 from Tests.UI.test_library_notes_files_sync_journey import (
     _isolate_actor_pack_recovery,  # noqa: F401 - autouse fixture, re-exported
 )
@@ -141,6 +140,29 @@ async def test_the_picker_fits_inside_the_pane_at_80x24(tmp_path, monkeypatch) -
         assert not (picker.region.y <= caret_row < picker.region.bottom), (
             f"the picker {picker.region} covers the caret row {caret_row}"
         )
+        options_now = screen.query_one("#library-note-link-picker-options", OptionList)
+        await _until(pilot, lambda: options_now.option_count >= 2, "the rows")
+        cut_height = picker.region.height
+        assert cut_height < options_now.option_count + 2, "the pin needs a cut box"
+        # Fix round 2 (R2-5): once the rows had been cut to fit beside the
+        # caret, the same rows shown again kept the cut height. When the
+        # terminal grows, the box grows back to its rows -- and still never
+        # covers the caret row.
+        await pilot.resize_terminal(80, 45)
+        await _until(
+            pilot,
+            lambda: _picker_open(screen)
+            and picker.region.height == options_now.option_count + 2,
+            f"the picker to grow back from {cut_height} rows after the resize",
+            timeout=10.0,
+        )
+        caret_row = body.cursor_screen_offset.y
+        assert not (picker.region.y <= caret_row < picker.region.bottom), (
+            f"the picker {picker.region} covers the caret row {caret_row} after the resize"
+        )
+        assert picker.region.bottom <= app.size.height
+        await pilot.resize_terminal(*COMPACT)
+        await pilot.pause(0.3)
         pane = screen.query_one("#library-note-editor-region").region
         assert picker.region.x >= pane.x and picker.region.right <= pane.right, (
             picker.region,
@@ -318,20 +340,23 @@ async def test_escape_latch_clears_on_a_new_context_and_a_note_switch(tmp_path, 
         await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
 
 
+REFUSED = "Link not opened (unsupported scheme): "
+#: (label, href as written, the full refusal notice -- Textual unquotes the
+#: href before it reaches the handler, and the notice drops C0/C1).
 HOSTILE_RENDERED = (
-    ("QUPPERQ", "HTTP://up.example/"),
-    ("QPROTOQ", "//evil.example/"),
-    ("QFTPQ", "ftp://a/[b]x[/]"),
-    ("QCTRLQ", "https://a.example/%1B]0;x%07"),
-    ("QMARKQ", "https://x.example/[b]bold[/]"),
+    ("QUPPERQ", "HTTP://up.example/", f"{REFUSED}HTTP://up.example/"),
+    ("QPROTOQ", "//evil.example/", f"{REFUSED}//evil.example/"),
+    ("QFTPQ", "ftp://a/[b]x[/]", f"{REFUSED}ftp://a/[b]x[/]"),
+    ("QCTRLQ", "https://a.example/%1B]0;x%07", f"{REFUSED}https://a.example/]0;x"),
+    ("QMARKQ", "https://x.example/[b]bold[/]", "Opened in browser: https://x.example/[b]bold[/]"),
 )
 HOSTILE_POSTED = (
-    "javascript:alert(1)",
-    "file:///etc/passwd",
-    "data:text/html,hi",
-    "vbscript:msgbox(1)",
-    "https://a.example/\x1b]0;x\x07",
-    "https://a.example/with space",
+    ("javascript:alert(1)", f"{REFUSED}javascript:alert(1)"),
+    ("file:///etc/passwd", f"{REFUSED}file:///etc/passwd"),
+    ("data:text/html,hi", f"{REFUSED}data:text/html,hi"),
+    ("vbscript:msgbox(1)", f"{REFUSED}vbscript:msgbox(1)"),
+    ("https://a.example/\x1b]0;x\x07", f"{REFUSED}https://a.example/]0;x"),
+    ("https://a.example/with space", f"{REFUSED}https://a.example/with space"),
 )
 
 
@@ -348,7 +373,7 @@ async def test_hostile_preview_links_are_refused_and_never_reach_the_os(tmp_path
     markdown-it renders ``javascript:``/``file:``/``data:``/``vbscript:``
     links as literal text, so those arrive as posted ``LinkClicked`` events."""
     app, profile = _app(tmp_path)
-    body_text = "\n\n".join(f"[{label}]({href})" for label, href in HOSTILE_RENDERED)
+    body_text = "\n\n".join(f"[{label}]({href})" for label, href, _notice in HOSTILE_RENDERED)
     hostile_id = profile.db.add_note("Hostile links", body_text)
     opened = _record_open_url(monkeypatch, app)
     browser = _record_browser(monkeypatch)
@@ -359,27 +384,26 @@ async def test_hostile_preview_links_are_refused_and_never_reach_the_os(tmp_path
         await _open_note(screen, pilot, "Hostile links", hostile_id)
         await _preview(screen, pilot, "QUPPERQ", app)
         region = screen.query_one("#library-note-preview-body").region
-        for label, href in HOSTILE_RENDERED:
+        for label, href, expected_notice in HOSTILE_RENDERED:
             before = len(toasts)
             offset = _painted_offset(app, region, label)
             assert offset is not None, f"{label} not painted"
             await pilot.click(offset=offset)
             await _until(pilot, lambda: len(toasts) > before, f"a notice for {href!r}")
             notice = toasts[before]
+            assert notice == expected_notice, (href, notice)
             if href == clean_http:
-                assert notice == f"Opened in browser: {href}"
                 await _until(pilot, lambda: browser == [clean_http], "the one browser call")
             else:
-                assert notice.startswith("Link not opened (unsupported scheme): "), notice
                 assert browser == [], (href, browser)
             assert not _has_control_chars(notice), repr(notice)
         md = screen.query_one("#library-note-preview-body", Markdown)
-        for href in HOSTILE_POSTED:
+        for href, expected_notice in HOSTILE_POSTED:
             before = len(toasts)
             md.post_message(Markdown.LinkClicked(md, href))
             await _until(pilot, lambda: len(toasts) > before, f"a notice for {href!r}")
             notice = toasts[before]
-            assert notice.startswith("Link not opened (unsupported scheme): "), notice
+            assert notice == expected_notice, (href, notice)
             assert not _has_control_chars(notice), repr(notice)
         await pilot.pause(0.5)
         assert browser == [clean_http], browser
@@ -455,3 +479,171 @@ async def test_accept_consumes_a_closer_a_click_accepts_and_enter_on_no_rows_ins
         await pilot.press("enter")
         await _until(pilot, lambda: body.text == f"{expected} [[zzzz\n", "Enter to insert the newline")
         assert not _picker_open(screen)
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2 pins
+# ---------------------------------------------------------------------------
+
+
+async def test_a_down_inside_a_burst_never_inserts_a_row_the_user_did_not_see(
+    tmp_path, monkeypatch
+) -> None:
+    """R2-1 (the insert-mode I-1): the picker is open on ``[[``; the burst
+    ``Lisbon``+Down+Enter used to insert "Lisbon alpha" (row 0 of the FRESH
+    rows) because the Down moved the highlight on the STALE rows and the
+    held Enter then accepted row 0. Ruling: a held accept never accepts a row
+    the user did not see highlighted in the current set -- the hold is
+    CANCELLED, the picker stays open on the fresh rows, nothing is inserted;
+    a paced Down+Enter then inserts "Lisbon beta". A row click while the
+    load is in flight likewise inserts nothing."""
+    import asyncio
+
+    from tldw_chatbook.Notes.note_import_plan_models import stored_note_link
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    ids = [profile.db.add_note(f"Burst {i}", "") for i in range(2)]
+    alpha = profile.db.add_note("Lisbon alpha", "a")
+    beta = profile.db.add_note("Lisbon beta", "b")
+    assert alpha and beta
+    # A slowed candidate service keeps every load in flight for 0.4 s, so
+    # the keys below land over STALE rows deterministically.
+    real = profile.scope_service.list_note_link_candidates
+
+    async def _slow(*args, **kwargs):
+        await asyncio.sleep(0.4)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(profile.scope_service, "list_note_link_candidates", _slow)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Burst 0", ids[0])
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        _burst(app, "[[")
+        await _until(pilot, lambda: _picker_open(screen), "the picker on [[")
+        await pilot.pause(0.3)
+        options = screen.query_one("#library-note-link-picker-options", OptionList)
+        _burst(app, "Lisbon", "down", "enter")
+        await _until(pilot, lambda: options.option_count == 3, "the three Lisbon rows")
+        await pilot.pause(0.8)
+        assert body.text == "[[Lisbon", body.text
+        assert _picker_open(screen)
+        assert options.option_count == 3
+        await pilot.press("down")
+        await pilot.press("enter")
+        expected = stored_note_link("Lisbon beta", beta)
+        await _until(pilot, lambda: body.text == expected, f"the paced Down+Enter to insert {expected!r}")
+
+        # The click arm: a row chosen while the narrower load is in flight.
+        body = await _open_note(screen, pilot, "Burst 1", ids[1])
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        _burst(app, "[[")
+        await _until(pilot, lambda: _picker_open(screen), "the picker on [[")
+        await pilot.pause(0.3)
+        options = screen.query_one("#library-note-link-picker-options", OptionList)
+        picker = _picker_or_none(screen)
+        _burst(app, "Lisbon")
+        await _until(pilot, lambda: body.text == "[[Lisbon", "the keys to land")
+        assert picker.generation != screen._notes_controller._library_notes_link_picker_generation, (
+            "the narrower load must still be in flight"
+        )
+        options.action_select()  # what a click on the (stale) highlighted row posts
+        await _until(pilot, lambda: options.option_count == 3, "the three Lisbon rows")
+        await pilot.pause(0.8)
+        assert body.text == "[[Lisbon", body.text
+        assert _picker_open(screen)
+
+
+async def test_tab_moves_focus_when_only_a_hint_row_shows(tmp_path, monkeypatch) -> None:
+    """R2-2 (regression from M-11): with "No note titled …" or "Keep typing…"
+    showing, Tab must still move focus out of the body (and the picker goes
+    with the focus); the Tab claim ignored ``has_rows`` while the body no
+    longer intercepted Tab, so Tab did nothing."""
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _body_focused(screen, pilot)
+        await _type(pilot, "[[zzzz")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", "No note titled")
+        await pilot.press("tab")
+        await _until(pilot, lambda: screen.focused is not body, "Tab to leave the body")
+        await _until(pilot, lambda: not _picker_open(screen), "the picker to close")
+        assert body.text == "[[zzzz"
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        await pilot.press("end")
+        await _type(pilot, " [[q")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", "Keep typing")
+        await pilot.press("tab")
+        await _until(pilot, lambda: screen.focused is not body, "Tab to leave the body")
+        await _until(pilot, lambda: not _picker_open(screen), "the picker to close")
+        assert body.text == "[[zzzz [[q"
+
+
+async def test_the_picker_never_opens_on_a_line_without_two_brackets(tmp_path, monkeypatch) -> None:
+    """R2-3: Enter landing after the ``[[Lisb`` sync started its load but
+    before it answered used to let that load open the picker at (1, 0) --
+    a line with no ``[[`` -- where it took Up/Down and swallowed the next
+    Enter. The no-context sync now supersedes the in-flight load. The
+    window is made deterministic by delaying the candidate service, so the
+    load is always still in flight when Enter lands."""
+    import asyncio
+
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    note_id = profile.db.add_note("Window", "")
+    real = profile.scope_service.list_note_link_candidates
+
+    async def _slow(*args, **kwargs):
+        await asyncio.sleep(0.4)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(profile.scope_service, "list_note_link_candidates", _slow)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _open_note(screen, pilot, "Window", note_id)
+        await pilot.click("#library-note-body")
+        await _until(pilot, lambda: screen.focused is body, "focus")
+        # One burst, so no load has answered when Enter lands (paced keys
+        # let the slow ``[[`` load open the picker mid-word, which is the
+        # held-accept path, not this one).
+        _burst(app, "[[Lisb")
+        await _until(pilot, lambda: body.text == "[[Lisb", "the text")
+        assert not _picker_open(screen), "the slow load must still be in flight"
+        _send_key(app, "enter")
+        await _until(pilot, lambda: body.text == "[[Lisb\n", "the newline")
+        await pilot.pause(1.2)
+        assert body.cursor_location == (1, 0)
+        assert not _picker_open(screen), "the picker opened on a bare line"
+        assert body.link_picker_open is False
+        await pilot.press("down")
+        await pilot.pause(0.2)
+        assert body.cursor_location == (1, 0)
+        await pilot.press("enter")
+        await _until(pilot, lambda: body.text == "[[Lisb\n\n", "the second Enter to land")
+
+
+async def test_a_held_enter_with_no_rows_keeps_the_picker_open_on_the_hint(tmp_path, monkeypatch) -> None:
+    """R2-4: ``[[Lis`` rows showing, then ``zz``+Enter as one burst: the held
+    Enter's load answers with no rows. The picker stays OPEN on the
+    "No note titled “Liszz”" hint so the user sees why nothing was inserted;
+    no newline is inserted for that Enter; the next Enter is the editor's."""
+    app, profile = _app(tmp_path)
+    _record_open_url(monkeypatch, app)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _library(app, pilot)
+        body = await _body_focused(screen, pilot)
+        await _type(pilot, "[[Lis")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", LISBON)
+        _burst(app, "zz", "enter")
+        await _until_painted(app, screen, pilot, "#library-note-link-picker", "No note titled “Liszz”")
+        await pilot.pause(0.8)
+        assert body.text == "[[Liszz", body.text
+        assert _picker_open(screen)
+        await pilot.press("enter")
+        await _until(pilot, lambda: body.text == "[[Liszz\n", "the next Enter to be the editor's")
+        await _until(pilot, lambda: not _picker_open(screen), "the picker to close")

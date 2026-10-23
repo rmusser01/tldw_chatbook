@@ -979,7 +979,9 @@ class NoteEditorTextArea(DetachSafeTextArea):
         on ``_no_default_action``), so Enter does not also insert a newline;
         ``stop()`` keeps Up/Down/Escape from bubbling to the screen's
         bindings. Tab reaches here only while the screen deactivates its
-        priority ``focus_next`` binding for the open picker.
+        priority ``focus_next`` binding -- which it does for an open picker
+        that shows a REAL row; over a hint row Tab moves focus as usual
+        (fix round 2, R2-2).
         """
         if not self.link_picker_open or event.key not in self.LINK_PICKER_KEYS:
             return
@@ -4428,6 +4430,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def _note_chrome_follows_caret(self, event: TextArea.SelectionChanged) -> None:
         """Follow the caret: arrow keys never reach the presentation state."""
         self.update_note_chrome_facts(body=event.text_area)
+
+    @on(Resize)
+    def _note_link_picker_follows_resize(self, event: Resize) -> None:
+        """Fix round 2 (R2-5): an open link picker re-anchors to the pane's
+        new geometry, so rows cut beside the caret grow back. Decorated, like
+        ``_note_chrome_follows_width`` beside it: the pane's own ``on_resize``
+        keeps running."""
+        try:
+            picker = self.query_one("#library-note-link-picker", LibraryNoteLinkPicker)
+        except NoMatches:
+            return
+        if picker.is_open:
+            picker.reanchor()
 
     def _restate_note_location(self) -> None:
         """Re-state the location row against the width the pane actually has.

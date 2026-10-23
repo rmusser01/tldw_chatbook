@@ -3891,6 +3891,10 @@ class LibraryNotesController:
         return (
             picker is not None
             and picker.is_open
+            # Fix round 2 (R2-2): over a hint row ("No note titled …", "Keep
+            # typing…") the body does not intercept Tab either, so the claim
+            # must lapse too or Tab did nothing at all.
+            and picker.has_rows
             and picker.mode == "insert"
             and body is not None
             and self.focused is body
@@ -3921,6 +3925,10 @@ class LibraryNotesController:
         context = wikilink_completion_context(body.text, body.cursor_location)
         if context is None:
             self._library_notes_link_picker_latch = None
+            # Fix round 2 (R2-3): supersede an in-flight load too, or its
+            # answer opened the picker on a line with no ``[[`` (Enter landing
+            # between the ``[[Lisb`` sync and its answer).
+            self._library_notes_link_picker_generation += 1
             self._close_library_note_link_picker(body)
             return
         query, start = context
@@ -3951,12 +3959,14 @@ class LibraryNotesController:
             pane = self.query_one("#library-note-editor-region")
         except NoMatches:
             pane = body
-        try:
-            cell = body.cursor_screen_offset
-            cell = (int(cell.x), int(cell.y))
-        except Exception:  # noqa: BLE001 - a detached body has no screen cell
-            cell = None
-        picker.reposition(pane, cell=cell)
+        def _caret_cell() -> tuple[int, int] | None:
+            try:
+                offset = body.cursor_screen_offset
+                return (int(offset.x), int(offset.y))
+            except Exception:  # noqa: BLE001 - a detached body has no screen cell
+                return None
+
+        picker.reposition(pane, cell=_caret_cell(), cell_provider=_caret_cell)
 
     async def _load_library_note_link_candidates(self, query: str, generation: int) -> None:
         """Ask the service for the rows and show them -- unless superseded.
@@ -4008,9 +4018,13 @@ class LibraryNotesController:
         body.link_picker_has_rows = picker.has_rows
         if picker.accept_pending_for == generation:
             # I-2: Enter arrived while this load was in flight; it was held
-            # rather than accepting the previous query's rows.
+            # rather than accepting the previous query's rows. Fix round 2
+            # (R2-4): with NO rows the hold is simply dropped -- the picker
+            # stays open on the "No note titled …" hint so the user can see
+            # why nothing was inserted (and no newline for that Enter).
             picker.accept_pending_for = None
-            self._accept_library_note_link_picker(body)
+            if picker.has_rows:
+                self._accept_library_note_link_picker(body)
 
     def handle_library_note_link_picker_key(
         self, message: NoteEditorTextArea.LinkPickerKey
@@ -4031,10 +4045,14 @@ class LibraryNotesController:
             # Fix round 1 (M-4): the focus left the body.
             self._library_notes_link_picker_generation += 1
             self._close_library_note_link_picker(body)
-        elif key == "up":
-            picker.move_highlight(-1)
-        elif key == "down":
-            picker.move_highlight(1)
+        elif key in {"up", "down"}:
+            if picker.generation != self._library_notes_link_picker_generation:
+                # Fix round 2 (R2-1): a move over STALE rows. The user is
+                # not seeing the set the next answer brings, so any accept
+                # held across it is cancelled rather than landing on row 0.
+                picker.moved_on_stale = True
+                picker.accept_pending_for = None
+            picker.move_highlight(-1 if key == "up" else 1)
         elif key in {"enter", "tab"}:
             self._accept_library_note_link_picker(body)
         elif key == "escape":
@@ -4060,8 +4078,11 @@ class LibraryNotesController:
             # I-2: the rows on show answered an OLDER query -- never insert
             # a stale row (the probe inserted "Burst 0" for "Lisb"+Enter and
             # autosave recorded a wrong backlink). Hold the accept; the
-            # loader honours it when the current answer lands.
-            picker.accept_pending_for = current
+            # loader honours it when the current answer lands -- unless a
+            # highlight move happened over the stale rows (R2-1): then the
+            # user chose a row in a set that is about to change, so nothing
+            # is held and the fresh rows simply show.
+            picker.accept_pending_for = None if picker.moved_on_stale else current
             return
         candidate = picker.accept_selected()
         context = wikilink_completion_context(body.text, body.cursor_location)
@@ -4099,6 +4120,10 @@ class LibraryNotesController:
         event.stop()
         picker = self._library_note_link_picker_or_none()
         if picker is None or not picker.is_open or not picker.has_rows:
+            return
+        if picker.generation != self._library_notes_link_picker_generation:
+            # Fix round 2 (R2-1): the clicked row belongs to a set a load in
+            # flight is about to replace -- nothing is inserted.
             return
         index = int(getattr(event, "option_index", 0) or 0)
         picker.query_one(OptionList).highlighted = index

@@ -570,7 +570,11 @@ _BUDGETS: dict[str, int] = {
     # 6870) -- the held stale accept, the closer consumption, the row-click
     # accept, the control-character link policy and the synchronous
     # follow-picker keys.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6966,
+    # 2026-10-23, TASK-34000.11 fix round 2 (same owner decision): 6966 ->
+    # 6991 (+25) -- a held accept is cancelled by a highlight move over
+    # stale rows, a stale row click inserts nothing, the Tab claim lapses
+    # over a hint row, the no-context sync supersedes an in-flight load.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6991,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
