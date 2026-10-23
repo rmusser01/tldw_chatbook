@@ -52,11 +52,14 @@ from __future__ import annotations
 
 from tldw_chatbook.Constants import WIDE_VIEWPORT_COLUMNS as WIDE_VIEWPORT_COLUMNS
 
-#: ModalScreen subclasses deliberately outside the wide tier, each with its
-#: reason. Sourced from the modal inventory's skip column and the rollout
+#: ModalScreen subclasses outside the wide tier, each with its reason.
+#: Sourced from the modal inventory's skip column and the rollout
 #: exclusions, plus individually verified stragglers; the reverse-sweep
 #: contract also fails on stale entries (a skip for a class that no longer
-#: exists or is no longer a modal).
+#: exists or is no longer a modal). Most are deliberate; entries marked
+#: "follow-up wave" carry fixed base caps that the ladder would relax --
+#: documented gaps queued for a second wide-tier pass, not verdicts that
+#: they never need scaling.
 MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     # -- inventory skip column (tiny-by-design / judgment) ------------------
     "PasswordDialog": "inventory #72: single-input dialog, scaling adds nothing",
