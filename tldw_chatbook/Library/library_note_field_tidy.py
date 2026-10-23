@@ -13,7 +13,8 @@ The two pure functions are the inverse of exactly the two vetoes they
 target (``validate_database_note_draft``'s whitespace and duplicate arms)
 and nothing more: no truncation, no markup change, no rewrite of a value
 the save would already accept. ``Tests/Library/test_library_note_field_tidy.py``
-pins that with Hypothesis.
+pins that with deterministic examples and
+``test_library_note_field_tidy_properties.py`` with Hypothesis.
 
 ``tidy_library_note_field_on_blur`` is the one UI-aware seam: it takes the
 screen and a Textual ``Input.Blurred`` event by duck type, so this module
@@ -69,27 +70,40 @@ def tidy_note_keywords(value: str) -> str:
     The inverse of the "Keywords contain a case-insensitive duplicate" veto.
     Tokens are split on commas and stripped (delimiter whitespace and empty
     segments are syntax the save already ignores); the FIRST spelling of
-    each case-folded identity is kept, in order; the result is joined with
-    ", ". Nothing is truncated or otherwise rewritten, so a keyword the save
-    refuses for its length or content still reaches the save as typed.
+    each case-folded identity is kept, in order. Nothing is truncated or
+    otherwise rewritten, so a keyword the save refuses for its length or
+    content still reaches the save as typed.
+
+    Final review (2026-10-22, M-2): the text is rewritten ONLY when there is
+    something to drop -- a duplicate identity or an empty segment (``"a,,b"``,
+    a trailing comma). A list the save already accepts is returned exactly
+    as typed: ``"a,b"`` stays ``"a,b"``, never ``"a, b"``. When a rewrite
+    does happen the kept tokens are re-joined with ", ".
 
     Args:
         value: The keywords text as typed.
 
     Returns:
-        The same keyword set, each identity once, first spelling first.
+        ``value`` unchanged when every segment is non-empty and no identity
+        repeats; otherwise the same keyword set, each identity once, first
+        spelling first, joined with ", ".
     """
     kept: list[str] = []
     seen: set[str] = set()
+    needs_rewrite = False
     for raw_token in value.split(","):
         token = raw_token.strip()
         if not token:
+            needs_rewrite = True
             continue
         identity = token.casefold()
         if identity in seen:
+            needs_rewrite = True
             continue
         seen.add(identity)
         kept.append(token)
+    if not needs_rewrite:
+        return value
     return ", ".join(kept)
 
 

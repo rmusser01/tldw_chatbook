@@ -54,14 +54,6 @@ from ..Utils.path_validation import validate_filename
 from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from ..Utils.text import sanitize_filename
-
-#: Ids per keyword batch read (``_read_keywords_in_slices``). Each reader
-#: binds one SQL variable per id and SQLite caps bound variables (32,766;
-#: 999 before 3.32), so a Library with more items than that used to fail
-#: the whole export on ``too many SQL variables`` (TASK-34000.19 fix round
-#: 1, I-2). Same figure as ``ChaChaNotes_DB._ID_LIST_BATCH_CAP``.
-_KEYWORD_READ_BATCH_CAP = 500
-
 from .chatbook_models import (
     ChatbookContent,
     ChatbookManifest,
@@ -71,6 +63,13 @@ from .chatbook_models import (
     Relationship,
 )
 from tldw_chatbook.Utils.timestamps import utc_now_iso
+
+#: Ids per keyword batch read (``_read_keywords_in_slices``). Each reader
+#: binds one SQL variable per id and SQLite caps bound variables (32,766;
+#: 999 before 3.32), so a Library with more items than that used to fail
+#: the whole export on ``too many SQL variables`` (TASK-34000.19 fix round
+#: 1, I-2). Same figure as ``ChaChaNotes_DB._ID_LIST_BATCH_CAP``.
+_KEYWORD_READ_BATCH_CAP = 500
 
 CITATION_MESSAGE_EXPORT_KEYS = ("citation_validation", "evidence_bundle", "citations")
 MAX_CITATION_REPORT_SNIPPET_CHARS = 1000

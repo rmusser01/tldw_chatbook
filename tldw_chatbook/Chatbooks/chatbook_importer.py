@@ -75,6 +75,7 @@ from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from .chatbook_models import ChatbookManifest, ChatbookVersion, ContentType
 from .conflict_resolver import ConflictResolution, ConflictResolver
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #: Fixed-text import warning when a note's or conversation's keyword could
 #: not be re-linked (TASK-34000.19 fix round 1, M-3). Never carries the
@@ -82,7 +83,6 @@ from .conflict_resolver import ConflictResolution, ConflictResolver
 KEYWORD_RESTORE_WARNING = (
     "Some keywords could not be restored on an imported note/conversation."
 )
-from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 _PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
 _MAX_ARCHIVE_MEMBERS = 10_000

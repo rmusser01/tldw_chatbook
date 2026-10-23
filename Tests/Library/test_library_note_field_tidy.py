@@ -5,7 +5,12 @@ duplicate ("ok, x, X"), vetoes every autosave -- ADR-027 forbids the save
 from stripping or deduplicating on the user's behalf. The tidy runs when the
 user LEAVES the field, as a visible draft edit, and it is the inverse of
 exactly those two vetoes and nothing more: no truncation, no markup change,
-no rewrite of a title the save would already accept.
+no rewrite of a title or keyword list the save would already accept.
+
+Deterministic examples only: this file runs in the PR Fast Lane, which
+installs no Hypothesis. The properties (a tidied value never draws its
+veto; an accepted value is left exactly as typed) are in
+``test_library_note_field_tidy_properties.py``, behind ``importorskip``.
 """
 
 from __future__ import annotations
@@ -13,8 +18,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 from tldw_chatbook.Library.library_note_field_tidy import (
     tidy_note_keywords,
@@ -34,6 +37,11 @@ _DUPLICATE_VETO = "Keywords contain a case-insensitive duplicate — remove one 
 
 def _draft(*, title: str = "Note", keywords_text: str = "") -> DatabaseNoteDraft:
     return DatabaseNoteDraft("n-1", title, "Body", keywords_text, 0)
+
+
+def _veto_message(**fields) -> str | None:
+    outcome = validate_database_note_draft(replace(_draft(), **fields))
+    return outcome.message if isinstance(outcome, NoteValidationVeto) else None
 
 
 # --- title ------------------------------------------------------------------
@@ -97,33 +105,54 @@ def test_tidy_note_keywords_does_not_touch_a_keyword_the_save_would_refuse_for_l
     assert tidy_note_keywords(long) == long
 
 
-# --- the tidy is the inverse of exactly the two vetoes ----------------------
+# --- final review M-2: no rewrite unless the save would refuse something ---
 
 
-@settings(max_examples=200, deadline=None)
-@given(st.text())
+@pytest.mark.parametrize(
+    "raw",
+    ["a,b", "a, b", "a,b,c", "ok, x", " a ,b", "one two, three"],
+)
+def test_tidy_note_keywords_leaves_an_accepted_list_exactly_as_typed(raw: str) -> None:
+    # No duplicate identity and no empty segment: the save accepts it, so
+    # the blur does not even re-spell the delimiters ("a,b" stays "a,b").
+    assert _veto_message(keywords_text=raw) != _DUPLICATE_VETO
+    assert tidy_note_keywords(raw) == raw
+
+
+@pytest.mark.parametrize(
+    ("raw", "tidied"),
+    [
+        ("a, A", "a"),  # a case-insensitive duplicate: the save refuses it
+        ("a,,b", "a, b"),  # an empty segment: dropped, the rest re-spelled
+        ("a,b,", "a, b"),  # a trailing comma is an empty segment too
+    ],
+)
+def test_tidy_note_keywords_rewrites_only_when_there_is_something_to_drop(
+    raw: str, tidied: str
+) -> None:
+    assert tidy_note_keywords(raw) == tidied
+    assert _veto_message(keywords_text=tidied) != _DUPLICATE_VETO
+
+
+# --- the tidy is the inverse of exactly the two vetoes (deterministic) --------
+
+
+@pytest.mark.parametrize("title", ["Groceries ", " Groceries", "\tGroceries\n", "   "])
 def test_a_tidied_title_never_draws_the_whitespace_veto(title: str) -> None:
-    outcome = validate_database_note_draft(
-        replace(_draft(), title=tidy_note_title(title))
-    )
-    if isinstance(outcome, NoteValidationVeto):
-        assert outcome.message != _WHITESPACE_VETO, title
+    assert _veto_message(title=title) == _WHITESPACE_VETO
+    assert _veto_message(title=tidy_note_title(title)) != _WHITESPACE_VETO
 
 
-@settings(max_examples=200, deadline=None)
-@given(st.text())
+@pytest.mark.parametrize("keywords_text", ["ok, x, X", "a, A", "b, A, a, B, c"])
 def test_tidied_keywords_never_draw_the_duplicate_veto(keywords_text: str) -> None:
-    outcome = validate_database_note_draft(
-        replace(_draft(), keywords_text=tidy_note_keywords(keywords_text))
+    assert _veto_message(keywords_text=keywords_text) == _DUPLICATE_VETO
+    assert _veto_message(keywords_text=tidy_note_keywords(keywords_text)) != (
+        _DUPLICATE_VETO
     )
-    if isinstance(outcome, NoteValidationVeto):
-        assert outcome.message != _DUPLICATE_VETO, keywords_text
 
 
-@settings(max_examples=200, deadline=None)
-@given(st.text())
+@pytest.mark.parametrize("title", ["Groceries", "Grocery  list", "A title"])
 def test_a_title_the_save_accepts_is_left_exactly_as_typed(title: str) -> None:
     # The tidy changes only what the whitespace veto would refuse.
-    outcome = validate_database_note_draft(replace(_draft(), title=title))
-    if not isinstance(outcome, NoteValidationVeto):
-        assert tidy_note_title(title) == title
+    assert _veto_message(title=title) != _WHITESPACE_VETO
+    assert tidy_note_title(title) == title

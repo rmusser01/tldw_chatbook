@@ -301,7 +301,7 @@ async def test_escape_cancels_an_armed_delete_before_the_dirty_veto(monkeypatch)
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_row_1(screen, pilot)
-        area = await _open_analysis_form(screen, pilot)
+        await _open_analysis_form(screen, pilot)
         # Arm the confirm while the form is still clean ...
         screen.query_one("#library-media-reader-more", Button).press()
         delete = await _wait_for_selector(screen, pilot, "#library-media-delete")
