@@ -484,6 +484,21 @@ ADMISSION_2_TARGETS = (
     # tick build no turn configuration for the Environment panel (the mounted
     # Console; bootstrap_profile, ~8 s).
     "Tests/UI/test_console_environment_refresh_off_loop.py",
+    # TASK-36384: pins that ran only on main pushes and nightly. TASK-35835's
+    # quit persistence (whole file; bootstrap_profile by Tests/conftest.py's
+    # test_config_ rule) and its real-app quit, whose app runs in a subprocess
+    # with its own profile. Tests/ProductionApp/conftest.py patches
+    # tldw_chatbook.app at setup, which imports the app there, under the
+    # per-test redirect, when nothing collected has imported it: as a lone
+    # file that is RecoveryRequired('raw_source_selection_changed'). This
+    # step imports the app at collection (test_settings_image_gen_panel.py
+    # does at module level), so the node passes here. Then TASK-35578's
+    # listed-pick note on the Model step (bootstrap_profile, 5 cases) and its
+    # real setup save (a private-profile child).
+    "Tests/test_config_persistence_owner.py",
+    "Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list",
+    "Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

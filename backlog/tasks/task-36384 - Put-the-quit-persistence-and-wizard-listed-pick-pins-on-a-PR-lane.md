@@ -1,8 +1,11 @@
 ---
 id: TASK-36384
 title: Put the quit-persistence and wizard listed-pick pins on a PR lane
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-10-22 23:58
+updated_date: 2026-10-23 16:45
 labels:
 - follow-up
 - ci
@@ -31,7 +34,29 @@ TASK-35835 (PR #3216) and TASK-35578 (PR #3214) add pins that no PR lane runs. T
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each named test runs in a PR-required lane, with a matching Tests/CI lane-contract pin
-- [ ] #2 The real-quit test runs in that lane without the lone-file RecoveryRequired setup error
+- [x] #1 Each named test runs in a PR-required lane, with a matching Tests/CI lane-contract pin
+- [x] #2 The real-quit test runs in that lane without the lone-file RecoveryRequired setup error
 - [ ] #3 The lane's measured job time stays at least 3 minutes under its cap
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Lane: `pr-fast-lane-admission-2` (median 11.1 / max 13.6 min of its 35 over the last 28 successful PR runs; the other two PR Fast Lane jobs run 24.5/27.8 and 16.5/19.2). Its suites are bootstrap_profile, as the persistence file (Tests/conftest.py's `test_config_` rule) and the wizard file (module mark) are; the integration node is a private-profile child; the real-quit node runs its app in a subprocess with its own env.
+2. Append the four targets at the tail of `Run admission-sensitive suites 2` and of `Tests/CI`'s `ADMISSION_2_TARGETS`, each with a rider note. Negative control: drop one target from the workflow, see the contract fail, restore.
+3. AC#2: find why the lone file errors at setup; prove the real-quit node passes in the lane's exact invocation through run.sh (or fix its isolation if the lane would not run it beside an app-importing file).
+4. AC#3: time the added targets in the step's order and flags, serial; run the whole step serially; estimate CI time with the ~2.6x ratio; record the CI job times read above.
+5. Check the lane install line covers the tests' imports, including the two that spawn Python (a minimal venv with only the lane's install line).
+6. Run Tests/CI with -n 4 and preflight.
+
+## Implementation Notes
+
+The four pins are appended to the tail of `pr-fast-lane-admission-2`'s `Run admission-sensitive suites 2` step and of `Tests/CI/test_ci_queue_pressure_contract.py`'s `ADMISSION_2_TARGETS`, with a rider note there. The workflow edit is those four target lines only (owner ruling of 2026-10-23 for this task).
+
+- **Lane choice.** Over the last 28 successful PR runs (read 2026-10-23), job median / max: PR Fast Lane 24.5 / 27.8 min, admission-sensitive 16.5 / 19.2, admission-sensitive 2 11.1 / 13.6 (step median 612 s, max 759 s), all of 35. Admission-sensitive 2 has the most room. Its suites are bootstrap_profile, and so are the persistence file (Tests/conftest.py's `test_config_` rule) and the wizard node (the file's module mark), which cannot go in the sandboxed step. The integration node is a private-profile child.
+- **AC#1 contract.** `test_second_admission_target_set_is_exact` pins the step exactly. Negative control: with the real-quit line dropped from the workflow it failed (1 failed, 83 passed); restored, it passes.
+- **AC#2 cause.** `Tests/ProductionApp/conftest.py`'s autouse `_disable_model_catalog_refresh` calls `monkeypatch.setattr("tldw_chatbook.app.TldwCli._refresh_model_catalogs", ...)`. That string target imports `tldw_chatbook.app` at setup, under the per-test redirect, and the app's module-level `load_settings()` raises `RecoveryRequired('raw_source_selection_changed')`. The test file imports nothing from the app (its app runs in a subprocess), so as a lone file nothing has imported the app yet. Reproduced through run.sh: 1 error at setup, traceback through `Tests/ProductionApp/conftest.py:34`. In this step the app is imported at collection (`Tests/UI/test_settings_image_gen_panel.py` imports it at module level), so the fixture only patches an attribute. No test or guard edit (TASK-36381 owns the error class).
+- **AC#2 evidence.** The step's exact argv, extracted from the workflow (`pytest <66 targets> --timeout=300 --tb=short`, plus run.sh's `-p no:cacheprovider --basetemp` and a `--junitxml` for timings), serially through run.sh: 1038 passed in 1099 s, the real-quit node passing. Again in a scratch venv holding only the lane's install line (`pip install -e . pytest pytest-asyncio pytest-timeout packaging`, no hypothesis or xdist), so the two tests that spawn Python ran with the lane's imports: 1038 passed in 660 s.
+- **AC#3 (left open for the PR's CI).** The 16 added cases took 39.9 s (main venv) and 48.7 s (lane-only venv) serially in the step, at load 30-43 on 18 CPUs. At the repo's ~2.6x CI/local ratio that is about 2.1 min. At this load's own ratio (CI step median 612 s against 660 s locally) it is under a minute. So expect a max of about 15.7 min, about 19 min under the 35-min cap. Even a hung test at `--timeout=300` (about 5.3 min with the private-profile report) ends well over 3 min under. The coordinator ticks this on the PR's measured run.
+- Tests/CI with -n 4: 1025 passed, 1 skipped. Preflight: all checks passed.
+- Files: `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+
