@@ -13,8 +13,15 @@ from typing import Any
 #: ticks only while run work is live), its config projections run at least
 #: this often even when no input changed.
 RUN_BACKSTOP_SECONDS = 1.0
+#: TASK-33620.15.4: while the run poll ticks, an explicit sync that lands
+#: within this long of the last projection leaves its projection to the
+#: poll's next tick (this is the poll's own interval), so the syncs a run
+#: start requests share one projection.
+RUN_COALESCE_SECONDS = 0.2
 _clock = time.monotonic
 _POLL_TICK: ContextVar[bool] = ContextVar("console_poll_tick", default=False)
+#: The running sync is the poll's (set at its entry, for its own task).
+_POLL_SYNC: ContextVar[bool] = ContextVar("console_poll_sync", default=False)
 
 
 def run_console_config_sync(
@@ -177,6 +184,8 @@ class _Cadence:
         self.values: tuple | None = None
         self.at = 0.0
         self.owed = False  # A poll tick skipped since the last projection.
+        self.published = 0  # Snapshot publications handed to the poll (an input).
+        self.waiting_since: float | None = None  # First request left to the poll.
 
 
 def _cadence(screen: Any) -> _Cadence:
@@ -217,10 +226,60 @@ def begin_console_sync(screen: Any) -> None:
     Args:
         screen: The Console screen whose sync is starting.
     """
-    if _POLL_TICK.get():
+    poll = _POLL_TICK.get()
+    if poll:
         _POLL_TICK.set(False)
     else:
         _cadence(screen).requested += 1
+    _POLL_SYNC.set(poll)
+
+
+def warm_run_presentation(screen: Any) -> None:
+    """Re-read an aging checked display as run work starts (TASK-33620.15.4).
+
+    The poll's first tick comes 0.2 s after this. An idle Console projects
+    nothing, so its checked display had always expired by then: the first
+    projection after a send ran the native config operation on the UI loop,
+    and the same tick's later presentation reads deferred to a whole-sync
+    replay. Starting the read here lets it land before that tick.
+
+    Args:
+        screen: The Console screen whose run poll is starting.
+    """
+    from .console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _screen_readiness_config,
+    )
+
+    if getattr(screen, "_closing", False):
+        return
+    value = _screen_readiness_config(screen)
+    if value and screen._console_config_snapshot_is_disk_loaded(value):
+        ConsoleReadinessConfigProjection.for_screen(screen).run(lambda: None)
+
+
+def publish_console_presentation(screen: Any, group: str) -> None:
+    """Hand a refreshed presentation snapshot to the next projection.
+
+    TASK-33620.15.4: each snapshot publication used to start a whole sync,
+    which projected again however recently another sync had (one to three
+    times in a send's run start). While the run poll ticks, a publication
+    is a cadence input instead: the next tick, within one poll interval,
+    projects it together with whatever else that interval asked for, and
+    asking the poll for that tick keeps it from stopping first. With no
+    poll, a whole sync renders it at once, as before.
+
+    Args:
+        screen: The Console screen the snapshot belongs to.
+        group: The worker group of the whole sync started without a poll.
+    """
+    if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+        _cadence(screen).published += 1
+        screen._start_console_transcript_sync_timer()  # Keeps the poll ticking.
+        return
+    screen.run_worker(
+        screen._sync_native_console_chat_ui(), exclusive=False, group=group
+    )
 
 
 def _pending_rounds(store: Any, controller: Any) -> tuple:
@@ -355,9 +414,35 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
         ),
         evidence.version if evidence is not None else None,
         _legacy_approval(screen),
+        _cadence(screen).published,
         run,
     )
     return objects, values
+
+
+def _left_to_the_poll(screen: Any, cadence: _Cadence) -> bool:
+    """Whether an explicit sync's projection waits for the run poll's next tick.
+
+    TASK-33620.15.4 (measured 2026-10-23): a send's run start asked for one to
+    four whole syncs (a deferral's replay, a sync re-armed behind the poll's
+    own, snapshot publications), and each projected at once, 40-120 ms after
+    the poll's tick had, before its next tick projected again. While the poll
+    ticks, a request that lands within ``RUN_COALESCE_SECONDS`` of the last
+    projection now stays requested (``requested`` ahead of ``served``), so
+    the next tick projects it with everything else of that interval; a
+    request already waiting that long projects in whichever sync comes
+    first. With no poll, every explicit sync projects at once, as before.
+    """
+    if getattr(screen, "_console_transcript_sync_timer", None) is None:
+        cadence.waiting_since = None
+        return False
+    now = _clock()
+    if cadence.waiting_since is None:
+        if now - cadence.at >= RUN_COALESCE_SECONDS:
+            return False
+        cadence.waiting_since = now
+        return True
+    return now - cadence.waiting_since < RUN_COALESCE_SECONDS
 
 
 def project_console_tick(screen: Any, *, force: bool = False) -> bool:
@@ -394,6 +479,12 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     fake clock (one 0.2 s tick each, a 15-chunk streamed run), a run made
     25-43 projections without this cadence and 9-18 with it.
 
+    TASK-33620.15.4: while the poll ticks, an explicit sync within a poll
+    interval of the last projection leaves its projection to the next tick
+    (``_left_to_the_poll``), and a snapshot published meanwhile is an input
+    (``publish_console_presentation``), so a run start's syncs share one
+    projection.
+
     Args:
         screen: The Console screen whose sync tick is running.
         force: Run the projections even when nothing moved.
@@ -409,6 +500,9 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
         # An unreadable input is a change: project (the parent's tick read
         # these inside the cost chip's best-effort build), and record none.
         objects, values = (), None
+    if not force and not _POLL_SYNC.get() and _left_to_the_poll(screen, cadence):
+        cadence.owed = True
+        return True
     requested = cadence.requested
     unchanged = (
         values is not None
@@ -427,6 +521,7 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     cadence.served = requested
     cadence.objects, cadence.values, cadence.at = objects, values, _clock()
     cadence.owed = False
+    cadence.waiting_since = None
     return True
 
 

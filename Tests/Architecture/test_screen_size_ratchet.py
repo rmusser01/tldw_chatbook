@@ -148,7 +148,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-25 owner rule (raise the row to the exact measurement): dev itself
     #: measures one line over its own row (24345 vs 24344); rebased onto it this
     #: branch measures 24322.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24322, 736),
+    #: Raised 24344 -> 24345 (methods unchanged) 2026-10-23 by TASK-33620.15.4,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the run poll's
+    #: start warms the checked config display (one call; the logic lives in
+    #: Console_Modules/config_sync.py::warm_run_presentation). Dev 5b5920b8e2
+    #: measures 24344/736; with the fix, 24345/736, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24345, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

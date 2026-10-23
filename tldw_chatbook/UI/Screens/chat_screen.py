@@ -17933,6 +17933,7 @@ class ChatScreen(BaseAppScreen):
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
         self._record_ui_timer_created("console-transcript-sync")
+        config_sync.warm_run_presentation(self)  # TASK-33620.15.4
 
     def _stop_console_transcript_sync_timer(self) -> None:
         if self._console_transcript_sync_timer is None:
