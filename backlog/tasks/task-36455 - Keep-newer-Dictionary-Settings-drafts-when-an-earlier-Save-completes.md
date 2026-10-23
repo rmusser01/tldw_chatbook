@@ -26,7 +26,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 19:32
+updated_date: 2026-10-23 20:36
 ---
 
 ## Description
@@ -44,15 +44,14 @@ Related tasks: [TASK-33910.14](task-33910.14%20-%20Roleplay-frame-B9a-entry-and-
 
 ADR check: no new ADR expected for a bounded repair within existing owners and contracts. Applicable decisions: [033-application-session-state-ownership](../decisions/033-application-session-state-ownership.md), [046-roleplay-chat-display-identity-and-template-provenance](../decisions/046-roleplay-chat-display-identity-and-template-provenance.md), [115-personas-demand-mounted-center-views](../decisions/115-personas-demand-mounted-center-views.md), [079-workspace-assistant-defaults](../decisions/079-workspace-assistant-defaults.md). Re-evaluate if implementation changes a boundary.
 
-[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). This task does not claim the repair is implemented.
+[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). The audit records the pre-fix behavior; implementation evidence is recorded below.
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Ordinary Dictionary Settings Save adopts the actual persisted version while later raw settings edits remain visible and unsaved; only submitted settings are acknowledged.
-- [ ] #2 The next explicit Save persists retained settings to the same dictionary using the correct optimistic-lock version. No-later-edit success becomes clean and definite failures preserve the current draft for retry.
-- [ ] #3 Existing New, leave and quit protections continue to detect retained settings edits, and choosing Stay retains them; entry-draft and transition ownership remain with their existing tasks.
-- [ ] #4 Mounted real-service/SQLite regressions cover ordinary success, input before Save, input accepted during Save, next Save and definite failure, witnessing child delivery independently of pump settlement.
+- [x] #1 Ordinary Dictionary Settings Save adopts the actual persisted version while later raw settings edits remain visible and unsaved; only submitted settings are acknowledged.
+- [x] #2 The next explicit Save persists retained settings to the same dictionary using the correct optimistic-lock version. No-later-edit success becomes clean and definite failures preserve the current draft for retry.
+- [x] #3 Existing New, leave and quit protections continue to detect retained settings edits, and choosing Stay retains them; entry-draft and transition ownership remain with their existing tasks.
+- [x] #4 Mounted real-service/SQLite regressions cover ordinary success, input before Save, input accepted during Save, next Save and definite failure, witnessing child delivery independently of pump settlement.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -74,13 +73,7 @@ Reason: bounded acknowledgement bug fix within existing dictionary form, screen,
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implementation complete; retained In Progress for parent review and integration.
+Dictionary Settings Save acknowledges the submitted raw controls without reloading over newer input, adopts the actual optimistic-lock version, and recomputes dirty state when older notifications arrive. Name/description, strategy, enabled and unfinished budget edits remain visible for the next Save to the same dictionary. Existing Persona completion is unchanged; its shared completion helper hosts the Dictionary tail. PersonasScreen drops to16,554 lines. Entry and transition ownership and existing New/leave/quit guards stay in place.
 
-Dictionary Settings Save now acknowledges the raw submitted settings without reloading live controls, adopts the actual committed optimistic-lock version, and recomputes current dirty state for queued notifications. Newer names (including whitespace), description, strategy, enabled, and unfinished/valid budget edits stay visible and dirty for the next explicit Save to the same dictionary. The existing success presentation tail moved to persona_save_completion.py to keep personas_screen.py below its unchanged line ratchet; existing Persona completion AST is unchanged. Added mounted real local scope-service/SQLite regressions and a narrow character-chat architecture note. Entry-draft/transition ownership, guards, dependencies and schema are unchanged.
-
-ADR required: no. Existing ADRs: 033 application session-state ownership, 046 aggregate Roleplay draft amendment, 115 demand-mounted Personas views, 079 workspace assistant defaults. Bounded acknowledgement repair within existing owners.
-
-Verification: dictionary-red-01 8 selected/6 failed/2 passed (two exact product failures, four fixture-delivery limitations retained and qualified); strengthened dictionary-red-02 5/5 exact clobber failures. dictionary-green-01 10 passed (run spans mechanical completion extraction); frozen final-source dictionary-green-final-02 6 passed/6 deselected, including queued Changed, stale old-baseline notification, valid budget, all Stay guards, ordinary success and pre-Save input. Unqualified legacy compatibility selection 25 selected/17 profile-admission failures/8 widget passes; original Git HEAD screen/widget source reproduces representative raw_source_selection_changed. Supported bootstrap_profile qualification of those 17 mounted cases passes 17/17 without production/test/guard edits. Selections overlap; counts are not summed.
-
-Static: widget/new test Ruff clean; existing 24 screen E721 plus one pre-existing Persona helper E721 unchanged, zero new findings. Ruff formatter and scoped diff-check pass. Screen 16554 lines below unchanged 16561 ratchet. Full suite not run. All raw logs/XML, exact command lines, baseline source/hash manifest, full failure names and qualifications are preserved; report: .test-tmp/task-36454-36458/dictionary-report.md. No commit/stage/push, Qodo, census/workflow edits or receipt deletion. Parent owns final gate integration, checklist/status and PR work.
+Twelve mounted real-service/SQLite regression cases pass, with next-Save/version, queued notification, failure and Stay controls; eight existing widget and17 screen contracts pass with the documented bootstrap qualification. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for exact evidence and limits. Character-chat architecture documentation is updated. Existing ADR-033 application state and ADR-046/079/115 apply; no new ADR. Independent Superpowers review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

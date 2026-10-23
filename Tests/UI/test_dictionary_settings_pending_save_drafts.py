@@ -36,6 +36,9 @@ from tldw_chatbook.Widgets.confirmation_dialog import UnsavedChangesDialog
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     PersonasDictionaryDetailWidget,
 )
+from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
+    PersonasLibraryPane,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.timeout(90)]
 
@@ -64,14 +67,16 @@ async def _dictionary_app(mock_app_instance, tmp_path, monkeypatch):
             screen = app.screen
             await pilot.click("#personas-mode-dictionaries")
             await _until(lambda: screen.state.active_mode == "dictionaries")
-            await _until(
-                lambda: bool(screen.query("#personas-library-rows > ListItem"))
-            )
+            library = screen.query_one(PersonasLibraryPane)
+            row_id = f"personas-library-row-dictionary-{record['id']}"
+            # The previous mode's rows can remain mounted while dictionaries load.
+            await _until(lambda: bool(library.query(f"#{row_id}")))
             rows = screen.query_one("#personas-library-rows", ListView)
-            rows.index = 0
+            library.highlight_row("dictionary", str(record["id"]))
             rows.action_select_cursor()
             await _until(
-                lambda: screen.state.selected_entity_id == str(record["id"])
+                lambda: screen.state.selected_entity_kind == "dictionary"
+                and screen.state.selected_entity_id == str(record["id"])
                 and bool(screen.query(PersonasDictionaryDetailWidget))
             )
             await pilot.pause()

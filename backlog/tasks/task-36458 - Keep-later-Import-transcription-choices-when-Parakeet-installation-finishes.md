@@ -31,7 +31,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 19:31
+updated_date: 2026-10-23 20:37
 ---
 
 ## Description
@@ -49,9 +49,8 @@ Related tasks: [TASK-931](task-931%20-%20Install-verified-Parakeet-v2-INT8-from-
 
 ADR check: no new ADR expected for a bounded repair within existing owners and contracts. Applicable decisions: [014-library-ingest-service-authority-and-recovery](../decisions/014-library-ingest-service-authority-and-recovery.md), [025-shared-stt-artifacts-and-runtime-routing](../decisions/025-shared-stt-artifacts-and-runtime-routing.md), [050-external-parakeet-roots-with-managed-vad](../decisions/050-external-parakeet-roots-with-managed-vad.md), [033-application-session-state-ownership](../decisions/033-application-session-state-ownership.md), [011-chatbook-workbench-ui-system](../decisions/011-chatbook-workbench-ui-system.md). Re-evaluate if implementation changes a boundary.
 
-[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). This task does not claim the repair is implemented.
+[Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). The audit records the pre-fix behavior; implementation evidence is recorded below.
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Completion of an earlier managed Parakeet install cannot replace later accepted provider, model-folder or precision choices, including choices for a changed source/batch.
@@ -79,11 +78,7 @@ Reason: Bounded callback ownership repair within existing screen, consent, artif
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Managed Parakeet completion now captures its requesting form identity, accepted-edit generation, source path, transcription choices and live controls. It selects Parakeet INT8 only while that context remains current; obsolete completion retains current editors and gives honest retained-choice copy while consented installation/preference can finish. The original UI-thread callback and zero-argument installer seam remain. Existing completion body moved to UI/Library_Modules/parakeet_install_selection.py to reduce LibraryScreen size; no new service/storage/runtime boundary.
+Managed Parakeet completion retains its requesting form identity, accepted-edit generation, source and raw transcription controls. Automatic INT8 selection applies only while that request context is current. Obsolete completion keeps later choices and reports that honestly, while consented installation/preference can finish. The original button, consent, worker and UI-thread callback remain. The narrow parakeet_install_selection helper loads only on request/completion; LibraryScreen stays at37,525 lines with its lowered ceiling unchanged.
 
-Added nine mounted regression controls covering ordinary success, unchanged prior F32/folder override, later provider, precision, folder, source/batch, provider ABA and genuine queued Changed delivery. Final targeted verification: 34 passed (33 combined including 8 new +25 existing, plus the ninth unchanged-override case separately), 0 failures/errors/skips. Qualified RED independently measured provider overwrite, f32-to-int8 overwrite and folder removal. Actual install button, consent modal, background worker, real ingest preflight, event handlers and original call_from_thread publication retained. External plan/provision/preference and optional runtime availability are qualified seams; no downloads, package installation, inference, Start-import or real persistent preference proof claimed.
-
-Ruff format/check for new files and py_compile for modified Python files pass; tracked diff whitespace check passes. Existing legacy test-file unused App import is pre-existing F401; scoped lint ignoring F401 passes. Full suite not run. Detailed root cause, exact selectors, raw receipts, setup failures and limits: .test-tmp/task-36454-36458/parakeet-report.md. Root owns shared architecture docs, diagnostic inventory/census/CI integration, final review and Done status.
-
-ADR required: no. Existing ADRs 014, 025, 050, 033 and 011 apply (see Implementation Plan for paths). The change is a bounded callback ownership repair and preserves artifact policy, model routing and source preference contracts.
+All nine new selection cases and25 existing contracts pass across the recorded targeted runs. After import deferral, ordinary/provider-change mounted controls and both exact size guards pass (4/4). Perf Guard exposed559/558 preload modules; the existing native guard reproduced it, then scoped imports restored558/558 without raising a limit. Rebased preimport/warmup controls pass (2/2,558/558 and93/94). External acquisition/preference seams are bounded; no download, package install or inference proof is claimed. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for evidence and limits. Existing ADR-014/025/050/033 application state/011 govern selection and [ADR-097](../decisions/097-boot-budget-ratchets.md) governs import timing; no new ADR. Independent Superpowers review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -27,7 +27,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 19:10
+updated_date: 2026-10-23 20:36
 ---
 
 ## Description
@@ -47,13 +47,12 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 
 [Textual book audit: evidence, controls, limits and overlap review](../../Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md). The audit records the pre-fix behavior; implementation evidence is recorded below.
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Create and update Save acknowledge only the submitted snapshot and adopt the actual persisted identity/version; later raw metadata and canonical block edits remain visible and dirty.
-- [ ] #2 The next explicit Save writes the retained draft to the same prompt using its current version. An unchanged successful Save becomes clean; definite failure preserves current edits for retry.
-- [ ] #3 Basic and Advanced projections agree after acknowledgement, including live child input already accepted while its Changed notification is queued. Existing Back, navigation and quit protections detect the retained draft.
-- [ ] #4 Mounted real-store regressions distinguish ordinary create/update, later accepted input, queued notification, definite failure, next Save and guarded exit; actual child input delivery and committed rows are witnessed.
+- [x] #1 Create and update Save acknowledge only the submitted snapshot and adopt the actual persisted identity/version; later raw metadata and canonical block edits remain visible and dirty.
+- [x] #2 The next explicit Save writes the retained draft to the same prompt using its current version. An unchanged successful Save becomes clean; definite failure preserves current edits for retry.
+- [x] #3 Basic and Advanced projections agree after acknowledgement, including live child input already accepted while its Changed notification is queued. Existing Back, navigation and quit protections detect the retained draft.
+- [x] #4 Mounted real-store regressions distinguish ordinary create/update, later accepted input, queued notification, definite failure, next Save and guarded exit; actual child input delivery and committed rows are witnessed.
 <!-- AC:END -->
 
 ## Definition of Done
@@ -72,8 +71,8 @@ Reason: bounded acknowledgement repair inside existing editor/persistence/histor
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
-<!-- SECTION:NOTES:BEGIN -->
-Prompt Save now captures live Basic/Advanced blocks and raw metadata, adopts the actual persisted identity/version, and retains later edits as a dirty working copy. The existing first-save capability refresh keeps the next Save on the same row; old queued semantic projections are rejected. Completion moved to UI/Library_Modules/prompt_save_ack.py to lower the controller ceiling to5,100. Child editors and existing history/guard/service boundaries stay in place.
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Prompt Save now captures raw live metadata and Basic/Advanced blocks, acknowledges only submitted input, and adopts the committed identity/version. Newer edits stay visible and dirty, obsolete semantic messages cannot replay old blocks, and the next Save updates the same row with the current version. The existing create-success action refresh is retained. Completion moved to UI/Library_Modules/prompt_save_ack.py; the controller ceiling drops from5,199 to5,100. Stateful children, history, services and exit guards remain with their existing owners.
 
-Mounted real-SQLite regressions cover create/update, later and queued input, definite failure, second Save, guarded Back/navigation/quit flush and a held older semantic message. See Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md for RED/GREEN receipts and fixture qualifications. Existing ADR-033 application state and ADR-040/049/076/086 apply; no new ADR. Independent Superpowers review and hosted CI remain pending.
-<!-- SECTION:NOTES:END -->
+Mounted real-SQLite controls cover create/update, later and queued body/metadata input, definite failure, guarded exit, next Save and old semantic publication. Superpowers review caught a stale other-lane Advanced projection; both convergence loops now synchronize all captured cards. Three new review regressions pass, plus11 neighboring Prompt controls. The combined Prompt module contains22 exact census cases. Full counts, RED/GREEN and fixture qualifications are in the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md). Existing ADR-033 application state and ADR-040/049/076/086 apply; no new ADR. Independent review approved the implementation; required current-head PR #3228 CI is pending, so the task stays In Progress.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

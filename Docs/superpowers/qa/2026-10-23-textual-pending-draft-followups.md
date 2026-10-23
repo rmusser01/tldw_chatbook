@@ -1,6 +1,6 @@
 # Pending draft follow-ups: TASK-36454 through TASK-36458
 
-Status: implementation and targeted local verification recorded; independent Superpowers review and PR CI pending.
+Status: implementation independently reviewed; targeted local evidence and hosted CI findings recorded. PR #3228 CI rerun pending after the Dictionary fixture readiness repair.
 
 ## Scope and ownership
 
@@ -62,4 +62,10 @@ The focused Superpowers follow-up approved `8a6ca765` with no remaining Critical
 
 The first hosted Perf Guard exposed an eager import introduced by the Parakeet helper extraction: screen preloading added 559 modules against the unchanged 558 limit. The existing guard reproduces locally (1 exact failure, 17.803 seconds). The helper now loads through scoped request/completion imports; its internal capture function is named `capture_selection` within that module. Both preimport/warmup controls pass afterward (2/2, 18.818 seconds): 558/558 preimport modules and 94/94 warmup modules. The LibraryScreen ceiling and actual size remain 37,525; no size or performance limit rises. ADR-097 governs this import timing repair. An explicit F401-only lint selection surfaced legacy unused re-exports; the final normal-rule comparison against dev still finds no new diagnostics in the nine affected existing owners.
 
-After import deferral, the mounted ordinary/provider-change Parakeet controls and both exact screen-size guards pass (4/4, 66.956 seconds). The small import-timing follow-up is being reviewed before current-head hosted CI and final task closeout.
+After import deferral, the mounted ordinary/provider-change Parakeet controls and both exact screen-size guards pass (4/4, 66.956 seconds). The scoped Superpowers review approved the import-timing follow-up. After rebasing onto dev `5b5920b8`, the reviewer verified that all 11 changed production files were byte-identical to the reviewed implementation; upstream test/lesson updates were preserved. Native preimport/warmup confirmation passed again (2/2, 18.841 seconds, 558/558 and 93/94).
+
+## Hosted CI follow-up
+
+[Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed on rebased implementation head `6c0d5255cd`. The corresponding [Derived Artifacts run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015317) found one Dictionary fixture readiness race in UI shard 3 (168 passed, one failed): the fixture selected an old Character row before the asynchronous Dictionary list replacement finished. It failed before Save or pending-draft input began. The selected numeric ID alone could not distinguish Character 1 from Dictionary 1.
+
+The fixture now waits for the exact kind-qualified Dictionary row, highlights its existing kind/identity, and requires selected kind, ID and mounted detail. All 12 case bodies and parameter IDs remain unchanged; no timeout, census entry or production contract changes. The formerly failing reverted-name case and ordinary, queued-name and raw-name/Stay guard controls pass (4/4, 123.997 seconds). Scoped Ruff, formatting and diff checks pass. Independent Superpowers review approved this fixture-only repair with no findings; it preserves actual selection dispatch, test bodies and guard assertions. Required current-head CI remains the final delivery check.
