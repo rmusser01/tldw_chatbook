@@ -35,7 +35,7 @@ NOTE_LINK_PREFIX = "note://"
 BIDI_CONTROLS: frozenset[str] = frozenset(
     {chr(code) for code in range(0x202A, 0x202F)}
     | {chr(code) for code in range(0x2066, 0x206A)}
-    | {"‎", "‏"}
+    | {"\u200e", "\u200f"}
 )
 
 

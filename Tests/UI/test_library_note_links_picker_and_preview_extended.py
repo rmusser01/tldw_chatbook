@@ -397,11 +397,11 @@ HOSTILE_POSTED = (
     ("https://a.example/with space", f"{REFUSED}https://a.example/with space"),
     # Final fix round (M-3): a bidi override in an http(s) href refuses it,
     # and the notice shows the href without the override.
-    ("https://a.example/‮evil", f"{REFUSED}https://a.example/evil"),
+    ("https://a.example/\u202eevil", f"{REFUSED}https://a.example/evil"),
     ("docs/relative.md", f"{NOWHERE}docs/relative.md"),
 )
 
-BIDI = "‪‫‬‭‮⁦⁧⁨⁩‎‏"
+BIDI = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f"
 
 
 def _has_control_chars(text: str) -> bool:
