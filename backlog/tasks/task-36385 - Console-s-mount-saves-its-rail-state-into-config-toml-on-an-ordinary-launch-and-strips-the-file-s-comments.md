@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 17:29
+updated_date: 2026-10-23 18:10
 labels:
 - follow-up
 - console
@@ -84,6 +84,7 @@ Found by TASK-35835 (PR #3216, 2026-10-22). Once TASK-35835 lands, a quit no lon
 - Round 1: `tldw_chatbook/Chat/console_rail_state.py`, `Tests/Chat/test_console_rail_state.py`, `Tests/Architecture/test_screen_size_ratchet.py`, `Docs/security/production-diagnostic-inventory.json`.
 
 No User Guide change: no page says that a launch rewrites config.toml.
+
 **Review round 1 (verdict "With fixes"):**
 - **Seeding stays one-time (finding 1).** Round 0 never wrote a defaults seed, so a later record could become its source. The reviewer's probe:
   - Launch 1 in Global writes nothing.
@@ -93,7 +94,7 @@ No User Guide change: no page says that a launch rewrites config.toml.
   - The seed records each defaults latch in `_console_rail_unsaved_seeds`.
   - Before any rail record is saved (an edit, or a seed copying a source), `Chat/console_rail_state.py::take_console_rail_seed_flush` queues the latched defaults that are still the seeded objects. When a workspace record is saved while the shared layout is absent from memory, it also holds and queues the shared defaults.
   - The save worker writes the queue first, under the same lock, so the saved record never reaches disk without them.
-  - A Global edit queues nothing: it saves the shared layout, which is the only latch.
+  - In a session that stayed in Global, an edit queues nothing: it saves the shared layout, which is the only latch. A Global edit after Per workspace was used in the same session also writes that session's held workspace defaults (`Tests/Chat/test_console_rail_state.py`, the shared-save case).
 - **Two limits** (the latch is per session):
   - A workspace seeded with defaults in one session and left untouched is not written when the Global layout is edited in a later session, so that workspace still seeds from Global afterwards. At dev it stays at the defaults.
   - A profile that never opened Console in Global writes the shared defaults at its first per-workspace save. At dev, it would later seed Global from the active workspace. Global is the default scope, so on dev the shared record practically always exists.
@@ -109,5 +110,20 @@ No User Guide change: no page says that a launch rewrites config.toml.
   - Rail-seed group (7 files), final head: 9 failed and 139 passed. The 9 are all in the pre-existing set of 10; `test_sources_chip_opens_inspector_at_140_cols` passed this time.
   - Other rail-persistence files (9): no new failures except `test_character_mount_loads_groups_without_duplicate_cold_resume_worker`. It is flaky at dev too: 2 of 4 serial runs failed at dev, 1 of 3 at this head.
   - Size ratchets: the same 8 failures as dev.
+  - Preflight passed.
+
+**Review round 2 (verdict "With fixes"):**
+- **The drain order is now pinned (finding 1).** Nothing failed if the save worker wrote its own record before the queued defaults; the reviewer showed that this order can put a held record the user edits back to the defaults. Two mounted tests sit in the census-listed `Tests/UI/test_console_first_chat_first_mount.py` and record every rail-state file write:
+  - `test_held_shared_defaults_are_written_before_the_workspace_record`: the mount holds Global's defaults; a workspace edit in Per workspace then records the shared defaults first, then the workspace record twice (the seed's copy, then the edit).
+  - `test_a_held_seed_the_user_edits_after_it_was_queued_keeps_the_edit`: the held shared record is queued, then edited and saved; the file ends at the edit.
+  - Both were red with the drain temporarily moved after the record write: `writes[0]` was the workspace record, and `[True, False] == [False, True]`. The edit was reverted.
+  - The recorder appends only after the real write returns. A first draft appended before the write and read the file too early.
+- **Notes (finding 2):** the Global-edit line now says it holds for a session that stayed in Global, and the missing blank line before the round 1 heading is back.
+- **Flush warning (recommendation 3):** it now logs `error_type` (the exception's type name). The diagnostic inventory row changed digest only; the new statement interpolates nothing but that type name. Checked with `--statements`, then rewritten with `--write`.
+- **Size ratchet:** `ChatScreen` measures 24363 lines (+3 for the warning), and the row is raised to that value under the same ruling.
+- **Runs** (`-n 4`; first-mount, rail_state, inspector compact access, profile_open, profile isolation, plus keepalive so the ProductionApp file collects):
+  - First run: 10 failed, 132 passed. Two of them were `test_profile_open_requires_actual_mounted_local_reads[database_failure|read_failure]` (`backup_operation_failed`, at load average about 30). That test passed 12 of 12 run alone.
+  - Second run: 8 failed, 134 passed. All 8 are in the pre-existing set that also fails at dev (4 keepalive, 4 compact_access display checks).
+  - Screen ratchet: 4 passed.
   - Preflight passed.
 <!-- SECTION:NOTES:END -->
