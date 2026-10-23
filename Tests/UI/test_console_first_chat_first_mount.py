@@ -22,14 +22,17 @@ import tomllib
 from collections.abc import Callable
 
 import pytest
+from textual.widgets import Button
 
 from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import _test_cli_setting
+from tldw_chatbook.Chat.console_rail_state import build_console_rail_preference_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import (
     get_cli_config_path,
+    save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
 from tldw_chatbook.Constants import TAB_CHAT
@@ -197,10 +200,12 @@ async def test_a_default_changed_after_start_chatting_names_the_model_in_use(
             assert shown.model == "model-b"
 
 
-def _saved_shared_rail_layout() -> dict:
+_SHARED_RAIL_KEY = build_console_rail_preference_key(layout_scope="global").value
+
+
+def _saved_rail_layout(key: str = _SHARED_RAIL_KEY) -> dict:
     data = tomllib.loads(get_cli_config_path().read_text(encoding="utf-8"))
-    rail_state = data.get("console", {}).get("rail_state", {})
-    return rail_state.get("console_rail_state:global:shared-layout-v1", {})
+    return data.get("console", {}).get("rail_state", {}).get(key, {})
 
 
 @pytest.mark.asyncio
@@ -227,7 +232,64 @@ async def test_consoles_first_mount_leaves_config_alone_and_a_rail_toggle_saves(
                 "Console's mount rewrote config.toml"
             )
 
-            assert await pilot.click("#console-rail-section-toggle-model")
+            # The toggle's own Pressed path; a pointer click can miss while the
+            # rail is still settling (one run in five here).
+            app.screen.query_one("#console-rail-section-toggle-model", Button).press()
             await _wait_until(
-                pilot, lambda: _saved_shared_rail_layout().get("model_open") is True
+                pilot, lambda: _saved_rail_layout().get("model_open") is True
             )
+            # A Global edit saves the shared layout and nothing else.
+            saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+            assert list(saved["console"]["rail_state"]) == [_SHARED_RAIL_KEY]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_per_workspace_edit_leaves_the_global_rail_layout_at_its_defaults(
+    request,
+) -> None:
+    """TASK-36385 review: the mount holds Global's defaults in memory only.
+    Seeding is still one-time: a per-workspace edit must not become Global's
+    seed at the next launch (the 2026-08-24 rail authority spec)."""
+    _persist_setup()
+
+    # Launch 1, Global: the user switches to Per workspace and closes
+    # Conversations, which saves the active workspace's record.
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            console = app.screen
+            await pilot.pause(0.5)
+            assert save_setting_to_cli_config(
+                "console", "rail_layout_scope", "workspace"
+            )
+            app.app_config["console"]["rail_layout_scope"] = "workspace"
+            context = console._workspace._current_console_workspace_context()
+            workspace_key = build_console_rail_preference_key(
+                workspace_id=context.active_workspace_id, layout_scope="workspace"
+            ).value
+            console.query_one(
+                "#console-rail-section-toggle-conversations", Button
+            ).press()
+            await _wait_until(
+                pilot,
+                lambda: _saved_rail_layout(workspace_key).get("conversations_open")
+                is False,
+            )
+
+    # Launch 2, back on Global: its layout is still the defaults.
+    assert save_setting_to_cli_config("console", "rail_layout_scope", "global")
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            await pilot.pause(0.5)
+            assert app.screen._current_console_rail_state().conversations_open is True
+            assert _saved_rail_layout().get("conversations_open") is True

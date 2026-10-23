@@ -456,6 +456,7 @@ from ...Chat.console_rail_state import (
     normalize_console_rail_layout_scope,
     resolve_console_rail_priority,
     serialize_console_rail_stored_preferences,
+    take_console_rail_seed_flush,
     serialize_console_rail_updated_preferences,
     console_rail_right_open_explicit,
 )
@@ -7275,6 +7276,9 @@ class ChatScreen(BaseAppScreen):
         # when the session's payload has actually changed since the last
         # check, and never while a run is actively streaming.
         self._last_console_rail_state: ConsoleRailState | None = None
+        #: TASK-36385: see `take_console_rail_seed_flush`.
+        self._console_rail_unsaved_seeds: dict[str, dict[str, bool]] = {}
+        self._console_rail_seed_flush: list[tuple[str, dict[str, bool]]] = []
         # TASK-2154.1: last width band seen by the resize hook; a rebuild of
         # the (expensive) effective rail state only happens when the band
         # actually changes, not on every pixel of a resize drag.
@@ -11702,6 +11706,15 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
         with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
+            # Held seed defaults land first (the UI thread only appends).
+            while self._console_rail_seed_flush:
+                flush_key, flush_value = self._console_rail_seed_flush.pop(0)
+                try:
+                    save_setting_to_cli_config(
+                        "console.rail_state", flush_key, flush_value
+                    )
+                except Exception:  # noqa: BLE001 -- the record's own save still runs
+                    logger.warning("Failed to persist Console rail seed defaults")
             latest: Any = serialized
             app_config = getattr(self.app_instance, "app_config", None)
             if isinstance(app_config, Mapping):
@@ -12006,11 +12019,15 @@ class ChatScreen(BaseAppScreen):
         )
         serialized = serialize_console_rail_stored_preferences(source)
         rail_state_config[selected_key.value] = serialized
-        # TASK-36385: an absent record already reads back as these defaults, so
-        # saving them would only rewrite config.toml (dropping its comments) on
-        # a launch that changed nothing. Copying a source record is the one-time
-        # migration and still saves; explicit rail edits save on their own.
-        if persist and source is not None:
+        # TASK-36385: saving defaults here rewrote config.toml on a launch that
+        # changed nothing; the next rail save writes them first instead. A
+        # copied source record is the one-time migration and still saves.
+        if source is None:
+            self._console_rail_unsaved_seeds[selected_key.value] = serialized
+        elif persist:
+            self._console_rail_seed_flush += take_console_rail_seed_flush(
+                rail_state_config, self._console_rail_unsaved_seeds, selected_key.value
+            )
             self._save_console_rail_preferences(
                 selected_key.value,
                 serialized,
@@ -12602,6 +12619,11 @@ class ChatScreen(BaseAppScreen):
                 explicit_right_toggle=explicit_right_toggle,
             )
             rail_state_config[preference_key.value] = serialized
+            self._console_rail_seed_flush += take_console_rail_seed_flush(
+                rail_state_config,
+                self._console_rail_unsaved_seeds,
+                preference_key.value,
+            )
             self._save_console_rail_preferences(
                 preference_key.value,
                 serialized,
