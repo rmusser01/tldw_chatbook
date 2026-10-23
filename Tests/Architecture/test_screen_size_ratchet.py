@@ -216,7 +216,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised by +19 (no method added) 2026-10-23 under the same owner
+    #: rule: TASK-36385 stops the mount saving default rail state, and
+    #: holds those defaults for the next rail save to write first so seeding
+    #: stays one-time (the logic itself is in Chat/console_rail_state.py::
+    #: take_console_rail_seed_flush). The row is the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24350, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

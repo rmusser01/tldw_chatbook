@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 16:35
+updated_date: 2026-10-23 17:29
 labels:
 - follow-up
 - console
@@ -45,7 +45,7 @@ Found by TASK-35835 (PR #3216, 2026-10-22). Once TASK-35835 lands, a quit no lon
 <!-- SECTION:NOTES:BEGIN -->
 **Why the mount wrote.** `_ensure_console_rail_scope_seed` (a0d61d9957, the scoped rail layouts plan of 2026-08-24) seeds an absent layout key once. When a source record exists (the active workspace's `:layout` record, its legacy `:global` record, or the shared layout), it copies it to the new key. That copy is the lossless one-time migration that replaced the old destructive fallback migration, and it still saves. When no source exists, it serialized product defaults and saved them. Only recovered profiles skipped that save (`unchanged_selected_config`, TASK-32628). On a fresh or template config, that defaults save was the boot's only config write. It dumped the file, which dropped the comments.
 
-**Fix** (`tldw_chatbook/UI/Screens/chat_screen.py`): the seed saves only when it copied a source record. Defaults stay as the in-memory latch, since an absent record reads back as the same defaults. The recovered-profile check is now redundant, so it is removed (`config.py`'s shutdown persist still uses `unchanged_selected_config`). A real edit goes through `_set_console_rail_preference`, which saves as before. One edge case behaves differently. If the shared layout was never edited, it is never written, so a later switch from Per workspace back to Global copies the workspace's saved layout. That is what the spec describes for a missing shared record.
+**Fix** (`tldw_chatbook/UI/Screens/chat_screen.py`): the seed saves only when it copied a source record. Defaults stay in memory; review round 1 below makes the next rail save write them first. The recovered-profile check is now redundant, so it is removed (`config.py`'s shutdown persist still uses `unchanged_selected_config`). A real edit goes through `_set_console_rail_preference`, which saves as before. (Round 0 also said a never-written shared layout seeding from a workspace later matched the spec. It does not: the spec makes seeding one-time. Review round 1 fixes it.)
 
 **Tests:**
 - `Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config` (AC#1). It covers a real `TldwCli` boot and quit. The sparse config now carries a leading comment and an inline one, and the bytes are compared across the whole session, no longer only around the shutdown persist. Red at dev: "the boot and quit rewrote the effective config".
@@ -81,6 +81,33 @@ Found by TASK-35835 (PR #3216, 2026-10-22). Once TASK-35835 lands, a quit no lon
 - `Tests/Wizards/test_first_run_setup_integration.py`
 - `Tests/Performance/test_boot_worker_census.py`
 - `backlog/docs/lessons-testing-evidence.md`: a patched config writer made a probe's file look untouched.
+- Round 1: `tldw_chatbook/Chat/console_rail_state.py`, `Tests/Chat/test_console_rail_state.py`, `Tests/Architecture/test_screen_size_ratchet.py`, `Docs/security/production-diagnostic-inventory.json`.
 
 No User Guide change: no page says that a launch rewrites config.toml.
+**Review round 1 (verdict "With fixes"):**
+- **Seeding stays one-time (finding 1).** Round 0 never wrote a defaults seed, so a later record could become its source. The reviewer's probe:
+  - Launch 1 in Global writes nothing.
+  - The user switches to Per workspace and closes Conversations in workspace A, which saves A.
+  - Launch 2 in Global seeds the shared layout from A, so Global flips with no action on it. At dev, Global stays at the defaults, and the spec (2026-08-24 rail authority, lines 140 and 250) says seeding happens once.
+- **Fix:**
+  - The seed records each defaults latch in `_console_rail_unsaved_seeds`.
+  - Before any rail record is saved (an edit, or a seed copying a source), `Chat/console_rail_state.py::take_console_rail_seed_flush` queues the latched defaults that are still the seeded objects. When a workspace record is saved while the shared layout is absent from memory, it also holds and queues the shared defaults.
+  - The save worker writes the queue first, under the same lock, so the saved record never reaches disk without them.
+  - A Global edit queues nothing: it saves the shared layout, which is the only latch.
+- **Two limits** (the latch is per session):
+  - A workspace seeded with defaults in one session and left untouched is not written when the Global layout is edited in a later session, so that workspace still seeds from Global afterwards. At dev it stays at the defaults.
+  - A profile that never opened Console in Global writes the shared defaults at its first per-workspace save. At dev, it would later seed Global from the active workspace. Global is the default scope, so on dev the shared record practically always exists.
+- **Tests:**
+  - New `test_console_first_chat_first_mount.py::test_a_per_workspace_edit_leaves_the_global_rail_layout_at_its_defaults` runs two real launches on one private profile. Red at a2d6db257c: `conversations_open` was False on launch 2 (`assert False is True`).
+  - New `Tests/Chat/test_console_rail_state.py::test_seed_flush_writes_held_defaults_before_a_record_that_could_seed_them` covers both directions plus the identity check. Red when the shared-defaults branch is disabled (`assert [] == [(...)]`).
+  - The first-mount toggle test now also pins that a Global edit saves only the shared key.
+  - Both mounted tests press the toggle Button (its own Pressed path) instead of a pointer click, which missed in 1 of about 5 runs while the rail settled. The file then passed 12 of 12 runs, three of them in parallel.
+- **Comments (finding 2):** the three "absent reads as defaults" comments now say the defaults are held for the next rail save.
+- **Size ratchet:** `ChatScreen` is 24360 lines (+19); the row is raised to that measured value under the file's 2026-10-04 owner ruling, with no method added. The helper went to `console_rail_state.py` to keep the screen small.
+- **Diagnostic inventory:** +1 call, a fixed-text `logger.warning`, checked with `--statements`, then rewritten with `--write`.
+- **Runs** (`-n 4`):
+  - Rail-seed group (7 files), final head: 9 failed and 139 passed. The 9 are all in the pre-existing set of 10; `test_sources_chip_opens_inspector_at_140_cols` passed this time.
+  - Other rail-persistence files (9): no new failures except `test_character_mount_loads_groups_without_duplicate_cold_resume_worker`. It is flaky at dev too: 2 of 4 serial runs failed at dev, 1 of 3 at this head.
+  - Size ratchets: the same 8 failures as dev.
+  - Preflight passed.
 <!-- SECTION:NOTES:END -->
