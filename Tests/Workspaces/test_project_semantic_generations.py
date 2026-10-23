@@ -80,6 +80,195 @@ def seed_keyword_ready(rig):
         lease.close()
 
 
+def start_held_semantic(rig, monkeypatch, started, release, *, close=None):
+    """Start a real service/SQLite/lease job with a held async embedding call."""
+    from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+    from tldw_chatbook.Workspaces.project_index import semantic
+
+    class Carrier:
+        model_name = "deterministic"
+        api_key = None
+        base_url = None
+        local_files_only = True
+        artifact_fingerprint = digest("artifact-a")
+
+        def close(self):
+            pass
+
+    class Wrapper:
+        def __init__(self, **kwargs):
+            pass
+
+        async def create_embeddings_async(self, texts):
+            started.set()
+            assert await asyncio.to_thread(release.wait, 45)
+            return [[1.0, 0.0] for _ in texts]
+
+        def close(self):
+            if close is not None:
+                close()
+
+    monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
+    monkeypatch.setattr(semantic, "_require_current_catalog", lambda *args: (None, None))
+    monkeypatch.setattr(
+        semantic, "_target",
+        lambda *args: SimpleNamespace(artifact_fingerprint=digest("artifact-a")),
+    )
+    monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
+    status = seed_keyword_ready(rig)
+    store = rig.store(rig.key)
+    lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+    try:
+        store.bind_native_lifetime(lease)
+        state = store.configure_semantic(
+            status.scope, settings(), enabled=True, expected_semantic_revision=0,
+        )
+    finally:
+        store.close_native()
+        lease.close()
+    job = rig.service.refresh_semantic(
+        rig.key, expected_epoch=status.scope.epoch,
+        expected_semantic_revision=state.semantic_revision,
+    )
+    assert started.wait(45)
+    return status, state, rig.service._semantic_runs[job]
+
+
+@private_profile_test
+async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_retry(
+    tmp_path, request, monkeypatch
+):
+    from Tests.Workspaces.test_project_index_service import Rig
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ProjectIndexRetirementUnproven, ProjectIndexSearchAuthority,
+    )
+
+    rig = Rig(tmp_path)
+    (rig.root / "dog.py").write_text("canine companion", encoding="utf-8")
+    started, release = threading.Event(), threading.Event()
+    closes = []
+
+    def close():
+        closes.append(threading.get_ident())
+        if len(closes) < 3:
+            raise RuntimeError("injected_model_close_failure")
+
+    status, _, run = start_held_semantic(
+        rig, monkeypatch, started, release, close=close,
+    )
+    clear_task = None
+    try:
+        release.set()
+        deadline = asyncio.get_running_loop().time() + 10
+        while not rig.service.semantic_close_pending(rig.key):
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.01)
+        assert len(closes) == 2 and not run.native_retired
+        clear_task = asyncio.create_task(
+            asyncio.to_thread(rig.service.clear, rig.key, expected_scope=status.scope)
+        )
+        with pytest.raises(ProjectIndexRetirementUnproven, match="close_pending"):
+            await asyncio.wait_for(asyncio.shield(clear_task), timeout=5)
+        assert run.stop.is_set() and not run.native_retired
+        assert rig.service.status(rig.key).scope.epoch > status.scope.epoch
+        old_search = ProjectIndexSearchAuthority(
+            status.scope, rig.live.root, rig.live.chain, (), 1,
+            lambda: True, None, lambda candidate: None,
+        )
+        assert rig.service.search(old_search, "canine").status == "unavailable"
+        with pytest.raises(ProjectIndexRetirementUnproven, match="close_pending"):
+            await asyncio.wait_for(rig.service.aclose(), timeout=5)
+        assert rig.service.retry_semantic_close(rig.key)
+        await asyncio.to_thread(run.thread.join, 10)
+        assert not run.thread.is_alive() and run.native_retired
+        assert run.lease.closed and run.store is None
+        assert len(closes) == 3 and len(set(closes)) == 1
+    finally:
+        release.set()
+        # Test cleanup is bounded even when the expected immediate retry is
+        # missing; it must not leave a non-daemon model owner in the child.
+        for _ in range(3):
+            if not run.thread.is_alive():
+                break
+            if rig.service.semantic_close_pending(rig.key):
+                rig.service.retry_semantic_close(rig.key)
+            await asyncio.to_thread(run.thread.join, 2)
+        if clear_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(clear_task), timeout=10)
+            except Exception:
+                pass
+        await rig.close()
+
+
+@pytest.mark.parametrize("change", ["detach", "exclusion", "settings"])
+@private_profile_test
+async def test_held_semantic_refuses_publication_after_binding_or_settings_change(
+    tmp_path, request, monkeypatch, change
+):
+    from Tests.Workspaces.test_project_index_service import Rig
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+    from tldw_chatbook.Workspaces.project_index import semantic
+
+    rig = Rig(tmp_path)
+    (rig.root / "dog.py").write_text("canine companion", encoding="utf-8")
+    started, release = threading.Event(), threading.Event()
+    status, state, run = start_held_semantic(rig, monkeypatch, started, release)
+    change_task = None
+    try:
+        if change == "detach":
+            rig.live = None
+            rig.service.binding_changed(rig.key.binding_id)
+            assert run.stop.is_set()
+        elif change == "exclusion":
+            rig.live = replace(
+                rig.live,
+                exclusions=(SensitiveExclusion("exact", "dog.py"),),
+                authority_revision=rig.live.authority_revision + 1,
+            )
+        else:
+            changed = settings("changed-destination")
+            monkeypatch.setattr(
+                semantic, "_settings_for_project_model",
+                lambda model_id: replace(
+                    changed, approved_destination_fingerprint=None,
+                ),
+            )
+            change_task = asyncio.create_task(asyncio.to_thread(
+                rig.service.enable_semantic,
+                rig.key, changed,
+                expected_epoch=status.scope.epoch,
+                expected_semantic_revision=state.semantic_revision,
+            ))
+            deadline = asyncio.get_running_loop().time() + 5
+            while not run.stop.is_set():
+                if change_task.done():
+                    await change_task
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.01)
+        assert not run.native_retired
+        release.set()
+        await asyncio.to_thread(run.thread.join, 10)
+        if change_task is not None:
+            await asyncio.wait_for(change_task, timeout=5)
+        assert not run.thread.is_alive() and run.native_retired
+        assert run.lease.closed and run.store is None
+        store = rig.store(rig.key)
+        lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+        try:
+            store.bind_native_lifetime(lease)
+            current = store.load_status(rig.key)
+            assert store.load_semantic_state(current.scope).ready_generation_id is None
+        finally:
+            store.close_native()
+            lease.close()
+    finally:
+        release.set()
+        if change_task is not None:
+            await asyncio.wait_for(asyncio.shield(change_task), timeout=10)
+        await rig.close()
+
+
 def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path):
     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
 
@@ -918,13 +1107,20 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
             )
             assert entered.wait(45)
             assert len(observed_wrappers) == 1
-            record = observed_wrappers[0].factory._cache["default"]
+            factory_ref = observed_wrappers[0].factory
+            record = factory_ref._cache["default"]
             close_calls = []
+            native_closed = []
+            actual_native_close = record["close"]
+            assert callable(actual_native_close)
+            assert isinstance(actual_native_close.__self__, requests.Session)
 
             def fail_then_close():
                 close_calls.append(threading.get_ident())
                 if len(close_calls) < 3:
                     raise RuntimeError("native_close_injected")
+                actual_native_close()
+                native_closed.append(threading.get_ident())
 
             record["close"] = fail_then_close
             search = ProjectIndexSearchAuthority(
@@ -936,26 +1132,52 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
             found = service.search(search, "canine")
             assert found.hits and found.hits[0].relative_path == "dog.txt"
             assert found.semantic_status == "unavailable"
-            release.set()
             job = service._semantic_runs[job_id]
+            cancelled_twice = threading.Event()
+            observer_errors = []
+
+            def observe_close():
+                async def cancel_waiter_twice():
+                    waiter = asyncio.create_task(service.aclose())
+                    await asyncio.sleep(0.05)
+                    waiter.cancel()
+                    await asyncio.sleep(0.05)
+                    waiter.cancel()
+                    cancelled_twice.set()
+                    try:
+                        await waiter
+                    except BaseException as error:
+                        observer_errors.append(error)
+
+                asyncio.run(cancel_waiter_twice())
+
+            observer = threading.Thread(target=observe_close)
+            observer.start()
+            assert cancelled_twice.wait(5)
+            assert observer.is_alive() and not job.native_retired
+            release.set()
             deadline = time.monotonic() + 15
             while not service.semantic_close_pending(key):
                 assert time.monotonic() < deadline
                 time.sleep(0.01)
-            assert service.semantic_state(key).ready_generation_id is None
             assert not job.native_retired
+            observer.join(5)
+            assert not observer.is_alive()
+            assert len(observer_errors) == 1
+            assert isinstance(observer_errors[0], ProjectIndexRetirementUnproven)
             with pytest.raises(ProjectIndexRetirementUnproven):
                 asyncio.run(asyncio.wait_for(service.aclose(), timeout=5))
-            assert service.retry_semantic_close(key)
-            deadline = time.monotonic() + 10
-            while len(close_calls) < 2:
-                assert time.monotonic() < deadline
-                time.sleep(0.01)
-            assert service.semantic_close_pending(key)
+            assert len(close_calls) == 2
             assert service.retry_semantic_close(key)
             job.thread.join(30)
             assert not job.thread.is_alive() and job.native_retired
+            assert job.lease.closed and job.store is None
             assert len(close_calls) == 3 and len(set(close_calls)) == 1
+            assert native_closed == [close_calls[-1]]
+            assert not factory_ref._cache
+            assert observed_wrappers[0].factory is None
+            assert observed_wrappers[0]._project_close_complete
+            assert observed_wrappers[0]._projection_execution_scope._closed
             reopened = ProjectIndexService(
                 factory, scanner,
                 lambda selected: authority if selected == key else None, fence,
@@ -966,6 +1188,19 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
                 asyncio.run(reopened.aclose())
         finally:
             release.set()
+            if "actual_native_close" in locals():
+                # Restore the real close callback for bounded cleanup even if
+                # the test assertion failed before its explicit retry.
+                record["close"] = actual_native_close
+            for active in service._semantic_runs.values():
+                for _ in range(3):
+                    if active.thread is None or not active.thread.is_alive():
+                        break
+                    if service.semantic_close_pending(key):
+                        service.retry_semantic_close(key)
+                    active.thread.join(2)
+            if "observer" in locals():
+                observer.join(5)
             asyncio.run(service.aclose())
 
     try:

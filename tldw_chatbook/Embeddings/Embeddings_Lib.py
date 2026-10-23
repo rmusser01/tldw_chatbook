@@ -577,7 +577,7 @@ _BACKOFF: tuple[float, ...] = (1, 2, 4, 8)
 
 def _openai_embedder(
     cfg: OpenAICfg,
-) -> Callable[[list[str], Any, bool], Any]:  # CHANGED: Takes OpenAICfg
+) -> tuple[Callable[..., Any], Callable[[], None]]:
     if not cfg.api_key and cfg.base_url is None:
         raise ValueError("embedding_provider_setup_required")
     session = requests.Session()
@@ -650,7 +650,7 @@ def _openai_embedder(
                 time.sleep(wait + random.random())
         raise RuntimeError("embedding_provider_request_failed")  # Unreachable
 
-    return _embed
+    return _embed, session.close
 
 
 ###############################################################################
@@ -835,9 +835,9 @@ class EmbeddingFactory:
                 f"_build: Initializing OpenAI model {model_id} (model: {spec.model_name_or_path})"
             )
             try:
-                fn = _openai_embedder(spec)  # Pass the whole spec object
+                fn, close = _openai_embedder(spec)
                 rec = CacheRecord(
-                    embed=fn, close=None, last=time.monotonic(), refs=0
+                    embed=fn, close=close, last=time.monotonic(), refs=0
                 )
                 logger.debug(
                     f"_build: Successfully created OpenAI embedder for {model_id}"

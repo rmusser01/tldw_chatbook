@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:27'
-updated_date: '2026-10-23 18:21'
+updated_date: '2026-10-23 19:55'
 labels: []
 dependencies:
   - TASK-36421
@@ -46,4 +46,12 @@ Reason: direct implementation of accepted generation, allocation, source ownersh
 7. Retain a background semantic build owner through actual model close failure and expose only retry_semantic_close(job_id) as a same-owner retry signal under the existing ADR241 amendment. Verify wrong-job refusal, pending shutdown, keyword lookup and positive physical retirement; report the synchronous query close-failure disposition. No general executor or storage/control change.
 8. Superseding the earlier unimplemented job-id signature, retry_semantic_close(key) signals only owned pending build/query closes for the exact binding. Keep one nonblocking semantic query/service on the existing sync tool worker; persistent close failure retains that worker without a SQL/read-slot/gate/fence, and contention falls back to keywords. Verify same-owner positive retry, cancellation, wrong-key refusal and keyword availability.
 9. Use the existing runtime/service registry context yielded owner for finite newly owned/replacement WorkspaceDB retirement with actual native/core proof before semantic model/provider/close/retry waits. Preserve/refuse live borrowed caller handles before effects. Exact added path RAG_Search/projection_scope.py integrates current-state retirement; no generic DB or keyword behavior rewrite.
+
+### Task3 explicit OpenAI transport retirement
+
+Ruling: The held-provider lifecycle test exposed that the OpenAI factory record has close=None while its embedding closure owns a requests.Session. Reference loss or factory-cache clearing is not deterministic transport retirement. Extend only the private _openai_embedder seam in tldw_chatbook/Embeddings/Embeddings_Lib.py to return the embedding callable and the existing session.close callback; the single production _build caller stores that callback in its existing CacheRecord. Adapt the direct consumer in Tests/RAG/test_embeddings_lib_logging.py and focused factory/held-provider controls. The existing factory refcount/condition, cache record, same-owner wrapper close and pending-retirement path remain the owners; do not introduce a transport manager, executor, new persistence or permission boundary. Requests/response behavior, destination approval, credentials, saved Library policy/item scopes, and keyword operation remain unchanged. Shared factory retirement now explicitly closes its already-owned OpenAI session for both project and default callers; do not silently substitute project-only no-op closure.
+
+Before source changes, retain the actual None-callback diagnosis and the aborted test as adverse evidence, not proof that the original callback failed. Test explicit real Session close on the original worker after in-flight embed completion, injected failure retention and successful retry, exact cache/wrapper/carrier retirement, and default-factory closure plus sanitized provider logs. No SQL handle/gate/fence spans close. No new model quality run is required for this HTTP-only seam. Cost if wrong: close failure remains truthfully pending under the existing owner; independent Task3 review includes this producer delta.
+
+ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: complete deterministic transport retirement at the existing embedding factory boundary without a new owner or storage contract.
 <!-- SECTION:PLAN:END -->
