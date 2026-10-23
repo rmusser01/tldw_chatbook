@@ -1339,3 +1339,8 @@ Tests/UI/test_library_notes_filter_finds_what_you_typed.py
 Tests/UI/test_library_note_links_picker_and_preview.py
 Tests/UI/test_library_note_links_preview_opens_in_app.py
 Tests/UI/test_library_notes_keep_synced_without_a_root.py
+
+# TASK-33620.15.8: the composer state-restyle file and the catalog fingerprint's
+# first-read yield node, appended at the tail; existing shard slots stay fixed.
+Tests/UI/test_console_composer_state_restyle.py
+Tests/UI/test_console_run_start_yields.py::test_the_fingerprint_reads_its_first_store_in_a_loop_turn_of_its_own
