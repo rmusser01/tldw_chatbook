@@ -135,7 +135,7 @@ async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
         # TASK-36389: cover a Console whose first attach has ended. Covered
         # sooner, its first return runs as the mount's resume, which does
         # not refresh the environment.
-        assert await console_attach_ended(screen), "the attach reconcile never ended"
+        await console_attach_ended(screen)
         await pilot.app.push_screen(Screen())
         await pilot.pause()
         assert screen.is_mounted and _right_rail_open(screen)

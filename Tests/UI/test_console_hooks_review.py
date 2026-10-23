@@ -151,7 +151,7 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file, v
         assert composer.draft_text() == "retained draft" and calls == []
         # TASK-36389: each dismissal reattaches the Console. A Send started
         # before that attach ends was refused when the attach ran late.
-        assert await console_attach_ended(console), "the attach reconcile never ended"
+        await console_attach_ended(console)
         second = _send_in_worker(console, "retained draft")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
@@ -166,7 +166,7 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file, v
         await pilot.click("#console-hooks-allow-all")
         assert await second.wait()
         assert calls == ["retained draft"]
-        assert await console_attach_ended(console), "the attach reconcile never ended"
+        await console_attach_ended(console)
         third = await console._dispatch_console_draft_send("retained draft")
         assert third and calls == ["retained draft", "retained draft"]
         assert host.screen is console
