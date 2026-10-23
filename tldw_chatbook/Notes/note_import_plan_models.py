@@ -290,6 +290,141 @@ def wikilink_only(text: str) -> str:
     return WIKILINK_SCAN.sub(_bare, text)
 
 
+def bare_wikilink_titles(content: str) -> list[str]:
+    """Return the titles a body names through bare ``[[Title]]`` links.
+
+    TASK-34000.11 (AC#2): a typed ``[[Title]]`` or ``[[Title|alias]]`` is an
+    identity the body does not carry, so the edge writer resolves the title
+    at write time (the TASK-32263 ruling: never at render time). This is the
+    pure half: which titles the body names.
+
+    Args:
+        content: One note body.
+
+    Returns:
+        Each bare target (no ``(note://…)`` tail), trimmed, outside code
+        spans, de-duplicated as written in first-seen order. An alias is
+        ignored (the target is the title); a ``#heading`` or ``^block``
+        suffix is already outside the target group; an embed ``![[…]]`` is
+        not a link.
+    """
+    if not content or "[[" not in content:
+        return []
+    seen: dict[str, None] = {}
+    for match in WIKILINK_SCAN.finditer(content):
+        if match.group("code") is not None or match.group("link"):
+            continue
+        target = (match.group("target") or "").strip()
+        if target:
+            seen.setdefault(target, None)
+    return list(seen)
+
+
+def wikilink_completion_context(
+    text: str, cursor: tuple[int, int]
+) -> tuple[str, tuple[int, int]] | None:
+    """Return the ``[[`` completion the caret is inside, or ``None``.
+
+    Pure detection for the Library Notes ``[[`` picker (TASK-34000.11 AC#1).
+    Only the caret's own line is read for the opener; the lines above decide
+    whether the caret sits inside an open fence.
+
+    Args:
+        text: The whole body.
+        cursor: ``(row, column)`` as ``TextArea.cursor_location`` reports it.
+
+    Returns:
+        ``(query, start)`` -- the text between ``[[`` and the caret (may be
+        empty) and the ``(row, column)`` of the opener's first ``[`` -- when
+        the nearest ``[[`` before the caret has no ``]``, ``|`` or ``[``
+        between it and the caret and is not an embed (``![[``); ``None``
+        when there is no such opener, when it sits inside backticks on that
+        line (an odd count of `` ` `` before it) or inside an open fence (an
+        odd count of lines starting with ``` ``` ``` above the caret row).
+        Never raises for an out-of-range caret.
+    """
+    if not text or "[[" not in text:
+        return None
+    lines = text.split("\n")
+    row, column = cursor
+    if row < 0 or row >= len(lines):
+        return None
+    line = lines[row]
+    column = max(0, min(column, len(line)))
+    if sum(1 for above in lines[:row] if above.startswith("```")) % 2 == 1:
+        return None
+    head = line[:column]
+    start = head.rfind("[[")
+    if start < 0:
+        return None
+    query = head[start + 2 :]
+    if any(ch in query for ch in "[]|"):
+        return None
+    if start > 0 and head[start - 1] == "!":
+        return None
+    if head[:start].count("`") % 2 == 1:
+        return None
+    return query, (row, start)
+
+
+def stored_note_link(title: str, note_id: str) -> str:
+    """Return the stored link form the ``[[`` picker inserts for one note.
+
+    Args:
+        title: The chosen note's title, as it is.
+        note_id: Its identity.
+
+    Returns:
+        ``[[<inner>]](note://<note_id>)`` where ``inner`` is the title with
+        ``\\`` doubled and every ``[``/``]`` turned into ``(``/``)`` and
+        ``|``/``#``/``^`` into ``-``, so the result always parses back as ONE
+        :data:`WIKILINK_SCAN` match whose tail carries the identity (Review
+        Focus 5: never a half-link that swallows the text after it). A blank
+        title becomes ``Untitled`` so the link still has a target.
+    """
+    inner = (
+        title.replace("\\", "\\\\")
+        .replace("[", "(")
+        .replace("]", ")")
+        .replace("|", "-")
+        .replace("#", "-")
+        .replace("^", "-")
+        .strip()
+    )
+    if not inner:
+        inner = "Untitled"
+    return f"[[{inner}]](note://{note_id})"
+
+
+def note_link_entries(body: str) -> tuple[tuple[str, str], ...]:
+    """Return the stored note links a body carries, as ``(label, note_id)``.
+
+    The Preview's Enter-follows-link action reads these (TASK-34000.11
+    sharper AC#3): links inside a Textual ``Markdown`` are click meta on
+    text, not focusable widgets, so the keyboard path lists them.
+
+    Args:
+        body: One note body as it is stored.
+
+    Returns:
+        Every :data:`NOTE_LINK_SCAN` match outside code spans, in document
+        order, de-duplicated by id (the first label wins); the label is the
+        alias when present, else the target, each trimmed.
+    """
+    if not body or "note://" not in body:
+        return ()
+    seen: dict[str, str] = {}
+    for match in NOTE_LINK_SCAN.finditer(body):
+        if match.group("code") is not None:
+            continue
+        note_id = match.group("uri")[len("note://") :]
+        if not note_id or note_id in seen:
+            continue
+        label = (match.group("alias") or "").strip() or (match.group("target") or "").strip()
+        seen[note_id] = label
+    return tuple((label, note_id) for note_id, label in seen.items())
+
+
 def render_note_links(text: str) -> str:
     """Return `text` with stored note links shown as their display text.
 

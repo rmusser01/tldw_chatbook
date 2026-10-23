@@ -544,6 +544,18 @@ class LibraryNotesState:
     #: link here yet" before -- or without ever -- checking.
     backlinks_status: Literal["loading", "ready", "failed"] = "loading"
 
+    #: TASK-34000.11: the ``[[`` picker's candidate-load generation. Bumped
+    #: on every new completion context; a loader that answers for an older
+    #: generation is dropped, so a slow query never paints stale rows over
+    #: a narrower one.
+    link_picker_generation: int = 0
+
+    #: TASK-34000.11: the completion ``start`` Escape dismissed, or ``None``.
+    #: While the caret's context still begins there the picker stays closed
+    #: (AC#1: Escape leaves the typed text and does not reopen until the
+    #: context changes); any other context -- or none -- clears it.
+    link_picker_latch: tuple[int, int] | None = None
+
     # Task 7 owns measured breakpoint transitions. Task 5 consumes this
     # explicit presentation input now so compact/wide utility grouping is
     # testable without coupling the canvas to terminal geometry.
