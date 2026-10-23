@@ -1,0 +1,54 @@
+{
+  "scope": "Task4 implementer pre-commit source snapshot; parent may rebase",
+  "hashes": [
+    {
+      "path": ".github/workflows/derived-artifacts.yml",
+      "sha256": "15D2FAF05BBF5A4790B24137817E0AAE50C568D51212D261BC131449C7060C8D"
+    },
+    {
+      "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+      "sha256": "259867597B44F471621207DCF643224503547C4664B1B6C26C394C0278292486"
+    },
+    {
+      "path": "Tests/Chat/test_console_workspace_folder_note_contract.py",
+      "sha256": "62B4C490D74368C81328F8D13A528748307F5235E56DFBFE5A51D8901D6F8B8C"
+    },
+    {
+      "path": "Tests/RAG/test_hf_embedding_device_precision.py",
+      "sha256": "2B369DF27B2B12D33E318326F03385E29750B381E0743372B4794BB49F2CE5F5"
+    },
+    {
+      "path": "Tests/UI/test_project_semantic_consent.py",
+      "sha256": "437B149C15CCB9C90289F4999C392314307CBE8269BE9D97CE814F0DC86358F6"
+    },
+    {
+      "path": "Tests/Workspaces/test_project_semantic_generations.py",
+      "sha256": "77AF0BB6626B58E3F3E0F1119F649E2B9CF47F73EC937D7174D30E7FF1182FE5"
+    },
+    {
+      "path": "Tests/Workspaces/test_project_semantic_app_quality.py",
+      "sha256": "DD14FDEAC5FF4ABB0FCF8B1E8AB30FC579EFDB5A6D2C09D6C16ED217A1ECEE43"
+    },
+    {
+      "path": "scripts/check_ui_pr_gate_census.py",
+      "sha256": "D699713A10A19737560766ABC45E3B194BA94DEB34F7A18A177A3A5F203E1F05"
+    },
+    {
+      "path": "scripts/ui_pr_gate_census.txt",
+      "sha256": "DC4B7BAC589682451EB7F62180CB4A42ACF7DD2439AE5DEA7E73454A1C504CD2"
+    },
+    {
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+      "sha256": "18C7A1706063B1B90290DF331F337F2B72961AC0D0072BA551AC00AA3DC1E538"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "sha256": "5333B8EE4EA78E9FBD0648B14713B1EFBE39A315AB058694575B8C0E3030220C"
+    }
+  ],
+  "base": "18aee620d5aaebdfd45bed70708d26341671e7fe"
+}

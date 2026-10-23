@@ -79,4 +79,4 @@ ADR-005 (invest in local RAG mirroring tldw server), ADR-013 (plain-text vs FTS 
 
 ## Workspace folder keyword indexes
 
-[Optional folder-bound indexes](./project-indexing.md) serve `fs_search_index` evidence inside explicitly admitted Console runs. They do not enter the Library's four search seams, create Media/Notes records, alter saved Library controls/scopes, or require embeddings. Settings manages them per local folder binding; semantic indexing remains a separate delivery.
+[Optional folder-bound indexes](./project-indexing.md) serve `fs_search_index` evidence inside explicitly admitted Console runs. They do not enter the Library's four search seams, create Media/Notes records, or alter saved Library controls/scopes. Keyword search requires no embeddings package. Optional per-folder semantic search uses a separately approved embedding destination and can be disabled without changing keyword or Library behavior; a missing optional package leaves keyword search available.

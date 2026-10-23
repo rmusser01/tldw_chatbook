@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="26.876" timestamp="2026-10-23T15:40:23.770935-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.Agents.test_project_index_tool" name="test_scan_to_public_search_casefolded_prefix[Src-src]" time="26.047" /></testsuite></testsuites>

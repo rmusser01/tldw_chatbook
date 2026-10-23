@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="9.997" timestamp="2026-10-23T13:46:03.072275-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call" time="8.998"><failure message="textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stage_without_disclosure_0/private-profile-process/pytest/test_stage_without_disclosure_0')
+request = &lt;FixtureRequest for &lt;Coroutine test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001CF5684C980&gt;
+
+    @private_profile_test
+    async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+        tmp_path, request, monkeypatch
+    ):
+        mod = card_module()
+        rig = Rig(tmp_path)
+        rig.enable()
+        before_keyword = rig.service.status(rig.key)
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        try:
+            async with CardApp(card).run_test(size=(100, 35)) as pilot:
+                await wait_for_card(card, pilot)
+&gt;               card.query_one(".project-semantic-model", Input).value = "openai-3-small"
+
+Tests\UI\test_project_semantic_consent.py:53: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = ProjectIndexBindingCard(classes='h-auto')
+selector = '.project-semantic-model'
+expect_type = &lt;class 'textual.widgets._input.Input'&gt;
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -&gt; QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+    
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+    
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+    
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+    
+        base_node = self._get_dom_base()
+    
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+    
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+            raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+    
+        try:
+            selector_set = parse_selectors(query_selector)
+        except TokenError:
+            raise InvalidQueryFormat(
+                f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+            ) from None
+    
+        if all(selectors.is_simple for selectors in selector_set):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+        else:
+            cache_key = None
+    
+        for node in walk_breadth_first(base_node, with_root=False):
+            if not match(selector_set, node):
+                continue
+            if expect_type is not None and not isinstance(node, expect_type):
+                raise WrongType(
+                    f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                )
+            if cache_key is not None:
+                base_node._query_one_cache[cache_key] = node
+            return node
+    
+&gt;       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       textual.css.query.NoMatches: No nodes match '.project-semantic-model' on ProjectIndexBindingCard(classes='h-auto')
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\dom.py:1533: NoMatches</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,76 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+_ test_catalog_destination_change_before_disclosure_refuses_old_staged_approval _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_catalog_destination_chang0/private-profile-process/pytest/test_catalog_destination_chang0')
+request = <FixtureRequest for <Coroutine test_catalog_destination_change_before_disclosure_refuses_old_staged_approval>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BE35723C20>
+
+    @private_profile_test
+    async def test_catalog_destination_change_before_disclosure_refuses_old_staged_approval(
+        tmp_path, request, monkeypatch
+    ):
+        from tldw_chatbook.Workspaces.project_index import semantic
+    
+        mod = card_module()
+        rig = Rig(tmp_path)
+        rig.enable()
+        keyword = rig.service.status(rig.key)
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        try:
+            async with CardApp(card).run_test(size=(100, 35)) as pilot:
+                await wait_for_card(card, pilot)
+                card.query_one(".project-semantic-model", Input).value = "openai-3-small"
+                next(b for b in card.query(Button) if b.name == "semantic-stage").press()
+                await pilot.pause()
+                await wait_for_card(card, pilot)
+                staged = rig.service.semantic_state(rig.key)
+                original = semantic._resolved_spec
+    
+                def changed(model_id):
+                    spec, destination = original(model_id)
+                    if model_id == "openai-3-small":
+                        return spec, "https://changed.example/v1/embeddings"
+                    return spec, destination
+    
+                monkeypatch.setattr(semantic, "_resolved_spec", changed)
+                next(b for b in card.query(Button) if b.name == "semantic-approve").press()
+                await pilot.pause()
+>               assert not list(card.app.screen.query("#project-semantic-confirm"))
+E               AssertionError: assert not [Button(id='project-semantic-confirm', classes='-style-default -textual-compact')]
+E                +  where [Button(id='project-semantic-confirm', classes='-style-default -textual-compact')] = list(<DOMQuery query='#project-semantic-confirm'>)
+E                +    where <DOMQuery query='#project-semantic-confirm'> = query('#project-semantic-confirm')
+E                +      where query = SemanticDisclosureDialog().query
+E                +        where SemanticDisclosureDialog() = CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).screen
+E                +          where CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}) = ProjectIndexBindingCard(classes='h-auto').app
+
+Tests\UI\test_project_semantic_consent.py:129: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-23 15:24:02.752 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-23 15:24:02.912 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-10-23 15:24:02.913 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-10-23 15:24:02.913 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-10-23 15:24:03.936 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_catalog_destination_change_before_disclosure_refuses_old_staged_approval
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-consent-catalog-red-01\pytest-of-GDesktop-1\pytest-0\test_catalog_destination_chang0\private-profile-process\pytest.xml -
+============================ slowest 25 durations =============================
+14.24s call     Tests/UI/test_project_semantic_consent.py::test_catalog_destination_change_before_disclosure_refuses_old_staged_approval
+2.21s setup    Tests/UI/test_project_semantic_consent.py::test_catalog_destination_change_before_disclosure_refuses_old_staged_approval
+
+(1 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_catalog_destination_change_before_disclosure_refuses_old_staged_approval
+1 failed, 1 warning in 17.61s

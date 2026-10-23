@@ -1,0 +1,29 @@
+{
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "temp": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\native-temp\\task4-retained-read-01",
+  "argv": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "-c",
+    "site.addsitedir(shared);runpy.run_path(script,run_name=\"__main__\")"
+  ],
+  "runner": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4_retained_read_diagnostic.py",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\k5-scale\\stable-profile",
+  "hashes": [
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_retained_read_diagnostic.py",
+      "sha256": "964098199F2CC1CFC6446E5153C1441356B535F01727DE49E800E5D8B03C6EF1"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "sha256": "5333B8EE4EA78E9FBD0648B14713B1EFBE39A315AB058694575B8C0E3030220C"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/allocation.py",
+      "sha256": "B7E5382376A086F056CA85F5BE36B11048A87EE647A3AC129067CC88C57AF30A"
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "sha256": "EC5C6796D920881F3AD6FC78E87DE1399D7E85922DDF66823C09FCAFDC036482"
+    }
+  ]
+}

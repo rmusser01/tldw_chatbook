@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-23 03:28'
-updated_date: '2026-10-23 20:40'
+updated_date: '2026-10-23 22:25'
 labels: []
 dependencies:
   - TASK-36422
@@ -30,6 +30,7 @@ Make optional semantic project discovery understandable and explicitly approved 
 - [ ] #4 A selected real local embedding backend is qualified in the real app for paraphrase discovery, refresh, failed rebuild, restart, disable and Clear/detach; no implicit model download or unapproved external project-text transmission occurs.
 - [ ] #5 Actual bounded scale, storage peak, memory, query latency and cancellation evidence plus all limitations, docs, ADR linkage and independent reviews are retained; deterministic vectors alone never certify semantic quality.
 - [ ] #6 Critical new semantic schema/settings/native ownership and project-admission regressions plus current keyword-without-embeddings controls execute in a bounded required PR lane on the actually qualified runtime; the new mounted consent tests are classified in the governed UI census, without spoofed SQLite qualification or optional ML in the PR gate.
+- [ ] #7 The selected local backend honors explicit device selection: CPU model loading uses FP32 even on a CUDA-capable host, while automatic and explicit CUDA behavior remain correct; focused producer tests and actual offline synthetic qualification cover the contract.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,4 +46,6 @@ Make optional semantic project discovery understandable and explicitly approved 
 ADR required: yes, amend existingADR241 andADR103.
 ADR paths: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
 Reason: complete existing consent/retirement UI and requiredPRruntime/aggregation boundary; no newstorage, modelowner or dependencybackend.
+
+8. Complete the selected-backend device contract exposed by real qualification: in existing Embeddings/Embeddings_Lib.py resolve the effective device before loading the HuggingFace model, select FP32 for CPU and FP16 only for actual CUDA, and preserve automatic/device fallback behavior. Write focused producer-contract RED/GREEN controls and one owned cached offline synthetic probe. Keep this correctness fix separate from throughput attribution; do not start another corpus qualification or alter its bound until retained timing decomposition supports a scoped diagnostic decision. No new provider, model owner, schema, persistent cache, global thread setting, or source authority. Amend existing ADR241, accepted Superpowers plan and Task4 brief before producer source edits. ADR required: yes, amend backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; reason: complete the existing explicitly selected embedding-provider runtime contract, without a new boundary.
 <!-- SECTION:PLAN:END -->

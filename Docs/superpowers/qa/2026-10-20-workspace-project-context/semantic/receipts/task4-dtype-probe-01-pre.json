@@ -1,0 +1,14 @@
+{
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "hashes": [
+    {
+      "sha256": "A8EF90C6C12B14D6306ED3B5780A09D6D20EBFA42E43B09091F5FDC871479FE1",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_dtype_probe.py"
+    },
+    {
+      "sha256": "E6113E49CB15F5411CFC242D53ED4EAD4F02E34A8BACDA1DA82643D4589A23C1",
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
+    }
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui"
+}

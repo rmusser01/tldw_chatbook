@@ -1,0 +1,40 @@
+{
+  "hf_hub_cache": "C:/Users/GDesktop-1/.cache/huggingface/hub",
+  "selectors": [
+    "Tests/UI/test_project_semantic_consent.py"
+  ],
+  "hashes": [
+    {
+      "sha256": "B2F8BAEC333356793FE88F4D32D049C1FE5EDD15CFEE73AF9B5D7382D3E24AA1",
+      "path": "Tests/UI/test_project_semantic_consent.py"
+    },
+    {
+      "sha256": "E6113E49CB15F5411CFC242D53ED4EAD4F02E34A8BACDA1DA82643D4589A23C1",
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
+    },
+    {
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E",
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py"
+    },
+    {
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D",
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py"
+    },
+    {
+      "sha256": "D0351BB50D2753859330A871C058B4006C5944082F0388D197920A5912AFB715",
+      "path": "tldw_chatbook/Workspaces/project_index/semantic.py"
+    },
+    {
+      "sha256": "6BDED02A5BB778B966689965DE3D767C0BA4BDC4819DB73498B6C7F1D4B024C9",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    }
+  ],
+  "argv": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "-c",
+    "import os,site,json; site.addsitedir(os.environ[\"TLDW_TEST_SHARED_SITE\"]); import pytest; raise SystemExit(pytest.main([*json.loads(os.environ[\"TLDW_TEST_SELECTORS_JSON\"]),\"-q\",\"--tb=short\",\"--show-capture=no\",\"--no-showlocals\"]))"
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "shared_site": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Lib/site-packages",
+  "offline_model": "sentence-transformers/all-MiniLM-L6-v2"
+}

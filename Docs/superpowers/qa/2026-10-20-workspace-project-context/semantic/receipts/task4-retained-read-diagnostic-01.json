@@ -1,0 +1,35 @@
+{
+  "status_state": "Ready",
+  "status_indexed": 20000,
+  "semantic_state": "Building",
+  "semantic_revision": 1,
+  "status_equal_after": true,
+  "semantic_equal_after": true,
+  "db_sha256_before_after_equal": true,
+  "inventory_equal_after": true,
+  "db_sha256": "0cfa068b1a089e81d2f242e700c50f402d2a32b6cb95f06d87f0dfb70faa5ed7",
+  "group_file_count": 4,
+  "group_file_bytes": 30482541,
+  "peer_count": 1,
+  "peer_results": [
+    {
+      "schema_version": 4,
+      "has_semantics": true,
+      "seconds": 0.0740271000249777
+    }
+  ],
+  "page_heads": 32,
+  "page_texts": 32,
+  "page_text_utf8_bytes": 1024,
+  "seconds": {
+    "status": 1.1369987000070978,
+    "semantic_state": 1.1066204000089783,
+    "inventory": 0.0004188999882899225,
+    "namespace_paths": 0.00039840000681579113,
+    "fenced_entry": 0.2876976000261493,
+    "page_heads": 0.22765480002271943,
+    "page_text": 0.00013499998021870852,
+    "fenced_total": 0.51688050001394
+  },
+  "limitations": "Read-only heads/text probe outside semantic claim; no write admission or append measured."
+}

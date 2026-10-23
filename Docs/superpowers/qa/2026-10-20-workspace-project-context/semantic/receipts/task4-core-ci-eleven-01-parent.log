@@ -1,0 +1,45 @@
+SQLite 3.49.1 2025-02-18 13:38:58 873d4e274b4988d260ba8354a9718324a1c26187a4ab4c1cc0227c03d0f10e70 ['ATOMIC_INTRINSICS=0', 'COMPILER=msvc-1943', 'DEFAULT_AUTOVACUUM', 'DEFAULT_CACHE_SIZE=-2000', 'DEFAULT_FILE_FORMAT=4', 'DEFAULT_JOURNAL_SIZE_LIMIT=-1', 'DEFAULT_MMAP_SIZE=0', 'DEFAULT_PAGE_SIZE=4096', 'DEFAULT_PCACHE_INITSZ=20', 'DEFAULT_RECURSIVE_TRIGGERS', 'DEFAULT_SECTOR_SIZE=4096', 'DEFAULT_SYNCHRONOUS=2', 'DEFAULT_WAL_AUTOCHECKPOINT=1000', 'DEFAULT_WAL_SYNCHRONOUS=2', 'DEFAULT_WORKER_THREADS=0', 'DIRECT_OVERFLOW_READ', 'ENABLE_FTS3', 'ENABLE_FTS4', 'ENABLE_FTS5', 'ENABLE_MATH_FUNCTIONS', 'ENABLE_RTREE', 'MALLOC_SOFT_LIMIT=1024', 'MAX_ATTACHED=10', 'MAX_COLUMN=2000', 'MAX_COMPOUND_SELECT=500', 'MAX_DEFAULT_PAGE_SIZE=8192', 'MAX_EXPR_DEPTH=1000', 'MAX_FUNCTION_ARG=1000', 'MAX_LENGTH=1000000000', 'MAX_LIKE_PATTERN_LENGTH=50000', 'MAX_MMAP_SIZE=0x7fff0000', 'MAX_PAGE_COUNT=0xfffffffe', 'MAX_PAGE_SIZE=65536', 'MAX_SQL_LENGTH=1000000000', 'MAX_TRIGGER_DEPTH=1000', 'MAX_VARIABLE_NUMBER=32766', 'MAX_VDBE_OP=250000000', 'MAX_WORKER_THREADS=8', 'MUTEX_W32', 'OMIT_AUTOINIT', 'SYSTEM_MALLOC', 'TEMP_STORE=1', 'THREADSAFE=1']
+sentence_transformers_present False
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+................................                                         [100%]
+============================== warnings summary ===============================
+Tests/DB/test_project_semantic_schema.py::test_fresh_v4_has_exact_semantic_tables_and_read_only_off
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ==============================
+31.78s call     Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix[Stra\xdfe-STRASSE]
+31.03s call     Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix[Src-src]
+23.39s call     Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call
+22.69s call     Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model
+16.51s call     Tests/Workspaces/test_project_semantic_generations.py::test_unknown_registry_retirement_roots_model_and_native_owners
+4.24s call     Tests/DB/test_project_semantic_schema.py::test_v3_to_v4_preserves_keyword_policy_frontier_claim_and_rows
+4.08s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_consent_cas_preserves_keyword_scope_and_state
+3.24s call     Tests/Workspaces/test_project_semantic_settings.py::test_full_revoke_disables_semantics_but_keyword_reconfigure_does_not
+2.99s call     Tests/DB/test_project_semantic_schema.py::test_v3_cleanup_only_projects_semantic_off_and_clears_without_upgrade
+2.89s call     Tests/Workspaces/test_project_index_allocation.py::test_retained_generation_after_revoke_qualifies_peer_and_closes_probes
+1.78s call     Tests/Workspaces/test_project_index_allocation.py::test_group_semantic_peer_qualifies_keyword_target_before_native_open
+1.71s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_admission_refuses_observed_other_native_writer
+1.44s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_admission_requires_actual_current_native_lease
+1.32s call     Tests/DB/test_project_semantic_schema.py::test_gate_absent_v3_read_refuses_unknown_file_without_recreating_control
+1.20s call     Tests/DB/test_project_semantic_schema.py::test_fresh_v4_has_exact_semantic_tables_and_read_only_off
+1.14s call     Tests/DB/test_project_semantic_schema.py::test_v4_ddl_failure_keeps_exact_v3_catalog
+1.10s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change1]
+1.09s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change0]
+1.09s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change2]
+1.09s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change4]
+1.08s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_status_is_read_only_and_imports_no_embedding_backend
+1.07s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change3]
+1.07s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change6]
+1.07s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change8]
+1.07s call     Tests/Workspaces/test_project_index_allocation.py::test_pure_keyword_group_uses_keyword_allowance
+1.07s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change5]
+1.07s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_refuse_credential_shapes_before_persistence[change7]
+1.00s call     Tests/Workspaces/test_project_semantic_settings.py::test_semantic_settings_accept_versioned_refs_and_changed_approval
+
+(68 durations < 1s hidden.  Use -vv to show these durations.)
+32 passed, 1 warning in 167.85s (0:02:47)
