@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A stale-exemption guard must count the same population the sweep does (TASK-36479, 2026-10-24)
+
+**Incident.** The focus-edge contrast sweep in `Tests/UI/test_theme_contrast.py` skips two kinds of edge: tokens listed as dev debt, and edges another test measures (the Workflows field). Its guard was meant to fail once a listed token stopped falling under 3:1. Mutation M6 listed `$ds-active-fg`, which the fix made pass everywhere, and the guard stayed green. It had searched every focus edge, so it found the Workflows field: that field paints `$ds-active-fg` too, sits at 2.88:1 on its own focus fill, and is exempt from the sweep for a different reason. Once the guard skipped the edges the sweep skips, the same mutation turned it red.
+
+**What to do.** When a test has more than one exemption list, have each list's guard run on what the sweep actually measures: drop every other exemption first. Then run a mutation that adds a now-passing entry to the list.
+
 ## A test that was red from birth hides its next failure behind the first (TASK-36390, 2026-10-23)
 
 **Incident.** Five Tests/Performance files ran in no PR lane. Two had been red since the commit that added them (3e618d7119): the compact-setup gate listed a method that had already moved to `context_spend`, and the tab-publication harness hit `NameError: run_controls`, which a later relative import turned into a `KeyError`. The voice history gate had been red since 38467b8fc6 began adding locators, because its 1,000-row split no longer added up. In three files, fixing the first failure exposed a second one that had never run:

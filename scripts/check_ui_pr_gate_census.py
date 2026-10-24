@@ -511,7 +511,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Current UI lane: 17 shards.
 # TASK-36454..36458 append all 58 exact mounted regressions after dev's
 # measured split-file tail (TASK-36512), preserving its slots and coverage.
-MINIMUM_FILES = 762
+# 2026-10-24, TASK-36479 appends two static node ids at the tail -- the
+# focus-edge contrast sweep over the 89 measurable themes and its
+# discovery/shortfall-list guard (Tests/UI/test_theme_contrast.py; no
+# mount, no config read, ~8 s locally) -- so no existing entry changes
+# shard: 762 -> 764.
+MINIMUM_FILES = 764
 
 
 def read_census(path: Path) -> list[str]:

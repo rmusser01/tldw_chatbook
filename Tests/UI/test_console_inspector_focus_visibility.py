@@ -176,23 +176,28 @@ def test_the_container_focus_cue_is_an_edge_not_a_tint():
     Three measurements ruled out the alternatives. A tint cannot carry the
     cue on this near-black theme: `$ds-action-focus 12%` measured 1.35:1
     against the rail ground and 1.11:1 against the pinned card, 45% reaches
-    only ~1.74:1, and even a fully opaque accent is 3.77:1 -- so a tint has
+    only ~1.74:1, and even a fully opaque $ds-action-focus is 3.77:1 -- so a tint has
     to be ~85-90% opaque, i.e. a solid block behind the text, to clear the
     3:1 non-text floor. A full `outline` clears it and is what DESIGN.md
     prescribes, but it paints over the widget's own edge cells, and at 80x24
     the rail body is THREE rows -- a top and bottom border would take two of
-    them. A one-column left edge costs a column instead of two rows, is the
-    same accent (so the same 3.77:1), and is already the house dense-form
-    convention.
+    them. A one-column left edge costs a column instead of two rows, and is
+    already the house dense-form convention.
+
+    TASK-36479: the edge paints $ds-active-fg, the house focus edge, since
+    $ds-action-focus fell under 3:1 on $surface in 27 of the 89 measurable
+    themes (Tests/UI/test_theme_contrast.py measures every focus edge). In
+    textual-dark it reads 5.12:1 on the rail's $panel ground and 6.26:1 on
+    $surface, where the accent read 3.01:1 and 3.68:1.
     """
     stylesheet = app_css_text()
     start = stylesheet.index("#console-inspector-rail-body:focus")
     block = stylesheet[start : stylesheet.index("}", start)]
     assert "outline-left" in block, f"the container focus cue is not an edge: {block!r}"
-    assert "$ds-action-focus" in block, (
-        f"the focus edge does not use the accent token: {block!r}"
+    assert "$ds-active-fg" in block, (
+        f"the focus edge does not use the focus-edge token: {block!r}"
     )
-    assert not re.search(r"\$ds-action-focus\s+\d+%", block), (
+    assert not re.search(r"\d+%", block), (
         "an alpha-blended tint is back; it cannot reach 3:1 on this theme"
     )
 

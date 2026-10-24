@@ -546,7 +546,7 @@ $ds-conversation-menu-width: 30;
 .watchlists-pane-grip:focus,
 .watchlists-pane-grip:hover:focus {
     border: none;
-    border-left: solid $ds-action-focus;
+    border-left: solid $ds-active-fg;
     outline: none;
     color: $ds-focus-fg;
     background: $ds-focus-bg;

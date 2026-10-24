@@ -320,7 +320,7 @@ Rail text width is pane width − 4 (border + padding): **24 / 31 / 35** at 120 
 - **Room.** With glosses the rail needs **25 rows**, against 29 at 120x36. At 80x24 (17 rows) the glosses drop and it needs 15.
 - **Section state.** Open or closed per section, persisted in `[roleplay.rail_state] sections`, mirroring the Library's `[library.rail_state] sections` (§2.11).
 - **Current row:** `▸` + bold (`resolve_glyph`, ASCII `>`). The current kind stays marked while the landing shows, because the list still holds that kind.
-- **Focused row:** `border-left: thick $ds-action-focus` in place of the 1-cell padding (the house rule, `css/features/_library.tcss:433-437`). It is never the same token as current (RP-063).
+- **Focused row:** `border-left: thick $ds-active-fg` in place of the 1-cell padding (the house rule, `css/features/_library.tcss:433-437`; `$ds-action-focus` until TASK-36479 moved the focus edges drawn with `$ds-action-focus` to `$ds-active-fg`; focus edges drawn with other tokens are tracked debt, TASK-36663). It is never the same token as current (RP-063).
 - **Navigation:** ↑/↓ rove, ←/→ collapse or expand a section, Enter activates.
 - **Disabled rows** say why on their gloss line, for example `New…` → `local profiles only` in server runtime (DESIGN.md:287).
 - **Build.** Reuse `DestinationRailSectionHeader` (`Widgets/destination_rail.py:163-289`) and the shared `DestinationRailRow` / `DestinationRailRowButton` (B0). Rows are patched, never recomposed (the Home precedent, `Widgets/Home/home_rail.py:52-90`). Do **not** subclass `LibraryRail` (`library_rail.py:579`).
@@ -2282,7 +2282,7 @@ class RoleplayMemory:
   | Surface | Focus cue (shape first) | Selected/active cue (independent of focus) |
   |---|---|---|
   | Items, entries and conversations lists | `thick $ds-active-fg` edge (2026-10-23 owner decision: `$ds-action-focus` measures under 3:1 in 27 of 89 themes; B2a uses `$ds-active-fg` (follow-up TASK-36479)); cursor row `$ds-focus-bg`/`$ds-focus-fg`, bold underline, **only while focused** | `▸` + bold on the loaded row |
-  | Rail rows | `border-left: thick $ds-action-focus` replacing the padding (`css/features/_library.tcss:433-437`) | `▸` + the selected background |
+  | Rail rows | `border-left: thick $ds-active-fg` replacing the padding (`css/features/_library.tcss:433-437`; `$ds-action-focus` until TASK-36479) | `▸` + the selected background |
   | View strip | the strip edge; `$ds-focus-bg` on the active chip while focused | bold + underline + the active marker |
   | Text fields | unchanged input focus box | — |
   | Grips | the house grip focus (`reverse`) under neutral classes | arrow direction |

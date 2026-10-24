@@ -1465,7 +1465,7 @@ LibraryFileNotesWorkspace TextArea:focus {
 
 #library-note-body:focus,
 #file-notes-editor:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
     background: $ds-surface-raised;
 }
 
@@ -1681,7 +1681,7 @@ Switch:focus {
 
 .settings-compact-input:focus {
     border: none;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
 
@@ -2740,7 +2740,7 @@ PromptVariablesDialog {
 }
 
 #prompt-variables-dialog .prompt-variable-input:focus {
-  border-left: thick $ds-action-focus;
+  border-left: thick $ds-active-fg;
   background: $ds-focus-bg;
   color: $ds-text-primary;
   text-style: bold;
@@ -2782,7 +2782,7 @@ PromptVariablesDialog {
 }
 
 #prompt-variables-actions Button:focus {
-  outline: heavy $ds-action-focus;
+  outline: heavy $ds-active-fg;
 }
 
 #prompt-variables-actions Button:disabled {
@@ -6512,7 +6512,7 @@ PersonalContextReviewModal .personal-context-review-row Input.personal-context-r
 }
 
 #console-send-authority-summary:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
 }
 
 #console-send-authority-heading {
@@ -6599,7 +6599,7 @@ ConsoleTerminalWorkspace#console-main-column {
 }
 
 #console-terminal-viewport:focus {
-    outline: solid $ds-action-focus;
+    outline: solid $ds-active-fg;
 }
 
 #console-right-rail {
@@ -6796,7 +6796,7 @@ ConsoleTerminalWorkspace#console-main-column {
 
 
 Button.console-rail-focus-carrier:focus {
-    outline-left: thick $ds-action-focus;
+    outline-left: thick $ds-active-fg;
 }
 
 
@@ -6953,7 +6953,7 @@ Button.console-rail-focus-carrier:focus {
 }
 
 #console-native-composer.console-composer-focused {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-input-focus-bg;
 }
 
@@ -9068,7 +9068,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 }
 
 #console-switcher-query:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     text-style: bold;
 }
 
@@ -9166,12 +9166,12 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 
 #console-inspector-rail-body:focus,
 #console-right-rail:focus {
-    outline-left: thick $ds-action-focus;
+    outline-left: thick $ds-active-fg;
 }
 
 
 #console-inspector-rail-open:focus {
-    outline-right: thick $ds-action-focus;
+    outline-right: thick $ds-active-fg;
 }
 
 .console-model-section-line {
@@ -10214,7 +10214,7 @@ ChatScreen.-focus #console-workbench-header {
 
 .console-prompts-primary-action:focus,
 #console-prompts-modal Button:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
 }
 
 .console-prompts-primary-action:disabled,
@@ -10250,7 +10250,7 @@ ChatScreen.-focus #console-workbench-header {
 
 #console-prompts-source:focus,
 #console-prompts-search:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-focus-bg;
     text-style: bold;
 }
@@ -17754,7 +17754,7 @@ RemoteView.-narrow #remote-variant-sort {
 }
 
 .audio-cpp-diagnostics-lines:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
     background: $ds-focus-bg;
     color: $ds-text-primary;
     scrollbar-color-active: $ds-action-focus;
