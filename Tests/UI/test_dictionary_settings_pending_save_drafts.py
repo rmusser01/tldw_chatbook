@@ -8,7 +8,6 @@ from textual import events
 from textual.widgets import (
     Button,
     Input,
-    ListView,
     Select,
     Static,
     Switch,
@@ -17,7 +16,11 @@ from textual.widgets import (
 )
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.roleplay_frame_harness import PersonasTestApp
+from Tests.UI.roleplay_frame_harness import (
+    PersonasTestApp,
+    select_roleplay_item,
+    visible_item_ids,
+)
 from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
     ChatDictionaryScopeService,
 )
@@ -68,12 +71,10 @@ async def _dictionary_app(mock_app_instance, tmp_path, monkeypatch):
             await pilot.click("#personas-mode-dictionaries")
             await _until(lambda: screen.state.active_mode == "dictionaries")
             library = screen.query_one(PersonasLibraryPane)
-            row_id = f"personas-library-row-dictionary-{record['id']}"
-            # The previous mode's rows can remain mounted while dictionaries load.
-            await _until(lambda: bool(library.query(f"#{row_id}")))
-            rows = screen.query_one("#personas-library-rows", ListView)
-            library.highlight_row("dictionary", str(record["id"]))
-            rows.action_select_cursor()
+            option_id = f"dictionary:{record['id']}"
+            # The previous mode's options can remain while dictionaries load.
+            await _until(lambda: option_id in visible_item_ids(library))
+            await select_roleplay_item(pilot, library, option_id)
             await _until(
                 lambda: screen.state.selected_entity_kind == "dictionary"
                 and screen.state.selected_entity_id == str(record["id"])

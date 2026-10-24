@@ -1,7 +1,7 @@
 ---
 id: TASK-36455
 title: Keep newer Dictionary Settings drafts when an earlier Save completes
-status: Done
+status: In Progress
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -26,7 +26,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 07:04
+updated_date: 2026-10-24 10:04
 ---
 
 ## Description
@@ -65,6 +65,7 @@ ADR required: no
 ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md; backlog/decisions/115-personas-demand-mounted-center-views.md; backlog/decisions/079-workspace-assistant-defaults.md
 Reason: bounded acknowledgement bug fix within existing dictionary form, screen, persistence and guard owners; no schema, boundary, policy or architecture change.
 CI aggregate follow-up: the extracted completion has one new W002 post-await Library-pane lookup. Add a mounted real-Save/SQLite pane-removal RED control, replace the unsafe lookup with safe bounded publication, preserve ordinary and newer-draft behavior, append the control to the existing required census, and run the guard/compatibility/boot checks plus fresh Superpowers review. Do not expand the safety census. ADR required: no; existing ADR-033/011 state/UI ownership and ADR-097 apply. See the latest 2026-10-23 pending-draft plan section.
+Live-dev B2a integration: PR #3229 replaces ListView row widgets with stable OptionList item IDs. Preserve its incoming production/list/census/CSS behavior. Reproduce the old Dictionary fixture contract failure, migrate only fixture selection to the existing kind-qualified B2a helpers, retain every acceptance assertion and all13 cases, then run mounted Dictionary and affected list/CI/boot/size/source-guard controls. The combined Personas ceiling is lowered from incoming16885 to measured16878 (same7-line extraction); no budget increase for our change. Fresh scoped Superpowers review and new normal final-head CI qualify integration. ADR required:no; existing ADR033/115/011/103/097 and TASK33910.3 apply.
 <!-- SECTION:PLAN:END -->
 ## Final Summary
 
