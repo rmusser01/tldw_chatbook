@@ -577,7 +577,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-22, TASK-34000.10 final-review re-review (owner decision, same
     # rule): 6473 -> 6484 -- the blurred-terminal restore leaves another
     # screen's or a modal's own focus slot alone.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6484,
+    # 2026-10-24, TASK-34000 P1-B rebased onto dev with P1-C (owner decision,
+    # "expand the limits, don't modify other code to make it fit"): the batch's
+    # .17/.14/.12/.11/.71 controller work (Add-from-files reset, root-load
+    # belt, link picker insert/follow, lazy-start settle) measured on the
+    # rebased tree: 6484 -> 7200.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7200,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -627,7 +632,11 @@ _BUDGETS: dict[str, int] = {
     # to the builder (+1), the migration check's status line names the
     # skipped files (+4), and `activate_root` refuses before asking the
     # runtime (+10 with its comment); the import is one line.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2415,
+    # 2026-10-24, TASK-34000 P1-B rebased onto dev with P1-C (same owner
+    # decision): P1-B's .17 begin_add_from_files / release-on-exit and .71
+    # availability re-derive on top of P1-C's .16 activation hold, measured
+    # on the rebased tree: 2415 -> 2461.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2461,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
