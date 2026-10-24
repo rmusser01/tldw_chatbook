@@ -519,7 +519,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36693 adds all fifteen mounted retirement/publication and Stop cases.
 # TASK-36694 adds all thirteen ordinary button/delivery controls.
 
-MINIMUM_FILES = 812
+MINIMUM_FILES = 827
 
 
 def read_census(path: Path) -> list[str]:

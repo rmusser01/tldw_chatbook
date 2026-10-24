@@ -21725,3 +21725,10 @@ At final delivery of TASK-36454 through TASK-36458, the completed c3d727a95e run
 During the Chunking Lab book audit, the private-profile parent reported 2 tests, 1 failure and 0 errors. The later-edit child had both the intended retention assertion failure and 1 teardown error: native-worker custody prevented config retirement. Reading only the parent totals would have mislabeled that as a clean expected-red run. An observation-only retry retained the teardown error; adding a worker-manager drain instead raised WorkerCancelled and masked the product exception. The [audit receipts](../../Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md) retain the ordinary clean control, actual before/after witness and both child outcomes.
 
 Before claiming a private-profile batch has no setup or teardown errors, inspect its child JUnit records as well as the parent summary. Keep a qualified product witness separate from lifecycle uncertainty; do not infer clean retirement from a parent failure-only count or from an attempted drain.
+
+
+## TASK-36696: mounted once is not current attachment
+
+During the MCP pending-file-read repair, a guard used `panel.is_mounted` to authorize completion. Review checked installed Textual8.2.8 and a real removal probe: this flag remains true after `await panel.remove()`, while querying its removed editor raises `NoMatches`. The explicit Cancel test passed because Cancel separately revoked the request. Real `MCPServersMode.hide_form()` and `show_import()` removal paths did not post Cancel, so both new controls reproduced `WorkerFailed(NoMatches)` after the held real read completed.
+
+The repair checks current attachment and pruning together with owner request/editor revisions. Both direct-retirement controls and ordinary/Cancel controls pass. When qualifying an asynchronous widget publication, exercise removal through the real owner as well as the Cancel gesture; an ever-mounted flag cannot establish current publication authority.

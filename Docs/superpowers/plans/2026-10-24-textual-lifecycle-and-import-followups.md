@@ -80,15 +80,15 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 
 ## Task 4: TASK-36696 — preserve MCP import drafts
 
-**Files:** Modify tldw_chatbook/UI/MCP_Modules/mcp_workbench.py and mcp_profile_form.py; create Tests/UI/test_mcp_import_pending_file_drafts.py.
+**Files:** Modify tldw_chatbook/UI/MCP_Modules/mcp_workbench.py and mcp_profile_form.py; create Tests/UI/test_mcp_import_pending_file_drafts.py. Adapt only the existing Tests/UI/test_mcp_workbench.py picker callback harness as needed for originating-panel arguments, retaining its behavior assertions.
 **Interfaces:** Consumes real EnhancedFileOpen callback, _load_import_file and MCPImportPanel text. Produces owner-local request/panel/draft applicability only; Task 5 retains the same Preview interface.
 **ADR required:** no. **ADR path:** existing 033 and 240. **Reason:** existing Settings/panel ownership and filesystem read contract.
 
-- [ ] Write actual picker callback + threaded file-read controls for untouched text, later typing, clear (including returning to initial empty text), and Cancel/reopen replacement.
-- [ ] Run against current completion and retain the intended draft/replacement RED evidence.
-- [ ] Bind completion to the originating panel and unchanged draft intent; invalidate on replacement/cancel. Preserve ordinary reads and raw invalid user text.
-- [ ] Run new controls and relevant existing MCP import/file-picker tests; inspect private child JUnit and focused Ruff/format checks.
-- [ ] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
+- [x] Write actual picker callback + threaded file-read controls for untouched text, later typing, clear (including returning to initial empty text), and Cancel/reopen replacement.
+- [x] Run against current completion and retain the intended draft/replacement RED evidence.
+- [x] Bind completion to the originating panel and unchanged draft intent; invalidate on replacement/cancel. Preserve ordinary reads and raw invalid user text.
+- [x] Run new controls and relevant existing MCP import/file-picker tests; inspect private child JUnit and focused Ruff/format checks.
+- [x] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
 
 ## Task 5: TASK-36697 — recover malformed MCP import Preview
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-36697
 title: Reject malformed MCP import shapes without losing the editable panel
-status: To Do
+status: In Progress
 created_date: 2026-10-24 17:34
 labels:
 - textual-patterns
@@ -9,6 +9,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
+assignee:
+- '@codex'
+updated_date: 2026-10-24 20:01
 ---
 
 ## Description
@@ -44,3 +47,15 @@ Reason: Routine validation and recoverable errors within the existing importer a
 - [ ] #3 Correcting the text and pressing Preview recovers normally; supported valid and omitted field shapes retain existing behavior.
 - [ ] #4 Parser and mounted Preview regressions cover both observed malformed shapes, a valid control and the installed keepalive semantics.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. ADR paths: [ADR-161](../decisions/161-component-pattern-library.md) and [ADR-240](../decisions/240-mcp-destination-retirement-tools-hub-in-settings.md). Reason: malformed-container validation within the existing parser/ValueError Preview recovery contract; unchanged permission and spawn/secret policy.
+1. Add parser controls for malformed args/env containers, including falsy wrong types, and valid/omitted/null supported inputs; add mounted valid-preview to rejection to correction controls under installed keepalive behavior.
+2. Retain attributable parser/handler RED, then validate container shapes with field-specific ValueError before iteration. Preserve command screening, secret filtering and current supported coercion.
+3. Verify rejected raw source remains editable, Import disabled and stale candidates cleared; correction/repreview recovers without retiring the panel. Preserve the reviewed file-read draft/retirement protections from TASK-36696.
+4. Run new and directly relevant existing parser/spawn/Preview checks with actual private-child XML inspection and focused lint/format. No full suite or inherited-fixture repairs.
+5. Obtain task-scoped Superpowers requesting-code-review, register parser/UI regressions on their existing required lanes, update architecture and implementation notes. Final hosted qualification follows all six tasks.
+Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task5).
+<!-- SECTION:PLAN:END -->

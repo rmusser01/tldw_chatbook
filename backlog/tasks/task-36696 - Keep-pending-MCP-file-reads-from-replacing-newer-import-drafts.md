@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 19:41
+updated_date: 2026-10-24 20:01
 ---
 
 ## Description
@@ -42,10 +42,10 @@ Reason: Routine stale UI publication repair within existing import-panel/workben
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An untouched originating import panel receives its explicitly selected file normally.
-- [ ] #2 Typing or clearing the import text after file selection remains visible when the older read completes, including invalid raw drafts.
-- [ ] #3 Cancel, replacement or reopening invalidates the old panel read so it cannot publish into a new import panel.
-- [ ] #4 Mounted checks cover the actual picker callback and filesystem await with same-panel, replacement and ordinary controls.
+- [x] #1 An untouched originating import panel receives its explicitly selected file normally.
+- [x] #2 Typing or clearing the import text after file selection remains visible when the older read completes, including invalid raw drafts.
+- [x] #3 Cancel, replacement or reopening invalidates the old panel read so it cannot publish into a new import panel.
+- [x] #4 Mounted checks cover the actual picker callback and filesystem await with same-panel, replacement and ordinary controls.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,13 @@ ADR required: no. ADR paths: [ADR-033](../decisions/033-application-session-stat
 5. Obtain task-scoped Superpowers requesting-code-review, register every new regression in required CI, update architecture/notes and existing ADR links. Final hosted qualification follows all six tasks.
 Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task4).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+The actual file-picker callback now captures its originating import panel and draft/request receiver before worker admission. Accepted editor changes count before parent Changed delivery, including edit then clear to empty. Later input, newer selection, Cancel, or direct owner removal/replacement revokes publication. Current attachment/pruning guards prevent detached-editor queries; completion never searches for a newer panel. Existing path/size/UTF-8 validation and Preview interface remain unchanged.
+
+Verification:13 initial mounted cases and4 existing picker/validation tests passed. Review found sticky is_mounted allowed direct retirement to raise NoMatches; both real hide/replace paths reproduced RED, then2new cases plus untouched/Cancel controls passed with4 clean private children. Root verified actual XMLs and final hashes. Superpowers scoped re-review approved. All15 new cases are gated exactly once (floor825); split completeness and census checks pass. Final hosted qualification remains pending. Original profile-form legacy tests have28 setup errors; inherited lint/format and size debt is explicitly retained. Workbench shrank6954 to6951 against6760 budget; TASK-36161 owns that existing red. No budget, allowance, fixture or security guard was weakened.
+
+ADR required: no; existing ADR-033/240 preserve ownership. Updated Docs/Architecture/mcp-hub.md and lessons-testing-evidence.md with the actual sticky-mounted incident. Source/tests: UI/MCP_Modules/mcp_workbench.py, mcp_profile_form.py, test_mcp_import_pending_file_drafts.py and one existing picker harness. No full local suite.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
