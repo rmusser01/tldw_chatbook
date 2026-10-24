@@ -151,3 +151,47 @@ async def test_a_reused_catalog_checks_each_store_in_its_own_loop_turn():
         )
 
     await _with_console(check)
+
+
+@pytest.mark.asyncio
+async def test_the_fingerprint_reads_its_first_store_in_a_loop_turn_of_its_own(
+    monkeypatch,
+):
+    """Red on origin/dev: the permission store was read in its caller's turn.
+
+    TASK-33620.15.8, live: once the post-commit step shrank, run start's
+    longest callback was provider entry reading the response rules' bindings
+    and then, in the same callback, the fingerprint's permission store.
+    """
+
+    async def check(c: _Console) -> None:
+        loop = asyncio.get_running_loop()
+        turn = [0]
+        running = [True]
+
+        def tick() -> None:
+            turn[0] += 1
+            if running[0]:
+                loop.call_soon(tick)
+
+        loop.call_soon(tick)
+        store = c.service.permission_store
+        real = store.catalog_fingerprint
+        read_turns: list[int] = []
+
+        def read(*args, **kwargs):
+            read_turns.append(turn[0])
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(store, "catalog_fingerprint", read)
+        try:
+            caller_turn = turn[0]
+            await c.service.run_catalog_fingerprint()
+        finally:
+            running[0] = False
+        assert read_turns, "the fingerprint read no permission store"
+        assert read_turns[0] > caller_turn, (
+            "the permission store was read in the caller's loop turn"
+        )
+
+    await _with_console(check)

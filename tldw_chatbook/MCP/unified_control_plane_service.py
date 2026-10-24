@@ -2492,12 +2492,15 @@ class UnifiedMCPControlPlaneService:
 
         Each store read is its own storage-admission scope, and a Console run
         start makes them on the UI loop, so the loop gets a turn between them
-        (TASK-33620.15.5).
+        (TASK-33620.15.5), and before the first: a Console provider entry
+        reads the response rules' bindings just before it calls this, and the
+        two reads shared run start's longest callback (TASK-33620.15.8).
 
         Args:
             profiles: ``(profile_id, plugin_owned)`` pairs whose connection
                 state to include (the servers a cached composition used).
         """
+        await asyncio.sleep(0)
         store = self.permission_store
         permission = None if store is None else store.catalog_fingerprint()
         await asyncio.sleep(0)
