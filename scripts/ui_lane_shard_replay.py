@@ -4,11 +4,12 @@
 The UI lane runs ``scripts/ui_pr_gate_census.txt`` as round-robin shards, so
 where a slow file sits decides which shard it lands in. This replays the
 file and node seconds of real CI runs over the current census and prints the
-pytest minutes each shard would carry; ``--write`` re-orders the census tail
-(the last ``--tail`` entries) for the flattest split. Each tail entry moves
-with the comment lines directly above it (the "what it pins" note); the tail
-block's own header stays put, so end it with a blank line before the first
-entry, or that entry takes the header with it.
+pytest minutes each shard would carry. ``--deal --write`` re-deals every
+entry for the flattest split (TASK-36514); ``--tail --write`` re-orders only
+the last ``--tail`` entries, so the rest keep their slots. A moved entry
+takes the comment lines (and blanks) between it and the entry before it;
+the lines above the first moved entry's own comments stay put, so end a
+header there with a blank line, or that entry takes the header with it.
 
 Timings move about 40% between hosted runs. Each file/node is scored at its
 WORST observed run. Pass more than one run. Node costs use pytest duration
@@ -19,13 +20,14 @@ lane prints all durations so future runs do not need the old even-split guess.
 
 Usage:
     # one directory per CI run, one file per shard job; --shards is the UI
-    # lane's matrix size, --tail the number of entries to re-order, counted
-    # back from the end of the census (the block's announced count plus any
-    # entries appended after it; such entries must not be blank-separated,
-    # or --write carries the blank into the block):
+    # lane's matrix size:
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
-    python scripts/ui_lane_shard_replay.py --shards 13 run1 run2
-    python scripts/ui_lane_shard_replay.py --shards 13 --tail 92 --write run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 16 run1 run2
+    # re-deal the whole census for that count:
+    python scripts/ui_lane_shard_replay.py --shards 16 --deal --write run1 run2
+    # or re-order only the census's last 40 entries (entries to re-order must
+    # not be blank-separated, or --write carries the blank among them):
+    python scripts/ui_lane_shard_replay.py --shards 16 --tail 40 --write run1 run2
 """
 
 from __future__ import annotations
@@ -216,6 +218,66 @@ def flattest_tail(
     return best[1] if best else tail
 
 
+def dealt(entries: list[str], seconds: dict[str, float], total: int) -> list[str]:
+    """The whole census re-dealt so the heaviest of ``total`` shards is light.
+
+    Shard ``s`` keeps the entry count round-robin gives it. Entries fill the
+    lightest open shard, largest first, then a swap moves cost from a heavier
+    shard to a lighter one while that narrows the pair (each swap flattens
+    the loads, so the search ends). Ties fall to the entry's name and the
+    shard number, never to census order, so the same logs deal the same
+    shards and a second deal changes nothing. Inside a shard, entries keep
+    their census order.
+
+    Args:
+        entries: The census, in file order.
+        seconds: File and node seconds to score entries by (the worst case).
+        total: The shard count.
+
+    Returns:
+        The entries in their new census order.
+    """
+    costs = entry_seconds(entries, seconds)
+    rank = {entry: index for index, entry in enumerate(entries)}
+    caps = [len(range(s, len(entries), total)) for s in range(total)]
+    shards: list[list[str]] = [[] for _ in range(total)]
+    loads = [0.0] * total
+    for entry in sorted(entries, key=lambda e: (-costs[e], e)):
+        s = min(
+            (s for s in range(total) if len(shards[s]) < caps[s]),
+            key=lambda s: (loads[s], s),
+        )
+        shards[s].append(entry)
+        loads[s] += costs[entry]
+    swapped = True
+    while swapped:
+        swapped = False
+        for a in sorted(range(total), key=lambda s: (-loads[s], s)):
+            for b in sorted(range(total), key=lambda s: (loads[s], s)):
+                gap = loads[a] - loads[b]
+                if gap <= 1e-6:
+                    break
+                best = None  # the swap that leaves the pair most even
+                for i, x in enumerate(shards[a]):
+                    for j, y in enumerate(shards[b]):
+                        moved = costs[x] - costs[y]
+                        if 1e-6 < moved < gap - 1e-6 and (
+                            best is None or abs(gap - 2 * moved) < best[0]
+                        ):
+                            best = (abs(gap - 2 * moved), i, j, moved)
+                if best:
+                    _, i, j, moved = best
+                    shards[a][i], shards[b][j] = shards[b][j], shards[a][i]
+                    loads[a] -= moved
+                    loads[b] += moved
+                    swapped = True
+                    break
+            if swapped:
+                break
+    queues = [iter(sorted(shard, key=rank.__getitem__)) for shard in shards]
+    return [next(queues[index % total]) for index in range(len(entries))]
+
+
 def _minutes(loads: list[float]) -> str:
     return " ".join(f"{load / 60:.1f}" for load in loads) + (
         f"  max {max(loads) / 60:.1f} min"
@@ -227,9 +289,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("runs", nargs="+", type=Path, help="one directory per CI run")
     parser.add_argument("--shards", type=int, required=True)
     parser.add_argument("--tail", type=int, default=0, help="entries to re-order")
-    parser.add_argument("--write", action="store_true", help="rewrite the census tail")
+    parser.add_argument("--deal", action="store_true", help="re-deal every entry")
+    parser.add_argument("--write", action="store_true", help="rewrite the census")
     parser.add_argument("--census", type=Path, default=CENSUS_PATH)
     args = parser.parse_args(argv)
+    if args.deal and args.tail:
+        parser.error("--deal re-deals every entry; it takes no --tail")
 
     seconds = worst_case([run_seconds(run) for run in args.runs])
     if not seconds:
@@ -239,19 +304,25 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"{args.shards} shards, as listed:  {_minutes(shard_loads(entries, seconds, args.shards))}"
     )
-    if not args.tail:
+    if args.deal:
+        tail, order = entries, dealt(entries, seconds, args.shards)
+        label, done = "dealt:      ", "re-dealt every entry"
+    elif args.tail:
+        head, tail = entries[: -args.tail], entries[-args.tail :]
+        order = head + flattest_tail(head, tail, seconds, args.shards)
+        label, done = "best tail:  ", f"rewrote the last {args.tail} entries"
+    else:
         return 0
-    head, tail = entries[: -args.tail], entries[-args.tail :]
-    order = flattest_tail(head, tail, seconds, args.shards)
     print(
-        f"{args.shards} shards, best tail:  {_minutes(shard_loads(head + order, seconds, args.shards))}"
+        f"{args.shards} shards, {label}{_minutes(shard_loads(order, seconds, args.shards))}"
     )
     if args.write:
         if len(set(entries)) != len(entries):
             print("the census lists an entry twice: fix it first", file=sys.stderr)
             return 2
+        order = order[len(entries) - len(tail) :]
         args.census.write_text(_reordered(args.census, tail, order), encoding="utf-8")
-        print(f"rewrote the last {args.tail} entries of {args.census.name}")
+        print(f"{done} of {args.census.name}")
     return 0
 
 

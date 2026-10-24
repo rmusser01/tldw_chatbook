@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import re
 from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ui_lane_shard_replay.py"
@@ -173,46 +172,85 @@ def test_write_reorders_only_the_tail_of_the_census_it_is_given(tmp_path, capsys
     assert replay.CENSUS_PATH.read_bytes() == real_census
 
 
-def test_the_census_tail_block_keeps_the_shape_write_relies_on():
-    """--write keeps the PR block's header in place only because one blank line ends it.
-
-    A blank line among the block's own entries would travel with the entry
-    after it and drift towards the header over repeated writes, so the block
-    has none. Only the entries the header announces are checked: anything
-    appended after them is not this block and may be laid out as usual,
-    unless --write is to re-order it with the block (then no blank lines).
-    """
+def test_the_census_header_stays_put_when_every_entry_moves():
+    """--deal --write moves every entry with the lines above it; the census's
+    own header stays first only because a blank line ends it before the first
+    entry's comments (TASK-36514). Without that line, the first entry would
+    carry the header off with it."""
     census = _SCRIPT.parent / "ui_pr_gate_census.txt"
-    lines = census.read_text(encoding="utf-8").splitlines()
-    header = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if line.startswith("# TASK-33007 (PR #3057")
-        ),
-        None,
+    lines = census.read_text(encoding="utf-8").splitlines(keepends=True)
+    blank = next(i for i, line in enumerate(lines) if not line.strip())
+    assert blank > 0 and all(line.startswith("#") for line in lines[:blank]), (
+        "the census must open with a comment header that a blank line ends"
     )
-    assert header is not None, "the PR block's header is missing"
-    announced = re.search(r"the (\d+)$", lines[header])
-    assert announced, "the header no longer says how many entries the block has"
-    count = int(announced.group(1))
-    blank = next((i for i in range(header, len(lines)) if not lines[i].strip()), None)
-    assert blank is not None, "no blank line ends the block header"
-    assert all(
-        line.lstrip().startswith("#") for line in lines[header:blank]
-    ), "a non-comment line inside the block header (is the blank line that ends it missing?)"
-    assert (
-        blank + 1 < len(lines) and lines[blank + 1].strip()
-    ), "more than one blank line ends the block header, or no entry follows it"
-    rows = [
-        i
-        for i in range(blank + 1, len(lines))
-        if lines[i].strip() and not lines[i].lstrip().startswith("#")
+    entries = replay.read_census(census)
+    reversed_text = replay._reordered(census, entries, entries[::-1])
+    assert reversed_text.splitlines(keepends=True)[: blank + 1] == lines[: blank + 1]
+    moved = [
+        line.strip()
+        for line in reversed_text.splitlines()
+        if line.strip() and not line.startswith("#")
     ]
-    assert len(rows) >= count, "the block has fewer entries than its header announces"
-    block = lines[blank + 1 : rows[count - 1] + 1]
-    assert block[0].lstrip().startswith("#"), "the block's first entry lost its comment"
-    assert all(line.strip() for line in block), "a blank line among the block's entries"
+    assert moved == entries[::-1]
+
+
+def _deal_seconds(**costs: float) -> dict[str, float]:
+    return {f"Tests/UI/test_{name}.py": spent for name, spent in costs.items()}
+
+
+def test_the_deal_puts_the_heaviest_shard_at_the_floor_and_keeps_census_order():
+    """Largest-first fills the 2-entry shard with both 3 s files and leaves 7 s
+    in the 3-entry one; a swap evens it to 6 and 6. Each shard's entries stay
+    in census order, and shard s still takes entries s, s+2, ..."""
+    seconds = _deal_seconds(a=3.0, b=2.0, c=3.01, d=2.01, e=2.02)
+    entries = list(seconds)
+
+    order = replay.dealt(entries, seconds, 2)
+
+    loads = replay.shard_loads(order, seconds, 2)
+    assert max(loads) < 6.1 and sorted(order) == sorted(entries)
+    for shard in (order[0::2], order[1::2]):
+        assert shard == sorted(shard, key=entries.index)
+    assert replay.dealt(entries, seconds, 2) == order  # same logs, same census
+
+
+def test_deal_write_moves_every_entry_with_its_comment(tmp_path, capsys):
+    census = tmp_path / "census.txt"
+    census.write_text(
+        "# the header\n"
+        "\n"
+        "# what test_h.py pins\n"
+        "Tests/UI/test_h.py\n"
+        "# what test_x.py pins\n"
+        "Tests/UI/test_x.py\n"
+        "Tests/UI/test_t1.py\n"
+        "Tests/UI/test_t2.py\n",
+        encoding="utf-8",
+    )
+    argv = ["--shards", "2", "--deal", "--write", "--census", str(census)]
+    run = str(_run_dir(tmp_path))  # h 102 s, t1 90 s, x 6 s, t2 6 s
+
+    assert replay.main(argv + [run]) == 0
+
+    written = census.read_text(encoding="utf-8")
+    assert written == (  # test_x.py moves to shard 1 and takes its comment
+        "# the header\n"
+        "\n"
+        "# what test_h.py pins\n"
+        "Tests/UI/test_h.py\n"
+        "Tests/UI/test_t1.py\n"
+        "# what test_x.py pins\n"
+        "Tests/UI/test_x.py\n"
+        "Tests/UI/test_t2.py\n"
+    )
+    out = capsys.readouterr().out
+    assert "2 shards, as listed:  3.2 0.2  max 3.2 min" in out
+    assert "2 shards, dealt:      1.8 1.6  max 1.8 min" in out
+    assert "re-dealt every entry of census.txt" in out
+    assert replay.main(argv + [run]) == 0
+    # test_x.py and test_t2.py tie at 6 s: ties go by name, not census order,
+    # so a second deal over the same logs changes nothing.
+    assert census.read_text(encoding="utf-8") == written
 
 
 def test_main_refuses_runs_that_timed_no_file(tmp_path, capsys):

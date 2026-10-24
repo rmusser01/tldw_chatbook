@@ -522,9 +522,21 @@ jobs:
     # heaviest shard carries 15.2 pytest min at nine, 13.7 at ten and 12.4 at
     # eleven, plus ~1.1-1.7 min of setup: ten is the fewest that still leaves
     # one hung test's report room under the cap (~15.4 + 3.3 of 20).
-    # TASK-35834 runs thirteen shards: measured worst-case replays plus 110s
-    # setup and 15% variance project <=1000s, below the 1020s acceptance cap.
+    # TASK-35834 took it to thirteen: measured worst-case replays plus 110s
+    # setup and 15% variance projected <=1000s, below the 1020s acceptance cap.
     # Complete duration rows let replay charge function selectors by node.
+    #
+    # TASK-36514 runs sixteen shards, so a hung test's report fits under the
+    # cap again: every job is to finish 3 min under it. Over 13 PR runs' shard
+    # logs (2026-10-23/24), each census entry at its slowest run, the census
+    # holds 228.5 pytest min. No deal puts less than 15.2 on the heaviest of
+    # fifteen shards, or 14.3 of sixteen. Setup before pytest took 62-117 s
+    # over 173 jobs, so with the durations print and shutdown the worst job
+    # comes to 17.4 min at fifteen (over the 17-min target) and 16.5 at
+    # sixteen. The census was then re-dealt whole for sixteen
+    # (scripts/ui_lane_shard_replay.py --deal --write): 14.3 worst case on
+    # every shard; each of the 13 runs' own heaviest shard replays at
+    # 12.1-13.6.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -533,7 +545,7 @@ jobs:
       # Report every shard, so one red shard does not hide another.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 
     steps:
       - uses: actions/checkout@v4

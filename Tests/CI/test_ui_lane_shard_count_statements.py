@@ -28,19 +28,14 @@ _WORDS = (
 #: "runners" is the shards plus the other test lanes the required check needs;
 #: "runners+perf" adds perf-guard's jobs, which a PR touching code also starts.
 _STATEMENTS = (
-    (WORKFLOW, r"TASK-35834 runs (\w+) shards", "shards"),
-    ("scripts/ui_pr_gate_census.txt", r"round-robin over (\w+) shards", "shards"),
-    ("scripts/ui_pr_gate_census.txt", r"TASK-35834 runs (\w+):", "shards"),
-    (
-        "scripts/check_ui_pr_gate_census.py",
-        r"TASK-35834: lane now runs (\w+)\.",
-        "shards",
-    ),
+    (WORKFLOW, r"TASK-36514 runs (\w+) shards", "shards"),
+    (WORKFLOW, r"re-dealt whole for (\w+)\s", "shards"),
     ("scripts/ui_lane_shard_replay.py", r"--shards (\d+) run1 run2", "shards"),
+    ("scripts/ui_lane_shard_replay.py", r"--shards (\d+) --deal", "shards"),
     ("scripts/ui_lane_shard_replay.py", r"--shards (\d+) --tail", "shards"),
-    (ADR, r"TASK-35834: (\w+) UI\s+shards", "shards"),
+    (ADR, r"\(TASK-36514\): (\w+) UI\s+shards", "shards"),
     (ADR, r"current total is (\w+) concurrent test runners per PR", "runners"),
-    (ADR, r"TASK-34353; (\w+) since\s+TASK-35834", "shards"),
+    (ADR, r"TASK-34353; (\w+) since\s+TASK-36514", "shards"),
     (ADR, r"now runs (\w+) test runners at once", "runners"),
     (ADR, r"(\w+) with perf-guard", "runners+perf"),
 )
@@ -76,7 +71,7 @@ def test_a_stated_shard_count_is_the_matrix_size(path, pattern, counts):
     stated = re.findall(pattern, (REPO_ROOT / path).read_text(encoding="utf-8"))
 
     assert len(stated) == 1, f"{path}: expected one match of {pattern!r}, got {stated}"
-    assert stated[0] in (str(number), _WORDS[number]), (
+    assert stated[0] in (str(number), *_WORDS[number : number + 1]), (
         f"{path} says {stated[0]!r} where the ui-fast-lane matrix makes it "
         f"{number} ({counts})"
     )

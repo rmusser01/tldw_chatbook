@@ -453,8 +453,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-35865..35870 add seven representative mounted regressions and retain
 # all 408 prior entries. Measured whole-file slot swaps preserve every node,
 # the ten shards and all time limits; TASK-35834 headroom work stays open.
-# TASK-35834: lane now runs thirteen. The model-defaults whole-file selector
-# becomes all 16 function selectors (+15); see its coverage guard in Tests/CI.
+# TASK-35834 took the lane to thirteen shards. The model-defaults whole-file
+# selector becomes all 16 function selectors (+15); see its coverage guard in
+# Tests/CI.
 # TASK-35597 raised it further: the five Tools-hub suites were made
 # PR-gate-lane safe and re-censused (3 whole files + 112 node ids) on top of
 # the 430 above.
@@ -508,7 +509,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36512 lists four heavy whole-file entries by function (the MCP
 # permissions handoff by parametrize case), so no shard takes one whole:
 # every test still runs once, and the floor follows the entry count.
-MINIMUM_FILES = 704
+# TASK-36514 lists test_settings_advanced_disclosures.py by function too and
+# re-deals every entry for the lane's matrix; the floor follows the count.
+MINIMUM_FILES = 723
 
 
 def read_census(path: Path) -> list[str]:

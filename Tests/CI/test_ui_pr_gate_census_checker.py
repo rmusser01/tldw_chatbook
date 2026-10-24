@@ -493,16 +493,17 @@ def test_dead_defines_test_is_gone():
 
 #: Census files listed by function (or, for a one-test file, by parametrize
 #: case) instead of whole, so no UI Fast Lane shard takes one whole
-#: (TASK-35834, TASK-36512). A test function or case added to one of them
-#: runs in no lane until it is listed too, which the test below catches. It
-#: counts top-level functions only, so it refuses a test class in a split file
-#: rather than let the class's methods go unlisted.
+#: (TASK-35834, TASK-36512, TASK-36514). A test function or case added to one
+#: of them runs in no lane until it is listed too, which the test below
+#: catches. It counts top-level functions only, so it refuses a test class in a
+#: split file rather than let the class's methods go unlisted.
 SPLIT_CENSUS_FILES = (
     "Tests/UI/test_settings_model_defaults_rows.py",
     "Tests/UI/test_settings_connect_rows.py",
     "Tests/UI/test_settings_connect_tab_budget.py",
     "Tests/UI/test_settings_default_model_picker.py",
     "Tests/UI/test_mcp_permissions_handoff.py",
+    "Tests/UI/test_settings_advanced_disclosures.py",
 )
 
 
