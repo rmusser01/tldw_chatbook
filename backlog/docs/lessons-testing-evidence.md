@@ -5279,6 +5279,27 @@ Vary the thing you suspect — here, install the package — and see if the symp
 
 ---
 
+## A hand-picked hazard table is not a round-trip proof -- `yaml.safe_dump(allow_unicode=True)` does not read back a NEL (TASK-34000.31, 2026-10-24)
+
+**Incident.** The task's AC listed the characters that break YAML front matter
+(`:`, a leading `*`/`#`/`-`/`?`, quotes, brackets, CJK, emoji, date- and
+bool-shaped strings) and the twelve-row table in
+`Tests/Chatbooks/test_note_frontmatter_round_trip.py` went green on the first
+dumper-based renderer. The Hypothesis sibling found `title='0\x85'` within
+its first 300 examples: PyYAML's emitter writes U+0085 (NEL) raw inside a
+quoted scalar when `allow_unicode=True` and treats it as a line break, so its
+own `safe_load` reads the title back as `'0 '`. U+2028/U+2029 survive; only
+NEL does not. The table could not have found it -- nobody puts NEL in a table.
+
+**What to do.** When the requirement is "what we write reads back", the
+renderer's promise is the round trip, not the dumper call: read the block back
+inside the renderer and re-dump escaped (`allow_unicode=False`) when it does
+not match, and keep the generated-input property beside the table (outside
+the fast lane, which installs no Hypothesis). Pin the found example in the
+table file too, so the lane catches a regression without Hypothesis.
+
+---
+
 ## A property test with no deadline override is load-sensitive
 
 **TASK-1260, 2026-07-28.** `test_safe_paths_always_validate` failed once inside a

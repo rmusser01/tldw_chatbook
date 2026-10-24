@@ -901,11 +901,12 @@ def build_note_export_content(
             falls back to ``"Untitled Note"``.
         content: The note's current (possibly unsaved) body text.
         keywords_text: The note's keywords as a single comma-separated
-            string (the editor's keywords ``Input`` value).
-        note_id: The note's id, interpolated as-is (``str()``-coerced by
-            the format strings below).
-        export_format: ``"markdown"`` for the frontmatter + ``# title``
-            shape; any other value renders the plain-text shape.
+            string (the editor's keywords ``Input`` value). The Markdown
+            shape writes them as a YAML list under ``tags``.
+        note_id: The note's id, ``str()``-coerced into the output.
+        export_format: ``"markdown"`` for the YAML front matter + ``# title``
+            shape (``title``, ``date``, ``tags``, ``note_id``); any other
+            value renders the plain-text shape.
         now: Timestamp to stamp the export with. Defaults to
             ``datetime.now()`` (naive, local time) -- matching the
             original's un-timezoned stamp -- so callers can pin it in tests.
@@ -918,16 +919,24 @@ def build_note_export_content(
         "%Y-%m-%d %H:%M:%S"
     )
     if export_format == "markdown":
-        return (
-            f"---\n"
-            f"title: {current_title}\n"
-            f"date: {timestamp}\n"
-            f"keywords: {keywords_text}\n"
-            f"note_id: {note_id}\n"
-            f"---\n\n"
-            f"# {current_title}\n\n"
-            f"{content}"
-        )
+        # TASK-34000.31: a real YAML dumper, not f-strings -- a title with a
+        # colon or a leading ``*``/``#``/``-``/``?`` used to produce a block
+        # no parser (Obsidian, Pandoc, Add from files…) could read. ``tags``
+        # is the key the app's own importer and Obsidian read; the old
+        # ``keywords:`` line was dropped on re-import. The import is lazy:
+        # this module is pre-imported at UI ready (ADR-097).
+        from tldw_chatbook.Notes.note_frontmatter import render_note_frontmatter
+
+        keywords = [
+            part.strip() for part in (keywords_text or "").split(",") if part.strip()
+        ]
+        fields: dict[str, object] = {
+            "title": current_title,
+            "date": timestamp,
+            "tags": keywords,
+            "note_id": str(note_id),
+        }
+        return f"{render_note_frontmatter(fields)}\n# {current_title}\n\n{content}"
     return (
         f"Title: {current_title}\n"
         f"Date: {timestamp}\n"
