@@ -2898,8 +2898,16 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     # excluded from the F1 panel by name instead (see
     # ``_active_library_binding_shortcuts``), since app-wide keyboard
     # chrome is not a Library shortcut.
+    # TASK-34000.28 (N-32): F6 is now a priority Binding on this screen too
+    # (Textual's TextArea otherwise claims it to select a line), gated
+    # exactly like Shift+F6.
     universal_actions = frozenset(
-        {"focus_previous_workbench_pane", "focus_next", "focus_previous"}
+        {
+            "focus_previous_workbench_pane",
+            "focus_next_workbench_pane",
+            "focus_next",
+            "focus_previous",
+        }
     )
 
     app = _build_test_app()

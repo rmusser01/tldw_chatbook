@@ -1038,6 +1038,20 @@ class LibraryScreen(BaseAppScreen):
             show=False,
             priority=True,
         ),
+        # TASK-34000.28 (N-32): Textual's ``TextArea`` binds f6 to
+        # ``select_line`` (non-priority), and the app's own F6 is
+        # non-priority by ADR-031, so with the note body focused F6 SELECTED
+        # the current line and the next keystroke replaced it. A priority
+        # binding on this screen -- the same shape as shift+f6 above --
+        # resolves before the key reaches the focused widget; the action
+        # and the app-level binding are unchanged.
+        Binding(
+            "f6",
+            "focus_next_workbench_pane",
+            "Next pane",
+            show=False,
+            priority=True,
+        ),
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
         ("ctrl+n", "library_notes_new", "New note"),
         ("/", "library_notes_focus_filter", "Find notes"),
@@ -5228,9 +5242,19 @@ class LibraryScreen(BaseAppScreen):
             # recompose the selection causes.
             "note-import-body": "import-body",
             "library-notes-create-blank": "create-template:blank",
+            # TASK-34000.28 (N-30): the Sort control and its open strip had
+            # no portable role, so the re-page a changed sort requests
+            # replayed the navigator FALLBACK -- the filter -- over the focus
+            # the chooser had just handed back to Sort (measured: Enter on
+            # Oldest left focus in the filter). Same pair as the others, in
+            # ``_library_notes_role_target``.
+            "library-notes-sort": "sort",
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
+        sort_choice = "library-notes-sort-"
+        if widget_id.startswith(sort_choice):
+            return f"sort-choice:{widget_id.removeprefix(sort_choice)}"
         if widget_id in {
             "library-note-back",
             "library-note-context-back",
@@ -9164,6 +9188,24 @@ class LibraryScreen(BaseAppScreen):
         if event.key in ("up", "down") and _move_library_list_row_focus(
             self.focused, event.key
         ):
+            event.stop()
+            event.prevent_default()
+            return
+        if (
+            event.key in ("right", "left")
+            and self.focused is not None
+            and self.focused.has_class("library-notes-folder-row")
+            and not self._notes_state.select_mode
+            and self._notes_controller._library_notes_folder_row_arrow(
+                self.focused, event.key
+            )
+        ):
+            # TASK-34000.28 N-22: on a folder row Right expands, Left
+            # collapses or climbs to the parent when already collapsed --
+            # expansion state only, through the row's own press (the one
+            # toggle path). The key stays untouched on a note row (Textual's
+            # Button ignores it) and inside any Input/TextArea (the early
+            # return above precedes this branch).
             event.stop()
             event.prevent_default()
             return
@@ -26679,7 +26721,10 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_item_traversal_active()
                 and self._review_set_active()
             )
-        if action == "focus_previous_workbench_pane":
+        if action in {"focus_previous_workbench_pane", "focus_next_workbench_pane"}:
+            # TASK-34000.28 (N-32): F6 joins Shift+F6 as this screen's own
+            # priority pane key; both resolve only visible targets and no-op
+            # safely when none exist.
             return bool(self._library_selected_row_id)
         return True
 

@@ -611,7 +611,7 @@ from ...Notes.note_import_plan_models import (
 from ...Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
-from .canvas_sync import _sync_library_canvas
+from .canvas_sync import _previous_folder_row_above, _sync_library_canvas
 from .library_notes_state import LibraryNotesState, notes_state_shim_attr
 from . import library_notes_sync_attention as notes_sync_attention
 from .library_notes_work_session import (
@@ -1209,6 +1209,13 @@ class LibraryNotesController:
     @property
     def _focus_library_control(self) -> Any:
         return self._focus_library_control_fn
+
+    @property
+    def _focus_library_choice_strip_active(self) -> Any:
+        # TASK-34000.28 (N-30): the Skills/Prompts sort twins hand focus to
+        # the open strip's active option through this screen helper; the
+        # Notes sort chooser now does the same (a live read, like ``focused``).
+        return self._screen._focus_library_choice_strip_active
 
     @property
     def _hide_library_adaptive_reader_rail_collapse(self) -> Any:
@@ -1967,9 +1974,26 @@ class LibraryNotesController:
             "import-retry": "#note-import-retry",
             "import-back": "#library-notes-import-back",
             "create-template:blank": "#library-notes-create-blank",
+            # TASK-34000.28 (N-30): see the matching pair in
+            # ``_library_notes_semantic_role``.
+            "sort": "#library-notes-sort",
         }.get(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
+        elif role.startswith("sort-choice:"):
+            try:
+                return self.query_one(
+                    f"#library-notes-sort-{role.removeprefix('sort-choice:')}",
+                    Widget,
+                )
+            except (NoMatches, QueryError):
+                # TASK-34000.28 (N-30): the strip closes on choose/Escape, so
+                # a slice page that landed while a choice still had focus
+                # replays an identity whose button is gone. Its opener is
+                # where that focus belongs -- not the navigator fallback (the
+                # filter), which is what the live walk showed after Enter on
+                # Oldest (capture 07, first round).
+                selector = "#library-notes-sort"
         elif role.startswith("sync-direction:"):
             selector = f"#notes-sync-direction-{role.removeprefix('sync-direction:').replace('_', '-')}"
         elif role.startswith("region-back:"):
@@ -5697,7 +5721,30 @@ class LibraryNotesController:
         self._library_notes_sort_choices_visible = (
             not self._library_notes_sort_choices_visible
         )
-        _sync_library_canvas(self, "notes")
+
+        # TASK-34000.28 (N-30): the strip opened but focus stayed in the
+        # filter, under a footer reading "enter choose sort" -- Enter would
+        # have submitted the filter. Same hand-off as the Skills twin
+        # (``handle_library_skills_sort``): land on the active ``✓`` choice
+        # when the strip opens, and back on the opener when it closes.
+        def focus_open_strip() -> None:
+            self._focus_library_choice_strip_active(
+                ".library-notes-sort-choice",
+                self._library_notes_sort,
+            )
+
+        def focus_opener() -> None:
+            self._focus_library_note_control("#library-notes-sort")
+
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=(
+                focus_open_strip
+                if self._library_notes_sort_choices_visible
+                else focus_opener
+            ),
+        )
     @on(Button.Pressed, ".library-notes-sort-choice")
     def handle_library_notes_sort_choice(self, event: Button.Pressed) -> None:
         """Apply the exact sort value carried by one direct choice."""
@@ -5720,7 +5767,14 @@ class LibraryNotesController:
             # in place could not move a note across a page boundary, and the
             # next page load would contradict it.
             self._request_library_notes_tree_initial_load()
-        _sync_library_canvas(self, "notes")
+
+        # TASK-34000.28 (N-30): choosing closes the strip, so focus goes back
+        # to the Sort control the chooser was opened from (the Escape path in
+        # ``action_library_notes_escape`` already does this).
+        def focus_opener() -> None:
+            self._focus_library_note_control("#library-notes-sort")
+
+        _sync_library_canvas(self, "notes", then=focus_opener)
     @on(Button.Pressed, "#library-notes-new")
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:
         """Open the in-Library Create surface from Navigator."""
@@ -6476,6 +6530,50 @@ class LibraryNotesController:
                     self._request_library_notes_tree_slice(key)
 
         _sync_library_canvas(self, "notes", then=_load_expanded_folder)
+
+    def _library_notes_folder_row_arrow(self, row: Button, key: str) -> bool:
+        """Right expands a focused folder row; Left collapses it or climbs to its parent.
+
+        TASK-34000.28 (N-22). The screen's ``on_key`` asks this for a focused
+        ``library-notes-folder-row`` outside select mode.
+
+        Toggling goes through the row's OWN press, so
+        ``handle_library_notes_folder_row`` stays the one toggle path: it
+        changes ``tree_expanded_ids`` and the selected placement -- view
+        facts, memory-only -- and never a note or a folder. Left on an
+        already-collapsed row moves focus to the parent folder row (the
+        nearest earlier sibling with a smaller ``tree_depth``) and toggles
+        nothing; a collapsed root has nowhere to climb and the key is simply
+        claimed.
+
+        Args:
+            row: The focused folder row.
+            key: ``"right"`` or ``"left"``.
+
+        Returns:
+            ``True`` when the key was the tree's to claim (a real folder row,
+            even when nothing changed). ``False`` for a row with no folder
+            identity -- the automatic Unfiled group -- so the caller leaves
+            the key untouched.
+        """
+        folder_id = str(getattr(row, "folder_id", "") or "")
+        if not folder_id:
+            return False
+        expanded = folder_id in self._library_notes_tree_expanded_ids
+        if key == "right":
+            if not expanded:
+                row.press()
+            return True
+        if expanded:
+            row.press()
+            return True
+        parent = _previous_folder_row_above(row)
+        if parent is not None:
+            # Same reveal as the Up/Down walker: scroll only as far as the
+            # row needs, never centre the list on it (TASK-34000.7).
+            parent.focus(scroll_visible=False)
+            parent.scroll_visible(animate=False, immediate=True)
+        return True
     @on(Button.Pressed, "#library-notes-select-toggle")
     async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
         """Enter/exit notes select mode; clears the selection set (both on enter and exit).
