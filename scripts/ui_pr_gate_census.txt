@@ -1196,3 +1196,18 @@ Tests/UI/test_dictation_view_retirement.py::test_explicit_stop_keeps_processor_t
 Tests/UI/test_dictation_view_retirement.py::test_queued_old_capture_command_cannot_publish_into_restarted_capture
 # TASK-36693 review round2: paused Stop retains text and releases capture.
 Tests/UI/test_dictation_view_retirement.py::test_stop_after_pause_preserves_finalized_text_and_releases_capture
+
+# TASK-36694: real parent/child button delivery, focused Space and unrelated routing.
+Tests/UI/test_dictation_button_delivery.py::test_start_and_distinct_stop_each_deliver_once[mouse]
+Tests/UI/test_dictation_button_delivery.py::test_start_and_distinct_stop_each_deliver_once[enter]
+Tests/UI/test_dictation_button_delivery.py::test_start_and_distinct_stop_each_deliver_once[space]
+Tests/UI/test_dictation_button_delivery.py::test_stop_cannot_bubble_and_restart_capture[mouse]
+Tests/UI/test_dictation_button_delivery.py::test_stop_cannot_bubble_and_restart_capture[enter]
+Tests/UI/test_dictation_button_delivery.py::test_stop_cannot_bubble_and_restart_capture[space]
+Tests/UI/test_dictation_button_delivery.py::test_pause_and_resume_each_deliver_once
+Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[dictation-clear-btn]
+Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[copy-button]
+Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[save-text-button]
+Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[save-md-button]
+Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[troubleshoot-btn]
+Tests/UI/test_dictation_button_delivery.py::test_unknown_child_and_container_back_keep_routing

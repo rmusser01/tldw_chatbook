@@ -517,7 +517,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # mount, no config read, ~8 s locally) -- so no existing entry changes
 # shard: 762 -> 764.
 # TASK-36693 adds all fifteen mounted retirement/publication and Stop cases.
-MINIMUM_FILES = 779
+# TASK-36694 adds all thirteen ordinary button/delivery controls.
+MINIMUM_FILES = 792
 
 
 def read_census(path: Path) -> list[str]:

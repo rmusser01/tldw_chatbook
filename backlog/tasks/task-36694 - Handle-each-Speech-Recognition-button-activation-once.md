@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 18:56
+updated_date: 2026-10-24 19:18
 ---
 
 ## Description
@@ -42,19 +42,29 @@ Reason: Routine correction of handled-message delivery within existing Speech ro
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A single mouse click or normal Enter/Space activation of Start starts one dictation session and leaves the foreground view listening until a distinct Stop action.
-- [ ] #2 Stop and other handled Speech Recognition buttons execute their intended action once, without a bubbled event reversing the result.
-- [ ] #3 Other Speech views and container-owned controls retain their routing and ADR-031-compliant keyboard behavior.
-- [ ] #4 Mounted controls exercise the actual parent and child handlers with the same event identity and bounded audio collaborators, including ordinary Start and Stop.
+- [x] #1 A single mouse click or normal Enter/Space activation of Start starts one dictation session and leaves the foreground view listening until a distinct Stop action.
+- [x] #2 Stop and other handled Speech Recognition buttons execute their intended action once, without a bubbled event reversing the result.
+- [x] #3 Other Speech views and container-owned controls retain their routing and ADR-031-compliant keyboard behavior.
+- [x] #4 Mounted controls exercise the actual parent and child handlers with the same event identity and bounded audio collaborators, including ordinary Start and Stop.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no. ADR paths: [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) and [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md). Reason: handled-message delivery correction within existing Speech routing, no new keys or boundaries.
+ADR required: no. ADR paths: [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) and [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md). Reason: handled-message delivery and explicitly required focused Space activation within existing Speech routing; no new terminal chords, global keys or service boundaries.
 1. Add mounted mouse/Enter/Space Start and distinct Stop controls with actual STTS parent/Dictation child message delivery, bounded recorder I/O and real service where relevant; cover other handled and unhandled/container controls.
-2. Retain duplicate-delivery RED evidence, then consume only messages handled by the child while preserving other routing. Preserve the reviewed retirement/capture-publication implementation from TASK-36693.
+2. Retain duplicate-delivery RED evidence, then consume only messages handled by the child while preserving other routing. Provide focused Space with a private owner-local Button subclass while retaining inherited Enter (stock Textual8.2.8 Button binds Enter only). Preserve the reviewed retirement/capture-publication implementation from TASK-36693.
 3. Run focused new and neighboring Speech controls, inspect private-child teardown, and run Ruff/format/whitespace checks.
 4. Obtain task-scoped Superpowers requesting-code-review, register every new regression in the required UI census, update Speech architecture notes and record implementation evidence. Final hosted PR qualification is part of overall delivery.
 Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task2).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Handled Speech Recognition Button.Pressed messages now stop at the child after their intended action; unknown/container controls retain normal bubbling. All seven action controls use a private Button subclass for focused Space activation alongside inherited Enter, meeting the explicit AC without global or reserved-key changes. Existing capture retirement, callback dispatch/generation and Stop behavior remain unchanged.
+
+Verification: 13 new mounted mouse/Enter/Space, Pause/Resume, Clear, actual clipboard/export/Troubleshoot and same-event routing cases plus 6 neighboring capture controls passed (19 parent cases and 19 clean private children, zero failures/errors/skips). Source hashes, Ruff/format/whitespace and complete split-census coverage were verified. All13 new cases are registered on the required UI gate; overall hosted PR qualification remains pending. Superpowers task review approved, with no blocking findings. No full local suite or real microphone/model/network/OS clipboard certification.
+
+ADR required: no; [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) and [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md) govern existing ownership and focused controls. Updated Docs/Architecture/speech.md and the UI census/ratchet. Source/tests: UI/Dictation_Window_Improved.py and Tests/UI/test_dictation_button_delivery.py.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

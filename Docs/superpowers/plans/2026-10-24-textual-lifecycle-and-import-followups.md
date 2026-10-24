@@ -57,14 +57,14 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 ## Task 2: TASK-36694 — deliver handled Speech buttons once
 
 **Files:** Modify tldw_chatbook/UI/Dictation_Window_Improved.py; inspect STTS_Window.py; create Tests/UI/test_dictation_button_delivery.py.
-**Interfaces:** Consumes real Button.Pressed bubbling and the parent dispatch. Produces no new API; recognized child controls consume their message once and unrelated container controls still bubble.
-**ADR required:** no. **ADR path:** existing 025 and 031. **Reason:** routine delivery correction without new keys or routing structure.
+**Interfaces:** Consumes real Button.Pressed bubbling and the parent dispatch. Produces no new public API; recognized child controls consume their message once, owner-local action Buttons support focused Space alongside inherited Enter, and unrelated container controls still bubble.
+**ADR required:** no. **ADR path:** existing 025 and 031. **Reason:** routine delivery correction and explicitly required focused-control Space activation, without new terminal chords or global routing.
 
-- [ ] Write actual Pilot mouse and Enter/Space Start/Stop controls: one Start leaves start_calls=1, stop_calls=0 and listening; one later Stop leaves stop_calls=1 and idle. Cover other handled controls and an unhandled/container control.
-- [ ] Run the focused cases against the unchanged dispatch and retain the duplicate-delivery failures.
-- [ ] Stop propagation for controls this child handles; preserve unhandled/container delivery. Do not add or pin a reserved terminal chord.
-- [ ] Run focused new/existing Speech routing checks and Ruff/format checks.
-- [ ] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
+- [x] Write actual Pilot mouse and Enter/Space Start/Stop controls: one Start leaves start_calls=1, stop_calls=0 and listening; one later Stop leaves stop_calls=1 and idle. Cover other handled controls and an unhandled/container control.
+- [x] Run the focused cases against the unchanged dispatch and retain the duplicate-delivery failures.
+- [x] Stop propagation for controls this child handles; preserve unhandled/container delivery. Use a private owner-local action Button to provide the required focused Space activation alongside inherited Enter. Do not add or pin a reserved terminal chord.
+- [x] Run focused new/existing Speech routing checks and Ruff/format checks.
+- [x] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
 
 ## Task 3: TASK-36695 — preserve newer Chunking sample intent
 

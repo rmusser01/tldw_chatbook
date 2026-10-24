@@ -84,6 +84,11 @@ Stop path so it returns its transcript and releases the recorder. Later cleanup
 does not stop the recorder again. An unopened view never constructs a service
 (TASK-36693; ADR-025/033).
 
+The Dictation action buttons support focused Space and inherited Enter. The
+child consumes each recognized `Button.Pressed` after handling it so STTS cannot
+manually forward the same bubbled event back to the child. Unrecognized and
+container-owned controls retain their normal route (TASK-36694; ADR-025/031).
+
 ## Dictation (dataflow)
 
 1. The Console mic button starts a streaming dictation session (16 kHz mono PCM, bounded 60 s / 1.92 MiB).

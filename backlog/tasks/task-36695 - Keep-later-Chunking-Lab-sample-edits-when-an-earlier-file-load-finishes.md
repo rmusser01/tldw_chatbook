@@ -1,7 +1,7 @@
 ---
 id: TASK-36695
 title: Keep later Chunking Lab sample edits when an earlier file load finishes
-status: To Do
+status: In Progress
 created_date: 2026-10-24 17:33
 labels:
 - textual-patterns
@@ -9,6 +9,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
+assignee:
+- '@codex'
+updated_date: 2026-10-24 19:18
 ---
 
 ## Description
@@ -44,3 +47,15 @@ Reason: Routine publication applicability repair within the existing Chunking La
 - [ ] #3 Replacement sample intent and read failure preserve the current authored state, recovery ownership and existing file-size/UTF-8 validation.
 - [ ] #4 Targeted mounted controls witness real accepted keyboard input and canonical state before releasing actual asynchronous file-read publication, with ordinary-load and later-edit cases.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. ADR paths: [ADR-118](../decisions/118-chunking-lab-local-execution-and-recovery.md) and [ADR-033](../decisions/033-application-session-state-ownership.md). Reason: applicability repair in the existing screen/coordinator/sample owner; unchanged validation, recovery and storage contracts.
+1. Add bounded mounted controls for real asynchronous sample-file and explicit-excerpt reads, witnessing actual keyboard edits in both the editor and canonical session before releasing the older completion; cover clear, replacement intent, untouched success and read failure.
+2. Retain attributable product RED with independently clean teardown. Reuse existing private-profile protections; use a bounded host or settle exact owners rather than hiding native-worker custody or broadly draining canceled workers.
+3. Fence older read publication against current sample intent, including queued parent Changed delivery and edit-then-clear; preserve ordinary provenance, canonical recovery and existing size/UTF-8 validation.
+4. Run new controls plus directly relevant existing file/excerpt/recovery tests and focused Ruff/format/whitespace checks, inspecting all private-child JUnit failures/errors/skips.
+5. Obtain task-scoped Superpowers requesting-code-review, register every new regression in the required UI census, update architecture evidence and implementation notes. Overall hosted PR qualification follows all six tasks.
+Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task3).
+<!-- SECTION:PLAN:END -->
