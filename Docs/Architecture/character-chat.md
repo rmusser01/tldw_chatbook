@@ -60,6 +60,24 @@ Cards can drive live expression playback: `emote_directives.CharacterEmoteEvent`
 
 ## Local portrait performance attachments
 
+
+`Character_Chat/portrait_compositing.py` provides the ADR-243 composition core:
+strict source-pixel rectangles, canonical tagged RGBA base identity, inward masks,
+one-time raw-edit feathering, binary finished-plane assembly and invariant-checked
+component recovery. Original alpha and outside-mask pixels are preserved exactly;
+PNG encoding changes do not change prepared pixel identity. It uses the existing
+shared decode reservations and bounded still normalizer with explicit image closure.
+
+`PortraitCompositionCandidate` is a disposable immutable snapshot of the recipe,
+region revision, finished components and currently available frames. Draft replacement
+is authoritative, not a merge; a new rest-only candidate cannot inherit old slots.
+Composed publication requires all three components and six roles. Successful manual
+imports switch to ordinary six-role readiness; failed edits preserve lineage.
+These core contracts are implemented in TASK-36551. Region persistence, selection UI
+and the three-request provider workflow remain follow-up work at this checkpoint;
+existing generation still uses its original six-request path until that integration.
+
+
 `Character_Chat/portrait_performance.py` normalizes six aligned still poses
 (`rest`, `small`, `open` and their `blink_` variants) into bounded PNGs. Work shares
 the existing avatar preparation budget and releases decoded images on failure.

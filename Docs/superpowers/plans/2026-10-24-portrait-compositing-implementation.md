@@ -199,7 +199,7 @@ def apply_character_portrait_performance(
 
 **Consumes:** Existing `PerformanceFrame`, `normalize_performance_frame(s)`, `FRAME_ROLES`, bounded decode reservation/cleanup seams and `PortraitPerformanceDraft`. **Produces:** All Unit 1 contracts above; no provider or DB write.
 
-- [ ] **1. Write a red pixel-oracle test.** Add local fixtures that encode a 64×64 RGBA base and visibly different whole-canvas edits, with rectangles left `(8,8,10,10)`, right `(42,8,10,10)`, mouth `(22,36,20,16)`. Construct the recipe with `prepared_base_pixel_sha256(base)` and the exact decoded dimensions. Decode returned PNGs into pixel lists; independently select coordinate sets for eye/mouth/outside regions. Assertions include:
+- [x] **1. Write a red pixel-oracle test.** Add local fixtures that encode a 64×64 RGBA base and visibly different whole-canvas edits, with rectangles left `(8,8,10,10)`, right `(42,8,10,10)`, mouth `(22,36,20,16)`. Construct the recipe with `prepared_base_pixel_sha256(base)` and the exact decoded dimensions. Decode returned PNGs into pixel lists; independently select coordinate sets for eye/mouth/outside regions. Assertions include:
 
 ```python
 frames = assemble_components(base, recipe, {
@@ -216,8 +216,8 @@ assert all(alpha(f.png) == alpha(base) for f in frames)
 ```
 
 `rgba`, `pixels`, `alpha` and coordinate sets are local test helpers using Pillow `getpixel`; define them in this test file, not a new production utility. Also assert eye pixels match across mouth states, every rectangle outer-border pixel (zero mask alpha) equals the base, and whole outputs differ. Use a deliberately globally darkened edit as the control proving no exposure drift outside the masks.
-- [ ] **2. Run the focused red case.** `.venv/bin/python -m pytest Tests/Character_Chat/test_portrait_compositing.py -q -o addopts=''`; expected failure is the missing compositor contract, not bootstrap/recovery setup.
-- [ ] **3. Implement the fixed v1 algorithm and bounded cleanup.** Validate types/geometry/digest/confirmation, decode admitted stills, create inward masks from the spec equation and preserve base alpha. Compose raw edits once; assemble using binary eye-support copying. Recover finished planes from validated `small/open/blink_rest` and compare all six decoded outputs against an independent reassembly before reuse. Implement manual `stage_group` and authoritative `replace_composition` as separate atomic paths; wire `can_apply` and `frames()` to candidate completeness rather than occupied slots. The core assembly copies finished eye pixels, preserving alpha:
+- [x] **2. Run the focused red case.** `.venv/bin/python -m pytest Tests/Character_Chat/test_portrait_compositing.py -q -o addopts=''`; expected failure is the missing compositor contract, not bootstrap/recovery setup.
+- [x] **3. Implement the fixed v1 algorithm and bounded cleanup.** Validate types/geometry/digest/confirmation, decode admitted stills, create inward masks from the spec equation and preserve base alpha. Compose raw edits once; assemble using binary eye-support copying. Recover finished planes from validated `small/open/blink_rest` and compare all six decoded outputs against an independent reassembly before reuse. Implement manual `stage_group` and authoritative `replace_composition` as separate atomic paths; wire `can_apply` and `frames()` to candidate completeness rather than occupied slots. The core assembly copies finished eye pixels, preserving alpha:
 
 ```python
 # These names denote the bounded images/masks admitted earlier in this step.
@@ -228,7 +228,7 @@ blink.putalpha(base_alpha)
 ```
 
 Create masks using the spec's integer equation; mask support, not feather alpha, controls the second copy. Reuse prior normalized frames for unaffected roles during retries so their encoded bytes remain identical.
-- [ ] **4. Exercise failure and reuse controls.** Reject float/bool/negative/overlapping/edge-exceeding/too-small coordinates, unknown versions, wrong-sized/animated/oversized/malformed edits. Cover alpha-zero pixels, non-square canvases, masks touching image borders, incomplete maps, repeat retries, normalization/set-byte failure and held concurrent decode reservations. Inject encode failure; assert every image core closes and the reservation counter returns to its entry value. A failed replacement leaves its prior snapshot/frames unchanged. Add encoding-equivalence and candidate-reset controls:
+- [x] **4. Exercise failure and reuse controls.** Reject float/bool/negative/overlapping/edge-exceeding/too-small coordinates, unknown versions, wrong-sized/animated/oversized/malformed edits. Cover alpha-zero pixels, non-square canvases, masks touching image borders, incomplete maps, repeat retries, normalization/set-byte failure and held concurrent decode reservations. Inject encode failure; assert every image core closes and the reservation counter returns to its entry value. A failed replacement leaves its prior snapshot/frames unchanged. Add encoding-equivalence and candidate-reset controls:
 
 ```python
 # png0/png9 encode the same source pixels using compression levels 0 and 9.
@@ -244,7 +244,13 @@ with pytest.raises(ValueError):
 ```
 
 Also change one RGB byte, one alpha byte, RGB under zero alpha, and dimensions to require different identities. Inject bad replacement metadata after a valid complete candidate and assert candidate object, encoded frames and readiness are unchanged. A failed retry of a complete candidate retains `can_apply`; a fresh incomplete candidate cannot inherit old slots.
-- [ ] **5. Verify, document and review.** Run only both affected test files, Ruff check/format on edited files and `git diff --check`; compare any pre-existing diagnostics by file. Update task notes with exact evidence and ADR-243, check AC, self-review memory lifetime/pixel invariants, then commit `feat: compose exact paired portrait frames from source regions`.
+- [x] **5. Verify, document and review.** Run only both affected test files, Ruff check/format on edited files and `git diff --check`; compare any pre-existing diagnostics by file. Update task notes with exact evidence and ADR-243, check AC, self-review memory lifetime/pixel invariants, then commit `feat: compose exact paired portrait frames from source regions`.
+
+**Execution checkpoint:** implemented and self-reviewed. New core/authoring gate:
+27 passed; affected core/legacy generation/motion/Personas callers: 58 passed before
+three additional cleanup/max-size controls and the successful retry control. Final
+core checks include those controls. Ruff lint/format and diff checks pass. No new
+provider/UI integration is claimed. See [atomic review](../reviews/2026-10-24-task-36551-review.md).
 
 ## Unit 2 — TASK-36552: durable settings and optional provenance
 
