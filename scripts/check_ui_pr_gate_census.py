@@ -495,7 +495,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # A static node (an AST walk, about 5-10 s with its private-profile child),
 # appended at the tail after TASK-35648's.
 # TASK-36360..36363 append48 nodes after the complete616-entry dev census.
-MINIMUM_FILES = 664
+# 2026-10-23, TASK-34000.20 (P1-C batch, task 1) appends one whole-file entry at
+# the tail -- Tests/UI/test_library_ingest_tilde_path_and_enter_waits.py (three
+# 160x45 boots, ~15 s locally) -- so no existing entry changes shard: 664 -> 665.
+MINIMUM_FILES = 665
 
 
 def read_census(path: Path) -> list[str]:

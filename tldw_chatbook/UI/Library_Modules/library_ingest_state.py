@@ -142,6 +142,13 @@ class LibraryIngestState:
     # generation is no longer current (task-2011).
     preflight_generation: int = 0
 
+    # (TASK-34000.20 AC#3) The pre-flight generation an Enter / Start press
+    # is waiting on. Set when a submit arrives before the check for the
+    # current text has landed; `_apply_library_ingest_preflight_result`
+    # fires the one-shot submit when THAT generation's result arrives and
+    # clears it. A text edit or a pre-flight invalidation drops it.
+    submit_armed_generation: int | None = None
+
     # (task-2015) While-typing validation: each path edit restarts this
     # timer; its fire runs the pre-flight so feedback no longer waits
     # for blur.

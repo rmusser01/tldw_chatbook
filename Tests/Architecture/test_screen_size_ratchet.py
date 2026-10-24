@@ -1022,7 +1022,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-22, P1-A final review C-1 (same owner decision): 37559 -> 37560
     #: (+1), the ``_library_media_selected_backing_id`` docstring says the
     #: Reader target is the loaded item whatever the view. Methods 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37560, 1354),
+    #: 2026-10-23, TASK-34000.20 (owner decision 2026-10-04: a fix over a size
+    #: ratchet raises the row to the measured value). dev `d0d926e11b` was
+    #: ALREADY over this row before the P1-C batch (measured 37586 vs 37560).
+    #: This task adds the ``expand_user_path`` import, the ``path`` pass-through
+    #: from the pre-flight worker into the apply, and the one-expansion-rule
+    #: block in ``_resolve_ingest_source``: 37560 -> 37593 (measured). Methods
+    #: unchanged at 1354.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37593, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

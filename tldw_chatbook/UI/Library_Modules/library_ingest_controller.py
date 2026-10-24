@@ -1643,6 +1643,10 @@ class LibraryIngestController:
         # accept it during the debounce window.
         self._cancel_library_ingest_preflight()
         self._library_ingest_preflight_generation += 1
+        # (TASK-34000.20 AC#3) An Enter/Start armed against the check for
+        # the OLD text dies with it: the bumped generation would already
+        # make it a no-op; clearing keeps the state honest.
+        self._library_ingest_submit_armed_generation = None
         # (task-2015) Feedback must not wait for blur: restart the debounce
         # timer on every edit; its fire runs the pre-flight for the text the
         # user has settled on. The blur/submit triggers still run
@@ -2072,6 +2076,10 @@ class LibraryIngestController:
         self._cancel_library_ingest_preflight()
         self._library_ingest_form.preflight = None
         self._library_ingest_form.preflight_checking = False
+        self._library_ingest_form.preflight_path = ""
+        # (TASK-34000.20 AC#3) ...and no submit may be waiting on a check
+        # that no longer exists.
+        self._library_ingest_submit_armed_generation = None
         # (task-3314) A consent armed against a forecast that no longer
         # exists must not survive it -- submit/Clear/reset all route here.
         self._disarm_library_ingest_start_confirm()
@@ -2097,9 +2105,24 @@ class LibraryIngestController:
         if not path.strip():
             self._library_ingest_form.preflight_checking = False
             return
+        # (TASK-34000.20 AC#3) A deliberate check supersedes the pending
+        # typing-pause one: letting the debounce fire later would restart
+        # this same analysis under a new generation and strand an Enter /
+        # Start armed against THIS one (seen in the gated Pilot arm: Enter
+        # inside the 0.8 s window, check held past it).
+        timer = self._library_ingest_path_debounce_timer
+        if timer is not None:
+            timer.stop()
+            self._library_ingest_path_debounce_timer = None
         self._cancel_library_ingest_preflight()
         self._library_ingest_preflight_generation += 1
         generation = self._library_ingest_preflight_generation
+        if self._library_ingest_submit_armed_generation is not None:
+            # A re-check of the SAME text (blur, Retry check) while a submit
+            # waits: the wait follows the check that will actually land. A
+            # text change never reaches here armed -- the Changed handler
+            # disarms first.
+            self._library_ingest_submit_armed_generation = generation
         self._library_ingest_form.preflight_checking = True
         # (task-2042) In-place: only the summary child re-renders, so a
         # trigger landing mid-word can neither steal focus nor swallow a
@@ -2113,17 +2136,27 @@ class LibraryIngestController:
         self,
         result: PreflightResult,
         generation: int,
+        path: str = "",
     ) -> None:
         """Merge a pre-flight result into the form echo and refresh.
 
         Drops results from a superseded generation: a clear/submit or a
         newer trigger bumped the counter after this worker started, so its
         result describes a path the form is no longer showing (task-2011).
+
+        Args:
+            result: The analysis for ``path``.
+            generation: The pre-flight generation the worker was started
+                under.
+            path: The field text the worker analysed (TASK-34000.20);
+                recorded as ``form.preflight_path`` so a submit can tell a
+                verdict for the current text from a stale one.
         """
         if generation != self._library_ingest_preflight_generation:
             return
         self._library_ingest_form.preflight = result
         self._library_ingest_form.preflight_checking = False
+        self._library_ingest_form.preflight_path = path.strip()
         # Re-evaluate the complete request identity after a fresh result.
         # An identical refresh keeps consent; changed warnings or candidate
         # membership revoke it. This preview uses only the captured result.
@@ -2136,6 +2169,13 @@ class LibraryIngestController:
         # (task-2042) In-place for the same reason as the trigger: the
         # result can land while the user is typing or mid-click.
         self._update_library_ingest_dynamic_regions()
+        armed = self._library_ingest_submit_armed_generation
+        if armed is not None and armed == generation:
+            # TASK-34000.20 AC#3: Enter (or Start) arrived while this check
+            # was running; the one-shot submit fires now, against THIS
+            # result, through the same gate the press would have used.
+            self._library_ingest_submit_armed_generation = None
+            self._submit_library_ingest_form()
 
     @on(Button.Pressed, "#library-ingest-start")
     def handle_library_ingest_start(self, event: Button.Pressed) -> None:
@@ -2151,20 +2191,20 @@ class LibraryIngestController:
     def handle_library_ingest_path_submitted(self, event: Input.Submitted) -> None:
         """Submit the ingest form when Enter is pressed in the path field.
 
-        Mirrors the Start import button exactly, but only when the Start
-        gate is open (``start_enabled``) -- Enter on a blank path (or with
-        the registry/DB unavailable) stays quiet instead of nagging, since
-        the always-visible gate line already explains the blocker
-        (2026-07 UAT: Enter in a valid path field previously did nothing).
-        Pre-flight is also triggered so a final Enter in a non-submitting
-        path still refreshes the summary.
+        Mirrors the Start import button exactly: both route through
+        ``_submit_library_ingest_form``, which (TASK-34000.20 AC#3) runs
+        the pre-check for the current text itself when none has landed yet
+        and imports only on that result. Enter on a blank path stays quiet
+        instead of nagging (2026-07 UAT: Enter in a valid path field
+        previously did nothing); a closed gate with an empty gate line --
+        registry/DB unavailable, a path the check could not find -- stays
+        quiet too, since what is on screen already explains the blocker.
 
         Args:
             event: Input submission event emitted by the path field.
         """
         event.stop()
-        self._trigger_library_ingest_preflight(self._library_ingest_form.path)
-        if not self._build_library_ingest_state().start_enabled:
+        if not self._library_ingest_form.path.strip():
             return
         self._submit_library_ingest_form()
 
@@ -2333,6 +2373,20 @@ class LibraryIngestController:
                 return False
         return bool(armed.active_job_ids)
 
+    def _library_ingest_preflight_is_current(self) -> bool:
+        """True when the stored pre-check describes the text in the field right now.
+
+        (TASK-34000.20 AC#3) ``start_enabled`` reads the STORED result and
+        knows nothing about whether a check is running or which text the
+        result was for; this is the one predicate a submit consults.
+        """
+        form = self._library_ingest_form
+        return (
+            not form.preflight_checking
+            and form.preflight is not None
+            and form.preflight_path == form.path.strip()
+        )
+
     def _submit_library_ingest_form(self) -> None:
         """Validate the ingest form and submit a new Library ingest job.
 
@@ -2354,12 +2408,22 @@ class LibraryIngestController:
         shouldn't have to retype for every submission.
         """
         form = self._library_ingest_form
-        submitted_source = self._resolve_ingest_source(form.path.strip())
-        if submitted_source is None:
+        raw_path = form.path.strip()
+        if not raw_path:
+            # Unchanged: the blank-path notice is ``_resolve_ingest_source``'s.
+            self._resolve_ingest_source(raw_path)
             return
-        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
-        if not callable(submit):
-            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
+        if not self._library_ingest_preflight_is_current():
+            # TASK-34000.20 AC#3: never import on a verdict for other text,
+            # or on no verdict at all. Arm a one-shot submit for the check
+            # that is (or is about to be) in flight; the result fires it.
+            # The trigger bumps the generation BEFORE the arm reads it, so
+            # the arm names the check that will land.
+            if not form.preflight_checking:
+                self._trigger_library_ingest_preflight(form.path)
+            self._library_ingest_submit_armed_generation = (
+                self._library_ingest_preflight_generation
+            )
             return
         # (task-14823) A selection the pre-flight already knows can import
         # nothing must not reach the queue: an empty folder used to leave
@@ -2374,11 +2438,24 @@ class LibraryIngestController:
         # this machine imports happily -- so this one refusal serves both
         # backends and the reason it quotes is the gate's own, whichever
         # of the two it is.
+        # (TASK-34000.20 AC#2) Checked BEFORE the source is resolved: a path
+        # the check could not find is already explained once, under the
+        # field, and its gate line is empty -- so this returns quietly
+        # instead of adding a "Could not find that file." toast on top.
         gate_state = self._build_library_ingest_state()
         if gate_state.selection_has_nothing_importable is True or not gate_state.start_enabled:
             reason = gate_state.start_quiet_line
             if reason:
                 self._notify_library_ingest_warning(reason)
+            return
+        submitted_source = self._resolve_ingest_source(raw_path)
+        if submitted_source is None:
+            # The fallback for a file removed between check and submit: the
+            # warning log + "Could not find that file." toast stay here.
+            return
+        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
+        if not callable(submit):
+            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
         pending = self._current_library_ingest_start_consent(
             submitted_source, gate_state

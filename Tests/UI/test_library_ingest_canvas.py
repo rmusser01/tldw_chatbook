@@ -2957,6 +2957,9 @@ async def test_path_error_offers_a_way_to_pick_a_file_not_retry():
     async with app.run_test() as pilot:
         assert len(pilot.app.query("#ingest-preflight-retry")) == 0
         assert pilot.app.query_one("#ingest-preflight-choose", Button)
+        # (TASK-34000.20 AC#2) Exactly one sentence for a path problem.
+        assert len(pilot.app.query("#ingest-preflight-error-0")) == 1
+        assert not pilot.app.query("#ingest-preflight-error-1")
 
 
 @pytest.mark.asyncio

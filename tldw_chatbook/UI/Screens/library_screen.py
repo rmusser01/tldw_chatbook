@@ -151,7 +151,7 @@ from ...Library.ingest_capabilities import (
     get_capabilities,
     list_type_groups,
 )
-from ...Library.ingest_preflight import analyze_path
+from ...Library.ingest_preflight import analyze_path, expand_user_path
 from ...Library.ingest_types import PreflightResult
 from ...Widgets.Library.library_ingest_canvas import (
     ingest_scope_label,
@@ -29723,16 +29723,17 @@ class LibraryScreen(BaseAppScreen):
                 total_files=0,
             )
         self.app.call_from_thread(
-            self._apply_library_ingest_preflight_result, result, generation
+            self._apply_library_ingest_preflight_result, result, generation, path
         )
 
     def _apply_library_ingest_preflight_result(
         self,
         result: PreflightResult,
         generation: int,
+        path: str = "",
     ) -> None:
         return self._ingest_controller._apply_library_ingest_preflight_result(
-            result, generation
+            result, generation, path
         )
 
     def _trigger_preflight(self, path: str) -> None:
@@ -29785,10 +29786,16 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return None
             return raw_path
+        # (TASK-34000.20) One expansion rule, two readers: the pre-check's
+        # ``analyze_path`` expands ``~`` through this same helper, so the
+        # verdict shown under the field and the path imported here agree.
+        # An unexpandable ``~user`` is "not found" through the one existing
+        # warning below (no second diagnostic site).
         try:
-            validated_path = validate_path_simple(
-                Path(raw_path).expanduser(), require_exists=True
-            )
+            expanded = expand_user_path(raw_path)
+            if expanded is None:
+                raise ValueError("~user prefix names no account on this machine")
+            validated_path = validate_path_simple(expanded, require_exists=True)
         except ValueError:
             logger.opt(exception=True).warning(
                 f"Rejected Library ingest path {raw_path!r}."

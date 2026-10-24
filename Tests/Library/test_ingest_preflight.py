@@ -424,6 +424,53 @@ class TestPathErrorsAreMarked:
         assert result.errors == []
         assert result.path_invalid is False
 
+    def test_a_tilde_path_to_an_existing_file_is_analyzed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TASK-34000.20 AC#1: ``~/`` is the user's home, not a security risk."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        docs = tmp_path / "fixtures" / "import-docs"
+        docs.mkdir(parents=True)
+        (docs / "team-handbook.md").write_text("# Handbook\n", encoding="utf-8")
+        result = analyze_path("~/fixtures/import-docs/team-handbook.md")
+        assert result.errors == []
+        assert result.path_invalid is False
+        assert result.total_files == 1
+        assert result.type_groups["generic"] == [str(docs / "team-handbook.md")]
+
+    def test_a_tilde_path_that_does_not_exist_is_one_not_found_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TASK-34000.20 AC#2: never 'dangerous pattern' for a missing ``~/`` path."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        result = analyze_path("~/fixtures/import-docs/nope.md")
+        assert result.errors == ["Path not found: ~/fixtures/import-docs/nope.md"]
+        assert result.path_invalid is True
+
+    def test_an_unknown_user_tilde_path_is_not_found_not_a_crash(self) -> None:
+        """Negative control (green on base: no ``~/`` substring): ``~user``
+        for a user that does not exist cannot be expanded and is simply
+        not found."""
+        result = analyze_path("~no_such_user_34000/notes.md")
+        assert result.path_invalid is True
+        assert len(result.errors) == 1
+        assert "dangerous" not in result.errors[0]
+
+    def test_a_bare_tilde_is_the_home_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review Focus 3: ``~`` alone stages the whole home folder -- the
+        pre-check must SAY so (a directory forecast), so the Enter-waits
+        gate shows it before anything imports. RED on d0d926e11b with
+        ``errors == ["Path not found: ~"]``: no ``~/`` substring, so the
+        dangerous-pattern guard let it through, but nothing expanded it and
+        ``Path("~")`` is a relative name in the cwd."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        result = analyze_path("~", scan_limit=10)
+        assert result.errors == []
+        assert result.total_files == 1
+
     def test_unreachable_url_is_not_a_path_problem(self, probing_allowed) -> None:
         """A URL that failed to respond is worth retrying; a typo'd path isn't."""
         with patch(

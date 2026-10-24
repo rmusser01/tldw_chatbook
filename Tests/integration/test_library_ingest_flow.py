@@ -130,6 +130,7 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
 
     form = screen._ingest_state.form
     form.path = str(pdf)
+    form.preflight_path = str(pdf)  # (TASK-34000.20) a staged verdict names the path it describes
     form.preflight = _preflight_result(
         type_groups={"pdf": [str(pdf)]},
         warnings=[warning],
@@ -176,6 +177,7 @@ async def test_real_screen_to_app_folder_member_change_rearms_without_queueing(
     active = app.library_ingest_jobs.submit(source_path=str(matching))
     form = screen._ingest_state.form
     form.path = str(folder)
+    form.preflight_path = str(folder)
     form.preflight = _preflight_result(
         type_groups={"generic": [str(first), str(matching)]},
         total_files=2,
@@ -257,6 +259,7 @@ def test_options_persist_to_config(monkeypatch):
         author="",
         keywords="",
         path="doc.pdf",
+        preflight_path="doc.pdf",
         preflight=_preflight_result(type_groups={"pdf": ["doc.pdf"]}),
         preflight_checking=False,
     )
@@ -347,6 +350,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
         author="",
         keywords="",
         path="notes.txt",
+        preflight_path="notes.txt",
         preflight=_preflight_result(type_groups={"generic": ["notes.txt"]}),
         preflight_checking=False,
     )
@@ -380,6 +384,7 @@ async def test_job_persists_to_db(library_screen, tmp_path):
     form = screen._ingest_state.form
     form.path = str(pdf)
     form.type_options = {"pdf": {"pdf_engine": "pymupdf"}}
+    form.preflight_path = str(pdf)
     form.preflight = _preflight_result(type_groups={"pdf": [str(pdf)]})
 
     screen._submit_library_ingest_form()
@@ -403,6 +408,7 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
 
     form = screen._ingest_state.form
     form.path = str(unsupported)
+    form.preflight_path = str(unsupported)
     form.preflight = _preflight_result(type_groups={"generic": [str(unsupported)]})
 
     screen._submit_library_ingest_form()

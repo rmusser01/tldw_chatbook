@@ -22,6 +22,7 @@ from tldw_chatbook.Library.library_ingest_state import (
     _GLYPH_CANCELLED,
     _GLYPH_FAILED,
     MEDIA_DB_UNAVAILABLE_COPY,
+    PATH_PROBLEM_LINE,
     IngestQueueRow,
     LibraryIngestFormState,
     group_ingest_queue_rows,
@@ -134,6 +135,33 @@ def test_available_seams_and_typed_path_enable_start():
         (), form=LibraryIngestFormState(path="/tmp/a.txt")
     )
     assert state.start_enabled is True
+
+
+def test_a_path_problem_renders_exactly_one_sentence_and_no_gate_line() -> None:
+    """TASK-34000.20 AC#2: one message per failure.
+
+    A path the pre-check cannot find used to paint its own ``Path not
+    found: …`` under the field AND the gate sentence beside Start (the
+    review's capture 02 showed three sentences for one typo). Owner ruling
+    2026-10-23 (question 2): the sentence under the field is the one that
+    stays; the gate line is empty and Start stays disabled.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="~/nope.md"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: ~/nope.md"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    assert state.errors == [PATH_PROBLEM_LINE]
+    assert state.start_quiet_line == ""
+    assert state.start_enabled is False
 
 
 # --- start_quiet_line (L3b AB wave, A4) ------------------------------------
@@ -1725,7 +1753,9 @@ def test_estimate_and_breakdown_suppressed_when_preflight_has_errors():
     state = build_library_ingest_state(
         (), form=LibraryIngestFormState(path="/nope/missing.txt"), preflight=preflight
     )
-    assert state.errors == ["Path not found: /nope/missing.txt"]
+    # (TASK-34000.20 AC#2) The pre-check's raw "Path not found: …" is
+    # collapsed to the one plain sentence; still exactly one error line.
+    assert state.errors == [PATH_PROBLEM_LINE]
     assert state.estimate_line == ""
     assert state.type_breakdown_line == ""
 
@@ -2518,7 +2548,10 @@ def test_unresolvable_path_gates_start_with_an_explanation() -> None:
 
     (task-2230) It used to leave Start styled exactly like a valid
     selection with a BLANK gate line, and pressing it left no queue
-    record at all.
+    record at all. (TASK-34000.20 AC#2, owner ruling 2026-10-23) The
+    explanation now lives ONCE, under the field as ``PATH_PROBLEM_LINE``;
+    the gate line beside Start is empty rather than repeating it, and
+    Start stays disabled.
     """
     state = build_library_ingest_state(
         (),
@@ -2534,9 +2567,8 @@ def test_unresolvable_path_gates_start_with_an_explanation() -> None:
         ),
     )
     assert not state.start_enabled
-    assert state.start_quiet_line == (
-        "Can't find that path — check it, or use Browse… to pick a file or folder."
-    )
+    assert state.errors == [PATH_PROBLEM_LINE]
+    assert state.start_quiet_line == ""
 
 
 def test_matched_rows_and_tallies_use_the_forecast_vocabulary() -> None:

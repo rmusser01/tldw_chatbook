@@ -248,7 +248,16 @@ _BUDGETS: dict[str, int] = {
     # Keyword-only constructor arity measured, not assumed: 38 -> 41 (43
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3080,
+    # 2026-10-23, TASK-34000.20 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value). dev `d0d926e11b` was
+    # ALREADY over this row before the P1-C batch (measured 3087 vs 3080).
+    # This task adds `_library_ingest_preflight_is_current`, the wait-gate at
+    # the top of `_submit_library_ingest_form` (Enter and Start now import
+    # only on a pre-check for the current text), the armed-submit fire in
+    # `_apply_library_ingest_preflight_result`, the debounce stop + arm
+    # re-point in `_trigger_library_ingest_preflight`, and two disarm sites:
+    # 3080 -> 3164 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3164,
     # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
     # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
     # stance of holding this row at 371. That stance was correct FOR A

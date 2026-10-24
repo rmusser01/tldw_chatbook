@@ -33,6 +33,32 @@ from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
+def expand_user_path(raw: str) -> Path | None:
+    """Expand a leading ``~`` the way the shell would; ``None`` when it cannot.
+
+    TASK-34000.20: the pre-check used to hand the raw text to
+    ``validate_path_simple``, whose ``"~/"`` guard then called an ordinary
+    home-relative path a security risk while the submit path expanded the
+    same text and imported it. Expansion happens HERE, before validation,
+    so both readers (``analyze_path`` and the screen's
+    ``_resolve_ingest_source``) see one path. ``validate_path_simple``
+    keeps refusing an unexpanded ``~`` for every other caller (TASK-32927
+    relies on it). ``~nosuchuser/x`` cannot be expanded: ``None`` means
+    "not found".
+
+    Args:
+        raw: The path text as the user typed it.
+
+    Returns:
+        The expanded path, or ``None`` when the ``~user`` prefix names no
+        account on this machine.
+    """
+    try:
+        return Path(raw).expanduser()
+    except (RuntimeError, KeyError):
+        return None
+
+
 def _safe_size(path: Path) -> int:
     """Return the size of ``path`` in bytes, or ``0`` on ``OSError``."""
     try:
@@ -419,8 +445,23 @@ def analyze_path(
                     )
                 warnings.extend(get_tooling_warnings(group))
     else:
+        # (TASK-34000.20) Expand ``~`` BEFORE validation: ``validate_path_
+        # simple``'s ``"~/"`` scan runs on ``str(expanded)``, which no
+        # longer starts with ``~``. The not-found message keeps the user's
+        # own text so the line under the field reads back what was typed.
+        expanded = expand_user_path(path_or_url)
+        if expanded is None:
+            return PreflightResult(
+                type_groups=type_groups,
+                warnings=warnings,
+                errors=[f"Path not found: {path_or_url}"],
+                total_size=total_size,
+                truncated=truncated,
+                total_files=total_files,
+                path_invalid=True,
+            )
         try:
-            p = validate_path_simple(path_or_url, require_exists=False)
+            p = validate_path_simple(expanded, require_exists=False)
         except ValueError as e:
             errors.append(f"Invalid path: {e}")
             return PreflightResult(

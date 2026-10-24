@@ -52,7 +52,15 @@ In server mode the **Export** rail row is disabled, with the tooltip
   time), any "⚠" warnings about missing tooling, and — if some files
   can't be handled — "2 unsupported files will be skipped: …" (importing
   on the server, the same line reads "will fail", because that backend
-  records a failure row rather than skipping quietly). The pre-check does
+  records a failure row rather than skipping quietly). A path may start
+  with `~` (`~/Documents/paper.pdf` is read as your home folder's
+  `Documents/paper.pdf`). A path that cannot be found shows one line under
+  the field — "Can't find that path — check it, or use Browse… to pick a
+  file or folder." — with a "Choose a file…" button. Enter (and Start
+  import) start an import only once the pre-check for what is in the field
+  has finished; pressing Enter while "Checking…" is shown starts the import
+  when the check lands, and never when the check says the path is wrong.
+  The pre-check does
   **not** contact a URL: it reads the address, not the site, so nothing is
   fetched while you are still typing one. A URL that turns out not to be
   fetchable is reported by the import job itself, where the failure carries
