@@ -3093,8 +3093,13 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
         pushed["screen"] = screen
         pushed["callback"] = callback
 
-    async def fake_load_import_file(file_path: str) -> None:
+    loaded_text: list[str] = []
+    publish = loaded_text.append
+    panel = SimpleNamespace(file_text_receiver=lambda: publish)
+
+    async def fake_load_import_file(file_path: str, receiver) -> None:
         scheduled["loaded_path"] = file_path
+        scheduled["receiver"] = receiver
 
     def fake_run_worker(coroutine, **kwargs):
         scheduled["coroutine"] = coroutine
@@ -3105,7 +3110,7 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
         run_worker=fake_run_worker,
         _load_import_file=fake_load_import_file,
     )
-    event = SimpleNamespace(stop=lambda: stopped.append(True))
+    event = SimpleNamespace(stop=lambda: stopped.append(True), panel=panel)
 
     await MCPWorkbench.on_mcp_import_panel_file_requested(handler, event)
 
@@ -3120,8 +3125,7 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
     }
     await scheduled["coroutine"]
     assert scheduled["loaded_path"] == str(config_path)
-
-    loaded_text: list[str] = []
+    assert scheduled["receiver"] is publish
     notifications: list[tuple[str, str]] = []
     loader = SimpleNamespace(
         app=SimpleNamespace(
@@ -3129,12 +3133,9 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
                 (str(message), severity)
             )
         ),
-        _import_panel_or_none=lambda: SimpleNamespace(
-            set_file_text=lambda text: loaded_text.append(text)
-        ),
     )
 
-    await MCPWorkbench._load_import_file(loader, str(config_path))
+    await MCPWorkbench._load_import_file(loader, str(config_path), publish)
 
     assert notifications == []
     assert loaded_text == [config_path.read_text()]

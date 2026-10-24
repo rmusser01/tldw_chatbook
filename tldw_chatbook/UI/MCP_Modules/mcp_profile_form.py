@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from textual.app import ComposeResult
@@ -372,6 +373,18 @@ class MCPProfileForm(Vertical):
             self.post_message(self.Cancelled())
 
 
+class _ImportTextArea(DetachSafeTextArea):
+    """Count accepted edits before Changed reaches the import panel's queue."""
+
+    draft_revision = 0
+
+    def post_message(self, message: Message) -> bool:
+        posted = super().post_message(message)
+        if posted and isinstance(message, TextArea.Changed):
+            self.draft_revision += 1
+        return posted
+
+
 class MCPImportPanel(Vertical):
     """Paste-or-file import of Claude-Desktop-style `mcpServers` JSON.
 
@@ -390,7 +403,9 @@ class MCPImportPanel(Vertical):
     """
 
     class FileRequested(Message, namespace="mcp_import_panel"):
-        pass
+        def __init__(self, panel: MCPImportPanel) -> None:
+            super().__init__()
+            self.panel = panel
 
     class ImportRequested(Message, namespace="mcp_import_panel"):
         def __init__(self, candidates: list[ImportCandidate]) -> None:
@@ -404,6 +419,7 @@ class MCPImportPanel(Vertical):
         super().__init__(**kwargs)
         self._existing_ids = set(existing_ids or ())
         self._candidates: list[ImportCandidate] = []
+        self._file_read_revision = 0
 
     # F-056: Escape mirrors the Cancel button (same `Cancelled` message the
     # `mcp-import-cancel` press posts -- one path, no drift).
@@ -414,6 +430,28 @@ class MCPImportPanel(Vertical):
         # TextArea -- `call_after_refresh` so this lands after Textual's own
         # mount-time focus settling instead of racing it.
         self.call_after_refresh(self.query_one("#mcp-import-text", TextArea).focus)
+
+    def post_message(self, message: Message) -> bool:
+        if isinstance(message, self.Cancelled):
+            self._file_read_revision += 1
+        return super().post_message(message)
+
+    def file_text_receiver(self) -> Callable[[str], None]:
+        """Bind a selected file to this panel and its current accepted draft."""
+        self._file_read_revision += 1
+        request_revision = self._file_read_revision
+        editor = self.query_one("#mcp-import-text", _ImportTextArea)
+        draft_revision = editor.draft_revision
+
+        def receive(text: str) -> None:
+            if (
+                self.is_mounted
+                and request_revision == self._file_read_revision
+                and draft_revision == editor.draft_revision
+            ):
+                self.set_file_text(text)
+
+        return receive
 
     def action_cancel_import(self) -> None:
         """F-056: Escape -- same path as the Cancel button."""
@@ -430,7 +468,7 @@ class MCPImportPanel(Vertical):
             classes="ds-field-row",
             markup=False,
         )
-        yield DetachSafeTextArea("", id="mcp-import-text")
+        yield _ImportTextArea("", id="mcp-import-text")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "From file…",
@@ -514,7 +552,7 @@ class MCPImportPanel(Vertical):
         button_id = event.button.id or ""
         if button_id == "mcp-import-file":
             event.stop()
-            self.post_message(self.FileRequested())
+            self.post_message(self.FileRequested(self))
         elif button_id == "mcp-import-preview":
             event.stop()
             await self._preview()

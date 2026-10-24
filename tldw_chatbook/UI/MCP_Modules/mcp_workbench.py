@@ -7,7 +7,7 @@ import asyncio
 import inspect
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -6696,12 +6696,6 @@ class MCPWorkbench(Container):
 
     # -- T8: mcpServers import (paste or file) ---------------------------------
 
-    def _import_panel_or_none(self) -> MCPImportPanel | None:
-        try:
-            return self.query_one(MCPImportPanel)
-        except Exception:
-            return None
-
     async def on_mcp_import_panel_file_requested(
         self, event: MCPImportPanel.FileRequested
     ) -> None:
@@ -6711,7 +6705,9 @@ class MCPWorkbench(Container):
         def on_file_selected(file_path: Any) -> None:
             if file_path:
                 self.run_worker(
-                    self._load_import_file(str(file_path)),
+                    self._load_import_file(
+                        str(file_path), event.panel.file_text_receiver()
+                    ),
                     group="mcp-import-file",
                     exclusive=True,
                 )
@@ -6726,7 +6722,9 @@ class MCPWorkbench(Container):
             callback=on_file_selected,
         )
 
-    async def _load_import_file(self, file_path: str) -> None:
+    async def _load_import_file(
+        self, file_path: str, publish: Callable[[str], None] | None = None
+    ) -> None:
         """Read a user-picked mcpServers config file into the import panel.
 
         F1 fix: `EnhancedFileOpen` lets the user browse anywhere on disk, so
@@ -6766,9 +6764,8 @@ class MCPWorkbench(Container):
                 _toast(f"Could not read {file_path}: {exc}"), severity="error"
             )
             return
-        panel = self._import_panel_or_none()
-        if panel is not None:
-            panel.set_file_text(text)
+        if publish is not None:
+            publish(text)
 
     async def on_mcp_import_panel_cancelled(
         self, event: MCPImportPanel.Cancelled
