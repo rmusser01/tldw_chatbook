@@ -498,7 +498,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36454..36458: append 56 exact mounted cases, retaining all 664 inherited
 # selectors. Current UI lane: 17 shards. Conservative timing replay preserves
 # the first 181 entries and all 56 new positions; see the 2026-10-23 QA report.
-MINIMUM_FILES = 723
+# Required-aggregate follow-up: append the two completion-safety controls.
+MINIMUM_FILES = 725
 # Latest dev adds three P1-C module selectors at the tail; none are dropped.
 
 

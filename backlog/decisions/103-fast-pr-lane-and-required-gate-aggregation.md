@@ -303,3 +303,8 @@ at least 17 shards even with ideal balance under the existing 1020s target
 999.83s at seventeen; this is an estimate requiring current-head hosted CI.
 The first 181 and last 104 census entries stay fixed, with all 720 unique
 selectors preserved. See [qualification evidence](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md).
+
+The same follow-up later appends two completion-safety regressions after the
+original 720 positions (722 selectors total). The seventeen-shard matrix,
+existing caps and aggregation policy stay unchanged; the QA report separates
+the earlier passing component timings from final-head qualification.

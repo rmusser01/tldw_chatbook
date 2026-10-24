@@ -151,6 +151,9 @@ async def finish_dictionary_settings_save(
     detail.set_status("Saved.")
     screen._update_title()
     await screen._render_dictionary_rows(query=screen.state.search_query)
-    screen.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+    library = next(iter(screen.query(PersonasLibraryPane)), None)
+    if library is None:
+        return
+    library.mark_active_row("dictionary", entity_id)
     screen._sync_inspector_console_actions()
     await screen._refresh_dictionary_versions()

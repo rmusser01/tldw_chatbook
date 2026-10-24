@@ -1116,6 +1116,10 @@ Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_liv
 Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-user]
 Tests/UI/test_library_prompt_pending_drafts.py::test_save_ack_mount_refreshes_existing_other_lane
 
+# TASK-36455/36458 aggregate guards: retain all 720 prior positions and caps.
+Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_dictionary_save_survives_library_pane_removed_during_completion
+Tests/UI/test_parakeet_install_selection_retention.py::test_install_failure_notification_renders_markup_shaped_text_literally
+
 # Latest dev P1-C regressions; append without moving the qualified slots.
 Tests/UI/test_library_ingest_tilde_path_and_enter_waits.py
 Tests/UI/test_library_notes_sync_skips_bad_files_by_name.py

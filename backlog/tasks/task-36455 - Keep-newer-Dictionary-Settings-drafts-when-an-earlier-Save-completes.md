@@ -1,7 +1,7 @@
 ---
 id: TASK-36455
 title: Keep newer Dictionary Settings drafts when an earlier Save completes
-status: Done
+status: In Progress
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -26,7 +26,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 21:46
+updated_date: 2026-10-24 06:55
 ---
 
 ## Description
@@ -64,8 +64,8 @@ ADR check: no new ADR expected for a bounded repair within existing owners and c
 ADR required: no
 ADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md; backlog/decisions/115-personas-demand-mounted-center-views.md; backlog/decisions/079-workspace-assistant-defaults.md
 Reason: bounded acknowledgement bug fix within existing dictionary form, screen, persistence and guard owners; no schema, boundary, policy or architecture change.
+CI aggregate follow-up: the extracted completion has one new W002 post-await Library-pane lookup. Add a mounted real-Save/SQLite pane-removal RED control, replace the unsafe lookup with safe bounded publication, preserve ordinary and newer-draft behavior, append the control to the existing required census, and run the guard/compatibility/boot checks plus fresh Superpowers review. Do not expand the safety census. ADR required: no; existing ADR-033/011 state/UI ownership and ADR-097 apply. See the latest 2026-10-23 pending-draft plan section.
 <!-- SECTION:PLAN:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
@@ -84,4 +84,5 @@ Dictionary Settings Save acknowledges the submitted raw controls without reloadi
 Twelve mounted real-service/SQLite regression cases pass, with next-Save/version, queued notification, failure and Stay controls; eight existing widget and 17 screen contracts pass with the documented bootstrap qualification. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for exact evidence and limits. Hosted UI3 exposed a fixture selecting a stale Character row before Dictionary list replacement. It now waits for the exact kind-qualified Dictionary row and selected kind/ID/detail. All 12 case bodies/IDs stay unchanged; four native readiness/Save/guard controls pass (4/4). Character-chat architecture documentation is updated. Existing ADR-033 application state and ADR-046/079/115 apply; no new ADR. Independent Superpowers review approved the implementation.
 
 Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
+Required-aggregate follow-up: the extracted completion now treats a missing Library pane after row rendering as an ended presentation context. Real SQLite Save identity/version and raw-draft acknowledgement remain unchanged. A mounted actual-Save control witnesses committed version2 and pane removal before releasing completion, then proves later typing stays usable; matched RED raises NoMatches and GREEN passes. The obsolete old-wrapper two-site W002 pin is removed; no new unsafe row is allowed. The complete targeted selection passes213 cases, and the exact native worker guard passes. Existing ADR-033/011/097 and the linked QA report cover this bounded lifetime repair; fresh scoped Superpowers review and final-head hosted CI remain the delivery gate.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

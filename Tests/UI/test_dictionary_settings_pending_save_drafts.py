@@ -400,3 +400,68 @@ async def test_pending_dictionary_save_without_later_edit_becomes_clean(
         assert screen._selected_dictionary_version == 2
         assert detail.query_one("#personas-dict-name", Input).value == "Submitted"
         assert not screen.state.has_unsaved_changes and not _dirty(screen)
+
+
+@private_profile_test
+async def test_dictionary_save_survives_library_pane_removed_during_completion(
+    request, mock_app_instance, tmp_path, monkeypatch
+):
+    """A committed Save must not kill the screen when its list pane disappears."""
+    from tldw_chatbook.UI.Persona_Modules import persona_save_completion
+
+    async with _dictionary_app(mock_app_instance, tmp_path, monkeypatch) as (
+        pilot,
+        screen,
+        detail,
+        service,
+        record,
+    ):
+        await _submitted(pilot, detail)
+        entered, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original_render = screen._render_dictionary_rows
+        original_completion = persona_save_completion.finish_dictionary_settings_save
+
+        async def held_render(*args, **kwargs):
+            await original_render(*args, **kwargs)
+            if screen._selected_dictionary_version == 2 and not entered.is_set():
+                entered.set()
+                await release.wait()
+
+        async def observed_completion(*args, **kwargs):
+            try:
+                return await original_completion(*args, **kwargs)
+            finally:
+                completed.set()
+
+        monkeypatch.setattr(screen, "_render_dictionary_rows", held_render)
+        monkeypatch.setattr(
+            persona_save_completion,
+            "finish_dictionary_settings_save",
+            observed_completion,
+        )
+        detail.query_one("#personas-dict-settings-save", Button).press()
+        try:
+            await _until(entered.is_set)
+            stored = await service.get_dictionary(record["id"], mode="local")
+            assert stored["name"] == "Submitted" and stored["version"] == 2
+            library = screen.query_one(PersonasLibraryPane)
+            removal = library.remove()
+            await _until(lambda: not screen.query(PersonasLibraryPane))
+            assert not completed.is_set()
+            print(
+                "DICTIONARY_COMMITTED_V2_LIBRARY_PANE_REMOVED_COMPLETION_HELD",
+                flush=True,
+            )
+        finally:
+            release.set()
+        await _until(completed.is_set)
+        await removal
+        await pilot.pause()
+        assert screen.is_mounted and detail.is_mounted
+        name = detail.query_one("#personas-dict-name", Input)
+        name.focus()
+        await pilot.press("end", "!")
+        await _until(lambda: name.value == "Submitted!")
+        assert screen.state.has_unsaved_changes and _dirty(screen)
+        stored = await service.get_dictionary(record["id"], mode="local")
+        assert stored["name"] == "Submitted" and stored["version"] == 2
