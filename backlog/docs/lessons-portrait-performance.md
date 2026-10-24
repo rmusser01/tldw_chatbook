@@ -25,3 +25,16 @@ That postponed closure to a third window despite the two-raw-window contract.
 use each window's actual duration only for exponential smoothing. Separately test
 fractional-rate source positions and two slightly-short quiet windows. The corrected
 TASK-36543 filter closes on the second quiet window without accumulated-time drift.
+
+## Retire output identity before releasing in-flight observations (TASK-36544, 2026-10-23)
+
+**Incident.** Stop cleared the latest mouth, but a notification already holding an
+open pose published afterward with the same injected clock timestamp. Timestamp
+ordering alone accepted it and reopened the mouth after Stop. Repeated old-sink
+cleanup could also clear a replacement sharing the request's presentation channel.
+
+**What to do.** Allocate an output epoch on successful sink admission and one
+retirement epoch on termination. Retain that retirement marker for duplicate
+cleanup; in-flight poses retain their older epoch. Serialize non-realtime analysis
+and metadata release, while keeping Stop independent of the publisher lock. Test
+the equal-timestamp race with barriers, rather than relying on elapsed time.

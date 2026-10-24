@@ -75,8 +75,15 @@ def _settle_notify_queue(notify_q, timeout: float = 5.0) -> None:
 
 
 class FakeStream:
-    def __init__(self, callback, samplerate, channels, blocksize):
+    def __init__(
+        self, callback, samplerate, channels, blocksize, finished_callback=None
+    ):
         self.callback = callback
+        self.finished_callback = finished_callback
+        self.channels = channels
+        self.auto_finish = True
+        self.finished = False
+        self.closed = False
         self.blocksize = blocksize
         self.started = False
         self.aborted = False
@@ -91,19 +98,26 @@ class FakeStream:
         self.stopped_via_drain = True  # the WRONG stop; must stay unused
 
     def close(self):
-        pass
+        self.closed = True
 
     def abort(self):
         self.abort_thread = threading.current_thread()
         self.aborted = True
 
-    def tick(self, n=1):
+    def finish_output(self):
+        self.finished = True
+        if self.finished_callback is not None:
+            self.finished_callback()
+
+    def tick(self, n=1, time_info=None):
         for _ in range(n):
-            if self.aborted:
+            if self.aborted or self.finished:
                 return
-            out = np.zeros((self.blocksize, 1), dtype=np.int16)
-            self.callback(out, self.blocksize, None, None)
+            out = np.zeros((self.blocksize, self.channels), dtype=np.int16)
+            drained = self.callback(out, self.blocksize, time_info, None)
             self.out.append(out.tobytes())
+            if drained and self.auto_finish:
+                self.finish_output()
             # The sink may deliver events for this block asynchronously off
             # the calling ("callback") thread (see StreamingPcmSink's notify
             # thread). Wait for that hand-off to fully settle -- including
@@ -120,8 +134,14 @@ class FakeStream:
 def _mk(events):
     holder = {}
 
-    def factory(*, samplerate, channels, blocksize, callback):
-        holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
+    def factory(*, samplerate, channels, blocksize, callback, finished_callback):
+        holder["s"] = FakeStream(
+            callback,
+            samplerate,
+            channels,
+            blocksize,
+            finished_callback=finished_callback,
+        )
         return holder["s"]
 
     sink = StreamingPcmSink(
@@ -250,8 +270,14 @@ def test_stop_during_underrun_enqueue_does_not_orphan_a_queue_item(monkeypatch):
             holder["sink"].stop()
         stop_finished.set()
 
-    def factory(*, samplerate, channels, blocksize, callback):
-        holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
+    def factory(*, samplerate, channels, blocksize, callback, finished_callback):
+        holder["s"] = FakeStream(
+            callback,
+            samplerate,
+            channels,
+            blocksize,
+            finished_callback=finished_callback,
+        )
         return holder["s"]
 
     sink = StreamingPcmSink(
@@ -324,8 +350,14 @@ def test_listener_stop_from_sink_started_does_not_abort_on_the_callback_thread()
         if isinstance(e, SinkStarted):
             holder["sink"].stop()  # reentrant, as a real barge-in listener would do
 
-    def factory(*, samplerate, channels, blocksize, callback):
-        holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
+    def factory(*, samplerate, channels, blocksize, callback, finished_callback):
+        holder["s"] = FakeStream(
+            callback,
+            samplerate,
+            channels,
+            blocksize,
+            finished_callback=finished_callback,
+        )
         return holder["s"]
 
     sink = StreamingPcmSink(
@@ -355,7 +387,9 @@ def test_drain_tears_down_the_stream_and_stop_afterward_is_clean():
     sink.feed(_pcm(16))
     sink.close()
     h["s"].tick(20)  # drains fully
-    assert h["s"].aborted is True, "a completed utterance must not leak the stream"
+    assert h["s"].closed and not h["s"].aborted, (
+        "natural completion closes only after native output finishes"
+    )
     assert sink._stream is None
     before = len(events)
     sink.stop()  # calling stop() after a natural drain...
@@ -368,8 +402,14 @@ def test_stop_racing_open_wins_and_stream_is_never_left_running():
     (events,) = ([],)
     holder = {}
 
-    def factory(*, samplerate, channels, blocksize, callback):
-        stream = FakeStream(callback, samplerate, channels, blocksize)
+    def factory(*, samplerate, channels, blocksize, callback, finished_callback):
+        stream = FakeStream(
+            callback,
+            samplerate,
+            channels,
+            blocksize,
+            finished_callback=finished_callback,
+        )
         holder["s"] = stream
         # Simulate a stop() landing while open() is still mid-flight, i.e.
         # after the stream object exists (and could be playing) but before
@@ -452,8 +492,14 @@ def test_stop_between_open_state_flip_and_notify_thread_publish_does_not_leak(
             holder["sink"].stop()  # reentrant, landing exactly in the N1 gap
             super().__init__(*a, **kw)
 
-    def factory(*, samplerate, channels, blocksize, callback):
-        holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
+    def factory(*, samplerate, channels, blocksize, callback, finished_callback):
+        holder["s"] = FakeStream(
+            callback,
+            samplerate,
+            channels,
+            blocksize,
+            finished_callback=finished_callback,
+        )
         return holder["s"]
 
     sink = StreamingPcmSink(
@@ -567,8 +613,14 @@ def test_stop_from_a_thread_with_a_blocking_listener_returns_promptly():
             listener_started.set()
             time.sleep(0.5)
 
-    def factory(*, samplerate, channels, blocksize, callback):
-        return FakeStream(callback, samplerate, channels, blocksize)
+    def factory(*, samplerate, channels, blocksize, callback, finished_callback):
+        return FakeStream(
+            callback,
+            samplerate,
+            channels,
+            blocksize,
+            finished_callback=finished_callback,
+        )
 
     sink = StreamingPcmSink(
         on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory
@@ -625,8 +677,14 @@ def test_on_event_may_be_invoked_concurrently_from_multiple_threads():
             if started_entered.is_set() and not started_may_finish.is_set():
                 entered_concurrently.set()
 
-    def factory(*, samplerate, channels, blocksize, callback):
-        return FakeStream(callback, samplerate, channels, blocksize)
+    def factory(*, samplerate, channels, blocksize, callback, finished_callback):
+        return FakeStream(
+            callback,
+            samplerate,
+            channels,
+            blocksize,
+            finished_callback=finished_callback,
+        )
 
     sink = StreamingPcmSink(
         on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory

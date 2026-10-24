@@ -55,7 +55,7 @@ a discarded import emits no success notification (TASK-36363).
 
 ## Playback model
 
-Two paths, never both for one response: **live PCM streaming** through `StreamingPcmSink` (PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio calls from the callback), or **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
+Two paths, never concurrently for one response: **PCM output** through `StreamingPcmSink` (raw streaming or an eligible complete PCM16 WAV body; PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio stream operations from the callback), or an **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
 
 ## Pure speech presentation contracts
 
@@ -72,9 +72,36 @@ Qualified silence has a closed mouth and no finite level while retaining valid
 timing; unknown timing is separate. Clock failure degrades observation without
 raising into audio callers. No waveform/history is stored in the channel.
 
-Device-time publication, backend completion and Console request adapters belong
-to the following radio-portrait implementation units (ADR-242); these pure
-contracts alone do not enable a moving Console portrait.
+`StreamingPcmSink(..., presentation=...)` prepares accepted PCM on its existing
+notification thread and publishes every nominal 20 ms. Source consumption and
+inserted device silence remain separate, including half-sample chunk boundaries
+and partial zero-padded blocks. Validated backend current/DAC timestamps map to
+one monotonic output timeline; poses are selected only inside their actual output
+interval. The device-tail horizon is at most one second. Missing, nonfinite,
+backward, excessive or hardware-underflow timing selects closed/status-only
+observation, with audio unchanged. Queued preparation is bounded by the existing
+queued-audio capacity plus that tail; readers hold only one snapshot. Underrun
+notifications coalesce behind a blocked listener. A stalled publisher relies on
+snapshot freshness rather than accumulating UI events.
+
+Natural drain requests sounddevice `CallbackStop` only through the thin backend
+wrapper. The sink stays draining, registered and abortable until `finished_callback`
+confirms pending audio played; then it closes without aborting, publishes drain
+and releases ownership. Immediate Stop/failure still aborts; late acknowledgements
+cannot change the terminal result. The existing buffered-duration plus five-second
+pump watchdog bounds missing acknowledgement. `settle()` settles queued events,
+not a pending device tail. A backend finishing during open cannot evict a healthy
+previous sink. Complete eligible WAV routing is reused, including existing scoped
+cleanup and fallback; no second player is introduced.
+
+Sink output epochs are distinct from request/session generations. Local sink
+termination retires its output epoch before clearing its level, so an in-flight
+pose with an equal timestamp cannot reopen the mouth. Duplicate old cleanup
+cannot invalidate a newer output epoch. Termination invalidates its level immediately; the request adapter projects the
+logical terminal state after it knows whether a WAV failure falls back to legacy
+playback. This preserves one owner through fallback without reopening a terminal
+channel. Console request adapters/rendering remain subsequent implementation units;
+these optional sink contracts alone do not enable a moving Console portrait.
 
 ## Speak action (dataflow)
 

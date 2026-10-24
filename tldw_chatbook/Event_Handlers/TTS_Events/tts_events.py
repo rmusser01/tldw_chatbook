@@ -21,6 +21,7 @@ from loguru import logger
 from textual.message import Message
 
 # Local imports
+from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
 from tldw_chatbook.Audio.streaming_sink import (
     SinkStarted,
     SinkUnderrun,
@@ -2902,6 +2903,7 @@ class TTSEventHandler:
         fallback_on_failure: bool = False,
         on_finished: Callable[[bool], None] | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
+        presentation: SpeechPresentation | None = None,
     ) -> str | None:
         """Play one response live through the streaming PCM sink.
 
@@ -2999,7 +3001,7 @@ class TTSEventHandler:
                 )
             self._post_sink_event(event)
 
-        sink = StreamingPcmSink(on_event=_on_event)
+        sink = StreamingPcmSink(on_event=_on_event, presentation=presentation)
         # Fix-round F2: `open()` is documented thread-safe and never
         # raises, but it is NOT free -- lazily importing `sounddevice` on
         # first use plus building/starting the real `OutputStream` measured
