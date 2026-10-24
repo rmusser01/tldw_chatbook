@@ -37,8 +37,8 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 
 ## Integration and Delivery
 
-- [ ] Register all new tests on the real hosted gates, preserving existing selectors, 17 UI shards and existing timeouts/safety allowances. Use measured durations to place additions; root alone edits census/contracts.
-- [ ] Run combined targeted UI/parser/CI/token/size checks appropriate to modified owners, plus actual required source guards. Attribute any native-platform limitations explicitly.
+- [x] Register all new tests on the real hosted gates, preserving existing selectors, 17 UI shards and existing timeouts/safety allowances. Use measured durations to place additions; root alone edits census/contracts.
+- [x] Run combined targeted UI/parser/CI/token/size checks appropriate to modified owners, plus actual required source guards. Attribute any native-platform limitations explicitly.
 - [ ] Complete per-task AC/notes/ADR checks and status via Backlog CLI only after evidence and reviews satisfy them; update relevant architecture/QA documentation.
 - [ ] Obtain a fresh whole-branch Superpowers review, fix actionable findings, push and create/attach the PR against dev.
 - [ ] Inspect all current-head CI and complete remote feedback/thread pages, address failures/findings and repeat affected checks until the delivered head is green and feedback is handled.
