@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {
+      "case": "one_mouse_click",
+      "mouse_click_count": 1,
+      "pilot_click_return": true,
+      "button_handler_deliveries": [
+        {
+          "event_identity": 1735226589936,
+          "before": false,
+          "after": true
+        },
+        {
+          "event_identity": 1735226589936,
+          "before": true,
+          "after": false
+        }
+      ],
+      "service_start_calls": 1,
+      "service_stop_calls": 1,
+      "recorder_is_recording": false,
+      "processor_alive": false,
+      "widget_is_dictating": false,
+      "service_state": "idle",
+      "toggle_label": "\ud83c\udfa4 Start Dictation"
+    },
+    {
+      "case": "one_ctrl_d_control",
+      "mouse_click_count": 0,
+      "pilot_click_return": null,
+      "button_handler_deliveries": [],
+      "service_start_calls": 1,
+      "service_stop_calls": 0,
+      "recorder_is_recording": true,
+      "processor_alive": true,
+      "widget_is_dictating": true,
+      "service_state": "listening",
+      "toggle_label": "\ud83d\uded1 Stop Dictation"
+    }
+  ],
+  "blocked_network_attempts": [],
+  "profile_violations": []
+}

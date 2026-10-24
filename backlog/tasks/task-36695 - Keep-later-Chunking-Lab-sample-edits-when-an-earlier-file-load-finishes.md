@@ -1,0 +1,46 @@
+---
+id: TASK-36695
+title: Keep later Chunking Lab sample edits when an earlier file load finishes
+status: To Do
+created_date: 2026-10-24 17:33
+labels:
+- textual-patterns
+- reliability
+priority: medium
+documentation:
+- Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+A pending sample file read publishes its captured text after later editing has already changed the live sample and canonical session. Preserve the newest accepted sample intent when older asynchronous reads finish.
+
+### Evidence and scope
+
+Verified after PR #3228 merged, against dev `96cae7eec00473bbfb5687ccfd0685eba2785add`. Real file_operation/sample-file reads a private UTF-8 file through its actual to_thread boundary. While delivery is held, a real keyboard x changes seed to xseed in both editor and canonical session. Releasing the read replaces both with selected file content. Untouched-file control passes. The file-dialog gesture and natural race frequency were not measured. Fresh merged-dev ordinary control passes. The later-edit child records the intended retention assertion failure plus a separate native-worker teardown error; it is not claimed as a clean whole-process regression result. Observational/worker-drain retries are retained as qualified or excluded evidence in the audit.
+
+Book basis: PDF145–146 and158 / printed136–137 and149 explains independent queues and awaited handlers. Preserving newer accepted text at an older completion is an application-specific applicability requirement.
+
+Affected owners: [chunking_lab_screen.py](../../tldw_chatbook/UI/Screens/chunking_lab_screen.py), [sample_region.py](../../tldw_chatbook/UI/Chunking_Lab_Modules/sample_region.py).
+
+### Existing ownership and decisions
+
+TASK-31645 is Done and implements ordinary file/clipboard imports and recovery, without a pending-read/newer-edit outcome. TASK-31640 owns recovery and TASK-31642 run lifecycle. TASK-31428 is an older planning task, not a second implementation owner. TASK-36363 protects audiobook authorship under a different owner.
+
+Related tasks: [TASK-31645](../tasks/task-31645%20-%20Chunking-Lab-Library-screen-and-recoverable-authoring-flow.md), [TASK-31640](../tasks/task-31640%20-%20Chunking-Lab-durable-profile-local-session-checkpoints.md), [TASK-31642](../tasks/task-31642%20-%20Chunking-Lab-bounded-local-A-B-execution-lifecycle.md), [TASK-31428](../tasks/task-31428%20-%20Chunking-Lab-Library-screen-and-recoverable-authoring-flow.md), [TASK-36363](../tasks/task-36363%20-%20Keep-newer-audiobook-source-edits-when-a-pending-file-import-completes.md).
+
+ADR required: no.
+ADR paths: [118-chunking-lab-local-execution-and-recovery](../decisions/118-chunking-lab-local-execution-and-recovery.md), [033-application-session-state-ownership](../decisions/033-application-session-state-ownership.md).
+Reason: Routine publication applicability repair within the existing Chunking Lab coordinator, sample ownership, validation and recovery contracts.
+
+[Post-merge book audit and evidence](../../Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md).
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 An older sample file or explicit-excerpt completion does not replace later accepted sample edits, including clearing the field; live text and canonical sample remain coherent.
+- [ ] #2 An untouched, still-applicable load publishes the selected text and truthful source provenance normally.
+- [ ] #3 Replacement sample intent and read failure preserve the current authored state, recovery ownership and existing file-size/UTF-8 validation.
+- [ ] #4 Targeted mounted controls witness real accepted keyboard input and canonical state before releasing actual asynchronous file-read publication, with ordinary-load and later-edit cases.
+<!-- AC:END -->
