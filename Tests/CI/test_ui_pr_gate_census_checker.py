@@ -525,6 +525,9 @@ def _case_count(function: ast.AST) -> int:
 @pytest.mark.parametrize("path", SPLIT_CENSUS_FILES)
 def test_a_split_census_file_keeps_every_test_gated_once(path):
     root = SCRIPT.parents[1]
+    spec = importlib.util.spec_from_file_location("cen_split", SCRIPT)
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
     tree = ast.parse((root / path).read_text(encoding="utf-8"))
     classes = [
         node.name
@@ -532,13 +535,15 @@ def test_a_split_census_file_keeps_every_test_gated_once(path):
         if isinstance(node, ast.ClassDef) and node.name.startswith("Test")
     ]
     assert not classes, (
-        f"{path} defines test classes {classes}: write them as functions"
+        f"{path} defines test classes {classes}: rename it or write its tests as functions"
     )
     functions = {  # pytest's default python_functions: the "test" prefix
         node.name: node
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and node.name.startswith("test")
+        # pytest never collects a fixture, so listing one would refuse the shard
+        and not any(checker._fixture_call(d) for d in node.decorator_list)
     }
     entries = [
         line.strip()
@@ -551,9 +556,6 @@ def test_a_split_census_file_keeps_every_test_gated_once(path):
     assert path not in selected, f"{path} is listed whole again"
     twice = sorted({entry for entry in selected if selected.count(entry) > 1})
     assert not twice, f"listed twice: {twice}"
-    spec = importlib.util.spec_from_file_location("cen_split", SCRIPT)
-    checker = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(checker)
     listed = 0
     for name, function in functions.items():
         selector = f"{path}::{name}"
