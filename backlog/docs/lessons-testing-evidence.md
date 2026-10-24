@@ -21828,6 +21828,48 @@ itself after an in-place write. Give each input a test that changes it alone
 and ticks through the real gate.
 
 
+## The shared bootstrap profile carried one test's config into the next (TASK-36478, 2026-10-24)
+
+**What happened.** During Roleplay B2a's gates, a single-process replay of one
+xdist worker's 180 tests failed
+`test_console_empty_regions_do_not_stack_nested_terminal_frames` on both arms,
+though it passed alone. A per-test trace of `config._SETTINGS_CACHE` and a
+bisect cut the replay to two tests:
+`test_console_character_avatar.py::test_character_section_composes_when_config_on`,
+then the victim. The avatar test's `_configure_native_ready_console` (from
+`test_console_native_chat_flow.py`) persists a ready llama.cpp provider. Every
+`bootstrap_profile` test in a process shares ONE `config.toml`, and nothing
+reset it between tests. The victim expects the shipped "not set up" config.
+Under the leaked config it booted ready, its composer took focus, and the
+composer's left edge turned `thick`. The same trace found two more leaks
+inside `test_console_internals_decomposition.py`:
+- `test_console_inspector_live_work_sources_stay_near_top` opens the
+  Inspector, and the Console saves `console.rail_state` on every toggle, so
+  the next tests booted with the Inspector open;
+- `test_console_run_inspector_shows_blocked_provider_and_missing_rag_source`
+  assigns `app.app_config["chat_defaults"] = {}`. That dict is
+  `load_settings()`'s cache, so the edit lasted until some later config write
+  happened to rebuild the cache.
+
+`Tests/Wizards/conftest.py` had already fixed the same leak for its own
+directory (TASK-34100.1).
+
+The leak was not the only reason whole-file runs failed different sets each
+time. Under load, the setup-modal, focus-at-open and paste tests also failed
+ALONE on dev, on some runs and not others. Some tests also passed on dev ONLY
+because of the leak. `test_console_gate15_keeps_existing_chat_send_control_reachable`
+fails alone, but it passed in an xdist worker that had run 33 avatar tests
+first. With the leak gone it fails every time.
+
+**What to do.** `Tests/conftest.py`'s `isolate_test_environment` now
+restores the bootstrap `config.toml` bytes after every bootstrap-profile test
+and drops config.py's caches, so none of these leaks survives a test boundary.
+The earlier advice in "That plugin's shared profile turns config-writing tests
+red together" (run each node in its own process) is no longer needed for
+config. The profile's DATA directory is still shared. Before you blame order
+for a whole-file red, run the failing nodes alone: in that file, 12 of 17
+failures also failed alone on dev, so they were not order-dependent.
+
 ## Census prose can be a machine-readable contract
 
 **Incident (PR #3228, 2026-10-23).** The seventeen-shard follow-up passed 140 targeted CI checks, then a historical-header wording cleanup removed the `the 92` suffix in `ui_pr_gate_census.txt`. The existing replay-boundary test parses that suffix; independent review reproduced its failure although every selector and Python AST was unchanged. Restoring the parseable header and rerunning the affected modules repaired the regression before publication.
