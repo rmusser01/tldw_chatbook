@@ -3200,6 +3200,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def _set_tree_row_metadata(button: Button, row: LibraryNotesTreeRow) -> None:
         """Attach stable domain identities without encoding them in DOM ids."""
         button.tree_kind = row.kind
+        # TASK-34000.28 N-22: Left on a collapsed folder row climbs to its
+        # parent -- the nearest earlier folder row with a SMALLER depth
+        # (``canvas_sync._previous_folder_row_above``); an integer here lets
+        # that walk compare depths, not indent spaces in a label.
+        button.tree_depth = row.depth
         button.placement_id = row.placement_id
         button.note_id = row.note_id or ""
         button.folder_id = row.folder_id or ""

@@ -582,7 +582,13 @@ _BUDGETS: dict[str, int] = {
     # .17/.14/.12/.11/.71 controller work (Add-from-files reset, root-load
     # belt, link picker insert/follow, lazy-start settle) measured on the
     # rebased tree: 6484 -> 7200.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7200,
+    # 2026-10-24, TASK-34000.28 (polish-1a task 2; same owner decision): the
+    # folder-row Right/Left helper ``_library_notes_folder_row_arrow`` (one
+    # method, docstring included), the Sort chooser's two focus hand-offs
+    # (``then=`` pair, Skills shape), its strip-focus forwarding property and
+    # the ``sort``/``sort-choice:`` role targets (a vanished choice resolves
+    # to its opener): 7200 -> 7298 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7298,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
