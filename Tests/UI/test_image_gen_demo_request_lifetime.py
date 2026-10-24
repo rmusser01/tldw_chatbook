@@ -259,3 +259,55 @@ async def test_serial_demo_and_palette_route_publish_current_outcome(
             assert "prompt='NEW'" in str(_view(screen)[2])
             assert _view(screen)[1] is not old_image
         assert not calls["NEW"].is_cancelled
+
+
+@pytest.mark.parametrize("old_error", [False, True], ids=["success", "error"])
+@private_profile_test
+async def test_demo_completion_during_native_pruning_cannot_publish(
+    request, monkeypatch, old_error
+):
+    async with _demo(monkeypatch, hold="publication", old_error=old_error) as (
+        app,
+        pilot,
+        screen,
+        calls,
+        decodes,
+        entered,
+        release,
+        queued,
+        publish,
+    ):
+        await _generate(pilot, screen, "OLD")
+        await _until(queued.is_set)
+        status = screen.query_one("#imagegen-status", Static)
+        image = screen.query_one("#imagegen-image", Static)
+        before = status.renderable
+        unmount_entered, unmount_release = asyncio.Event(), asyncio.Event()
+
+        async def hold_status_unmount(widget):
+            if widget is status:
+                unmount_entered.set()
+                await asyncio.wait_for(unmount_release.wait(), 15)
+
+        # Hold one real child's Unmount, leaving native screen removal pending.
+        # Sibling teardown still runs, and no lifecycle flags are synthesized.
+        monkeypatch.setattr(Static, "on_unmount", hold_status_unmount, raising=False)
+        removing = app.pop_screen()
+        try:
+            await asyncio.wait_for(unmount_entered.wait(), 10)
+            await _until(lambda: not image.is_attached)
+            assert screen._pruning and screen.is_attached
+            assert not calls["OLD"].is_cancelled
+            assert status.is_attached
+            publish.set()
+            await _until(lambda: not _thread_running(screen))
+            assert screen._pruning and screen.is_attached
+            assert not calls["OLD"].is_cancelled
+            assert status.renderable == before
+            assert decodes == ([] if old_error else ["OLD"])
+            assert not app._exception
+        finally:
+            publish.set()
+            unmount_release.set()
+            await removing
+        assert not screen.is_attached

@@ -136,7 +136,7 @@ class ImageGenDemoScreen(BaseAppScreen):
         """Publish only while the originating worker and screen are still live."""
         # Exclusive workers cancel predecessors, but their threads (and queued
         # UI callbacks) can outlive cancellation. Check at the actual DOM write.
-        if worker.is_cancelled or not self.is_attached:
+        if worker.is_cancelled or self._pruning or not self.is_attached:
             return
         if error is not None:
             self._set_status(error)

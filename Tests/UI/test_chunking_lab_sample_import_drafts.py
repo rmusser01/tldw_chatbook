@@ -1,11 +1,12 @@
 """Real file reads must not overwrite newer accepted Chunking Lab sample intent."""
 
 import asyncio
+import json
 import threading
 from contextlib import asynccontextmanager
 
 import pytest
-from textual.widgets import TextArea
+from textual.widgets import Input, TextArea
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -372,6 +373,62 @@ async def test_newer_failed_read_revokes_older_sample_intent(
                 await settle_lab(host, screen, pilot)
                 assert editor.text == sample(screen)["text"] == "x"
                 assert sample(screen)["source"] == {"kind": "paste"}
+            finally:
+                release.set()
+                await pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["sample-file", "excerpt"])
+@private_profile_test
+async def test_pending_sample_read_retains_unrelated_recipe_edit(
+    request, tmp_path, monkeypatch, action
+):
+    selected = tmp_path / "selected.txt"
+    selected.write_bytes(b"selected file content")
+    async with mounted_lab() as (host, screen, pilot):
+        editor = screen.query_one("#lab-sample-text", TextArea)
+        initial_sample = sample(screen)
+        candidate_id = next(iter(screen.coordinator.session.candidates))
+        assert await pilot.click("#lab-show-configure")
+        maximum = screen.query_one("#lab-max-size", Input)
+        async with held_read(monkeypatch, action, selected) as (entered, release):
+            pending = asyncio.create_task(
+                screen.file_operation(
+                    action, {"path": str(selected), "start": "0", "end": "8"}
+                )
+            )
+            try:
+                await entered_read(entered)
+                maximum.focus()
+                await pilot.press("home", "shift+end", *"512")
+                await pilot.pause()
+                await screen.drain_edits()
+                await settle_lab(host, screen, pilot)
+                draft = screen.coordinator.session.candidates[candidate_id]["draft"]
+                assert (
+                    json.loads(draft["parsed_json"])["chunking"]["config"]["max_size"]
+                    == 512
+                )
+                assert not draft["pending_controls"]
+                assert maximum.value == "512"
+                assert sample(screen) == initial_sample
+                release.set()
+                await asyncio.wait_for(pending, 10)
+                await settle_lab(host, screen, pilot)
+                expected = (
+                    "selected file content" if action == "sample-file" else "selected"
+                )
+                assert editor.text == sample(screen)["text"] == expected
+                source = {"kind": "file", "name": selected.name}
+                if action == "excerpt":
+                    source.update(kind="file_excerpt", start=0, end=8)
+                assert sample(screen)["source"] == source
+                assert (
+                    screen.coordinator.session.candidates[candidate_id]["draft"]
+                    == draft
+                )
+                assert maximum.value == "512"
             finally:
                 release.set()
                 await pending
