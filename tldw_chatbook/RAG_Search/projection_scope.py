@@ -86,7 +86,7 @@ class ProjectionExecutionScope:
         value._check_live()
         return value
 
-    def _check_live(self):
+    def _check_live(self, *, retiring=False):
         if (
             self not in _issued
             or self._closed
@@ -95,7 +95,9 @@ class ProjectionExecutionScope:
             or self._parent.operation not in self._service._operations
         ):
             raise ProjectProjectionRequired()
-        self._service._require_projection_open(self.scope.key)
+        self._service._require_projection_open(
+            self.scope.key, retiring=self if retiring else None
+        )
 
     def validate_constructor(
         self,
@@ -216,7 +218,7 @@ class ProjectionExecutionScope:
         return successor
 
     def close(self):
-        self.require(self)
+        self._check_live(retiring=True)
         if execution_identity() != self._identity:
             raise ProjectProjectionRequired()
         with self._lock:

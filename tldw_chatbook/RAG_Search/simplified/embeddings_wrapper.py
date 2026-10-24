@@ -403,7 +403,12 @@ class EmbeddingsServiceWrapper:
             self._config_dict = (
                 {
                     "default_model_id": "default",
-                    "models": {"default": self._projection_execution_scope._config},
+                    "models": {
+                        "default": {
+                            **self._projection_execution_scope._config,
+                            "allow_redirects": False,
+                        }
+                    },
                 }
                 if self._projection_execution_scope is not None
                 else self._build_config(
@@ -507,7 +512,9 @@ class EmbeddingsServiceWrapper:
             return self.model_name
         config = self.factory.config
         model = config.models[config.default_model_id]
-        base_url = str(model.base_url) if model.base_url else "https://api.openai.com/v1"
+        base_url = (
+            str(model.base_url) if model.base_url else "https://api.openai.com/v1"
+        )
         endpoint = base_url.rstrip("/") + "/embeddings"
         # The validated factory config supplies the exact effective endpoint.
         # Persist only its digest: URLs can contain credentials or query secrets.
@@ -545,9 +552,12 @@ class EmbeddingsServiceWrapper:
         if store is None:
             return {}
         try:
-            return store.get_cached_embeddings(
-                self._embedding_cache_model_id(), content_hashes
-            ) or {}
+            return (
+                store.get_cached_embeddings(
+                    self._embedding_cache_model_id(), content_hashes
+                )
+                or {}
+            )
         except Exception as e:
             log_counter(
                 "embeddings_persistent_cache_error",

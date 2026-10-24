@@ -13,6 +13,7 @@ import pytest
 from Tests.private_profile import private_profile_test
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_real_app_model_free_four_page_stage_timing(
     tmp_path, request, monkeypatch
@@ -236,6 +237,7 @@ async def test_real_app_model_free_four_page_stage_timing(
         await close_project_index_service(app)
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_all_saved_library_source_choices_survive_semantic_and_chat_changes(
     tmp_path, request
@@ -309,6 +311,7 @@ async def test_all_saved_library_source_choices_survive_semantic_and_chat_change
     await close_project_index_service(app)
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_cached_minilm_local128_disable_retires_actual_held_producer(
     tmp_path, request, monkeypatch
@@ -651,6 +654,7 @@ async def test_cached_minilm_local128_disable_retires_actual_held_producer(
             mark("service_close_return")
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_cached_minilm_real_app_paraphrase_refresh_restart_and_revoke(
     tmp_path, request, monkeypatch

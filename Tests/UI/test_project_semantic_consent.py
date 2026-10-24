@@ -47,6 +47,7 @@ async def test_mounted_semantic_controls_and_status_do_not_load_model(
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
     tmp_path, request, monkeypatch
@@ -93,6 +94,7 @@ async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_pr
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_catalog_destination_change_before_disclosure_refuses_old_staged_approval(
     tmp_path, request, monkeypatch
@@ -165,6 +167,7 @@ async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
     tmp_path, request, monkeypatch
@@ -214,6 +217,7 @@ async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_approval_then_destination_change_pauses_and_preserves_keyword(
     tmp_path, request, monkeypatch
@@ -381,6 +385,7 @@ async def test_pending_cleanup_retries_the_captured_owner_after_app_admission_cl
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_cleanup_retry_never_displays_revoked_old_semantic_state(
     tmp_path, request, monkeypatch
