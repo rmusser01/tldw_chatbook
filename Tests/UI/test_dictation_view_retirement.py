@@ -525,3 +525,37 @@ async def test_queued_old_capture_command_cannot_publish_into_restarted_capture(
         assert view.query_one("#transcript-display", TextArea).text == "new capture"
         assert view.transcript_text == "new capture"
         assert view.word_count == 2
+
+
+@private_profile_test
+async def test_stop_after_pause_preserves_finalized_text_and_releases_capture(
+    captures, request
+):
+    app = _SpeechHost()
+    async with app.run_test(size=(130, 55)) as pilot:
+        view, service, recorder = await _start(app, pilot, captures)
+        await asyncio.to_thread(
+            service._handle_streamed_final, "paused transcript survives"
+        )
+        display = view.query_one("#transcript-display", TextArea)
+        await _until(lambda: display.text == "paused transcript survives")
+        # Use the actual widget action through its UI message queue; button
+        # bubbling and legacy shortcut ownership are separate follow-up tasks.
+        assert view.call_later(view.action_pause_dictation)
+        await _until(lambda: service.state == DictationState.PAUSED)
+        assert view.is_dictating
+        assert recorder.is_recording
+        assert service.processing_thread.is_alive()
+        button = view.query_one("#dictation-toggle-btn", Button)
+        await _until(lambda: not button.has_class("-active"))
+        await pilot.press("ctrl+d")
+        await pilot.pause()
+        assert display.text == "paused transcript survives"
+        assert view.transcript_text == "paused transcript survives"
+        assert view.word_count == 3
+        assert view.duration > 0
+        assert not view.is_dictating
+        assert not recorder.is_recording
+        assert recorder.stop_calls == 1
+        assert not service.processing_thread.is_alive()
+        assert service.state == DictationState.IDLE

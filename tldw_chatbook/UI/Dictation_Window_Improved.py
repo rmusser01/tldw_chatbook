@@ -706,6 +706,8 @@ class ImprovedDictationWindow(Widget):
         if not self.dictation_service:
             return
 
+        if self.dictation_service.state == DictationState.PAUSED:
+            self.dictation_service.resume_dictation()
         result = self.dictation_service.stop_dictation()
         self._capture_generation += 1
 
