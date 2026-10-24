@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A Console focus precondition can hold only because the activation restore got there first (TASK-33620.15.8, 2026-10-23)
+
+**Incident.** A style guard called `visible.focus()` on the composer's visible draft and asserted the bar's `console-composer-focused` class. The draft has `can_focus = False`, so `focus()` did nothing; the assert held on the branch only because the Console's activation restore (`_restore_console_workbench_focus`, run after refresh and again on a 0.2 s timer) had already focused the bar. On origin/dev the restore landed later, focus was still on Textual's AUTO_FOCUS pick (the nav bar's Home button), and the guard failed its own precondition. The first fix was a fixed 0.5 s pause; review flagged it as a CI flake risk. A probe then showed the same restore undoing a test's `set_focus(None)` about 30 ms later, which is also why `test_typing_with_nothing_focused_focuses_the_draft_first` fails on dev in most runs (TASK-33620.15.23).
+
+**What to do.** In a mounted Console test, focus the bar itself and wait on the state you need with a bounded condition, not a fixed sleep. To leave the bar unfocused, blur it again inside the wait until it stays blurred: nothing focused is not a resting state while the activation restore is pending. Once the wait returns, do your loads and assertions without awaiting, so no restore can land between them. Before trusting `widget.focus()`, check that the widget can take focus (`focusable`).
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.
