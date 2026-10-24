@@ -207,6 +207,7 @@ class ImprovedDictationWindow(Widget):
 
         # Lazy service - not initialized until needed
         self.dictation_service = None
+        self._retired = False
 
         # Transcript management
         self.transcript_segments = []
@@ -545,8 +546,35 @@ class ImprovedDictationWindow(Widget):
         self._settings_dirty = False
         await asyncio.to_thread(self._write_settings_snapshot, snapshot)
 
+    def cleanup(self) -> None:
+        """Retire this foreground capture without waiting for transcription."""
+        if self._retired:
+            return
+        # Revoke saved callback references before abandon can notify, and before
+        # on_unmount yields to a pending settings write.
+        self._retired = True
+        self.is_dictating = False
+        service = self.dictation_service
+        if service is None:
+            return
+        for callback in (
+            "on_partial_transcript",
+            "on_final_transcript",
+            "on_state_change",
+            "on_error",
+            "on_command",
+        ):
+            setattr(service, callback, None)
+        processor = service.processing_thread
+        # A failed Start may own a processor even though is_dictating is False.
+        # A completed explicit Stop is already idle and must not stop twice.
+        if service.state != DictationState.IDLE or (
+            processor is not None and processor.is_alive()
+        ):
+            service.abandon()
+
     async def on_unmount(self) -> None:
-        """Flush a pending debounced settings write.
+        """Retire capture and flush a pending debounced settings write.
 
         Fires both when this view is switched away from (`STTS_Window`'s
         `content_container.remove_children()`) and when the app quits while
@@ -555,6 +583,7 @@ class ImprovedDictationWindow(Widget):
         write is already in flight, waits for it rather than dispatching a
         second writer against the same config file.
         """
+        self.cleanup()
         if self._settings_save_timer is not None:
             self._settings_save_timer.stop()
             self._settings_save_timer = None
@@ -695,25 +724,35 @@ class ImprovedDictationWindow(Widget):
 
     def _on_partial_transcript(self, text: str):
         """Handle partial transcript updates."""
+        if self._retired:
+            return
         self._update_transcript_display(text, is_partial=True)
 
     def _on_final_transcript(self, text: str):
         """Handle final transcript segments."""
+        if self._retired:
+            return
         self._add_transcript_segment(text)
 
     def _on_state_change(self, state: str):
         """Handle dictation state changes."""
+        if self._retired:
+            return
         self.dictation_state = state
         state_display = self.query_one("#state-display", Static)
         state_display.update(f"State: {state}")
 
     def _on_error(self, error: Exception):
         """Handle dictation errors."""
+        if self._retired:
+            return
         self._show_status(f"Error: {error}", "error")
         logger.error(f"Dictation error: {error}")
 
     def _on_command(self, command: str):
         """Handle voice commands."""
+        if self._retired:
+            return
         self.post_message(VoiceCommandEvent(command=command, raw_text=command))
         logger.info(f"Voice command detected: {command}")
 
