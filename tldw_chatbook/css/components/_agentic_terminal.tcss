@@ -275,7 +275,7 @@ PromptVariablesDialog {
 }
 
 #prompt-variables-dialog .prompt-variable-input:focus {
-  border-left: thick $ds-action-focus;
+  border-left: thick $ds-active-fg;
   background: $ds-focus-bg;
   color: $ds-text-primary;
   text-style: bold;
@@ -317,7 +317,7 @@ PromptVariablesDialog {
 }
 
 #prompt-variables-actions Button:focus {
-  outline: heavy $ds-action-focus;
+  outline: heavy $ds-active-fg;
 }
 
 #prompt-variables-actions Button:disabled {

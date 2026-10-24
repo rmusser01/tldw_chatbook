@@ -770,7 +770,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 }
 
 #console-switcher-query:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     text-style: bold;
 }
 
@@ -895,12 +895,13 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
    3. A one-column left edge costs one column instead of two rows, clears
       the same 3.77:1 because it is the same colour, and is already the
       house pattern -- DESIGN.md's dense-form convention flips exactly this
-      edge to `thick $ds-action-focus` on focus. The rail is 33 columns at
+      edge to `thick $ds-active-fg` on focus (`$ds-action-focus` until
+      TASK-36479). The rail is 33 columns at
       120 and narrower; a column is affordable where two of three rows is
       not. */
 #console-inspector-rail-body:focus,
 #console-right-rail:focus {
-    outline-left: thick $ds-action-focus;
+    outline-left: thick $ds-active-fg;
 }
 
 /* The COLLAPSED rail's handle -- the shipping default state, and before this
@@ -909,7 +910,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
    "◂" of "◂ Inspect" while the last column is always blank. A left edge would
    paint "█ Inspect". See TASK-31663 notes. */
 #console-inspector-rail-open:focus {
-    outline-right: thick $ds-action-focus;
+    outline-right: thick $ds-active-fg;
 }
 
 .console-model-section-line {
@@ -2049,7 +2050,7 @@ ChatScreen.-focus #console-workbench-header {
 
 .console-prompts-primary-action:focus,
 #console-prompts-modal Button:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
 }
 
 .console-prompts-primary-action:disabled,
@@ -2085,7 +2086,7 @@ ChatScreen.-focus #console-workbench-header {
 
 #console-prompts-source:focus,
 #console-prompts-search:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-focus-bg;
     text-style: bold;
 }

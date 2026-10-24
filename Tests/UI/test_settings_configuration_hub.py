@@ -13480,7 +13480,7 @@ def test_compact_inputs_carry_rest_edge_and_focus_edge():
     assert rest and focus
     assert "border-left: solid $ds-control-edge;" in rest.group(0)
     assert "height: $ds-control-height-compact;" in rest.group(0)
-    assert "border-left: thick $ds-action-focus;" in focus.group(0)
+    assert "border-left: thick $ds-active-fg;" in focus.group(0)
 
 
 @pytest.mark.asyncio

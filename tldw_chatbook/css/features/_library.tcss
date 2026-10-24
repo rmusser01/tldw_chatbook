@@ -431,7 +431,7 @@
    neither shifts nor is clipped, and `outline: none` suppresses the generic
    `*:focus{outline:solid}` fallback (core/_reset.tcss). */
 .library-rail-row:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -446,7 +446,7 @@
    `outline: none` suppresses the generic `*:focus{outline:solid}`
    fallback (core/_reset.tcss). */
 .library-hub-recent:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -500,7 +500,7 @@
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }

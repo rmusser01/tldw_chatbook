@@ -39,7 +39,9 @@ $ds-input-focus-accent: $primary;
 /* task-1586 control convention: editable fields carry a one-column left
    edge at rest — presence of the edge (a structural marker), not its
    color, distinguishes controls from prose. Quieter than text at rest
-   (3:1, TASK-33003.6), the edge flips to thick $ds-action-focus on focus.
+   (3:1, TASK-33003.6), the edge flips to thick $ds-active-fg on focus
+   (TASK-36479: $ds-action-focus fell under 3:1 on $surface in 27 of the
+   89 measurable themes).
    Left borders cost a column, never a row, so dense one-row forms keep
    their height. */
 $ds-control-edge: $tldw-boundary;

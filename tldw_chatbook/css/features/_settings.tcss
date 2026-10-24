@@ -675,7 +675,7 @@ Button.settings-category-group-toggle:focus {
 #settings-providers-models-card .settings-compact-select:focus,
 #settings-console-behavior-card .settings-compact-select:focus {
     border: none;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
 }
 
 /* TASK-33007.4: the Applies-to row names the open chat and the pair it will
@@ -909,7 +909,7 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-compact-select:focus {
-    border: solid $ds-action-focus;
+    border: solid $ds-active-fg;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
@@ -1005,7 +1005,7 @@ Button.settings-category-group-toggle:focus {
 
 #settings-discovered-models-list:focus {
     border: none;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     outline: none;
 }
 

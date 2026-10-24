@@ -915,7 +915,7 @@ def test_console_composer_focus_uses_thin_input_treatment():
     text = AGENTIC.read_text(encoding="utf-8")
     block = css_block(text, "#console-native-composer.console-composer-focused")
     assert "border: heavy" not in block
-    assert "border-left: thick $ds-action-focus;" in block
+    assert "border-left: thick $ds-active-fg;" in block
     assert "background: $ds-input-focus-bg;" in block
     assert "border: solid" not in block
     assert "border-bottom:" not in block

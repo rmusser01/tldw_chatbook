@@ -520,7 +520,7 @@
 }
 
 #console-send-authority-summary:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
 }
 
 #console-send-authority-heading {
@@ -607,7 +607,7 @@ ConsoleTerminalWorkspace#console-main-column {
 }
 
 #console-terminal-viewport:focus {
-    outline: solid $ds-action-focus;
+    outline: solid $ds-active-fg;
 }
 
 #console-right-rail {
@@ -836,7 +836,7 @@ ConsoleTerminalWorkspace#console-main-column {
    Button in the app (test_textual_css_fastpath.py's ratchet). Coverage and
    losslessness pinned by test_console_inspector_focus_carriers.py. */
 Button.console-rail-focus-carrier:focus {
-    outline-left: thick $ds-action-focus;
+    outline-left: thick $ds-active-fg;
 }
 
 /* Inspector ROWS are deliberately absent above: the `*:focus` fallback in
@@ -1012,7 +1012,7 @@ Button.console-rail-focus-carrier:focus {
 }
 
 #console-native-composer.console-composer-focused {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-input-focus-bg;
 }
 

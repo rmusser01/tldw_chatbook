@@ -184,15 +184,19 @@ def test_the_container_focus_cue_is_an_edge_not_a_tint():
     them. A one-column left edge costs a column instead of two rows, is the
     same accent (so the same 3.77:1), and is already the house dense-form
     convention.
+
+    TASK-36479: the edge paints $ds-active-fg, the house focus edge, since
+    $ds-action-focus fell under 3:1 on $surface in 27 of the 89 measurable
+    themes (Tests/UI/test_theme_contrast.py measures every focus edge).
     """
     stylesheet = app_css_text()
     start = stylesheet.index("#console-inspector-rail-body:focus")
     block = stylesheet[start : stylesheet.index("}", start)]
     assert "outline-left" in block, f"the container focus cue is not an edge: {block!r}"
-    assert "$ds-action-focus" in block, (
-        f"the focus edge does not use the accent token: {block!r}"
+    assert "$ds-active-fg" in block, (
+        f"the focus edge does not use the focus-edge token: {block!r}"
     )
-    assert not re.search(r"\$ds-action-focus\s+\d+%", block), (
+    assert not re.search(r"\d+%", block), (
         "an alpha-blended tint is back; it cannot reach 3:1 on this theme"
     )
 

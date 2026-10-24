@@ -656,8 +656,11 @@ def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     # content rows -- the top one abutted the Reader identity line and read as
     # a rendering artifact at the pane join (`┐─────Local Media item`, critique
     # #4 P2), not as focus. Focus is the accent recolour on the arrow glyph.
-    assert "outline-top: solid $ds-action-focus;" not in source
-    assert "outline-bottom: solid $ds-action-focus;" not in source
+    # TASK-36479 moved the house focus edge to $ds-active-fg; both tokens stay
+    # covered.
+    for token in ("$ds-action-focus", "$ds-active-fg"):
+        assert f"outline-top: solid {token};" not in source
+        assert f"outline-bottom: solid {token};" not in source
     # Phase C: the per-route shell ids are gone, so asserting the ABSENCE of
     # one is now vacuous (nothing anywhere can spell it). What the original
     # assertion protected -- that grip styling is expressed on the SHARED

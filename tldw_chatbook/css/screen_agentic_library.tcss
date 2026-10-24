@@ -683,7 +683,7 @@ $ds-conversation-menu-width: 30;
    neither shifts nor is clipped, and `outline: none` suppresses the generic
    `*:focus{outline:solid}` fallback (core/_reset.tcss). */
 .library-rail-row:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -698,7 +698,7 @@ $ds-conversation-menu-width: 30;
    `outline: none` suppresses the generic `*:focus{outline:solid}`
    fallback (core/_reset.tcss). */
 .library-hub-recent:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -752,7 +752,7 @@ $ds-conversation-menu-width: 30;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2014,7 +2014,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    task-31983 (critique #6 P1): `-selected` above uses this SAME background,
    so focus and selection were indistinguishable -- the row the keyboard was
    ON looked exactly like the open row and arrow-nav read as a dead key. The
-   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
+   `border-left: thick $ds-active-fg` bar is the focus-only, non-colour
    cue `-selected` does NOT carry, so the two stay distinct even when a row
    is both focused AND selected (arrow onto the open row). The left edge
    replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
@@ -2024,7 +2024,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2053,7 +2053,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2169,7 +2169,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2244,7 +2244,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2274,7 +2274,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }

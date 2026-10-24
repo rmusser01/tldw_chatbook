@@ -273,11 +273,16 @@ fields (task-1586):
   (TASK-33003.6): `$ds-control-edge`, `$ds-grid-line` and `$ds-column-line`
   resolve to `$tldw-boundary`, which `ensure_readable_text_hues` (themes.py) works out
   per theme, user themes included.
-- **Focus:** the edge flips to `thick $ds-action-focus` and the
+- **Focus:** the edge flips to `thick $ds-active-fg` and the
   background swaps to `$ds-focus-bg` (the task-345 focus surface) with
   bold text. Three concurrent signals: edge weight, background, weight.
-  The Settings category rail uses the same thick edge, in `$ds-active-fg`
-  (3:1 on every row fill). A variant Button (primary, success, warning,
+  Every focus edge (a border or outline a `:focus` rule draws) reads at
+  3:1 against `$surface`, `$panel` and its own rule's fill, in every
+  theme (TASK-36479, `Tests/UI/test_theme_contrast.py`): `$ds-active-fg`
+  is the house focus-edge colour, the Settings category rail's and the
+  Roleplay list's too. `$ds-action-focus` (`$primary`) fell under 3:1 on
+  `$surface` in 27 of the 89 measurable themes and no longer draws focus
+  edges. A variant Button (primary, success, warning,
   error) keeps its fill on focus; the focus tint would make it darker. A
   default Button's focus fill is `$tldw-focus-fill`: the focus tint where
   that sits at least as far from a `$panel` card as the resting `$surface`

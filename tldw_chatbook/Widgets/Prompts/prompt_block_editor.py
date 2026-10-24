@@ -280,7 +280,10 @@ class PromptBlockEditor(Vertical):
     /* INTENTIONAL widget-local palette (TASK-16811 audit): these are this
        editor's own design values, not parse fallbacks. They deliberately
        shadow the app tokens for this source ($ds-focus-bg: $accent 12%,
-       $ds-action-focus: $accent), and $ds-surface-field exists only here. */
+       $ds-action-focus: $accent), and $ds-surface-field exists only here.
+       TASK-36479: the focus edges paint $text-accent, the accent's readable
+       tint; $accent measured under 3:1 on $surface or $panel in 37 of the
+       89 measurable themes. */
     $ds-surface-panel: $panel;
     $ds-surface-raised: $surface;
     $ds-surface-field: $surface-darken-1;
@@ -317,12 +320,12 @@ class PromptBlockEditor(Vertical):
         width: 100%; height: 3; border: none;
         background: $ds-surface-raised; color: $ds-text-primary;
     }
-    #prompt-editor-show-optional:focus { outline: heavy $ds-action-focus; }
+    #prompt-editor-show-optional:focus { outline: heavy $text-accent; }
     .prompt-lane {
         width: 100%; height: auto; margin: 0 0 1 0;
         border: round $ds-grid-line; background: $ds-surface-panel;
     }
-    .prompt-lane:focus-within { border: round $ds-action-focus; }
+    .prompt-lane:focus-within { border: round $text-accent; }
     .prompt-lane-blocks { width: 100%; height: auto; min-height: 1; }
     .prompt-lane-empty {
         width: 100%; height: auto; padding: 0 1; color: $ds-text-muted;
@@ -353,7 +356,7 @@ class PromptBlockEditor(Vertical):
     .prompt-block-syntax:focus,
     .prompt-block-xml-tag:focus,
     .prompt-block-content:focus {
-        outline: heavy $ds-action-focus; background: $ds-focus-bg;
+        outline: heavy $text-accent; background: $ds-focus-bg;
     }
 
     .prompt-lane-add,
@@ -370,7 +373,7 @@ class PromptBlockEditor(Vertical):
     .prompt-lane-add:focus,
     .prompt-block-action:focus,
     .prompt-editor-action:focus,
-    #prompt-editor-save-menu:focus { outline: heavy $ds-action-focus; }
+    #prompt-editor-save-menu:focus { outline: heavy $text-accent; }
     .prompt-block-action:disabled,
     .prompt-editor-action:disabled,
     #prompt-editor-save-menu:disabled {
