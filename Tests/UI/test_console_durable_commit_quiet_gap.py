@@ -15,10 +15,12 @@ first whole sync runs as before and opens a hold until the poll's next tick:
 explicit syncs meanwhile leave their request for later, that next tick skips
 and ends the hold, and the tick after it serves what was held (never two
 skipped ticks; each commit holds once). These tests drive the real
-ChatScreen on the mounted send harness; its in-memory store commits on the
-UI loop, so the commit's window is opened by hand around the ticks (the
-window itself is pinned on a real threaded commit in
-``Tests/Chat/test_console_durable_commit_window.py``).
+ChatScreen on the mounted send harness. Its in-memory commit is over long
+before a tick could land inside it, so the hold tests open the commit's
+window by hand around the ticks. One test pins that a real send's commit
+opens that window on the very store the screen's hold reads, and
+``Tests/Chat/test_console_durable_commit_window.py`` pins the window on a
+file-backed commit held on its thread.
 """
 
 from __future__ import annotations
@@ -29,7 +31,13 @@ import contextlib
 import pytest
 
 from Tests.UI.test_console_config_sync_cadence import _held_run
-from Tests.UI.test_console_send_acknowledgement import build, eager_tasks, until
+from Tests.UI.test_console_send_acknowledgement import (
+    build,
+    eager_tasks,
+    press,
+    ready_console,
+    until,
+)
 from tldw_chatbook.Chat import console_native_commit
 from tldw_chatbook.UI.Console_Modules import config_sync
 
@@ -149,6 +157,49 @@ async def test_without_a_run_poll_a_durable_commit_holds_no_sync(monkeypatch):
                         )
                         await console._sync_native_console_chat_ui()
                         assert syncs.count == expected
+            finally:
+                gateway.validation_release.set()
+
+
+@pytest.mark.asyncio
+async def test_a_real_sends_commit_opens_the_window_on_the_store_the_screen_reads(
+    monkeypatch,
+):
+    """The store a send's commit marks is the one the Console's hold reads.
+
+    The tests above open the window by hand. Here a real send's ordinary
+    commit (``commit_durable_turn_owned``, on its executor thread) opens it,
+    and the screen's own store (``_console_chat_store``, which the hold reads)
+    reports it while the commit runs, then closes it.
+    """
+    started_at = getattr(
+        console_native_commit, "durable_commit_started_at", lambda _store: None
+    )
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            store = console._console_chat_store
+            assert store is not None, "the ready Console has no store"
+            real = store.commit_durable_turn
+            seen: list[float | None] = []
+
+            def commit(acceptance):
+                seen.append(started_at(console._console_chat_store))
+                return real(acceptance)
+
+            monkeypatch.setattr(store, "commit_durable_turn", commit)
+            press(host, "enter", "\r")
+            try:
+                # Provider resolution comes before the turn's durable commit.
+                await until(gateway.validation_started.is_set, timeout=30)
+                gateway.validation_release.set()
+                await until(lambda: gateway.stream_calls >= 1, timeout=30)
+                assert len(seen) == 1, f"{len(seen)} durable commits for one send"
+                assert seen[0] is not None, (
+                    "a real send's commit opened no window on the screen's store"
+                )
+                assert started_at(store) is None, "the commit window stayed open"
             finally:
                 gateway.validation_release.set()
 
