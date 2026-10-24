@@ -396,6 +396,10 @@ MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
         "tldw_chatbook.Widgets.Console.console_message_delete_receipt",
         "ConsoleMessageDeleteReceiptModal",
     ),
+    "screen_modal_file_notes_history.tcss": (
+        "tldw_chatbook.Widgets.Library.library_file_notes_workspace",
+        "FileNotesHistoryDialog",
+    ),
 }
 
 #: Tokens that PREFIX-match an owner but are composed by widgets on OTHER
@@ -609,6 +613,22 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         },
         prefixes={"console_delete_receipt": ("console-delete-receipt",)},
         pinned=frozenset(),
+    ),
+    # TASK-36386 / ADR-097: the File Notes revision-history dialog is a
+    # rarely opened Library modal, so its `file-notes-history*` ids leave the
+    # boot bundle for a sheet its own CSS_PATH loads on first open -- see
+    # MODAL_OWNED_SPLIT_SHEETS. features/_notes.tcss holds no other rule.
+    # Owner audit 2026-10-23, repo-relative paths: the moved ids are composed
+    # only in Widgets/Library/library_file_notes_workspace.py
+    # (FileNotesHistoryDialog). The pin is the workspace's own History
+    # button (`#file-notes-history`, same file, LibraryFileNotesWorkspace):
+    # it matches the prefix but is on screen whenever File Notes is, so a
+    # rule naming it must ride the bundle.
+    ScreenOwnedSplit(
+        modules=("features/_notes.tcss",),
+        sheets={"file_notes_history": "screen_modal_file_notes_history.tcss"},
+        prefixes={"file_notes_history": ("file-notes-history",)},
+        pinned=frozenset({"file-notes-history"}),
     ),
     ScreenOwnedSplit(
         modules=("features/_watchlists.tcss",),

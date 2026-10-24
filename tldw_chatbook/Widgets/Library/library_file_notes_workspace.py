@@ -735,24 +735,20 @@ class FileNotesHistoryDialog(
     chosen action; every service call runs in the workspace under the same
     transition guards as its other file actions, so a dialog opened against
     one root can never publish into a root that changed beneath it.
+
+    TASK-36386 / ADR-097: its styling is not on the boot path. The
+    ``file-notes-history*`` rules live in ``css/features/_notes.tcss``, and
+    ``build_css.py`` splits them into ``screen_modal_file_notes_history.tcss``,
+    which this modal's ``CSS_PATH`` loads the first time the dialog opens.
     """
 
     BINDINGS = [("escape", "request_safe_cancel", "Close")]
     SAFE_MODAL_CONTENT = "#file-notes-history-dialog"
-
-    BUNDLED_CSS = """
-    FileNotesHistoryDialog { align: center middle; }
-    #file-notes-history-dialog {
-        width: 90; max-width: 95%; height: auto; max-height: 85%;
-        border: round $primary; background: $surface; padding: 1 2;
-    }
-    #file-notes-history-title { height: 1; text-style: bold; }
-    #file-notes-history-list { height: auto; max-height: 10; min-height: 1; margin-top: 1; }
-    #file-notes-history-destination-label { height: 1; margin-top: 1; }
-    #file-notes-history-destination { height: 1; }
-    #file-notes-history-actions { height: 1; margin-top: 1; }
-    #file-notes-history-status { height: 1; margin-top: 1; }
-    """
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "css"
+        / "screen_modal_file_notes_history.tcss"
+    )
 
     def __init__(
         self,

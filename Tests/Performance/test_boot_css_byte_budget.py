@@ -114,6 +114,13 @@ from tldw_chatbook.css import build_css
 #: and indexed subjects. Parsed token parity and retained ownership banners
 #: establish that no rule-bearing sources were dropped: measured 583,097 B.
 #: Bank the saving at measured + 25,000 B, rounded down to ten bytes.
+#: RE-MEASURED 2026-10-23 (TASK-36386), limit unchanged: the generated
+#: class-default sheets stopped copying each block's Python indentation, and
+#: FileNotesHistoryDialog's rules moved to a modal-owned split sheet.
+#: 605,868 -> 583,354 B on dev ae85e59e8f (headroom 2,222 -> 24,736). The
+#: tightening convention does not fire: the 22,514 B shed is under the
+#: 25,000 B slack, and 583,354 + 25,000 = 608,354 is above this limit, so
+#: "lowering" would raise it.
 MAX_BOOT_PARSED_CSS_BYTES = 608_090
 
 #: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
