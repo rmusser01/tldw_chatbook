@@ -933,7 +933,10 @@ def test_roleplay_items_list_focus_edge_and_cursor_clear_contrast(
 # $surface, $panel and the fill its own rule paints over either. The edges
 # are discovered in every CSS source the app loads (the tcss modules and the
 # class-level CSS strings in Python), each resolved in its own source's
-# variable scope, so a new focus edge is measured without being listed here.
+# variable scope, so a new focus edge is measured without being listed here,
+# whatever token or literal colour it paints. The only edges not measured
+# are listed one by one: the dev debt in focus_edge_shortfall_on_dev.tsv
+# (TASK-36663) and FOCUS_EDGES_MEASURED_ELSEWHERE.
 # On dev, 43 focus edges painted $ds-action-focus ($primary; $accent in
 # PromptBlockEditor's own palette), under 3:1 on $surface in 27 of the 89
 # measurable themes (sweet_sorbet 1.06:1); they paint $ds-active-fg now, or
@@ -941,32 +944,28 @@ def test_roleplay_items_list_focus_edge_and_cursor_clear_contrast(
 # under the edge. A Button whose focus rule sets no fill takes the generic
 # `Button:focus` $tldw-focus-fill, and $ds-active-fg reads 2.33-2.88:1 on that
 # fill in tokyo-night, atom-one-dark, catppuccin-frappe and earthy_nature
-# (painted, TASK-36479 notes); against the surface beside it, 4.5:1 or more.
+# (painted, TASK-36479 notes; tracked by TASK-36663); against the surface
+# beside it, 4.5:1 or more.
 _FOCUS_STATE = re.compile(r":focus(?:-within)?(?![\w-])|\.[\w-]+-focused(?![\w-])")
 _EDGE_PROPERTY = re.compile(r"(?:border|outline)(?:-(?:top|right|bottom|left))?")
 _EDGE_TOKEN = re.compile(r"\$([\w-]+)(?:\s+\d{1,3}%)?")
+#: An edge declaration that paints nothing.
+_NO_EDGE = ("none", "hidden", "blank")
 _CLASS_CSS_ATTRS = ("BUNDLED_CSS", "BUNDLED_SCREEN_CSS", "DEFAULT_CSS", "CSS")
 _LOCAL_DEFINITION = re.compile(r"^\s*\$([\w-]+)\s*:\s*([^;]+);", re.MULTILINE)
 
-#: Focus edges painted with these tokens are under 3:1 on dev today and are
-#: not fixed by TASK-36479, whose scope is the $ds-action-focus edges.
-#: Measured 2026-10-24 against $surface/$panel over the 89 measurable
-#: themes. test_focus_edge_discovery_and_shortfall_list_are_current fails
-#: once a token here clears 3:1 or no focus edge paints it, so this only
-#: shrinks.
-FOCUS_EDGE_SHORTFALL_ON_DEV = {
-    "ds-focus-accent": "$primary: the *:focus fallback (core/_reset.tcss) and more",
-    "ds-input-focus-accent": "$primary: field focus edges",
-    "ds-input-focus-border": "$primary: Input:focus and TextArea:focus frames",
-    "primary": "raw $primary: the nav buttons, the file-notes git panel",
-    "accent": "raw $accent: Console, Library and form focus edges",
-    "foreground": "the theme editor's colour swatches",
-    "tldw-active-edge": "the active top tab, on the tab bar (CHROME_LINES)",
-}
+#: Focus edges under 3:1 on dev today that TASK-36479 (the $ds-action-focus
+#: edges) did not fix: 152 rows, one per edge -- source, selector, property,
+#: painted value -- tracked by TASK-36663. Keyed per edge, so a new focus
+#: edge, or a listed one whose value changes, is measured like any other.
+#: test_focus_edge_discovery_and_shortfall_list_are_current fails once a row
+#: no longer matches an edge or its edge clears 3:1 on every theme, so the
+#: list only shrinks: never add a row.
+FOCUS_EDGE_DEBT_FILE = Path(__file__).with_name("focus_edge_shortfall_on_dev.tsv")
 
 #: Focus edges another test measures under its own, reviewed contract.
 FOCUS_EDGES_MEASURED_ELSEWHERE = {
-    ("css/features/_workflows.tcss", WORKFLOW_FIELD_FOCUS): (
+    ("css/features/_workflows.tcss", WORKFLOW_FIELD_FOCUS, "outline"): (
         "test_workflow_pane_edges_clear_non_text_contrast: its $tldw-focus-fill"
         " shifts the pane by the house floor, or its frame reads at 3:1 on it"
     ),
@@ -996,13 +995,52 @@ class FocusEdge(NamedTuple):
     source: str
     selector: str
     prop: str
+    #: The colour it paints: `$token`, `$token NN%` or a literal; "" when the
+    #: declaration draws an edge in no colour this test can read.
     value: str
-    token: str
     fill: str | None
     #: The source's own `$name: value;` lines; None for a tcss module, which
     #: parses in the bundle's scope (the theme, then _variables.tcss).
     local: dict | None
+    #: Whether _variables.tcss reaches the source: the tcss modules, and the
+    #: BUNDLED_CSS blocks the build seeds with it. BUNDLED_SCREEN_CSS blocks
+    #: are rendered without it (build_css.build_screen_css), DEFAULT_CSS and
+    #: CSS parse as sources of their own.
     vocabulary: bool
+
+    @property
+    def key(self) -> tuple[str, str, str, str]:
+        return (self.source, self.selector, self.prop, self.value)
+
+
+def _focus_edge_debt() -> list[tuple[str, ...]]:
+    """The rows of FOCUS_EDGE_DEBT_FILE, in file order."""
+    lines = FOCUS_EDGE_DEBT_FILE.read_text(encoding="utf-8").splitlines()
+    return [
+        tuple(line.split("\t")) for line in lines if line and not line.startswith("#")
+    ]
+
+
+def _edge_colour(value: str) -> str | None:
+    """The colour an edge declaration paints, "" if none is readable, or
+    None when it draws no edge (`none`, `hidden`, `blank`)."""
+    if token := _EDGE_TOKEN.search(value):
+        return token[0]
+    from textual.css.constants import VALID_BORDER
+
+    words = value.split()
+    if not words or words[0] in _NO_EDGE:
+        return None
+    return " ".join(words[1:] if words[0] in VALID_BORDER else words)
+
+
+def _theme_reaches(theme: Theme, edge: FocusEdge) -> bool:
+    """A `.-dark-mode` / `.-light-mode` rule paints only under that polarity."""
+    if ".-dark-mode" in edge.selector:
+        return theme.dark
+    if ".-light-mode" in edge.selector:
+        return not theme.dark
+    return True
 
 
 def _css_rules(css: str) -> list[tuple[str, str]]:
@@ -1048,14 +1086,23 @@ def _class_css_sources() -> list[tuple[str, str, str]]:
             if not isinstance(node, ast.ClassDef):
                 continue
             for stmt in node.body:
-                if not isinstance(stmt, ast.Assign) or not isinstance(
-                    stmt.value, ast.Constant
+                # As widget_css.iter_blocks lifts them: `X = "..."` and
+                # `X: str = "..."`.
+                if isinstance(stmt, ast.Assign):
+                    targets = stmt.targets
+                elif isinstance(stmt, ast.AnnAssign):
+                    targets = [stmt.target]
+                else:
+                    continue
+                if not (
+                    isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str)
                 ):
                     continue
-                for target in stmt.targets:
+                for target in targets:
                     if isinstance(target, ast.Name) and target.id in _CLASS_CSS_ATTRS:
                         label = f"{relative.as_posix()}::{node.name}.{target.id}"
-                        found.append((label, target.id, str(stmt.value.value)))
+                        found.append((label, target.id, stmt.value.value))
     return found
 
 
@@ -1078,8 +1125,10 @@ def _focus_edges() -> tuple[FocusEdge, ...]:
             declarations = [d.partition(":")[::2] for d in body.split(";") if ":" in d]
             fills = [v.strip() for p, v in declarations if p.strip() == "background"]
             for prop, value in declarations:
-                token = _EDGE_TOKEN.search(value)
-                if not (_EDGE_PROPERTY.fullmatch(prop.strip()) and token):
+                if not _EDGE_PROPERTY.fullmatch(prop.strip()):
+                    continue
+                colour = _edge_colour(value)
+                if colour is None:
                     continue
                 for selector in selectors.split(","):
                     if _FOCUS_STATE.search(selector):
@@ -1088,11 +1137,10 @@ def _focus_edges() -> tuple[FocusEdge, ...]:
                                 label,
                                 selector.strip(),
                                 prop.strip(),
-                                token[0],
-                                token[1],
+                                colour,
                                 fills[-1] if fills else None,
                                 local,
-                                attr in (None, "BUNDLED_CSS", "BUNDLED_SCREEN_CSS"),
+                                attr in (None, "BUNDLED_CSS"),
                             )
                         )
     return tuple(edges)
@@ -1137,13 +1185,19 @@ def _focus_edge_floor(theme: Theme, edge: FocusEdge) -> tuple[float, str]:
 def test_focus_edges_clear_non_text_contrast_on_every_theme(theme: Theme) -> None:
     """TASK-36479 AC#2: every focus edge the app's CSS draws reads at 3:1
     against $surface, $panel and its own rule's fill over either, on every
-    measurable theme -- outside the dev-debt tokens and the edges another
-    test measures, both listed above."""
+    measurable theme -- outside the edges listed above one by one (the
+    TASK-36663 debt, and the edges another test measures)."""
+    debt = set(_focus_edge_debt())
     short = []
     for edge in _focus_edges():
-        if edge.token in FOCUS_EDGE_SHORTFALL_ON_DEV:
+        if edge.key in debt or edge.key[:3] in FOCUS_EDGES_MEASURED_ELSEWHERE:
             continue
-        if (edge.source, edge.selector) in FOCUS_EDGES_MEASURED_ELSEWHERE:
+        if not _theme_reaches(theme, edge):
+            continue
+        if not edge.value:
+            short.append(
+                f"  {edge.source} {edge.selector} {{{edge.prop}}}: no readable colour"
+            )
             continue
         ratio, ground = _focus_edge_floor(theme, edge)
         if ratio < NON_TEXT:
@@ -1158,27 +1212,36 @@ def test_focus_edges_clear_non_text_contrast_on_every_theme(theme: Theme) -> Non
 
 
 def test_focus_edge_discovery_and_shortfall_list_are_current() -> None:
-    """TASK-36479: the discovery reaches every kind of CSS source, and each
-    dev-debt token still paints a focus edge that falls under 3:1 somewhere
-    (fixing one means deleting its entry, not leaving it to cover new ones)."""
+    """TASK-36479: the discovery reaches every kind of CSS source, and every
+    row of the TASK-36663 debt list is still an edge that falls under 3:1
+    somewhere (fixing one means deleting its row, never re-using it)."""
     edges = _focus_edges()
     found = {(edge.source, edge.selector) for edge in edges}
-    expected = (*FOCUS_EDGE_ANCHORS, *FOCUS_EDGES_MEASURED_ELSEWHERE)
-    missing = [edge for edge in expected if edge not in found]
-    assert not missing, f"focus-edge discovery missed {missing}"
-    measured = [
-        edge
-        for edge in edges
-        if (edge.source, edge.selector) not in FOCUS_EDGES_MEASURED_ELSEWHERE
+    missing = [anchor for anchor in FOCUS_EDGE_ANCHORS if anchor not in found]
+    missing += [
+        listed
+        for listed in FOCUS_EDGES_MEASURED_ELSEWHERE
+        if listed not in {edge.key[:3] for edge in edges}
     ]
-    for token in FOCUS_EDGE_SHORTFALL_ON_DEV:
-        painted = [edge for edge in measured if edge.token == token]
-        assert painted, f"no focus edge paints ${token}; drop it from the list"
-        assert any(
+    assert not missing, f"focus-edge discovery missed {missing}"
+    rows = _focus_edge_debt()
+    assert len(rows) == len(set(rows)), "a debt row is listed twice"
+    by_key: dict[tuple[str, ...], list[FocusEdge]] = {}
+    for edge in edges:
+        by_key.setdefault(edge.key, []).append(edge)
+    gone = [row for row in rows if row not in by_key]
+    assert not gone, f"debt rows that match no focus edge any more; drop them: {gone}"
+    cleared = [
+        row
+        for row in rows
+        if not any(
             _focus_edge_floor(theme, edge)[0] < NON_TEXT
+            for edge in by_key[row]
             for theme in MEASURABLE_THEMES
-            for edge in painted
-        ), f"every ${token} focus edge clears {NON_TEXT}:1 now; drop it from the list"
+            if _theme_reaches(theme, edge)
+        )
+    ]
+    assert not cleared, f"debt rows that clear {NON_TEXT}:1 now; drop them: {cleared}"
 
 
 HIGHLIGHT_RULES = tuple(

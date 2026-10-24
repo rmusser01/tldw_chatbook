@@ -276,13 +276,18 @@ fields (task-1586):
 - **Focus:** the edge flips to `thick $ds-active-fg` and the
   background swaps to `$ds-focus-bg` (the task-345 focus surface) with
   bold text. Three concurrent signals: edge weight, background, weight.
-  Every focus edge (a border or outline a `:focus` rule draws) reads at
-  3:1 against `$surface`, `$panel` and its own rule's fill, in every
-  theme (TASK-36479, `Tests/UI/test_theme_contrast.py`): `$ds-active-fg`
-  is the house focus-edge colour, the Settings category rail's and the
-  Roleplay list's too. `$ds-action-focus` (`$primary`) fell under 3:1 on
-  `$surface` in 27 of the 89 measurable themes and no longer draws focus
-  edges. A variant Button (primary, success, warning,
+  `$ds-active-fg` is the house focus-edge colour (the Settings category
+  rail's and the Roleplay list's too). TASK-36479 moved the focus edges
+  drawn with `$ds-action-focus` (`$primary`, under 3:1 on `$surface` in 27
+  of the 89 measurable themes) to it; those edges read at 3:1 against
+  `$surface`, `$panel` and their own rule's fill in every theme.
+  `Tests/UI/test_theme_contrast.py` measures every focus edge the CSS
+  draws, except the 152 still under 3:1 on dev, which are tracked debt:
+  one row each in `Tests/UI/focus_edge_shortfall_on_dev.tsv`, fixed by
+  TASK-36663 (other `$primary`/`$accent` aliases including the `*:focus`
+  fallback and the Input/TextArea focus frames). A Button whose focus
+  rule paints no fill sits on the generic `Button:focus` fill, where
+  `$ds-active-fg` reads 2.33-2.88:1 in four themes (also TASK-36663). A variant Button (primary, success, warning,
   error) keeps its fill on focus; the focus tint would make it darker. A
   default Button's focus fill is `$tldw-focus-fill`: the focus tint where
   that sits at least as far from a `$panel` card as the resting `$surface`
