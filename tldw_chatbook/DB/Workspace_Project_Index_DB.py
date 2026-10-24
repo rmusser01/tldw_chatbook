@@ -762,6 +762,34 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 if row["epoch"] == scope.epoch
                 else "keyword_scope_changed"
             )
+            coverage = None
+            if (
+                state == "Ready"
+                and row["enabled"]
+                and row["ready_generation_id"]
+                and settings
+            ):
+                generation = conn.execute(
+                    "SELECT chunk_count FROM semantic_generations WHERE generation_id=? "
+                    "AND namespace=? AND epoch=? AND processing_revision=? "
+                    "AND semantic_revision=? AND provider_id=? AND model_id=? "
+                    "AND destination_fingerprint=? AND config_fingerprint=? "
+                    "AND format_id='float32-le-v1' AND state='Ready' "
+                    "AND claim_token IS NULL AND (chunk_count=0 OR dimension>0)",
+                    (
+                        row["ready_generation_id"],
+                        scope.key.namespace,
+                        scope.epoch,
+                        scope.processing_revision,
+                        row["semantic_revision"],
+                        settings.provider_id,
+                        settings.model_id,
+                        settings.destination_fingerprint,
+                        settings.config_fingerprint,
+                    ),
+                ).fetchone()
+                if generation is not None:
+                    coverage = generation[0]
             return ProjectSemanticState(
                 scope,
                 row["semantic_revision"],
@@ -770,6 +798,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 state,
                 reason,
                 row["ready_generation_id"] if row["epoch"] == scope.epoch else None,
+                coverage,
             )
 
     @_activated
