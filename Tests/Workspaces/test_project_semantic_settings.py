@@ -55,6 +55,7 @@ def test_semantic_consent_cas_preserves_keyword_scope_and_state(tmp_path):
     )
     assert disabled.semantic_revision == 2
     assert disabled.enabled is False
+    assert disabled.coverage is None
     assert store.load_status(key) == keyword_before
     store.close_native()
     reopened = open_semantic_store(tmp_path)
@@ -147,9 +148,13 @@ def test_full_revoke_disables_semantics_but_keyword_reconfigure_does_not(tmp_pat
         store.load_semantic_state(keyword).semantic_revision
         == semantic.semantic_revision
     )
-    assert store.load_semantic_state(keyword).enabled
+    paused = store.load_semantic_state(keyword)
+    assert paused.enabled
+    assert paused.coverage is None
     revoked = store.revoke(key, clear=True, expected_scope=keyword)
-    assert not store.load_semantic_state(revoked).enabled
+    off = store.load_semantic_state(revoked)
+    assert not off.enabled
+    assert off.coverage is None
     with pytest.raises(ValueError, match="stale_scope"):
         store.configure_semantic(
             scope,

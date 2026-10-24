@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 
 import pytest
@@ -618,7 +618,9 @@ def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path)
             scope, first, "first", rows, [encode_vector([1, 0])]
         )
         assert store.semantic_publish(scope, first, "first")
-        assert store.load_semantic_state(scope).ready_generation_id == first
+        ready = store.load_semantic_state(scope)
+        assert ready.ready_generation_id == first
+        assert ready.coverage == 1
 
         second = store.semantic_claim(
             scope,
@@ -633,6 +635,7 @@ def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path)
         failed = store.load_semantic_state(scope)
         assert failed.ready_generation_id == first
         assert failed.state == "Ready"
+        assert failed.coverage == 1
         assert failed.reason == "previous_index_refresh_failed_provider_unavailable"
         assert (
             store.semantic_ready_generation(scope, failed, digest("artifact-a"))
@@ -646,6 +649,22 @@ def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path)
             )[0].relative_path
             == "src/dog.py"
         )
+        with store.transaction(semantic=True) as conn:
+            conn.execute(
+                "UPDATE semantic_generations SET model_id=? WHERE generation_id=?",
+                ("changed-model", first),
+            )
+        assert store.load_semantic_state(scope).coverage is None
+        with store.transaction(semantic=True) as conn:
+            conn.execute(
+                "UPDATE semantic_generations SET model_id=? WHERE generation_id=?",
+                (state.settings.model_id, first),
+            )
+            conn.execute(
+                "UPDATE semantic_control SET settings_json=? WHERE singleton=1",
+                (json.dumps(asdict(settings("changed"))),),
+            )
+        assert store.load_semantic_state(scope).coverage is None
     finally:
         store.close_native()
         lease.close()
@@ -667,6 +686,7 @@ def test_failed_first_generation_has_no_ready_projection(tmp_path):
         failed = store.load_semantic_state(scope)
         assert failed.state == "Error"
         assert failed.ready_generation_id is None
+        assert failed.coverage is None
         assert (
             store.semantic_ready_generation(scope, failed, digest("artifact-a")) is None
         )
@@ -702,6 +722,7 @@ def test_ready_zero_members_is_distinct_from_unavailable_semantics(tmp_path):
         assert store.semantic_publish(scope, generation, "empty")
         ready = store.load_semantic_state(scope)
         assert ready.state == "Ready" and ready.ready_generation_id == generation
+        assert ready.coverage == 0
         assert (
             rank_semantic(
                 store, scope, ready, digest("artifact-a"), [1, 0], (), limit=10

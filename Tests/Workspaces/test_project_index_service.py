@@ -16,6 +16,7 @@ from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     WorkspaceProjectIndexDB,
     index_store_path,
 )
+from tldw_chatbook.Utils.private_paths import PrivatePathError, secure_private_directory
 from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
 
@@ -39,7 +40,13 @@ class Rig:
 
     def store(self, key):
         path = index_store_path(self.data, key)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            for directory in (path.parent.parent, path.parent):
+                result = secure_private_directory(
+                    directory, create=True, application_owned=True
+                )
+                if not result.verified_private:
+                    raise PrivatePathError(result)
         return WorkspaceProjectIndexDB(path)
 
     @contextmanager
