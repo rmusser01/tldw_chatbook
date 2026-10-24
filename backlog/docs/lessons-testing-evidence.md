@@ -67,6 +67,12 @@ completion while stubbing only the separately tested package/model check.
 
 **What to do.** Retain every progress occurrence, all duration phases and each run's exact census. Top-25 reports do not fully time parameterized functions; label the unmeasured remainder and measure hosted job setup separately. Bind evidence hashes to canonical Git blob bytes (LF/UTF8), since Windows checkout newlines and upstream-only comments can change file hashes without changing the selected tests.
 
+## A census tail cannot take work off a heavy shard, and no deal beats the floor (TASK-36512, 2026-10-23)
+
+**Incident.** UI Fast Lane shards timed out at their 20-minute cap. The plan was to split the heavy files by function, keep one selector in each file's slot, and append the rest at the tail. Replayed over nine PR runs, each entry at its slowest, that moved the worst shard from 19.6 only to 18.3 pytest minutes. Round-robin gives every shard an equal share of the tail, and each selector costs at least one app boot (~15 s), so shards that were already average gained 1-2 minutes. Re-dealing the Phase 7 block together with the tail reached 17.2-17.3 on every shard. That is also the floor: 223.6 minutes of worst-case work over 13 shards. Setup adds 1.0-2.0 minutes, so the worst case is about 19.2 minutes a job. No order could meet the original AC#3, 3 minutes under the 20-minute cap. The re-dealt tail was also tied to the slot it starts in: in the replay, 1-12 entries added above it raised the worst case from 17.3 to 17.8-18.5.
+
+**What to do.** Before planning a re-deal, compute the floor: the sum of the worst-case entry costs divided by the shard count, plus the measured setup. If that is over the target, say so first: no order meets it, and only more shards or less work per shard can. Moving work off a heavy shard needs a fixed-length block of heavy entries re-dealt together with the tail, so every entry outside the block keeps its slot. A tail-only append only adds work to every shard. The shipped `scripts/ui_lane_shard_replay.py --write` cannot do that yet: it re-orders only the tail. TASK-36512 used an uncommitted scratch search, and TASK-36514 asks for a committed tool. A block dealt for its slot needs a header that says to keep it in place, with later entries after it.
+
 
 ## A returned frame address cannot identify a later invocation (TASK-35713, PR #3189, 2026-10-21)
 
