@@ -5,6 +5,7 @@ Date: 2026-10-23
 Related Task: [TASK-36509](../tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
 Spec: [Console radio portraits](../../Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md)
 Review: [Source-anchored design review](../../Docs/superpowers/reviews/2026-10-23-console-radio-portraits-design-review.md)
+Implementation review: [Three corrections and revised-plan review](../../Docs/superpowers/reviews/2026-10-23-console-radio-portraits-implementation-review.md)
 Plan: [Implementation and atomic tasks](../../Docs/superpowers/plans/2026-10-23-console-radio-portraits-implementation.md)
 Supersedes: N/A
 
@@ -67,11 +68,21 @@ elapsed-time estimates cannot establish accurate mouth timing.
    envelope/position pairing; otherwise retain working voice and show truthful
    status with the original portrait. Never simulate sync from text or network
    chunk timing, change providers silently, or play through two paths at once.
+   Sample presentation every 20 ms on the existing notification thread, independent
+   of UI reads/public events and without per-block publication jobs. Reuse native
+   graceful callback completion/output-finished acknowledgement for natural drain;
+   keep ownership until buffered audio finishes, including with observation absent
+   or DAC timing invalid. This deliberately corrects queue-exhaustion/abort drain.
+   Stop/replacement remains immediate abort; stale completion cannot release a
+   newer owner. Preserve the existing bounded drain watchdog. Driver timestamps
+   qualify mouth timing, not a substitute completion signal.
 7. Keep one stable token-backed radio frame in the existing Character rail.
    Preserve expression precedence, geometry, keyboard access, current bounded
    preparation and stale-worker rejection. Existing motion/accessibility settings
    suppress animation without hiding voice status. No new graphics dependency,
    destination, contact/call interaction or sound pack is introduced.
+   Suppressed meters retain their row through visibility hiding in ordinary
+   layouts; only compact layout removes the row, independently of voice state.
 
 ## Alternatives considered
 
@@ -85,6 +96,7 @@ elapsed-time estimates cannot establish accurate mouth timing.
 | Private loose frame files plus database pointers | Requires another file/DB publication and backup lifetime; six bounded SQLite blobs allow atomic Apply. |
 | Estimate file progress from elapsed wall time | Player startup, pause and buffering drift can produce visibly false synchronization. |
 | A new audio/animation framework | Existing speech owners, PCM sink and disposable avatar provide the required boundaries. |
+| Treat software-queue exhaustion as successful playback | Device-buffered audio may still be pending; abort can cut it off and release hands-free ownership early. Native output-finished acknowledgement supplies the completion boundary. |
 
 ## Consequences
 

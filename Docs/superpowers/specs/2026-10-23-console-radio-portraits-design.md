@@ -78,6 +78,10 @@ existing aspect-preserving contain fit, rail scrolling, and full-size-on-click
 viewer. The viewer snapshots the currently displayed frame without owning another
 animation or speech clock.
 
+In ordinary layouts suppression uses visibility hiding, preserving the meter's
+row and image/control geometry. Only compact layout removes the row from layout;
+voice state and timing availability cannot change that layout decision.
+
 All geometry, color, state and motion values compose from the design language and
 component patterns. Add any missing `$ds-*` values centrally before use, edit only
 source stylesheets, and rebuild the generated TCSS bundle. New controls remain
@@ -330,6 +334,28 @@ output. Partial blocks must map their zero-padded suffix to silence even if no
 public SinkUnderrun event was emitted. Missing/invalid device timing makes the
 mouth timing unavailable, rather than silently substituting callback wall time.
 Do not fire a UI event for every sample.
+
+Use the sink's existing non-realtime notification thread to sample presentation
+at 20 ms intervals while observation is active, independent of public sink events
+or widget reads. Callback progress replaces bounded shared state; publication
+coalesces into one latest snapshot. Periodic publication cannot manufacture timing
+validity: evaluate only already-mapped device intervals, never extrapolate speech
+beyond them. The last mapped interval may remain valid during native device drain;
+once it has passed without new timing, close the mouth and mark timing unavailable.
+
+Natural completion is distinct from interruption. After the final source block is
+submitted, keep playback ownership and the sink alive until the backend confirms
+all pending output has played. Reuse sounddevice's graceful callback completion
+and output-finished acknowledgement, with teardown off the realtime callback.
+Only then publish successful drain, release the voice owner and complete the
+utterance or advance hands-free to its next sentence/listening. This corrects the
+sink's existing queue-exhaustion/abort behavior for observed and unobserved callers.
+Explicit Stop, failure and replacement still abort immediately with the existing
+two-block silence contract; a late finished callback cannot turn an interruption
+into successful completion or disturb a newer owner. Invalid DAC timing disables
+mouth observation but does not replace native completion with a clock estimate.
+Preserve the existing buffered-duration plus five-second drain watchdog so missing
+backend acknowledgement fails with bounded cleanup rather than hanging.
 
 Bound queued envelope metadata by the existing queued-audio capacity plus a
 one-second device-tail reserve, and keep only the latest presentation snapshot

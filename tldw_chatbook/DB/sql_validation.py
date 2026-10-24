@@ -81,6 +81,8 @@ VALID_TABLES = {
         "character_conversation_search_revision",
         "character_conversation_search_state",
         "character_expression_images",
+        "character_portrait_performances",
+        "character_portrait_performance_frames",
         "chat_dictionaries",
         "collection_keywords",
         "conversation_dictionaries",

@@ -58,6 +58,30 @@ The mounted Dictionary Settings form acknowledges only the raw controls submitte
 
 Cards can drive live expression playback: `emote_directives.CharacterEmoteEvent` parses emote directives **inline during streaming** (inside `append_stream_chunk`, with a fail-closed parser reset), and `character_expression_playback.prepare_expression` selects the sprite/mood for display. Durable emote metadata follows ADR-075.
 
+## Local portrait performance attachments
+
+`Character_Chat/portrait_performance.py` normalizes six aligned still poses
+(`rest`, `small`, `open` and their `blink_` variants) into bounded PNGs. Work shares
+the existing avatar preparation budget and releases decoded images on failure.
+Canonical source identities use the actual resolved expression, source digest and
+immutable asset or legacy-image IDs; current and historical resolution of one
+asset have the same identity.
+
+Schema 82 adds `character_portrait_performances` and
+`character_portrait_performance_frames`. `CharactersRAGDB` Apply/get/Remove APIs
+publish all six poses atomically, revalidate source selection and expected revision,
+and retain increasing inactive revision tombstones after Remove. Savepoints also
+preserve replacement atomicity inside caller-owned transactions. A source change
+leaves the old record available for explicit revision-checked replacement; consumers
+must match its source before rendering it. Soft deletion preserves rows, while
+permanent character deletion cascades through the parent and frames.
+
+These attachments are profile-local (ADR-242). Native full-profile SQLite backup
+and recovery schema admission include them; original artwork, character cards,
+Actor Packs, Chatbooks and sync formats are unchanged. Preparation/editor, speech
+observation and Console animation are later implementation units, not exposed by
+this storage API alone. See [ADR-242](../../backlog/decisions/242-console-radio-portrait-performance.md).
+
 ## Failure behaviors
 
 | Case | Behavior |

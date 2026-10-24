@@ -12,6 +12,8 @@ documentation:
 - Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md
 - Docs/superpowers/plans/2026-10-23-console-radio-portraits-implementation.md
 - backlog/decisions/242-console-radio-portrait-performance.md
+- Docs/superpowers/reviews/2026-10-23-console-radio-portraits-implementation-review.md
+updated_date: 2026-10-23 23:40
 ---
 
 ## Description
@@ -23,11 +25,11 @@ Expose consistent speech presentation for manual Speak, automatic replies, hands
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Manual and automatic Speak publish only for their existing validated message/request/session owner; stale session/profile/character signals cannot animate a new owner.
-- [ ] #2 Hands-free receives optional start/progress/terminal observation with its exact reply/session/character/sequencer token while retaining current voice selection, cooldown bypass, quiet failures and exactly-once completion.
+- [ ] #2 Hands-free receives optional start/progress/terminal observation with its exact reply/session/character/sequencer token while retaining current voice selection, cooldown bypass, quiet failures and exactly-once completion; the next sentence or listening starts only after backend-confirmed natural drain or settled interruption.
 - [ ] #3 Guarded app-owned editor speech can expose its own presentation owner and uses selected-character resolution plus existing destination checks without fabricating a conversation message.
 - [ ] #4 Preview close/cancel/supersession stops only its exact request; late cleanup and terminal acknowledgements cannot stop or clear newer speech.
 - [ ] #5 Confirmed pause/resume is presentation transport state and does not introduce unsupported values into existing speech-admission state machines or add new player capabilities.
-- [ ] #6 Targeted ownership tests cover older-message replay, unknown/cross-character provenance, sentence handoff, stale validators, absent observers and cancellation without changing existing public-call behavior.
+- [ ] #6 Targeted ownership tests cover older-message replay, unknown/cross-character provenance, delayed final-device-block completion, sentence handoff, stale validators, absent observers and cancellation during device drain; late completion cannot clear newer speech or fire completion twice.
 <!-- AC:END -->
 
 ## Implementation Notes

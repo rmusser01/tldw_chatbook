@@ -12,6 +12,8 @@ documentation:
 - Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md
 - Docs/superpowers/plans/2026-10-23-console-radio-portraits-implementation.md
 - backlog/decisions/242-console-radio-portrait-performance.md
+- Docs/superpowers/reviews/2026-10-23-console-radio-portraits-implementation-review.md
+updated_date: 2026-10-23 23:40
 ---
 
 ## Description
@@ -22,12 +24,14 @@ Keep portrait speech levels aligned with the audio actually scheduled to the out
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Optional presentation observation leaves existing sink callers and audio output unchanged when disabled or when observation fails.
+- [ ] #1 Optional presentation observation preserves public sink call compatibility and audio samples when disabled or when observation fails; backend-confirmed natural completion applies equally to observed and unobserved callers.
 - [ ] #2 Source-frame consumption and device-output positions remain distinct; validated output-DAC timing maps both to monotonic presentation time, including partial-block zero padding and resumed audio after underruns.
 - [ ] #3 Rejected or retried feed chunks never advance envelope position; device-scheduled metadata survives until its output time and remains bounded by admitted audio plus the one-second tail reserve.
 - [ ] #4 Slow or hidden readers cannot block audio, drop samples or accumulate presentation events; the realtime callback performs no image, database, UI, provider or blocking observer work.
 - [ ] #5 Eligible PCM16 WAV artifacts reuse the existing sink; unqualified external timing retains working audio with status-only presentation, preserving one-voice ownership and fallback without double playback.
-- [ ] #6 Fake-device tests prove delayed DAC output, full/partial underruns, backpressure, stop/replacement, invalid timestamps, observer failure and bounded cleanup; targeted sink/format regression checks pass.
+- [ ] #6 Fake-device tests prove delayed DAC output, final-block device drain with and without observation or valid DAC timing, full/partial underruns, backpressure, stop/replacement, invalid timestamps, observer failure and bounded cleanup; affected sink, pump, format and spoken-feedback regression checks pass.
+- [ ] #7 Natural completion retains the live sink, abortable stream and speech ownership until backend output-finished acknowledgement; source-queue exhaustion cannot publish drain or release pump completion, explicit Stop/replacement still meets the two-block silence contract, late/duplicate acknowledgements cannot override interruption, and a missing acknowledgement reaches bounded failure/cleanup.
+- [ ] #8 Qualified presentation updates continuously on the existing notification thread at a 20 ms sampling interval without UI reads, direct test calls to the publication helper or per-block publication-job accumulation; loud/pause/loud and pending-tail tests prove fresh observations, expired mapped output loses timing validity, and terminal cleanup stops publication.
 <!-- AC:END -->
 
 ## Implementation Notes
