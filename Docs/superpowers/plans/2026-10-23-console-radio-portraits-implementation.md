@@ -491,23 +491,22 @@ handle character names safely. No new design token was needed. See the atomic
 
 ### Unit 9 — TASK-36550: integrated qualification and documentation
 
-**Execution checkpoint:** still In Progress. Installed artwork and native restore
-journeys, portable exports, local waveform timing and real afplay fallback have
-passed. Hardware evidence exposed an early CoreAudio ACK; the reviewed correction
-adds a bounded final-output tail fence independent of portrait analysis and keeps
-deferred close in tracked queue work. Final sink/speech gate: 226 passed; real
-playback probes: three passed. See the [partial qualification review](../reviews/2026-10-23-task-36550-review.md)
+**Execution checkpoint:** qualified and reviewed with stated coverage limits.
+Installed artwork/native recovery and export journeys, real local waveform timing,
+afplay fallback, user-selected ChatGPT reference edits/import/replacement, and real
+Pocket TTS/native-device checks pass. Native completion respects the measured final
+output interval. Real speech controls and production sentence/listening-intent
+handoffs pass; local ASR retains the final word. Pocket's app adapter remains WAV-only;
+the incremental transport probe is separate. Microphone/STT hardware, acoustic loopback,
+other platforms, native graphics terminals and live in-app image-adapter generation
+remain named limits. See the [final review](../reviews/2026-10-23-task-36550-review.md)
 and [dated evidence](../qa/console-radio-portraits/2026-10-23/qualification.md).
-Real MOSS image generation remains pending reachable ComfyUI/workflow metadata;
-real TTS/perceptual/hands-free qualification is also still required. No completion
-is inferred from the known-waveform or mocked provider tests.
-
 
 **Files:** Create `Tests/ProductionApp/test_console_radio_portraits.py`, `Tests/Backup_Recovery/test_portrait_performance_restore.py`; extend `Tests/Actor_Packs/test_actor_pack_export.py`, `Tests/Chatbooks/test_local_chatbook_service_export.py` and `Tests/Character_Chat/test_character_backup_export_image.py`. Create evidence under `Docs/superpowers/qa/console-radio-portraits/` with a dated run record. Update `Docs/Architecture/{character-chat,speech,media-generation}.md`, `Docs/User_Guide/console/voice-and-hands-free.md` and `Docs/User_Guide/roleplay-chat-dictionaries/characters-and-personas.md`.
 
 **Consumes:** Units 1–8 as installed application behavior. **Produces:** Reproducible test/evidence records and accurate user documentation, no new feature subsystem.
 
-- [ ] **1. Add an installed-path red-to-green journey.** Extend the existing production app/private-profile harness, not a fake Console. Import six marked frames, inspect offline transitions, Apply, open Console, drive owned sample audio, reopen the editor, Remove and reapply. Assertions must include:
+- [x] **1. Add an installed-path red-to-green journey.** Extend the existing production app/private-profile harness, not a fake Console. Import six marked frames, inspect offline transitions, Apply, open Console, drive owned sample audio, reopen the editor, Remove and reapply. Assertions must include:
 
 ```python
 assert reopened.revision == applied_revision
@@ -518,11 +517,11 @@ assert stale_owner_cannot_repaint
 ```
 
 Bind these values to the installed database/widget/owner observations in the journey; no helper-only proof. Add full-profile backup/restore using the existing native recovery harness, with fresh post-restore application open and a blocked old-owner control. Assert restored frame hashes/revisions, unchanged portable exports and no new sync tables/records. Do not count an archive existing as a successful restore.
-- [ ] **2. Run the new production/recovery cases and targeted exports.** The implemented flow must pass, and deliberate stale-source/old-owner controls must be rejected. Check migrated and fresh profiles; close owned worker/database resources after the last callback.
-- [ ] **3. Qualify real image editing in an isolated profile.** Select a configured reference-capable backend; capture source, destination, six staged frames, one selected regeneration, offline/idle preview and explicit Apply. Review identity/framing consistency and no jumps at actual rail size. No configured backend means this AC remains open; mocks cannot replace it.
-- [ ] **4. Qualify real streaming and eligible WAV artifact speech separately.** Use a known pause-heavy waveform and real TTS. Record audio/device/backend, visual onset, nonzero-background pause closure, underrun/resume where reproducible, stop/interruption, hands-free sentence handoff and conversation switch. Include audible final-syllable/device-tail completion, no early next sentence or listening, and Stop/replacement during a pending tail. Verify continuous portrait updates without test-only helper calls. Score the 100 ms target using validated output-DAC and actual frame-paint timestamps mapped to the same monotonic clock; preserve real playback capture for perceptual checks and report device latency separately. State whether independent physical loopback measurement was available rather than claiming one from driver timestamps. Exercise an unqualified external-player fallback. A platform/player not exercised remains a named coverage limit, not a success.
-- [ ] **5. Run the affected-file regression gate and update docs.** Include new files plus relevant expression, owner, sink, Personas, recovery, migration, token and CSS checks. No full sweep without explicit approval. Record exact checkout/runtime identity, commands, results, timing measurements and baseline failures. Source docs describe what shipped: six-request generation, imports, local storage/export limit, motion settings, real timing capability and safe fallback.
-- [ ] **6. Self-review and commit the qualification unit.** Suggested message: `test: qualify Console radio portraits end to end`. Mark implementation tasks Done only when their AC, static checks, documentation, review and actual qualification obligations are satisfied; keep missing live evidence open rather than recording completion from mock tests.
+- [x] **2. Run the new production/recovery cases and targeted exports.** The implemented flow must pass, and deliberate stale-source/old-owner controls must be rejected. Check migrated and fresh profiles; close owned worker/database resources after the last callback.
+- [x] **3. Qualify real image editing in an isolated profile.** Use the user-selected real reference-image service: ChatGPT built-in generation, substituted for unreachable ComfyUI/MOSS. Capture source, exact prompts, six frames and one selected replacement; import authorized 1024×1024 copies into the actual mounted editor, inspect offline/idle preview and actual rail-size captures, then Apply/reopen/Remove. Retain originals and explicitly record that external generation does not qualify the in-app adapter path. Mocks cannot replace real generated artwork.
+- [x] **4. Qualify real streaming and eligible WAV artifact speech separately.** Use a known pause-heavy waveform and real TTS. Record audio/device/backend, visual onset, nonzero-background pause closure, underrun/resume where reproducible, stop/interruption, hands-free sentence handoff and conversation switch. Include audible final-syllable/device-tail completion, no early next sentence or listening, and Stop/replacement during a pending tail. Verify continuous portrait updates without test-only helper calls. Score the 100 ms target using validated output-DAC and actual frame-paint timestamps mapped to the same monotonic clock; preserve real playback capture for perceptual checks and report device latency separately. State whether independent physical loopback measurement was available rather than claiming one from driver timestamps. Exercise an unqualified external-player fallback. A platform/player not exercised remains a named coverage limit, not a success.
+- [x] **5. Run the affected-file regression gate and update docs.** Include new files plus relevant expression, owner, sink, Personas, recovery, migration, token and CSS checks. No full sweep without explicit approval. Record exact checkout/runtime identity, commands, results, timing measurements and baseline failures. Source docs describe what shipped: six-request generation, imports, local storage/export limit, motion settings, real timing capability and safe fallback.
+- [x] **6. Self-review and commit the qualification unit.** Suggested message: `test: qualify Console radio portraits end to end`. Mark implementation tasks Done only when their AC, static checks, documentation, review and actual qualification obligations are satisfied; keep missing live evidence open rather than recording completion from mock tests.
 
 ## Spec coverage and execution handoff
 

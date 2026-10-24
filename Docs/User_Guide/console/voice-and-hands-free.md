@@ -30,10 +30,15 @@ animating the new character. Normal speech transitions keep sidebar rows stable;
 compact layouts omit the level bar first.
 
 Eligible PCM streaming and complete PCM16 WAV artifacts use local device timing.
-Natural completion waits for the device's finished acknowledgement before the next
-sentence or listening handoff. **Stop** still interrupts immediately. Synchronization
+Natural completion waits for the device's finished acknowledgement and any validated
+pending output tail before the next sentence or listening handoff. **Stop** still interrupts immediately. Synchronization
 accuracy depends on the selected player/device; the source qualification record
 lists exercised paths and measurement limits.
+
+Pocket TTS can use the existing [OpenAI-compatible TTS settings](../openai-compatible-tts.md)
+with its native `/tts` URL and WAV output. This endpoint's WAV must finish arriving
+before playback starts; once playing through the local PCM16 WAV path, the portrait
+uses measured device timing.
 
 ## How formatted replies are spoken
 

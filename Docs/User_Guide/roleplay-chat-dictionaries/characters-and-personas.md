@@ -181,6 +181,11 @@ Select each of the six slots and **Import / replace…** a still PNG, JPEG or We
 `rest`, `small`, `open`, `blink_rest`, `blink_small`, `blink_open`. All images must
 have matching dimensions. Each image is limited to 1,048,576 pixels and 4 MiB;
 the complete normalized set is limited to 16 MiB. Animated images are refused.
+Artwork made in an external image editor or service, including ChatGPT, uses this
+same import workflow. Export six separate files with identical framing and dimensions;
+for square images, 1024×1024 meets the pixel limit. Keep the originals when preparing
+smaller copies. The app does not resize over-limit imports automatically.
+
 **Clear slot** only changes the draft. Compare the source with the Console-sized
 preview, cycle all six poses, inspect individual poses, or run **Idle + blink**
 without generating images or playing speech.

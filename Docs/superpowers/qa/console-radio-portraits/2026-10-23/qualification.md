@@ -1,6 +1,6 @@
-# Console radio portrait qualification — partial
+# Console radio portrait qualification
 
-Date: 2026-10-23 (local). TASK-36550 remains **In Progress**. ADR-242 applies;
+Date: 2026-10-23 (local). TASK-36550 **Done**, with the qualification limits below. ADR-242 applies;
 ADR-052 still governs the packaged ComfyUI image-edit workflow. The completed
 implementation is in the isolated `codex/console-radio-portraits` worktree.
 Runtime, package hashes and the final sink source digest are in `runtime.json`.
@@ -95,20 +95,100 @@ three obsolete architecture/bare-shell checks reproduced on pre-feature source,
 six unchanged module-budget violations, and two Actor Pack golden-byte baselines.
 They are not counted as new passing checks here.
 
-## Still required
+## User-selected ChatGPT artwork qualification
 
-1. Real reference-image generation and one selected regeneration with reviewed
-   identity/alignment at rail size. User specified **MOSS image creation** on
-   `http://192.168.2.216:8188`. Direct `/system_stats` and `/object_info` requests
-   repeatedly timed out, including a proxy-free recheck after clarification.
-   **No image upload or generation job was submitted.** Server reachability and the
-   MOSS workflow/node/model contract remain unknown. The current ComfyUI adapter is
-   packaged H3 edit-only (ADR-052), so a MOSS path cannot be inferred or silently
-   replaced by that graph. The pending user question requests reachability and the
-   saved workflow name.
-2. Real TTS synthesis, audible final syllables, perceptual capture, stop/replacement
-   during a real speech tail, hands-free sentence/listening handoff and conversation
-   changes with real speech. Known-waveform device tests and mocked ownership tests
-   do not replace these obligations. MOSS was clarified as image creation, not TTS.
-3. Complete the remaining acceptance criteria and final task review only after that
-   live evidence exists. No push, PR or merge has been performed.
+The user replaced unreachable ComfyUI/MOSS with ChatGPT image generation. Built-in
+reference edits produced six individual Samira poses plus a selected `blink_small`
+replacement. All seven originals are 1254×1254 PNGs. They are preserved byte-for-byte;
+the production boundary rejected all seven at the unchanged 1-megapixel limit.
+After explicit user authorization, Pillow LANCZOS resized separate copies to
+1024×1024, without cropping. The final six-file `selected/` set uses the replacement.
+[Exact prompts, original/prepared hashes and selected files](imagegen-manifest.json)
+are recorded. Assets are in workspace `output/imagegen/console-radio-samira-2026-10-23/`
+(ignored local deliverables, not shipped defaults).
+
+`PYTHONPATH=. .venv/bin/python Docs/superpowers/qa/console-radio-portraits/2026-10-23/imagegen_import_probe.py`
+passes with actual TldwCli, an owned private profile and the network guard intact.
+Six imports, a selected replacement preserving the other five normalized hashes,
+source/staged review, explicit Apply, six individual Console poses, idle timer,
+reopen equality and Remove all pass. Original portrait bytes remain unchanged.
+[Mounted observations](imagegen-observations.json) record the six distinct fitted
+rasters, a fixed 23×12 cell box / 24×24 pixel mosaic, and revisions 1 → 2.
+This probe uses normal offline preview controls and publishes no speech snapshots.
+
+Actual editor/Console SVGs and their PNG renders are under `preview/` beside the
+assets. SVG rendering used CairoSVG with its Homebrew library path and substituted
+Menlo for unavailable Fira Code; the original SVG captures remain intact. Color and
+monochrome journeys pass. Reviewed color rest/open/blink captures show stable head
+and backdrop placement. Fine mouth/blink differences are subtle at the 24×24 mosaic
+resolution; native graphics-terminal rendering was not exercised.
+
+The initial private fixture's provider-setup overlay obscured the Console. Its
+existing-profile onboarding flag and a visible fitted-avatar barrier now make the
+capture witness the actual rail. An intermediate wait also observed an empty rail
+during fit; the final probe waits for the currently visible widget rather than a
+pre-fit child. No production visibility, ownership or allocation gate was bypassed.
+
+These real external edits plus the existing import path satisfy the user-selected
+artwork qualification. They do not qualify live in-app adapter generation. No
+ChatGPT provider was added and no ComfyUI job was submitted.
+
+## Real Pocket TTS qualification
+
+User explicitly selected Pocket TTS and authorized installation. Pocket TTS 3.3.0
+is installed in isolated `output/tools/pocket-tts-venv/`; model assets are cached in
+`output/tools/pocket-tts-hf-cache/`. The original app environment, default voice and
+user profile were not modified. The local server used English (2026-09), the public
+without-voice-cloning model and built-in `alba`, listening on 127.0.0.1:18765.
+Install/serve follows the [official Pocket TTS documentation](https://github.com/kyutai-labs/pocket-tts/blob/main/README.md).
+
+`PYTHONPATH=. .venv/bin/python Docs/superpowers/qa/console-radio-portraits/2026-10-23/pocket_tts_probe.py`
+passes against real Pocket synthesis, actual TldwCli and MacBook Pro Speakers.
+Its private profile configures the existing OpenAI-compatible native `/tts` dialect;
+normal Console message snapshots, real character-authority context navigation,
+admission, WAV repair, event delivery and native sink remain in place. No external
+adapter, synthesis response, audio device, timer or speech snapshot is faked. Observers
+delegate to the real backend and native callbacks. Microphone input is not opened.
+
+- Native WAV: the entire 5.32-second source WAV is byte-identical to the captured
+  device-submitted WAV. Normal, small and open mouth states appear automatically;
+  measured silence closes the mouth. Natural completion is 34.770 ms after the
+  final scheduled DAC interval. The existing known-waveform run separately proves
+  nonzero quiet-background closure and the 100 ms paint target.
+- Incremental transport: 39 real HTTP chunks from the same server feed their verified
+  PCM16 payload directly to the existing `pump`, with complete source-to-device
+  equality. Confirmed playing begins 200.079 ms before the HTTP response ends.
+  This is a transport probe: the app's native Pocket adapter remains WAV-only and
+  buffers the body to repair its header. No PCM-provider capability is inferred.
+- Actual Console Stop succeeds near the last 0.4 seconds of pending output; a second
+  message replaces the first voice, and changing conversations retires the exact
+  replacement owner. Late ownership cannot animate the new context.
+- The production hands-free sentence dispatcher and sequencer speak two real Pocket
+  utterances with zero failures. The next sentence starts 276.150 ms after the prior
+  scheduled tail; the listening/OpenCapture intent follows the final tail by 23.619 ms.
+  Capture-end input is simulated and intents are observed; microphone/STT hardware
+  and the complete acoustic hands-free loop are not qualified by this probe.
+- Installed local faster-whisper `tiny.en` recognizes the complete original sentence
+  from both source and device-submitted WAV, including “The final word is complete.”
+  The streamed sample also retains that final word. This is automated speech-content
+  evidence, not an independent human/acoustic audition. Playable WAVs are preserved.
+
+[Summary and hashes](pocket-summary.json), [raw observations](pocket-observations.json),
+[transcripts](pocket-transcripts.json), [native WAV](pocket-speech.wav) and
+[streamed WAV](pocket-http-stream.wav) record the evidence. One native WAV is stored
+because source and device captures are identical. The previous 53.25 ms device
+latency calibration applies to this same local route; this probe does not claim a
+new physical latency measurement. The reviewed production source commit is recorded
+in the summary. Pocket protocol + Console presentation regressions: **26 passed**
+using `--basetemp=/private/tmp/radio-pocket-final` and the targeted pytest flags above.
+Local transcription used the installed `faster_whisper.WhisperModel('tiny.en',
+device='cpu', compute_type='int8', download_root='output/tools/whisper-qa')`, with
+`language='en', beam_size=5` on each captured WAV. Both new opt-in probes pass Ruff lint/format; JSON hashes and `git diff --check` pass.
+
+## Qualification limits
+
+No independent physical/acoustic loopback, microphone/STT hardware, other OS/device,
+native graphics-terminal rendering or real in-app image-adapter generation is claimed.
+User-selected external image generation is the approved artwork qualification method.
+No full test sweep, push, PR or merge ran. All earlier unrelated baseline findings
+remain recorded above and in the owning reviews.
