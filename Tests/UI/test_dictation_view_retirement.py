@@ -45,6 +45,7 @@ class _Recorder:
 
 class _SpeechHost(App[None]):
     def compose(self) -> ComposeResult:
+        self.commands = []
         yield Button("Leave Speech Recognition", id="leave")
         self.window = STTSWindow(
             self,
@@ -54,6 +55,9 @@ class _SpeechHost(App[None]):
         )
         self.window.set_reactive(STTSWindow.current_view, "dictation")
         yield self.window
+
+    def on_voice_command_event(self, event) -> None:
+        self.commands.append(event.command)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "leave":
@@ -334,3 +338,190 @@ async def test_initialized_idle_departure_never_opens_recorder(captures, request
         view.cleanup()
         assert service._audio_service is None
         assert recorder.stop_calls == 0
+
+
+@pytest.mark.parametrize("departure", ["cleanup", "replacement"])
+@private_profile_test
+async def test_callback_entered_before_retirement_cannot_publish_after_it(
+    captures, monkeypatch, departure, request
+):
+    app = _SpeechHost()
+    entered = threading.Event()
+    release = threading.Event()
+    async with app.run_test(size=(130, 55)) as pilot:
+        view, service, recorder = await _start(app, pilot, captures)
+        callback = service.on_command
+        ui_thread = threading.get_ident()
+        attempted_commands = []
+        original_post = view.post_message
+
+        def track_command(message):
+            if isinstance(message, dictation_module.VoiceCommandEvent):
+                attempted_commands.append(message.command)
+            return original_post(message)
+
+        monkeypatch.setattr(view, "post_message", track_command)
+
+        class PausedRetirementRead:
+            def __bool__(self):
+                # Model preemption after the worker read False, before its
+                # callback continues. Cleanup itself stays on the UI thread.
+                if threading.get_ident() != ui_thread:
+                    entered.set()
+                    assert release.wait(12), "callback barrier was not released"
+                return False
+
+        view._retired = PausedRetirementRead()
+        pending = asyncio.create_task(asyncio.to_thread(callback, "overlap command"))
+        replacement = None
+        try:
+            await _until(entered.is_set)
+            if departure == "cleanup":
+                view.cleanup()
+                assert view.is_attached
+            else:
+                assert await pilot.click("#leave")
+                await _until(lambda: not view.is_attached)
+                assert await app.window.request_view("dictation")
+                await _until(
+                    lambda: bool(
+                        app.window.query(dictation_module.ImprovedDictationWindow)
+                    )
+                )
+                replacement = app.window.query_one(
+                    dictation_module.ImprovedDictationWindow
+                )
+            assert not recorder.is_recording
+            assert service.stop_processing.is_set()
+        finally:
+            release.set()
+            await pending
+        await pilot.pause()
+        assert (
+            attempted_commands == []
+        ), "already-entered callback published after retirement"
+        assert app.commands == []
+        assert view.transcript_text == ""
+        if replacement is not None:
+            assert replacement is not view
+            assert replacement.transcript_text == ""
+            assert replacement.dictation_service is None
+
+
+@private_profile_test
+async def test_live_background_callbacks_publish_on_ui_thread(
+    captures, monkeypatch, request
+):
+    app = _SpeechHost()
+    async with app.run_test(size=(130, 55)) as pilot:
+        view, service, recorder = await _start(app, pilot, captures)
+        ui_thread = threading.get_ident()
+        publication_threads = []
+        original_query = view.query_one
+        original_post = view.post_message
+
+        def track_query(*args, **kwargs):
+            publication_threads.append(threading.get_ident())
+            return original_query(*args, **kwargs)
+
+        def track_command(message):
+            if isinstance(message, dictation_module.VoiceCommandEvent):
+                publication_threads.append(threading.get_ident())
+            return original_post(message)
+
+        monkeypatch.setattr(view, "query_one", track_query)
+        monkeypatch.setattr(view, "post_message", track_command)
+        display = original_query("#transcript-display", TextArea)
+        service.transcript_segments = [{"text": "live final"}]
+        await asyncio.to_thread(service.on_partial_transcript, "live partial")
+        await _until(lambda: display.text == "live final live partial")
+        await asyncio.to_thread(service.on_final_transcript, "live final")
+        await _until(lambda: view.transcript_text == "live final")
+        assert display.text == "live final"
+        await asyncio.to_thread(service.on_state_change, DictationState.PAUSED)
+        await _until(lambda: view.dictation_state == DictationState.PAUSED)
+        await asyncio.to_thread(service.on_error, RuntimeError("live error"))
+        await _until(
+            lambda: any(
+                "live error" in str(widget.content)
+                for widget in view.query("#status-container Static")
+            )
+        )
+        await asyncio.to_thread(service.on_command, "live command")
+        await _until(lambda: app.commands == ["live command"])
+        assert publication_threads
+        assert set(publication_threads) == {
+            ui_thread
+        }, "callback published off the UI loop"
+        assert recorder.is_recording
+
+
+@private_profile_test
+async def test_explicit_stop_keeps_processor_tail_result_after_queued_callbacks(
+    captures, request
+):
+    app = _SpeechHost()
+    async with app.run_test(size=(130, 55)) as pilot:
+        view, service, recorder = await _start(app, pilot, captures)
+        service._transcription_service.transcribe_buffer = lambda *args, **kwargs: {
+            "text": "stop tail result"
+        }
+        service.silence_threshold_seconds = 60
+        service.transcript_segments = [{"text": "earlier words"}]
+        service.on_final_transcript("earlier words")
+        recorder.callback(b"\x10\x27" * 16000)
+        assert service.captured_bytes == 32000
+        button = view.query_one("#dictation-toggle-btn", Button)
+        await _until(lambda: not button.has_class("-active"))
+        await pilot.press("ctrl+d")
+        await _until(lambda: not recorder.is_recording)
+        await pilot.pause()
+        assert not service.processing_thread.is_alive()
+        assert recorder.stop_calls == 1
+        assert (
+            service.transcript_segments == []
+        ), "privacy cleanup must precede queued UI updates"
+        assert (
+            view.query_one("#transcript-display", TextArea).text
+            == "earlier words stop tail result"
+        )
+        assert view.transcript_text == "earlier words stop tail result"
+        assert view.word_count == 5
+
+
+@private_profile_test
+async def test_queued_old_capture_command_cannot_publish_into_restarted_capture(
+    captures, monkeypatch, request
+):
+    app = _SpeechHost()
+    async with app.run_test(size=(130, 55)) as pilot:
+        view, service, recorder = await _start(app, pilot, captures)
+        queued = []
+        original_call_later = view.call_later
+        ui_thread = threading.get_ident()
+
+        def hold_worker_publication(callback, *args, **kwargs):
+            if threading.get_ident() != ui_thread:
+                queued.append((callback, args, kwargs))
+                return True
+            return original_call_later(callback, *args, **kwargs)
+
+        monkeypatch.setattr(view, "call_later", hold_worker_publication)
+        await asyncio.to_thread(service.on_command, "old capture command")
+        assert len(queued) == 1, "worker publication was not queued"
+        button = view.query_one("#dictation-toggle-btn", Button)
+        await _until(lambda: not button.has_class("-active"))
+        await pilot.press("ctrl+d")
+        await _until(lambda: not recorder.is_recording)
+        await _until(lambda: not button.has_class("-active"))
+        await pilot.press("ctrl+d")
+        await _until(lambda: recorder.is_recording)
+        service.transcript_segments = [{"text": "new capture"}]
+        service.on_final_transcript("new capture")
+        for callback, args, kwargs in queued:
+            assert original_call_later(callback, *args, **kwargs)
+        await pilot.pause()
+        assert app.commands == [], "prior capture command reached the restarted capture"
+        assert view.query_one("#transcript-display", TextArea).text == "new capture"
+        assert view.transcript_text == "new capture"
+        assert view.word_count == 2

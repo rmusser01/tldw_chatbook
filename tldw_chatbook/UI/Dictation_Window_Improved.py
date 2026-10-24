@@ -3,10 +3,11 @@
 Improved dictation interface with privacy settings and better error handling.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 from pathlib import Path
 from datetime import datetime
 import asyncio
+import threading
 import time
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
@@ -208,6 +209,7 @@ class ImprovedDictationWindow(Widget):
         # Lazy service - not initialized until needed
         self.dictation_service = None
         self._retired = False
+        self._capture_generation = 0
 
         # Transcript management
         self.transcript_segments = []
@@ -668,6 +670,8 @@ class ImprovedDictationWindow(Widget):
         if not self._initialize_service():
             return
 
+        self._capture_generation += 1
+
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
         toggle_btn.label = "🛑 Stop Dictation"
@@ -703,6 +707,7 @@ class ImprovedDictationWindow(Widget):
             return
 
         result = self.dictation_service.stop_dictation()
+        self._capture_generation += 1
 
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
@@ -714,6 +719,10 @@ class ImprovedDictationWindow(Widget):
         pause_btn.label = "⏸️ Pause"
 
         self.is_dictating = False
+        # Stop owns the completed result after service privacy cleanup. Queued
+        # processor updates from this capture must not overwrite that result.
+        self.transcript_text = result.transcript
+        self.query_one("#transcript-display", TextArea).load_text(result.transcript)
         self.duration = result.duration
         self.word_count = len(result.transcript.split()) if result.transcript else 0
         self._update_stats()
@@ -722,21 +731,45 @@ class ImprovedDictationWindow(Widget):
 
         self._show_status("Dictation stopped", "info")
 
+    def _dispatch_dictation_callback(
+        self, callback: Callable[..., None], *args: Any
+    ) -> bool:
+        """Allow publication only on this live widget's UI message loop."""
+        generation = self._capture_generation
+        if self._retired:
+            return False
+        if threading.get_ident() != self._thread_id:
+            # Nonblocking: explicit Stop may be joining this processor. Re-enter
+            # the callback on the UI loop so retirement is checked there too.
+            self.call_later(
+                self._publish_dictation_callback, generation, callback, args
+            )
+            return False
+        return True
+
+    def _publish_dictation_callback(
+        self, generation: int, callback: Callable[..., None], args: tuple[Any, ...]
+    ) -> None:
+        """Publish a queued update only while its foreground capture still owns it."""
+        if self._retired or generation != self._capture_generation:
+            return
+        callback(*args)
+
     def _on_partial_transcript(self, text: str):
         """Handle partial transcript updates."""
-        if self._retired:
+        if not self._dispatch_dictation_callback(self._on_partial_transcript, text):
             return
         self._update_transcript_display(text, is_partial=True)
 
     def _on_final_transcript(self, text: str):
         """Handle final transcript segments."""
-        if self._retired:
+        if not self._dispatch_dictation_callback(self._on_final_transcript, text):
             return
         self._add_transcript_segment(text)
 
     def _on_state_change(self, state: str):
         """Handle dictation state changes."""
-        if self._retired:
+        if not self._dispatch_dictation_callback(self._on_state_change, state):
             return
         self.dictation_state = state
         state_display = self.query_one("#state-display", Static)
@@ -744,14 +777,14 @@ class ImprovedDictationWindow(Widget):
 
     def _on_error(self, error: Exception):
         """Handle dictation errors."""
-        if self._retired:
+        if not self._dispatch_dictation_callback(self._on_error, error):
             return
         self._show_status(f"Error: {error}", "error")
         logger.error(f"Dictation error: {error}")
 
     def _on_command(self, command: str):
         """Handle voice commands."""
-        if self._retired:
+        if not self._dispatch_dictation_callback(self._on_command, command):
             return
         self.post_message(VoiceCommandEvent(command=command, raw_text=command))
         logger.info(f"Voice command detected: {command}")
