@@ -537,6 +537,33 @@ class PromptBlockEditor(Vertical):
         """Return the immutable editor working copy."""
         return self._state
 
+    def capture_live_state(self) -> PromptBlockEditorState:
+        """Read raw block controls before their queued Changed notifications."""
+        state = self._state
+        for lane in self._state.definition.lanes:
+            for block in lane.blocks:
+                card = self._block_widgets.get(block.id)
+                if card is None or not card.is_mounted:
+                    continue
+                token = card.token
+                changes = {
+                    "title": card.query_one(
+                        f"#prompt-block-title-{token}", Input
+                    ).value,
+                    "content": card.query_one(
+                        f"#prompt-block-content-{token}", TextArea
+                    ).text,
+                }
+                syntax = card.query_one(f"#prompt-block-syntax-{token}", Select).value
+                if syntax in {"freeform", "markdown", "xml"}:
+                    changes["syntax"] = syntax
+                if changes.get("syntax") == "xml":
+                    changes["xml_tag"] = card.query_one(
+                        f"#prompt-block-xml-tag-{token}", Input
+                    ).value
+                state = update_block(state, block.id, **changes)
+        return state
+
     def set_update_original_available(
         self, available: bool, *, unavailable_reason: str = ""
     ) -> None:

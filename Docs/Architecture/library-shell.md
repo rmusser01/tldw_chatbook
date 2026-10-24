@@ -34,7 +34,10 @@ Media canvas views: list / viewer / trash through one shared builder. Read-it-la
 ## Prompts and skills surfaces
 
 - Prompts canvas consumes `PromptsDatabase` row shapes with typed conflicts (`ExpectedVersionConflictError`, `PromptNameConflictError`) classified at save; create vs browse is an editor-view sentinel, not a separate canvas. Prompt insertion into the Console is covered in [chat-pipeline.md](./chat-pipeline.md).
+- Pending Prompt Save uses `UI/Library_Modules/prompt_save_ack.py`: the existing scope service writes the submitted snapshot, then the controller adopts the committed identity/version while retaining newer raw metadata and Basic/Advanced block controls as dirty. The next Save updates that same record. Basic first-block mounts and Save acknowledgement re-read both live lanes after structural awaits and refresh every affected Advanced card; obsolete queued semantic projections cannot replace the current child state. Back/navigation/quit use the existing dirty guards.
 - Skills canvas consumes `LocalSkillsService` envelopes (available/blocked + trust fields); import staging lives on the screen. Skills was retired as a destination into Library (ADR-015; route alias `skills` → `library`).
+
+Managed Parakeet installation keeps its consented artifact/preference lifecycle. `UI/Library_Modules/parakeet_install_selection.py` selects INT8 for the requesting form only when form identity, accepted-edit generation, source and live transcription controls still match. An obsolete completion retains current choices and reports installation without claiming current-batch selection.
 
 ## Ingest job queue (dataflow)
 

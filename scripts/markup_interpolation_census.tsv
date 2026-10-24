@@ -156,7 +156,6 @@ tldw_chatbook/UI/Screens/evals_screen	EvalsScreen._set_bench_run_running_ui	butt
 tldw_chatbook/UI/Screens/evals_screen	EvalsScreen._set_sample_bench_running_ui	button_label_interp	1
 tldw_chatbook/UI/Screens/evals_screen	EvalsScreen._set_skill_eval_running_ui	button_label_interp	1
 tldw_chatbook/UI/Screens/home_screen	HomeScreen._activate_home_control	notify_interp	1
-tldw_chatbook/UI/Screens/library_screen	LibraryScreen._apply_parakeet_v2_install_result	notify_interp	1
 tldw_chatbook/UI/Screens/library_screen	LibraryScreen._apply_parakeet_v2_preflight_result	notify_interp	1
 tldw_chatbook/UI/Screens/meetings_screen	MeetingsScreen._start_failed	notify_interp	1
 tldw_chatbook/UI/Screens/meetings_screen	MeetingsScreen._stop_failed	notify_interp	1

@@ -3092,6 +3092,13 @@ class LibraryPromptsController:
         selected_prompt_id = self._selected_prompt_id
         prompt_id = None if save_as_new else selected_prompt_id
         is_create = prompt_id is None
+        if self._library_prompt_block_state is not None:
+            try:
+                canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
+            except QueryError:
+                pass
+            else:
+                self._library_prompt_block_state = canvas.capture_live_block_state()
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
@@ -3157,8 +3164,6 @@ class LibraryPromptsController:
                     except (NoMatches, QueryError):
                         pass
                 return
-            system_prompt = draft.system_prompt
-            user_prompt = draft.user_prompt
         else:
             save_fields = {
                 "name": name,
@@ -3172,8 +3177,6 @@ class LibraryPromptsController:
                 ),
                 "keywords": keywords,
             }
-            system_prompt = save_fields["system_prompt"]
-            user_prompt = save_fields["user_prompt"]
 
         service = getattr(self.app_instance, "prompt_scope_service", None)
         get_prompt = getattr(service, "get_prompt", None)
@@ -3327,115 +3330,13 @@ class LibraryPromptsController:
             await self._sync_library_prompt_open_existing_button(show=False)
             return
 
-        new_id = result_id if is_create else prompt_id
-        self._selected_prompt_id = new_id
-        self._library_prompt_loaded_id = new_id
-        self._library_prompt_detail_selected_name = name
-        self._library_prompt_detail_loading = False
-        self._library_prompt_detail_error = ""
-        self._library_prompt_detail_retryable = False
-        version = result.get("version") if isinstance(result, Mapping) else None
-        self._library_prompt_version = (
-            version
-            if version is not None
-            else (1 if is_create else (self._library_prompt_version or 0) + 1)
+        from .prompt_save_ack import acknowledge_prompt_save
+
+        await acknowledge_prompt_save(
+            self, result, prompt_id=prompt_id, is_create=is_create,
+            submitted_fields=fields, submitted_state=block_state,
+            prepared_state=prepared_state, save_fields=save_fields,
         )
-        patched_detail: dict[str, Any] = (
-            dict(result)
-            if is_create and isinstance(result, Mapping)
-            else (
-                dict(self._library_prompt_detail)
-                if isinstance(self._library_prompt_detail, Mapping)
-                else {}
-            )
-        )
-        patched_detail["id"] = new_id
-        patched_detail["name"] = name
-        patched_detail["author"] = author
-        patched_detail["details"] = details
-        patched_detail["system_prompt"] = system_prompt
-        patched_detail["user_prompt"] = user_prompt
-        patched_detail["version"] = self._library_prompt_version
-        if prepared_state is not None:
-            patched_detail["artifact_type"] = prepared_state.artifact_type
-            patched_detail["prompt_format"] = "structured"
-            patched_detail["prompt_schema_version"] = 2
-            patched_detail["prompt_definition"] = save_fields["prompt_definition"]
-            self._library_prompt_block_state = prepared_state
-        if isinstance(result, Mapping):
-            if isinstance(result.get("uuid"), str):
-                patched_detail["uuid"] = result["uuid"]
-            if "keywords" in result:
-                patched_detail["keywords"] = result["keywords"]
-            if result.get("last_modified"):
-                patched_detail["last_modified"] = result["last_modified"]
-        elif keywords is not None:
-            patched_detail["keywords"] = keywords
-        history_was_open = bool(
-            self._library_prompt_history_state is not None
-            and self._library_prompt_history_state.is_open
-        )
-        if is_create:
-            editor_was_armed = self._library_prompt_editor_armed
-            self._adopt_library_prompt_persisted_detail(
-                patched_detail,
-                status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
-                open_history=history_was_open,
-            )
-            self._load_library_prompt_memberships()
-            # This success patches the existing editor in place rather than
-            # remounting it, so retain its prior dirty-tracking arm state.
-            self._library_prompt_editor_armed = editor_was_armed
-            self._sync_library_prompt_save_action_widgets()
-            # Unlike a plain in-place field update (which defers the
-            # broader snapshot refresh to when the editor is actually left
-            # -- see the comment below), a brand-new prompt changes the
-            # list's membership/count, so the Prompts rail badge and list
-            # must pick up the new row now. The broad snapshot owns counts;
-            # only the browse controller can refresh the retained Items page.
-            self._request_library_prompts_browse(
-                self._library_prompt_browse_controller.mutation_refresh_scope,
-                focus_identity=self._library_prompts_focus_identity(),
-            )
-            self._refresh_local_source_snapshot()
-        else:
-            self._library_prompt_detail = patched_detail
-            self._library_prompt_detached_structured = False
-            self._library_prompt_original_name = name
-            self._library_prompt_dirty = False
-        self._set_library_prompt_discard_enabled(False)
-        # Targeted updates only (no recompose): the fields already hold the
-        # user's just-saved text, so nothing there needs to change -- only
-        # the meta line's version and the status line need to reflect the
-        # save. Mirrors ``_save_library_note``'s discipline (it "never
-        # recomposes, so the TextArea/Input widget instances stay identical
-        # across a save"): recomposing here would remount fresh Input/
-        # TextArea widgets while the editor is still armed, and Textual's
-        # spurious mount-time ``Changed`` event for a non-empty initial
-        # value would immediately re-mark the just-saved prompt dirty.
-        self._update_library_prompt_meta_static()
-        # A prior attempt within this same editor session may have left the
-        # D3 Open-existing button mounted (e.g. a name-in-use retry that
-        # then succeeded with a different name) -- clear it alongside the
-        # "Saved." status, same combined helper the failure branches above
-        # use.
-        await self._apply_library_prompt_save_outcome("ok")
-        # Retained block cards and provenance must adopt the persisted state,
-        # just as the outer Saved line does. Their draft markers are independent.
-        saved_editor = build_prompt_editor_state(
-            patched_detail, capabilities=self._library_prompt_capabilities
-        )
-        self._library_prompt_block_state = saved_editor.block_editor_state
-        try:
-            canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            await canvas.sync_saved_editor_state(saved_editor)
-        if not is_create:
-            self._initialize_library_prompt_history(
-                patched_detail, open_history=history_was_open
-            )
         # The broader local-source snapshot (rail badge / list ordering) is
         # deliberately NOT refreshed here -- it would recompose the whole
         # canvas (see the comment above) while this editor is still open

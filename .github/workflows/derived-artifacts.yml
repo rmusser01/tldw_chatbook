@@ -522,8 +522,10 @@ jobs:
     # heaviest shard carries 15.2 pytest min at nine, 13.7 at ten and 12.4 at
     # eleven, plus ~1.1-1.7 min of setup: ten is the fewest that still leaves
     # one hung test's report room under the cap (~15.4 + 3.3 of 20).
-    # TASK-35834 runs thirteen shards: measured worst-case replays plus 110s
-    # setup and 15% variance project <=1000s, below the 1020s acceptance cap.
+    # TASK-35834 (2026-10-20) introduced thirteen shards: its measured replay
+    # plus 110s setup and 15% variance projected <=1000s below the 1020s target.
+    # Current UI lane: 17 shards (TASK-36454..36458 capacity qualification).
+    # Keep that setup/variance target; preserve all tests and existing caps.
     # Complete duration rows let replay charge function selectors by node.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
@@ -533,7 +535,7 @@ jobs:
       # Report every shard, so one red shard does not hide another.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 
     steps:
       - uses: actions/checkout@v4

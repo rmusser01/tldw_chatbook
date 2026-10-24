@@ -3284,6 +3284,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "9a0db2598c1c73406c9d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/parakeet_install_selection.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "d60e6953c836d335ca8d",
       "owner": "TASK-494",
@@ -3473,8 +3480,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 87,
-      "diagnostic_digest": "42e5f6e29a9d01ac27d9",
+      "call_count": 86,
+      "diagnostic_digest": "9f573e45c551194e3bd0",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
