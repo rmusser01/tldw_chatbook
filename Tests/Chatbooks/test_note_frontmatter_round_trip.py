@@ -280,27 +280,76 @@ def test_vault_import_does_not_report_the_apps_own_export_keys(tmp_path):
     assert payload.unimported_frontmatter_keys == ()
 
 
-def test_a_title_holding_a_fence_line_round_trips_through_both_exporters(tmp_path):
-    """M1: the dumper folds a multi-line title so one continuation line is an
-    indented ``  ---``; only a fence at column 0 may close the block."""
-    title = "a\n---\nb"
-    text = build_note_export_content(title, "body", "travel", "n-1", "markdown", now=EXPORT_NOW)
+def test_non_vault_import_keeps_a_capitalised_title_tags_block_whole(tmp_path):
+    """R2-1: the readers match keys exactly (``title``, not ``Title``), so a
+    ``Title:``/``Tags:`` block is not one the import can read -- outside a vault
+    it stays whole, nothing is lost and nothing needs reporting."""
+    text = "---\nTitle: My Title\nTags: a, b\n---\nBody"
+    payload = _import_once(tmp_path / "plain", {"cap.md": text})["cap.md"]
+    assert payload.content == text
+    assert payload.title == "cap"
+    assert payload.keywords == ()
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_vault_import_reports_a_users_own_date_property(tmp_path):
+    """R2-3: ``date:`` is one of the most common Obsidian properties. It is
+    silenced only when the whole block has the shape of the app's own export;
+    beside a ``mood:`` it is the user's and is reported like any other."""
+    text = "---\ndate: 2026-01-01\nmood: x\n---\n\n# Day\n\nBody."
+    payload = _import_once(tmp_path / "vault", {"day.md": text}, obsidian_mode=True)[
+        "day.md"
+    ]
+    assert payload.unimported_frontmatter_keys == ("date", "mood")
+
+
+@pytest.mark.parametrize("raw", ["3.10", "12:30", "0755", "2026-10-24"])
+def test_vault_import_keeps_a_scalar_title_exactly_as_written(tmp_path, raw):
+    """R2-4: YAML 1.1 types ``3.10`` as 3.1, ``12:30`` as 750 (base 60) and
+    ``0755`` as 493; the title is the text the author wrote."""
+    text = f"---\ntitle: {raw}\n---\n\n# Heading\n\nBody."
+    payload = _import_once(tmp_path / "vault", {"t.md": text}, obsidian_mode=True)["t.md"]
+    assert payload.title == raw
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_vault_import_report_cap_never_hides_the_tags_report(tmp_path):
+    """R2-5: twelve other properties fill the report cap; the tags line must
+    still be there -- it is the only sign the keywords were lost."""
+    others = "".join(f"p{i}: v\n" for i in range(12))
+    tags = ", ".join(f"t{i}" for i in range(101))
+    text = f"---\n{others}tags: {tags}\n---\n\n# Heading\n\nBody."
+    payload = _import_once(tmp_path / "vault", {"many.md": text}, obsidian_mode=True)[
+        "many.md"
+    ]
+    assert payload.keywords == ()
+    assert any(entry.startswith("tags (more than") for entry in payload.unimported_frontmatter_keys), (
+        payload.unimported_frontmatter_keys
+    )
+
+
+def test_vault_import_combined_cap_counts_after_dedupe(tmp_path):
+    """R2-6: 60 tags plus the same 60 as ``keywords`` are 60 keywords, all
+    kept -- no "more than 100 in total" report."""
+    sixty = ", ".join(f"k{i}" for i in range(60))
+    text = f"---\ntags: {sixty}\nkeywords: {sixty}\n---\n\n# Heading\n\nBody."
+    payload = _import_once(tmp_path / "vault", {"dup.md": text}, obsidian_mode=True)[
+        "dup.md"
+    ]
+    assert len(payload.keywords) == 60
+    assert payload.unimported_frontmatter_keys == ()
+
+
+FENCE_TITLE = "a\n---\nb"
+"""M1: the dumper folds a multi-line title so one continuation line is an
+indented ``  ---``; only a fence at column 0 may close the block."""
+
+
+def test_a_title_holding_a_fence_line_round_trips_through_the_single_note_export():
+    text = build_note_export_content(FENCE_TITLE, "body", "travel", "n-1", "markdown", now=EXPORT_NOW)
     metadata, _body = split_frontmatter(text)
     assert metadata is not None
-    assert metadata["title"] == title
-
-    source = _db_trio(tmp_path / "source", "fm-source")
-    note_id = _add_note(source["chachanotes_db"], title, ["travel"])
-    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "n.zip")
-    [item] = _manifest_items(bundle, ContentType.NOTE)
-    metadata, _body = split_frontmatter(_read_text(bundle, item["file_path"]))
-    assert metadata is not None
-    assert metadata["title"] == title
-    dest = _db_trio(tmp_path / "dest", "fm-dest")
-    _import(dest, bundle)
-    [note] = dest["chachanotes_db"].list_notes(limit=5)
-    assert note["title"] == title
-    assert note["content"] == f"Body of {title}"
+    assert metadata["title"] == FENCE_TITLE
 
 
 def test_legacy_single_note_export_with_a_keywords_key_still_imports_its_keywords():
@@ -323,57 +372,55 @@ def test_legacy_single_note_export_with_a_keywords_key_still_imports_its_keyword
 # --- Bundles: the same renderer, the real creator and importer ---------------
 
 
-@pytest.mark.parametrize("title", AWKWARD_TITLES)
-def test_bundle_note_frontmatter_parses_and_round_trips_the_title(tmp_path, title):
+BUNDLE_TITLES = (*AWKWARD_TITLES, FENCE_TITLE)
+TAGGED_TITLE = "Lisbon trip"
+
+
+@pytest.fixture(scope="module")
+def bundle_round_trip(tmp_path_factory):
+    """ONE bundle holding every awkward title, the fence title and a two-keyword
+    note, exported by the real creator and imported by the real importer into a
+    real destination database (R2-8: fourteen separate round trips cost ~2.3 s
+    each; one costs the same and the per-title tests below still name the title)."""
+    root = tmp_path_factory.mktemp("fm-bundle")
+    source = _db_trio(root / "source", "fm-source")
+    note_ids = [_add_note(source["chachanotes_db"], title, ["travel"]) for title in BUNDLE_TITLES]
+    note_ids.append(_add_note(source["chachanotes_db"], TAGGED_TITLE, ["travel", "lisbon"]))
+    bundle = _export(source, {ContentType.NOTE: note_ids}, root / "all.zip")
+    files = {
+        item["title"]: _read_text(bundle, item["file_path"])
+        for item in _manifest_items(bundle, ContentType.NOTE)
+    }
+    dest = _db_trio(root / "dest", "fm-dest")
+    _import(dest, bundle)
+    notes = {note["title"]: note for note in dest["chachanotes_db"].list_notes(limit=100)}
+    return {"files": files, "notes": notes, "dest": dest, "manifest_ids": dict(zip(BUNDLE_TITLES, note_ids))}
+
+
+@pytest.mark.parametrize("title", BUNDLE_TITLES)
+def test_bundle_note_frontmatter_parses_and_round_trips_the_title(bundle_round_trip, title):
     """The bundle's note file parses, names the title exactly, and the
     destination note has that title and a body without the fence."""
-    source = _db_trio(tmp_path / "source", "fm-source")
-    note_id = _add_note(source["chachanotes_db"], title, ["travel"])
-    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "n.zip")
-
-    [item] = _manifest_items(bundle, ContentType.NOTE)
-    markdown = _read_text(bundle, item["file_path"])
-    metadata, body = split_frontmatter(markdown)
-    assert metadata is not None
+    metadata, body = split_frontmatter(bundle_round_trip["files"][title])
+    assert metadata is not None, title
     assert metadata["title"] == title
-    assert "---" not in body
-
-    dest = _db_trio(tmp_path / "dest", "fm-dest")
-    _import(dest, bundle)
-    [note] = dest["chachanotes_db"].list_notes(limit=5)
+    assert metadata["id"] == bundle_round_trip["manifest_ids"][title]
+    # The body is exactly the note's text: no fence, no leftover block (the
+    # fence title's own body legitimately contains ``---``).
+    assert body.strip() == f"Body of {title}", title
+    note = bundle_round_trip["notes"][title]
     assert note["title"] == title
     assert note["content"] == f"Body of {title}"
 
 
-def test_bundle_note_tags_are_a_list_and_survive_the_import(tmp_path):
-    source = _db_trio(tmp_path / "source", "fm-source")
-    note_id = _add_note(source["chachanotes_db"], "Lisbon trip", ["travel", "lisbon"])
-    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "n.zip")
-
-    [item] = _manifest_items(bundle, ContentType.NOTE)
-    metadata, _body = split_frontmatter(_read_text(bundle, item["file_path"]))
+def test_bundle_note_tags_are_a_list_and_survive_the_import(bundle_round_trip):
+    metadata, _body = split_frontmatter(bundle_round_trip["files"][TAGGED_TITLE])
     assert metadata is not None
     assert metadata["tags"] == ["lisbon", "travel"]
-    assert metadata["id"] == note_id
-
-    dest = _db_trio(tmp_path / "dest", "fm-dest")
-    _import(dest, bundle)
-    assert _note_keywords(dest["chachanotes_db"], "Lisbon trip") == ["lisbon", "travel"]
-
-
-def test_bundle_note_title_holding_a_fence_keeps_the_body_whole(tmp_path):
-    """A quoted scalar may hold ``---``; the importer must split on the YAML
-    block, not on the first three dashes it finds."""
-    title = "before --- after"
-    source = _db_trio(tmp_path / "source", "fm-source")
-    note_id = _add_note(source["chachanotes_db"], title, ["travel"])
-    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "n.zip")
-
-    dest = _db_trio(tmp_path / "dest", "fm-dest")
-    _import(dest, bundle)
-    [note] = dest["chachanotes_db"].list_notes(limit=5)
-    assert note["title"] == title
-    assert note["content"] == f"Body of {title}"
+    assert _note_keywords(bundle_round_trip["dest"]["chachanotes_db"], TAGGED_TITLE) == [
+        "lisbon",
+        "travel",
+    ]
 
 
 def test_a_pre_fix_bundle_with_an_unparseable_block_still_imports_a_clean_body(tmp_path):

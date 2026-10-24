@@ -173,10 +173,14 @@ editor's own Back control returns to its list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
   **Keep a folder synced** relationship before reading a source. Both buttons
   sit together, each directly under its own description; the bar below holds
-  only **‹ Notes**. A Markdown file's YAML front matter is read whatever the
-  source: `title` names the note, `tags` (or `keywords`) and `aliases` become
-  keywords, and the block itself is not kept in the body — so a note you
-  exported with **Export Markdown** comes back as it left.
+  only **‹ Notes**. With Import once, a Markdown file's YAML front matter is
+  read and removed from the body when every property in it is one Chatbook
+  reads (`title`, `tags`, `keywords`, `aliases`) or writes (`date`, `note_id`,
+  `id`, `created_at`, `updated_at`) — so a note you exported with **Export
+  Markdown** comes back as it left; any other block stays in the body exactly
+  as written (inside an Obsidian vault with the toggle on, see "Obsidian
+  vaults" below). Keep a folder synced reads front matter only inside a vault
+  and always keeps the block in the body.
 - **Manage sync folders** — appears when roots or migration candidates exist;
   it shows text-explicit status and the valid action for each root.
 
@@ -1223,8 +1227,11 @@ With it on:
   imported: status"), so nothing disappears silently — that includes a key
   YAML does not read as text (`Yes:` is reported as `True`), a `title` that is
   not text, and a `tags` list the import could not keep ("tags (more than
-  100)"). A `title` that is a number or a date (`title: 2026`) is used as
-  written.
+  100)"). A `title` that is a number or a date (`title: 2026`, `12:30`) is used
+  exactly as written. Your own `date:` or `id:` property is reported like any
+  other; only a block made entirely of the properties Chatbook reads or writes
+  (the shape of its own exports) drops them silently, because nothing in it
+  is yours.
 - Outside a vault — a picked file, a plain folder, or the toggle off — the
   block is read and removed only when every key in it is one of the above
   (`title`, `tags`, `keywords`, `aliases`) or one Chatbook's own exports write
@@ -1261,9 +1268,10 @@ once instead. Nothing already synced changes when it comes back on —
 the pass only ever leaves files the sync has never taken alone.
 
 Turn the toggle off to import the vault exactly as any other folder — every
-directory walked, frontmatter left in the body (unless the block is one of
-Chatbook's own exports — `title`, `tags`, `date`, `note_id` — which is read and
-removed as with the toggle on), links left as text. The config
+directory walked, frontmatter left in the body (unless every property in the
+block is one Chatbook reads — `title`, `tags`, `keywords`, `aliases` — or
+writes — `date`, `note_id`, `id`, `created_at`, `updated_at` — in which case it
+is read and removed as with the toggle on), links left as text. The config
 files inside are then listed one by one, still as **Skipped** ("Not a note file
 (app configuration).") rather than as failures. One rule
 applies either way: a title that is only a template placeholder, such as a

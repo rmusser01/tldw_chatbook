@@ -1187,7 +1187,7 @@ def test_a_run_past_the_mount_ceiling_reports_its_whole_size_on_both_pages() -> 
 
 def test_vault_off_reason_says_only_chatbooks_own_exports_are_stripped():
     """TASK-34000.31 fix round 1 (I-2): with the toggle off, a front matter
-    block stays in the body unless it is one of Chatbook's own exports -- the
+    block stays in the body unless every property is one Chatbook reads or writes -- the
     copy must not promise the old "keeps frontmatter in the note body" without
     that exception, nor the on-mode behaviour."""
     from tldw_chatbook.Library.library_note_import_state import _obsidian_reason
@@ -1197,8 +1197,8 @@ def test_vault_off_reason_says_only_chatbooks_own_exports_are_stripped():
     )
     assert _obsidian_reason(state) == (
         "Obsidian vault off: imports every folder, keeps frontmatter in the note "
-        "body unless it is one of Chatbook's own exports, and leaves [[links]] "
-        "as text."
+        "body unless every property is one Chatbook reads (title, tags, aliases) "
+        "or writes (date, id), and leaves [[links]] as text."
     )
     assert _obsidian_reason(replace(state, obsidian_mode=True)).startswith(
         "Obsidian vault: skips .obsidian"
