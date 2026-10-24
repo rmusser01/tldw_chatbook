@@ -2452,6 +2452,28 @@ class LibraryIngestController:
         worker = self._library_ingest_preflight_worker
         return worker is not None and not worker.is_finished
 
+    def _library_ingest_gate_is_shut_by_the_precheck(self) -> bool:
+        """True when Start is shut on what the pre-check FOUND in the selection.
+
+        (TASK-34000.20, P1-C final fix round I-B) The footer reads "enter
+        check this path" for every shut gate, and the fix-round-1 re-check
+        covered only ``path_invalid``: an empty folder that had since gained
+        a file, an all-unsupported folder, a lone 0-byte file or a selection
+        the targeted server takes nothing of kept its stale verdict and
+        toasted the stale reason on every Enter. ``selection_has_nothing_
+        importable`` is the one flag all of those set, and it is only ever
+        true with a stored verdict, so it names exactly the refusals a fresh
+        check can lift. A gate shut for another reason -- a bad option
+        value, a missing runtime, no registry or media DB, a consent waiting
+        -- is left to the toast below: checking the path again cannot open it.
+        """
+        state = self._build_library_ingest_state()
+        return (
+            state.selection_has_nothing_importable is True
+            and not state.start_enabled
+            and not state.unavailable_line
+        )
+
     def _submit_library_ingest_form(self, *, from_armed: bool = False) -> None:
         """Validate the ingest form and submit a new Library ingest job.
 
@@ -2490,7 +2512,19 @@ class LibraryIngestController:
             and form.preflight is not None
             and getattr(form.preflight, "path_invalid", False)
         )
-        if not self._library_ingest_preflight_is_current() or stale_path_problem:
+        precheck_is_current = self._library_ingest_preflight_is_current()
+        # (P1-C final fix round, I-B) ...and a press on a CURRENT verdict that
+        # shut the gate for what the check found -- an empty folder, nothing
+        # importable, nothing the server takes -- re-checks for the same
+        # reason the path problem does: the folder may hold a file by now.
+        # Never from the armed fire: that verdict IS the re-check's answer.
+        refused_by_the_precheck = (
+            not from_armed
+            and not stale_path_problem
+            and precheck_is_current
+            and self._library_ingest_gate_is_shut_by_the_precheck()
+        )
+        if not precheck_is_current or stale_path_problem or refused_by_the_precheck:
             # TASK-34000.20 AC#3: never import on a verdict for other text,
             # or on no verdict at all. Arm a one-shot submit for the check
             # that is (or is about to be) in flight; the result fires it.

@@ -1,13 +1,17 @@
 """Extended arms for TASK-34000.20 -- NOT in the UI PR-lane census.
 
 The gated sibling (``test_library_ingest_tilde_path_and_enter_waits.py``)
-carries the three 160x45 boots. These are the slower / wider arms:
+carries the five 160x45 boots. These are the slower / wider arms:
 
 - the AC#1 and AC#2 walks at 100x30 (the review's second size);
 - owner ruling 2026-10-23 (question 1): the Start import BUTTON waits for
   the pre-check exactly as Enter does -- one shared seam;
 - Review Focus 2: a text edit while a submit is armed drops the armed
-  submit; the new text imports only on its own Enter.
+  submit; the new text imports only on its own Enter;
+- the fix-round disarm routes (leave/return, modal, cancelled Browse) and
+  the re-check-on-Enter pins (a stale not-found verdict; an empty folder
+  that gained a file). The suspend/resume disarm arm moved to the gated
+  sibling (P1-C final fix round, I-D ruling).
 """
 
 from __future__ import annotations
@@ -20,6 +24,8 @@ from Tests.UI.test_library_ingest_tilde_path_and_enter_waits import (
     EXISTING,
     MISSING,
     PATH_PROBLEM_PREFIX,
+    _arm_enter_under_held_check,
+    _enter_imports_after,
     _home_with_fixture,
     _import_canvas,
     _painted,
@@ -363,54 +369,44 @@ async def test_enter_on_a_stale_not_found_verdict_rechecks_the_path(
         assert toasts == []
 
 
-async def _arm_enter_under_held_check(screen, pilot, submitted) -> None:
-    await _type_path(screen, pilot, EXISTING)
-    await pilot.press("enter")
-    await pilot.pause(0.2)
-    assert submitted == []
-    assert screen._ingest_state.submit_armed_generation is not None
-
-
-async def _enter_imports_after(screen, pilot, submitted, handbook) -> None:
-    """Enter still works once the user is back on the canvas."""
-    screen.query_one("#library-ingest-path", Input).focus()
-    await pilot.pause()
-    await pilot.press("enter")
-    await _wait_for_condition(
-        pilot, lambda: submitted, timeout=10.0, message="Enter was dead afterwards"
-    )
-    assert len(submitted) == 1
-    assert submitted[0]["source_path"] == str(handbook)
-
-
-async def test_a_screen_suspend_and_resume_drops_a_waiting_submit(tmp_path, monkeypatch):
-    """Fix round 2, R2-1: another tab (``switch_screen``) suspends the Library
-    screen; the check landing AFTER resume must not import."""
-    handbook = _home_with_fixture(tmp_path, monkeypatch)
+async def test_enter_on_a_current_empty_folder_verdict_rechecks_and_imports_once(
+    tmp_path, monkeypatch
+):
+    """P1-C final fix round, I-B: the footer says "enter check this path" for
+    EVERY shut gate, but only a path problem re-checked. An empty folder that
+    has since gained a file must re-check on the first Enter and then import
+    once from that press -- not toast "This folder is empty" twice and import
+    nothing. The same seam covers an all-unsupported folder, a lone 0-byte
+    file and a selection the targeted server takes nothing of (one flag,
+    ``selection_has_nothing_importable``)."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
     submitted: list = []
     toasts: list[str] = []
-    gate = _gate_precheck(monkeypatch)
     app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
     async with host.run_test(size=(160, 45)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
-        await _arm_enter_under_held_check(screen, pilot, submitted)
-        other = Screen()
-        host.install_screen(screen, name="library")
-        host.install_screen(other, name="other-tab")
-        host.switch_screen("other-tab")
+        await _type_path(screen, pilot, str(inbox))
+        await _wait_for_precheck(screen, pilot)
+        assert screen._ingest_state.form.preflight.total_files == 0
+        await _wait_painted_once(host, pilot, "This folder is empty")
+        (inbox / "a.md").write_text("# Now there is a file\n", encoding="utf-8")
+        await pilot.press("enter")
         await _wait_for_condition(
-            pilot, lambda: host.screen is other, timeout=5.0, message="tab not shown"
+            pilot,
+            lambda: submitted,
+            timeout=10.0,
+            message="Enter did not re-check the folder and import the new file",
         )
-        host.switch_screen("library")
-        await _wait_for_condition(
-            pilot, lambda: host.screen is screen, timeout=5.0, message="tab not resumed"
-        )
-        gate.set()
-        await _no_submit_for(pilot, submitted, 1.5, "imported after a suspend/resume")
-        assert toasts == []
-        await _enter_imports_after(screen, pilot, submitted, handbook)
+        await pilot.pause(0.3)
+        assert len(submitted) == 1, "the one Enter imported more than once"
+        assert submitted[0]["source_path"] == str(inbox)
+        assert toasts == [], toasts
+        # A successful submit clears the path (and with it the stale verdict).
+        assert screen._ingest_state.form.path == ""
+        assert "This folder is empty" not in _painted(host)
 
 
 async def test_a_cancelled_browse_picker_drops_a_waiting_submit(tmp_path, monkeypatch):

@@ -60,11 +60,14 @@ In server mode the **Export** rail row is disabled, with the tooltip
   import) start an import only once the pre-check for what is in the field
   has finished; pressing Enter while "Checking…" is shown starts the import
   when the check lands, and never when the check says the path is wrong.
-  When the check could not find the path, the footer reads "enter check
-  this path": Enter re-runs the check (so a file you have just created is
-  picked up) and imports if it now passes. Leaving the Import canvas, or
-  picking a different file with Browse…, cancels a waiting Enter — nothing
-  imports until you press again.
+  When the check has refused what is in the field — it could not find the
+  path, or the folder is empty or holds nothing it can import — the footer
+  reads "enter check this path": Enter re-runs the check (so a file you
+  have just created or added to the folder is picked up) and imports if it
+  now passes. Leaving the Import canvas, picking a different file with
+  Browse…, or any screen that opens over the Library — F1 help, the Ctrl+P
+  palette, any dialog, and the Browse… picker even when you cancel it —
+  cancels a waiting Enter: nothing imports until you press again.
   The pre-check does
   **not** contact a URL: it reads the address, not the site, so nothing is
   fetched while you are still typing one. A URL that turns out not to be

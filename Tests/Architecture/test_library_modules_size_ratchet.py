@@ -267,7 +267,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-23, TASK-34000.20 fix round 2 (same owner decision): the fire-time
     # text check reads the live path Input instead of the form echo
     # (`_library_ingest_submit_may_fire`): 3242 -> 3247 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3247,
+    # 2026-10-24, TASK-34000.20 P1-C final fix round (same owner decision): a
+    # press on a CURRENT verdict that shut the gate for what the check found
+    # (empty folder, nothing importable, nothing the server takes) re-checks
+    # like the path problem does (`_library_ingest_gate_is_shut_by_the_
+    # precheck`, I-B): 3247 -> 3281 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3281,
     # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
     # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
     # stance of holding this row at 371. That stance was correct FOR A

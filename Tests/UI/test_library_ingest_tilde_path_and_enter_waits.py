@@ -7,9 +7,12 @@ while the submit path expanded the same text and imported it; a missing
 ``~/`` path painted three sentences for one typo; and Enter inside the 0.8 s
 debounce imported a path the pre-check had not yet seen (capture 07).
 
-Three boots at 160x45 against the real ``LibraryScreen`` with the app
+Five boots at 160x45 against the real ``LibraryScreen`` with the app
 stylesheet (``LibraryHarness``). Every claim is what the user sees (painted
-text) or what reached the app's ``submit_library_ingest_job`` seam.
+text) or what reached the app's ``submit_library_ingest_job`` seam. The
+fourth and fifth boots pin the two disarm routes the whole-branch review
+ruled into a PR lane (fix round 1 C1 (c): a Browse pick; fix round 2 R2-1: a
+screen suspend); the other disarm arms live in the ``_extended`` sibling.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Input
 
 from Tests.UI.app_factory import _build_test_app
@@ -154,6 +158,39 @@ async def _wait_painted_once(host, pilot, text: str) -> str:
     return _painted(host)
 
 
+async def _wait_painted(host, pilot, text: str) -> str:
+    """Wait until ``text`` is painted at least once, then return the paint.
+
+    (P1-C final fix round, M4) A "not painted" belt read on the frame the
+    state landed carried no weight: the summary had not been painted yet
+    either way. Read it after the verdict's OWN copy is on screen.
+    """
+    await _wait_for_condition(
+        pilot,
+        lambda: text in _painted(host),
+        timeout=10.0,
+        message=lambda: f"{text!r} never painted",
+    )
+    return _painted(host)
+
+
+async def _wait_for_recheck(screen, pilot, before) -> None:
+    """Wait for a verdict that is NEWER than ``before`` and describes the field.
+
+    (P1-C final fix round, I-C) Enter on a current verdict starts a re-check
+    whose worker lands later; ``_wait_for_precheck`` alone is vacuous while
+    the stored verdict is still the old, current one. A re-check produces a
+    new ``PreflightResult`` object, so identity tells the two apart.
+    """
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._ingest_state.form.preflight is not before
+        and _precheck_is_current(screen),
+        timeout=10.0,
+        message="Enter did not re-check the path",
+    )
+
+
 async def test_an_existing_tilde_path_passes_the_precheck_and_enter_imports_it(
     tmp_path, monkeypatch
 ):
@@ -170,7 +207,8 @@ async def test_an_existing_tilde_path_passes_the_precheck_and_enter_imports_it(
         await _type_path(screen, pilot, EXISTING)
         await _wait_for_precheck(screen, pilot)
         assert screen._ingest_state.form.preflight.errors == []
-        painted = _painted(host)
+        # (M4) The belts read AFTER the verdict's own copy is painted.
+        painted = await _wait_painted(host, pilot, "plain text file")
         assert "dangerous" not in painted
         assert PATH_PROBLEM_PREFIX not in painted
 
@@ -198,15 +236,29 @@ async def test_a_missing_tilde_path_shows_exactly_one_not_found_message_and_ente
 
         await _type_path(screen, pilot, MISSING)
         await _wait_for_precheck(screen, pilot)
-        painted = _painted(host)
-        assert "dangerous" not in painted
+        # (M4) The belts read AFTER the one sentence is painted, not on the
+        # frame the state landed.
         painted = await _wait_painted_once(host, pilot, PATH_PROBLEM_PREFIX)
         assert "dangerous" not in painted
         assert "Path not found" not in painted
 
+        # (fix round 1, I3) Enter on a CURRENT not-found verdict re-checks the
+        # path -- the footer promises "enter check this path" -- and the
+        # re-check's verdict decides. (P1-C final fix round, I-C) Wait for
+        # THAT verdict and its paint before reading anything: on a timer the
+        # field still showed "Checking…" at 0.3 s under CI load (PR #3234's
+        # failure class), and ``submitted == []`` was vacuous until the
+        # re-check had landed.
+        before = screen._ingest_state.form.preflight
         await pilot.press("enter")
-        await pilot.pause(0.3)
-        assert submitted == []
+        await _wait_for_recheck(screen, pilot, before)
+        assert screen._ingest_state.form.preflight.path_invalid
+        painted = await _wait_painted_once(host, pilot, PATH_PROBLEM_PREFIX)
+        assert "dangerous" not in painted
+        assert "Path not found" not in painted
+        await _no_submit_for(
+            pilot, submitted, 0.3, "Enter imported a path the re-check refused"
+        )
         assert toasts == []
         assert _painted(host).count(PATH_PROBLEM_PREFIX) == 1
 
@@ -321,3 +373,59 @@ async def test_a_browse_pick_while_a_submit_is_armed_imports_nothing(
         )
         assert len(submitted) == 1
         assert submitted[0]["source_path"] == str(other)
+
+
+async def _arm_enter_under_held_check(screen, pilot, submitted) -> None:
+    await _type_path(screen, pilot, EXISTING)
+    await pilot.press("enter")
+    await pilot.pause(0.2)
+    assert submitted == []
+    assert screen._ingest_state.submit_armed_generation is not None
+
+
+async def _enter_imports_after(screen, pilot, submitted, handbook) -> None:
+    """Enter still works once the user is back on the canvas."""
+    screen.query_one("#library-ingest-path", Input).focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await _wait_for_condition(
+        pilot, lambda: submitted, timeout=10.0, message="Enter was dead afterwards"
+    )
+    assert len(submitted) == 1
+    assert submitted[0]["source_path"] == str(handbook)
+
+
+async def test_a_screen_suspend_and_resume_drops_a_waiting_submit(tmp_path, monkeypatch):
+    """Fix round 2, R2-1: another tab (``switch_screen``) suspends the Library
+    screen; the check landing AFTER resume must not import.
+
+    (P1-C final fix round, I-D ruling) Moved here from the ``_extended``
+    sibling so the suspend disarm -- the last C1 route -- runs on every pull
+    request; the Browse arm above stays green without it, so it alone could
+    not carry the guarantee.
+    """
+    handbook = _home_with_fixture(tmp_path, monkeypatch)
+    submitted: list = []
+    toasts: list[str] = []
+    gate = _gate_precheck(monkeypatch)
+    app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await _arm_enter_under_held_check(screen, pilot, submitted)
+        other = Screen()
+        host.install_screen(screen, name="library")
+        host.install_screen(other, name="other-tab")
+        host.switch_screen("other-tab")
+        await _wait_for_condition(
+            pilot, lambda: host.screen is other, timeout=5.0, message="tab not shown"
+        )
+        host.switch_screen("library")
+        await _wait_for_condition(
+            pilot, lambda: host.screen is screen, timeout=5.0, message="tab not resumed"
+        )
+        gate.set()
+        await _no_submit_for(pilot, submitted, 1.5, "imported after a suspend/resume")
+        assert toasts == []
+        await _enter_imports_after(screen, pilot, submitted, handbook)
