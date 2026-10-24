@@ -1044,8 +1044,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the picker retries when every row the query found is being replaced
     #: instead of parking entry focus on the live filter (M5):
     #: 37630 -> 37635 (measured). Methods unchanged at 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37600, 1354),
-    # TASK-36454..36458: completion helpers reduce the combined owner to 37600 lines.
+    # TASK-36454..36458: completion helpers and pure option projection reduce this owner.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37542, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

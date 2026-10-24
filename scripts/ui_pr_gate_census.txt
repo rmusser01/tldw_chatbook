@@ -1,3 +1,6 @@
+# Dated task notes below retain insertion-time shard counts and block grouping;
+# grouping/placement claims describe those historical insertions.
+# Current capacity/layout evidence: 2026-10-23 pending-draft QA report.
 Tests/UI/test_adaptive_pane_shell.py
 Tests/UI/test_app_instance_warning.py
 Tests/UI/test_app_query_one_fallback.py
@@ -104,9 +107,7 @@ Tests/UI/test_console_voice_accessibility.py
 Tests/UI/test_console_workspace_details_tray.py
 Tests/UI/test_css_generated_comments.py
 Tests/UI/test_design_style_utilities.py
-# TASK-36454..36458 CI: swap slots 77/432 after measured shard-3 caps;
-# all tests/caps retained (ADR-103). This task-35597 whole file now runs on 12.
-Tests/UI/test_mcp_permissions_handoff.py
+Tests/UI/test_destination_rail_row.py
 Tests/UI/test_dictation_export_path.py
 Tests/UI/test_disabled_action_recovery_tooltips.py
 Tests/UI/test_enhanced_file_dialog_bundle_css.py
@@ -268,9 +269,11 @@ Tests/UI/test_model_config_field_labels.py
 Tests/UI/test_console_personal_context_selection_factory.py
 Tests/UI/test_personal_context_proposal_review.py::test_provenance_renewal_preserves_proposal_editor_and_acceptance
 Tests/UI/test_settings_personal_context.py::test_canonical_settings_pending_provenance_uses_cheap_current_owner
-Tests/UI/test_settings_personal_context.py::test_production_settings_inspects_private_and_deleted_metadata[size0]
+# TASK-36036: pending mark/clear gestures cannot erase batch ownership.
+Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_mark_and_clear_gestures
 Tests/UI/test_console_conversation_inspector.py::test_detail_worker_creation_can_be_cancelled_before_coroutine_exists
-Tests/UI/test_settings_personal_context.py::test_export_and_deleted_labels_keep_literal_metadata
+# Capture fix 2 round 2, finding 1: the quit prompt never stacks on the theme's.
+Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_staged_changes_never_stacks_on_the_theme_prompt
 # R1 #10 (C4): the API key row follows an unsaved Env var edit.
 Tests/UI/test_settings_api_key_row_env_var.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
@@ -286,15 +289,15 @@ Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_bloc
 Tests/UI/test_console_model_popover_no_provider.py
 # Ruling C-N1: Ctrl+Q on another screen asks about a kept Settings draft.
 Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft
-# TASK-35834 runs thirteen: 16 model-defaults functions replace the whole-file entry.
-# The Phase 7 block below is rebalanced from two green CI runs; its first entry
-# and every entry outside that block keep their relative order. All 415 prior
-# selections remain covered; 430 entries retain every parameter case.
-# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 92
-# entries below originated in that PR. No earlier entry's shard
-# depends on them, in the order that spreads them most evenly when they are
-# dealt round-robin over thirteen shards (scripts/ui_lane_shard_replay.py; see
-# check_ui_pr_gate_census.py).
+# TASK-35834 (2026-10-20) ran thirteen: 16 functions replaced the whole file.
+# Current UI lane: 17 shards (TASK-36454..36458 capacity qualification).
+# At that step the Phase 7 block was rebalanced from two green CI runs; its
+# first entry and every entry outside that block kept their relative order.
+# All 415 prior selections remained covered; 430 entries retained every case.
+# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign)
+# introduced 92 entries, since spread across this census by capacity replays.
+# All current entries are dealt round-robin over 17 shards; see
+# scripts/ui_lane_shard_replay.py and check_ui_pr_gate_census.py.
 # Each keeps the comment that names what it pins, which the replay's --write
 # moves with it; the blank line below ends this header, so it stays here.
 # Four of their slots hold Phase 9 entries since Phase 9's whole-PR review,
@@ -308,24 +311,25 @@ Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_abou
 # TASK-33007.9: Connect painted whole -- the open provider list's box and a
 # wide provider name from its head, at both full-screen sizes.
 Tests/UI/test_settings_connect_paint.py
-# TASK-33007.3: the Default model picker -- one row, ids grouped by where they
-# came from, Custom ID and its rollback, a wide id read from its head.
-Tests/UI/test_settings_default_model_picker.py
-# TASK-33007.2 and .9: Connect one row per fact; the Provider control's name
-# after a choice or Revert, and its open list drawn whole at both sizes.
-Tests/UI/test_settings_connect_rows.py
+# task-35597: MCP permissions handoff whole-file gate; same isolated profile.
+Tests/UI/test_mcp_permissions_handoff.py
+# R1 #2: an emptied Default model is not rebuilt as the text None.
+Tests/UI/test_settings_blank_model_card_rebuild.py
+# R2 F6: a staged Context window Reset reads as an edit.
+Tests/UI/test_settings_context_window_staged_reset.py
 # TASK-33007.2: Connect's API key source words and Clear key, the Key check
 # row, an endpoint with no shipped default and the card's result line.
 Tests/UI/test_settings_connect_key_rows.py
-# R2 F6: a staged Context window Reset reads as an edit.
-Tests/UI/test_settings_context_window_staged_reset.py
-Tests/UI/test_console_settings_disclosures.py
-# TASK-33007.7: Console Behavior's global fallbacks in the shared rows, the
-# On/Off streaming Select, and a real save a new chat follows.
-Tests/UI/test_settings_console_fallback_rows.py
+# TASK-33620.15.1.3: a closed Inspect rail never asks the Environment panel
+# for its workspace root (50 tests, ~4 s serial).
+Tests/UI/test_console_environment_controller.py
 # TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
 # state, state words on every row, one frame level, '/' opening its disclosure.
 Tests/UI/test_settings_advanced_disclosures.py
+# task-35597: Tools-hub UI suite re-enters the census with bootstrap/private-
+# profile isolation against ADR-126 config-participant admission. Other
+# task-35597 suites with dev-red nodes retain their individual node gates.
+Tests/UI/test_settings_tools_hub.py
 # TASK-33007.4 AC#6: the reference rows read from the Inspector's closed
 # disclosure, after Model defaults (16-19 s).
 Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_defaults_appear_before_reference_copy
@@ -340,15 +344,14 @@ Tests/UI/test_library_dreams_reader.py
 Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
 # R2 F1 = R1 #12: a dropped Clear of the API key does not come back.
 Tests/UI/test_settings_api_key_clear_reset.py
-# Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
-# TASK-33002.17: the file whole since, in this test's place, with the Provider field's new-chat purpose pins (3 tests, ~14 s, private profile).
-Tests/UI/test_settings_provider_save_scope.py
+# TASK-33008.3: the card's first focus is Use detected when one is offered.
+Tests/UI/test_console_local_server_discovery_card.py::test_setup_modal_first_focus_is_the_detected_action_when_one_is_offered
 # R2 F3: Revert and a deep link drop the discovery listing.
 Tests/UI/test_settings_discovery_listing_dropped.py
 # TASK-33008.1 AC#9: a recovery round trip returns to the chat on one Enter (40 s).
 Tests/UI/test_console_provider_return.py::test_recovery_round_trip_returns_to_the_chat_on_one_enter
-# R1 #3 and R3 #9 (a2-N1): the restored-OpenAI review row is read again.
-Tests/UI/test_settings_openai_reconnect_reread.py
+# TASK-33008.1: a return to a closed chat stays put with a notice.
+Tests/UI/test_console_provider_return.py::test_return_to_a_closed_chat_stays_put_with_a_notice
 # R3 #1 and #2: Down walks the open model list; Enter picks the id typed in full.
 Tests/UI/test_settings_default_model_list_keys.py
 # R1 #6: an env var name that is no name is invalid settings, not an exception.
@@ -361,8 +364,9 @@ Tests/UI/test_settings_theme_card_contrast.py::test_image_gen_on_check_is_readab
 Tests/UI/test_settings_inspector_rows_refresh.py
 # TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
 Tests/UI/test_approval_batch_geometry.py
-# R1 #2: an emptied Default model is not rebuilt as the text None.
-Tests/UI/test_settings_blank_model_card_rebuild.py
+# TASK-33007.2 and .9: Connect one row per fact; the Provider control's name
+# after a choice or Revert, and its open list drawn whole at both sizes.
+Tests/UI/test_settings_connect_rows.py
 # Capture round 2, finding 22: Ctrl+Q with a staged Settings change asks first.
 Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_a_staged_settings_change_asks_first
 # R3 #10: the two free-text Side chat fields take their row.
@@ -444,9 +448,9 @@ Tests/UI/test_settings_number_spelling.py
 Tests/UI/test_settings_api_key_row_help.py
 # Capture finding 12: Render linked images is a Checkbox read from config.
 Tests/UI/test_settings_configuration_hub.py::test_remote_images_toggle_value_reflects_config
-# Parent AC#11 (ADR-033) and TASK-33007.6 AC#7: the catalog controls are
-# labelled and set apart (17-29 s).
-Tests/UI/test_settings_save_commit_models.py::test_model_catalog_controls_are_labeled_and_visually_separated
+# Phase 9 Task 15 (2026-10-18) appends one entry no lane ran, 3 of 3 serial (and 10 of 10, TASK-33003.21's bar).
+# TASK-33006.16: through a real credential round trip a pick still names Model alone, and a Temperature edit still asks (2 cases, ~40 s, private profile).
+Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved
 # Review of #3057, sibling of finding 3: undoing an audio.cpp review merge keeps a pipeline voice edit (12 s, both cases).
 Tests/UI/test_audio_cpp_model_library_handoff.py::test_review_merge_undo_keeps_a_pipeline_voice_edit
 # Capture fix 2 round 1, finding 4: Ctrl+Q asks about staged drafts first.
@@ -464,8 +468,7 @@ Tests/UI/test_settings_theme_import.py::test_import_drops_auto_on_a_background_v
 Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_lists_console_supported_catalog
 # Review of #3057, finding 2: the unsaved-work check reads a kept Settings visit (10 s).
 Tests/UI/test_app_quit_under_modal.py::test_the_unsaved_work_check_reads_a_kept_settings_visit
-# Capture fix 2 round 2, finding 1: the quit prompt never stacks on the theme's.
-Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_staged_changes_never_stacks_on_the_theme_prompt
+Tests/UI/test_settings_personal_context.py::test_export_and_deleted_labels_keep_literal_metadata
 # Phase 9 capture fix wave (2026-10-18), F2, 3 of 3 serial; moved from the end of this file into a geometry node's slot by the whole-PR review's round 2, when that slot's definition-row node became bootstrap_profile and went to the admission-sensitive step (ledger R11), so no other entry changes shard.
 # TASK-33005.7: every reason build_console_disabled_reason returns fits the composer's reason strip whole, chevron and padding included (~2 s).
 Tests/UI/test_console_composer_reason_width.py::test_every_disabled_reason_fits_the_strip_whole
@@ -520,8 +523,8 @@ Tests/UI/test_console_setup_card_keyboard.py::test_a_guidance_sync_keeps_focus_o
 Tests/UI/test_console_provider_return.py::test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider[saves-a-key]
 # TASK-33008.1: the return lands on the chat it came from.
 Tests/UI/test_console_provider_return.py::test_return_lands_on_the_originating_chat
-# TASK-33008.1: a return to a closed chat stays put with a notice.
-Tests/UI/test_console_provider_return.py::test_return_to_a_closed_chat_stays_put_with_a_notice
+# R1 #3 and R3 #9 (a2-N1): the restored-OpenAI review row is read again.
+Tests/UI/test_settings_openai_reconnect_reread.py
 # TASK-33008.1: a failed landing settles its claim and never ends the app.
 Tests/UI/test_console_provider_return.py::test_a_failed_landing_settles_its_claim_and_never_ends_the_app
 # TASK-33008.1: a stale return applies nothing and says so.
@@ -554,8 +557,9 @@ Tests/UI/test_console_setup_card_keyboard.py::test_a_sync_under_a_dialog_keeps_t
 Tests/UI/test_console_setup_card_keyboard.py::test_card_draws_on_a_plain_dim_fill_with_no_backdrop_widget
 # TASK-33008.4 AC#4: the card's copy names the Settings round trip and only Enter.
 Tests/UI/test_console_setup_card_keyboard.py::test_card_copy_names_the_settings_round_trip_and_only_footer_keys
-# TASK-33008.3: the card's first focus is Use detected when one is offered.
-Tests/UI/test_console_local_server_discovery_card.py::test_setup_modal_first_focus_is_the_detected_action_when_one_is_offered
+# Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
+# TASK-33002.17: the file whole since, in this test's place, with the Provider field's new-chat purpose pins (3 tests, ~14 s, private profile).
+Tests/UI/test_settings_provider_save_scope.py
 # Capture fix: an untouched MLX-LM is not running, not ready.
 Tests/UI/test_console_switcher_local_probe.py::test_an_untouched_mlx_lm_is_not_running_not_ready
 # Capture fix: NOT RUNNING wraps so every name shows whole, and repacks on resize.
@@ -642,11 +646,10 @@ Tests/UI/test_llm_gguf_source_modes.py::test_model_source_label_and_value_paint_
 Tests/UI/test_library_skills_builtin_rows.py
 # TASK-33001.15 (ledger R18): a Settings model save writes a key copied from legacy [API] into the provider table (~6 s, private profile).
 Tests/UI/test_settings_configuration_hub.py::test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table
-# TASK-33641.3 (ledger R11, review round 1): the backend rows' controls stay inside their rows and clickable under the app stylesheet at 235x52 and 120x45 (2 cases, ~30 s, private profile).
-Tests/UI/test_settings_image_gen_panel.py::test_backend_row_controls_visible_and_clickable_under_real_css
-# Phase 9 Task 15 (2026-10-18) appends one entry no lane ran, 3 of 3 serial (and 10 of 10, TASK-33003.21's bar).
-# TASK-33006.16: through a real credential round trip a pick still names Model alone, and a Temperature edit still asks (2 cases, ~40 s, private profile).
-Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved
+Tests/UI/test_screen_navigation.py::test_screen_load_error_handles_unknown_route
+# Parent AC#11 (ADR-033) and TASK-33007.6 AC#7: the catalog controls are
+# labelled and set apart (17-29 s).
+Tests/UI/test_settings_save_commit_models.py::test_model_catalog_controls_are_labeled_and_visually_separated
 # Phase 9 Task 16 (2026-10-17) appends one entry no lane ran, 3 of 3 serial.
 # TASK-33005.12: a local server's switcher rows are the models its probe listed; with no listing they stay the saved ones (4 cases, ~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_a_local_servers_rows_are_the_models_its_probe_listed
@@ -664,8 +667,11 @@ Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_rea
 # Phase 9 Task 18 review round 3 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
 # TASK-35190: an open on a moved endpoint runs two probers under one in-flight cap, four local servers at most SWITCHER_PROBES_IN_FLIGHT at a time (~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap
-# TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
-Tests/UI/test_console_transcript_poll_stop_removal.py
+# TASK-35010 (S1 T1): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (12 functions, private profile, 86 s serial in the lane's install set).
+# TASK-35011 (S1 T2): a discovered model chosen as the default joins its saved list on s, Add to model list's label, order, receipts and Inspector rows (15 functions, private profile, 145 s serial in the lane's install set).
+# TASK-35012 (S1 T3, 2026-10-20): Switch model and Chat settings' model picker list each provider's saved default first (9 functions after T2's, private profile, 2.4-7.2 s each and 39.2 s together summed from junit test durations, 3 of 3 serial in the lane's install set; the probe function's listing-bound case since review round 2).
+# TASK-35011 review rounds 1-2, TASK-35012 and the rebase onto dev 1bbc145ffc (2026-10-20): the three files as one node per test function. The lane deals entries[index::10], so block positions i, i+10, i+20 and i+30 always share a shard. The block starts at census index 363, so position group g runs on job ((363+g) mod 10)+1. The order fits each group to its job's measured load: the job's worst wall time on dev's census (#3169's runs 39382891881 and 39420530080) plus 2.6x the group's local serial seconds (each node at the slower of two runs in the lane's install set). Job 9, at 19.5 min worst before S1 (TASK-35834), gets the four lightest nodes (10.2 s, about +0.4 min: 19.9 predicted); no other job is predicted above 18.2 min. If dev appends entries before this merges, every group moves that many jobs: re-derive the order.
+Tests/UI/test_settings_saved_lists_follow_file.py::test_config_reload_reads_an_in_place_edit_into_the_saved_lists
 # TASK-34751: Study paints a markup-shaped workspace name in its scope banner,
 # and typing finds a markup-shaped deck/quiz name in the open pickers
 # (2 tests, 13.5 s pytest unloaded).
@@ -674,12 +680,9 @@ Tests/UI/test_study_user_text_literal.py
 # not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
 # unit cases that build no app).
 Tests/UI/test_study_flashcards_quit_mid_rebuild.py
-# TASK-35010 (S1 T1): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (12 functions, private profile, 86 s serial in the lane's install set).
-# TASK-35011 (S1 T2): a discovered model chosen as the default joins its saved list on s, Add to model list's label, order, receipts and Inspector rows (15 functions, private profile, 145 s serial in the lane's install set).
-# TASK-35012 (S1 T3, 2026-10-20): Switch model and Chat settings' model picker list each provider's saved default first (9 functions after T2's, private profile, 2.4-7.2 s each and 39.2 s together summed from junit test durations, 3 of 3 serial in the lane's install set; the probe function's listing-bound case since review round 2).
-# TASK-35011 review rounds 1-2, TASK-35012 and the rebase onto dev 1bbc145ffc (2026-10-20): the three files as one node per test function. The lane deals entries[index::10], so block positions i, i+10, i+20 and i+30 always share a shard. The block starts at census index 363, so position group g runs on job ((363+g) mod 10)+1. The order fits each group to its job's measured load: the job's worst wall time on dev's census (#3169's runs 39382891881 and 39420530080) plus 2.6x the group's local serial seconds (each node at the slower of two runs in the lane's install set). Job 9, at 19.5 min worst before S1 (TASK-35834), gets the four lightest nodes (10.2 s, about +0.4 min: 19.9 predicted); no other job is predicted above 18.2 min. If dev appends entries before this merges, every group moves that many jobs: re-derive the order.
-Tests/UI/test_settings_saved_lists_follow_file.py::test_config_reload_reads_an_in_place_edit_into_the_saved_lists
-Tests/UI/test_settings_pick_joins_saved_list.py::test_s_saves_the_default_and_says_why_a_pick_did_not_simply_join
+# TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
+Tests/UI/test_console_transcript_poll_stop_removal.py
+Tests/UI/test_screen_footer_hints.py::test_built_bundle_carries_the_footer_rules
 Tests/UI/test_settings_saved_lists_follow_file.py::test_the_startup_refresh_keeps_an_external_addition_and_appends_new_ids
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_saved_list_settings_cannot_write_still_saves_the_default
 Tests/UI/test_settings_saved_lists_follow_file.py::test_an_old_sample_list_leaves_default_model_unset_until_save_selected
@@ -769,13 +772,13 @@ Tests/UI/test_settings_model_defaults_rows.py::test_a_shown_negative_integer_can
 Tests/UI/test_settings_model_defaults_rows.py::test_saving_another_field_keeps_every_untouched_hand_edit_exactly
 Tests/UI/test_settings_model_defaults_rows.py::test_inherit_after_an_option_clears_a_choice_the_select_cannot_show
 Tests/UI/test_settings_model_defaults_rows.py::test_temperature_states_and_holds_the_providers_own_range
-# task-35597: the Tools-hub UI suites are PR-gate-lane safe now (bootstrap
-# profile / private-profile isolation against the ADR-126 config-participant
-# admission) and re-enter the census. Two whole files here; MCP handoff is
-# above after the measured TASK-36454..36458 CI swap with destination-rail.
-# The two files still carrying dev-red nodes are gated by node id (below).
-Tests/UI/test_settings_tools_hub.py
-Tests/UI/test_destination_rail_row.py
+# TASK-33007.7: Console Behavior's global fallbacks in the shared rows, the
+# On/Off streaming Select, and a real save a new chat follows.
+Tests/UI/test_settings_console_fallback_rows.py
+# TASK-33007.3: the Default model picker -- one row, ids grouped by where they
+# came from, Custom ID and its rollback, a wide id read from its head.
+Tests/UI/test_settings_default_model_picker.py
+# task-35597: Settings footer-hints whole-file gate; same isolated profile.
 Tests/UI/test_settings_footer_hints.py
 # task-35597: footer ownership + the two BUNDLED_CSS/bundle drift guards
 # (the bundle guard now locates the footer block structurally because the
@@ -794,7 +797,7 @@ Tests/UI/test_screen_footer_hints.py::test_library_registration_updates_the_scre
 Tests/UI/test_screen_footer_hints.py::test_library_note_footer_shortcut_contract_is_exact
 Tests/UI/test_screen_footer_hints.py::test_settings_registration_updates_the_screens_own_footer
 Tests/UI/test_screen_footer_hints.py::test_default_css_matches_the_live_bundle_source
-Tests/UI/test_screen_footer_hints.py::test_built_bundle_carries_the_footer_rules
+Tests/UI/test_settings_pick_joins_saved_list.py::test_s_saves_the_default_and_says_why_a_pick_did_not_simply_join
 Tests/UI/test_screen_footer_hints.py::test_personas_screen_has_no_recompose_path_while_footer_hints_are_non_persisting
 # task-35597: the navigation floor, gated on its lane-green nodes only
 # (bootstrap profile at module level; the private-profile alternative would
@@ -817,7 +820,7 @@ Tests/UI/test_screen_navigation.py::test_startup_route_validation_rejects_unknow
 Tests/UI/test_screen_navigation.py::test_ccp_default_tab_initializes_before_reactive_watcher_runs
 Tests/UI/test_screen_navigation.py::test_notes_is_not_a_navigable_tab
 Tests/UI/test_screen_navigation.py::test_open_notes_workspace_routes_to_library_notes_list
-Tests/UI/test_screen_navigation.py::test_prompts_route_resolves_to_library_screen
+Tests/UI/test_library_media_editor_dirty_escape.py
 Tests/UI/test_screen_navigation.py::test_skills_route_resolves_to_library_screen
 Tests/UI/test_screen_navigation.py::test_research_route_resolves_to_research_screen
 Tests/UI/test_screen_navigation.py::test_research_workspace_route_resolves_without_repointing_runs
@@ -830,7 +833,7 @@ Tests/UI/test_screen_navigation.py::test_subscription_route_resolves_to_watchlis
 Tests/UI/test_screen_navigation.py::test_conversation_route_uses_library_conversation_context
 Tests/UI/test_screen_navigation.py::test_legacy_mcp_routes_alias_to_settings_tools
 Tests/UI/test_screen_navigation.py::test_mcp_shell_routes_resolve_to_settings_destination
-Tests/UI/test_screen_navigation.py::test_ctrl9_is_tools_compatibility_binding
+Tests/UI/test_console_settings_disclosures.py
 Tests/UI/test_screen_navigation.py::test_navigation_flushes_outgoing_screen_and_honors_veto
 Tests/UI/test_screen_navigation.py::test_navigation_flush_exception_warns_and_aborts_switch
 Tests/UI/test_screen_navigation.py::test_navigation_confirms_with_outgoing_screen_and_honors_veto
@@ -897,7 +900,8 @@ Tests/UI/test_screen_navigation.py::test_no_route_reaches_the_retired_ingest_scr
 Tests/UI/test_screen_navigation.py::test_screen_load_error_reports_underlying_import_failure
 Tests/UI/test_screen_navigation.py::test_screen_load_error_returns_none_for_a_loadable_route
 Tests/UI/test_screen_navigation.py::test_screen_load_error_reports_missing_optional_dependency
-Tests/UI/test_screen_navigation.py::test_screen_load_error_handles_unknown_route
+# TASK-33641.3 (ledger R11, review round 1): the backend rows' controls stay inside their rows and clickable under the app stylesheet at 235x52 and 120x45 (2 cases, ~30 s, private profile).
+Tests/UI/test_settings_image_gen_panel.py::test_backend_row_controls_visible_and_clickable_under_real_css
 Tests/UI/test_screen_navigation.py::test_push_initial_screen_fatal_error_names_the_underlying_cause
 Tests/UI/test_screen_navigation.py::test_navigation_survives_screen_construction_failure
 Tests/UI/test_screen_navigation.py::test_navigation_survives_screen_mount_failure
@@ -914,8 +918,7 @@ Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_same_and_c
 Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_same_and_cross_verb_overlap[delete-delete]
 # TASK-36037: every TXT/CSV/JSON draft/caret/selection case stays gated.
 Tests/UI/test_evals_snippet_import_drafts.py::test_import_preserves_live_name_edit
-# TASK-36036: pending mark/clear gestures cannot erase batch ownership.
-Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_mark_and_clear_gestures
+Tests/UI/test_settings_personal_context.py::test_production_settings_inspects_private_and_deleted_metadata[size0]
 
 # TASK-36097..36100: retain all549 dev entries and thirteen shards.
 # Individual cases distribute measured native work; no timeout changes.
@@ -982,12 +985,10 @@ Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_onc
 # Rebased onto dev e2cffbed60 (2026-10-22): appended at the tail, so no dev
 # entry changes shard.
 Tests/UI/test_console_idle_heap_refreeze.py
-# TASK-33620.15.1.3: a closed Inspect rail never asks the Environment panel
-# for its workspace root (50 tests, ~4 s serial).
-Tests/UI/test_console_environment_controller.py
+Tests/UI/test_screen_navigation.py::test_ctrl9_is_tools_compatibility_binding
 Tests/UI/test_library_media_actions_target_opened_item.py
 Tests/UI/test_library_media_actions_target_opened_item_extended.py
-Tests/UI/test_library_media_editor_dirty_escape.py
+Tests/UI/test_screen_navigation.py::test_prompts_route_resolves_to_library_screen
 Tests/UI/test_library_media_editor_dirty_escape_extended.py
 Tests/UI/test_library_media_editor_dirty_escape_openers.py
 Tests/UI/test_library_note_autosave_after_dialog.py

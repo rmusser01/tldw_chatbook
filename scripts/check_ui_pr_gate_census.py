@@ -453,7 +453,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-35865..35870 add seven representative mounted regressions and retain
 # all 408 prior entries. Measured whole-file slot swaps preserve every node,
 # the ten shards and all time limits; TASK-35834 headroom work stays open.
-# TASK-35834: lane now runs thirteen. The model-defaults whole-file selector
+# TASK-35834 (2026-10-20): lane grew to thirteen. The model-defaults whole-file selector
 # becomes all 16 function selectors (+15); see its coverage guard in Tests/CI.
 # TASK-35597 raised it further: the five Tools-hub suites were made
 # PR-gate-lane safe and re-censused (3 whole files + 112 node ids) on top of
@@ -496,8 +496,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # appended at the tail after TASK-35648's.
 # TASK-36360..36363 append48 nodes after the complete616-entry dev census.
 # TASK-36454..36458: append 56 exact mounted cases, retaining all 664 inherited
-# selectors. Hosted timing replay swaps only slots 77/432 (ADR-103); 662 old
-# positions and all 56 new positions stay fixed. See the 2026-10-23 QA report.
+# selectors. Current UI lane: 17 shards. Conservative timing replay preserves
+# the first 181 entries and all 56 new positions; see the 2026-10-23 QA report.
 MINIMUM_FILES = 723
 # Latest dev adds three P1-C module selectors at the tail; none are dropped.
 

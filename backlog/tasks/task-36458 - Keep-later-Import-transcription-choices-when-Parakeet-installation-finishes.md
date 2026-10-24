@@ -31,7 +31,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-23 21:47
+updated_date: 2026-10-24 03:10
 ---
 
 ## Description
@@ -89,4 +89,5 @@ Managed Parakeet completion retains its requesting form identity, accepted-edit 
 All nine new selection cases and 25 existing contracts pass across the recorded targeted runs. After import deferral, ordinary/provider-change mounted controls and both exact size guards pass (4/4). Perf Guard exposed 559/558 preload modules; the existing native guard reproduced it, then scoped imports restored 558/558 without raising a limit. Rebased preimport/warmup controls pass (2/2,558/558 and93/94). External acquisition/preference seams are bounded; no download, package install or inference proof is claimed. See the [verification report](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md) for evidence and limits. Existing ADR-014/025/050/033 application state/011 govern selection and [ADR-097](../decisions/097-boot-budget-ratchets.md) governs import timing; no new ADR. Independent Superpowers review approved the implementation.
 
 Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
+Current-dev integration: after rebasing onto dev d0d926e11b (related PR #3221), the combined LibraryScreen exceeded the existing 37,525 ceiling at 37,551 lines. The complete existing pure ingest-options projection now lives beside LibraryIngestFormState in its already imported state module; the screen retains its delegate. Auto displayed-model/submission, preference and Parakeet consent/activation/selection bodies are unchanged. LibraryScreen is now 37,493 lines/1,354 methods with its line ceiling lowered to 37,493; prior 37,525 statements describe the earlier checkpoint. Final native combined-source selection passes 80 cases (101.251s JUnit), including Auto/readiness, snapshot/submission, mounted ordinary/provider-change Parakeet and boot/size guards. Preimport 558/558, warmup 93/94; no new lint diagnostics or raised budget. ADR-025/033/097 and the linked QA report govern this mechanical extraction; no new ADR. Fresh scoped review and current-head hosted results are recorded in PR #3228.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
