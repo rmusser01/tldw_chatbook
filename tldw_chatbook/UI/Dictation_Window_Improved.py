@@ -57,6 +57,12 @@ def dictation_export_directory() -> Path:
     return get_user_data_dir() / "exports" / "dictation"
 
 
+class _DictationActionButton(Button):
+    """Activate focused Dictation controls with Space and inherited Enter."""
+
+    BINDINGS = [Binding("space", "press", "Press button", show=False)]
+
+
 class ImprovedDictationWindow(Widget):
     """
     Improved dictation interface with:
@@ -252,14 +258,20 @@ class ImprovedDictationWindow(Widget):
 
                     # Control buttons
                     with Horizontal():
-                        yield Button(
+                        yield _DictationActionButton(
                             "🎤 Start Dictation",
                             id="dictation-toggle-btn",
                             variant="primary",
                         )
-                        yield Button("⏸️ Pause", id="dictation-pause-btn", disabled=True)
-                        yield Button("🗑️ Clear", id="dictation-clear-btn")
-                        yield Button("🔧 Troubleshoot", id="troubleshoot-btn")
+                        yield _DictationActionButton(
+                            "⏸️ Pause", id="dictation-pause-btn", disabled=True
+                        )
+                        yield _DictationActionButton(
+                            "🗑️ Clear", id="dictation-clear-btn"
+                        )
+                        yield _DictationActionButton(
+                            "🔧 Troubleshoot", id="troubleshoot-btn"
+                        )
 
                 # Sidebar
                 with ScrollableContainer(classes="dictation-sidebar"):
@@ -372,9 +384,15 @@ class ImprovedDictationWindow(Widget):
                     # Export section
                     with Vertical(classes="control-section"):
                         yield Label("Export", classes="section-title")
-                        yield Button("📋 Copy to Clipboard", id="copy-button")
-                        yield Button("💾 Save as Text", id="save-text-button")
-                        yield Button("📝 Save as Markdown", id="save-md-button")
+                        yield _DictationActionButton(
+                            "📋 Copy to Clipboard", id="copy-button"
+                        )
+                        yield _DictationActionButton(
+                            "💾 Save as Text", id="save-text-button"
+                        )
+                        yield _DictationActionButton(
+                            "📝 Save as Markdown", id="save-md-button"
+                        )
 
     def on_mount(self):
         """Initialize on mount."""
@@ -486,6 +504,11 @@ class ImprovedDictationWindow(Widget):
             self._export_as_text()
         elif button_id == "save-md-button":
             self._export_as_markdown()
+        else:
+            return
+        # STTS forwards bubbled presses to its active child; handled actions
+        # already ran here and must not be delivered a second time.
+        event.stop()
 
     def _finish_mounting(self) -> None:
         """Stop treating control changes as mount noise."""
