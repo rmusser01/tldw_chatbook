@@ -315,7 +315,7 @@ Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_abou
 Tests/UI/test_settings_connect_paint.py
 # TASK-33007.2 and .9: Connect one row per fact; the Provider control's name
 # after a choice or Revert, and its open list drawn whole at both sizes.
-# TASK-36512: one function here; the file's other functions are at the census tail.
+# TASK-36512 split selector; the file's functions span Phase 7 and the census tail.
 Tests/UI/test_settings_connect_rows.py::test_a_typed_name_prefix_highlights_the_provider_it_starts
 # TASK-33007.3 AC#9: Save selected fills an empty default model with the first
 # saved id (17-27 s).
@@ -355,7 +355,7 @@ Tests/UI/test_settings_api_key_row_help.py
 # R2 F4 and F5: the Key check and Endpoint key rows refresh as they were composed.
 Tests/UI/test_settings_inspector_rows_refresh.py
 # TASK-33007.2, parent AC#2: Model is at most five Tab presses from Provider.
-# TASK-36512: one function here; the file's other functions are at the census tail.
+# TASK-36512 split selector; the file's functions span Phase 7 and the census tail.
 Tests/UI/test_settings_connect_tab_budget.py::test_clear_is_not_a_tab_stop_stays_clickable_and_the_row_names_its_key
 Tests/UI/test_theme_pending_save_drafts.py::test_saved_publication_preserves_raw_edit_before_changed_is_delivered
 # R1 #29 (C6): Settings spells a number one way.
@@ -765,8 +765,7 @@ Tests/UI/test_settings_model_defaults_rows.py::test_temperature_states_and_holds
 # admission) and re-enter the census. Three whole files; the two files that
 # still carry dev-red nodes are gated by node id instead (see below).
 Tests/UI/test_settings_tools_hub.py
-# TASK-36512: one parametrize case of the file's one test keeps its slot; the
-# other cases are at the census tail.
+# TASK-36512 case-level selector; the test's cases span Phase 7 and the tail.
 Tests/UI/test_mcp_permissions_handoff.py::test_edit_routes_to_visible_current_profile_and_keyboard_rows[size2-textual-dark]
 Tests/UI/test_settings_footer_hints.py
 # task-35597: footer ownership + the two BUNDLED_CSS/bundle drift guards
@@ -1050,8 +1049,9 @@ Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_ans
 
 # TASK-36512: the heavy files that held shards at the 20-minute cap, by
 # function (the MCP permissions handoff by parametrize case: it has one test),
-# so no shard takes one whole. Each file keeps one selector in its old slot;
-# these are the rest. They and the Phase 7 block were dealt together from
+# so no shard takes one whole. TASK-36512 originally kept one selector in
+# each old slot and appended the rest here. The current integration re-deals
+# all split selectors across this tail and Phase 7; their timing input came from
 # nine PR runs' shard logs, each entry at its slowest. Tests/CI pins that
 # every function (or case) of a split file stays listed.
 # Keep this block where it is: its order was dealt for the slot it starts in.
@@ -1083,7 +1083,7 @@ Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_labels_use_use
 Tests/UI/test_settings_default_model_picker.py::test_discovered_models_stay_in_the_picker_after_the_card_rebuilds
 # TASK-33007.3: the Default model picker -- one row, ids grouped by where they
 # came from, Custom ID and its rollback, a wide id read from its head.
-# TASK-36512: one function here; the file's other functions are at the census tail.
+# TASK-36512 split selector; the file's functions span Phase 7 and the census tail.
 Tests/UI/test_settings_default_model_picker.py::test_custom_id_and_the_combined_save_refuse_the_same_ids
 Tests/UI/test_settings_connect_rows.py::test_provider_and_model_read_edited_only_when_their_own_value_is
 Tests/UI/test_settings_default_model_picker.py::test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with_s

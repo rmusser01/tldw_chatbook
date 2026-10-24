@@ -191,3 +191,5 @@ A literal append to dev's13-shard ordering predicted an over-cap17-shard job. Th
 TASK-36512's incoming completeness guards remain intact; its three-run observation criterion is not claimed complete. TASK-36514 separately proposes15 shards and a committed full-deal tool; this integration retains the already qualified17-shard count and does not mark that task complete. Reassess its count-specific proposal against the final merged matrix rather than duplicating this coverage work.
 
 Targeted integration verification: all228 CI/census/replay/workflow/queue checks pass on the final combined census. Three intermediate shard-description assertions were red until the17-shard metadata was restored; no tests were changed to obtain the green. Checker Ruff and whitespace checks pass.
+
+Fresh independent Superpowers review of the split-census integration found no Critical or Important issues. Its single Minor placement-comment correction is applied; all12 parsed-metadata/header checks pass afterward and the762-selector order is unchanged. Reviewer independently reproduced all29 swaps, cost provenance, outside-slot preservation and the228-pass receipt.
