@@ -580,12 +580,19 @@ the recovery card was still in the DOM after its title had gone, and a sync
 then raised `NoMatches` in the console-sync worker, which exits the app.
 `test_a_recovery_sync_during_a_center_swap_never_fails_the_sync` steps the
 event loop into that window and fails if the flag stops covering it.
-TASK-34000.26 (2026-10-24) added three more, all at the focus seam: `BaseAppScreen.set_focus`
-refuses a `_pruning` or detached target (Textual 8.2.8's `Screen.set_focus` checks only
-`focusable`, which reads `visible` and never `_pruning`, so a write landing after
-`App._prune`'s mark was kept and the keyboard died in that widget's closed pump — review
-S-10), the Library's list-entry picker skips a `_pruning` row or filter, and
-`DetachedFocusGuard` clears a `_pruning`/detached `focused` before a key is forwarded.
+TASK-34000.26 (2026-10-24) added seven more, all at the focus seam:
+`UI/Navigation/base_app_screen.py` `BaseAppScreen.set_focus` refuses a `_pruning` or
+detached target (Textual 8.2.8's `Screen.set_focus` checks only `focusable`, which reads
+`visible` and never `_pruning`, so a write landing after `App._prune`'s mark was kept and the
+keyboard died in that widget's closed pump — review S-10); four sites in
+`UI/Screens/library_screen.py` — `_library_media_empty_list_fallback_target` returns a
+`_pruning` preferred control rather than falling through to a lower-preference one, and
+`_focus_library_list_entry` skips `_pruning` rows (retrying when every row the query found is
+being replaced), a `_pruning` fallback filter, and a `_pruning` media fallback control;
+`Utils/text_selection_crash_guard.py` `DetachedFocusGuard` clears a `_pruning`/detached
+`focused` before a key is forwarded; and `UI/Console_Modules/right_rail.py`
+`_focus_library_activity` targets only an attached, non-`_pruning` selected-turn heading and
+re-attempts after the next refresh while every match is being removed.
 `Tests/App/test_detached_focus_guard.py` steps into the window and fails if the flag stops
 covering it (its negative control fails the other way if Textual starts refusing the write).
 

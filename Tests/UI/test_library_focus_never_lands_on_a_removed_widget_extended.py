@@ -202,6 +202,71 @@ async def test_the_entry_focus_retry_lands_on_the_replacement_filter(
             await _help_opens(app, pilot)
 
 
+async def test_rows_all_being_replaced_wait_for_the_replacement_rows_not_the_filter(
+    tmp_path, monkeypatch
+):
+    """P1-C final fix round, M5: when EVERY row the query found is being
+    removed (a canvas recompose mid-flight) and the filter is live, the list
+    is not empty -- the empty-list fallback used to park entry focus on the
+    filter. The picker now waits, and the bounded retry lands on a
+    replacement row once the canvas has recomposed (the M-4 rule, applied to
+    the rows)."""
+    events: list = []
+    app, _profile = _library_app(tmp_path, monkeypatch, events, read=lambda profile: None)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=WIDE) as pilot:
+            screen = await _library(app, pilot)
+            await _open_notes(screen, pilot)
+            old_rows = list(screen.query(".library-notes-row"))
+            assert old_rows, "precondition: a list with rows"
+            filter_input = screen.query_one("#library-notes-filter")
+            # Park focus somewhere that is neither the filter nor a row first:
+            # entry focus has already landed on the filter here, and
+            # ``App._prune`` resets a focused widget's focus synchronously when
+            # it is pruned -- either would hide the picker's own choice.
+            elsewhere = next(
+                widget
+                for widget in screen.focus_chain
+                if widget is not filter_input and not widget.has_class("library-notes-row")
+            )
+            screen.set_focus(elsewhere)
+            await pilot.pause()
+            assert screen.focused is elsewhere, screen.focused
+
+            screen._arm_library_list_entry_focus()
+            removals = [row.remove() for row in old_rows]
+            assert all(row._pruning for row in old_rows)
+            screen._focus_library_list_entry()
+            assert screen.focused is not filter_input, (
+                "entry focus fell back to the filter while the rows were only being "
+                "replaced"
+            )
+            assert screen.focused is elsewhere, screen.focused
+            for removal in removals:
+                await removal
+
+            canvas = screen.query_one("#library-notes-canvas")
+            canvas.refresh(recompose=True)
+
+            def _landed_on_a_replacement_row() -> bool:
+                current = list(screen.query(".library-notes-row"))
+                focused = screen.focused
+                return (
+                    bool(current)
+                    and focused in current
+                    and focused not in old_rows
+                    and focused.is_attached
+                )
+
+            await _until(
+                pilot,
+                _landed_on_a_replacement_row,
+                "entry focus to land on a replacement row",
+                timeout=3.0,
+            )
+            await _help_opens(app, pilot)
+
+
 async def test_the_picker_alone_never_writes_focus_onto_a_removed_widget(
     tmp_path, monkeypatch
 ):

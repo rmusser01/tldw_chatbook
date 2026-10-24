@@ -1040,7 +1040,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: empty-list fallback stops at a pruning preferred control and the picker
     #: retries instead of falling through to a lower-preference one (M-4):
     #: 37623 -> 37630 (measured). Methods unchanged at 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37630, 1354),
+    #: 2026-10-24, TASK-34000.26 P1-C final fix round (same owner decision):
+    #: the picker retries when every row the query found is being replaced
+    #: instead of parking entry focus on the live filter (M5):
+    #: 37630 -> 37635 (measured). Methods unchanged at 1354.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37635, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

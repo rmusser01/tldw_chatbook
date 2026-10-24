@@ -11188,12 +11188,17 @@ class LibraryScreen(BaseAppScreen):
         # 8.2.8 and leaves the keyboard dead after the detach (review S-10).
         # Skipping it here makes the "only a landing counts" checks below
         # true, and the retry re-attempts against the replacement rows.
-        rows = [
-            row
-            for row in self.query(f".{row_class}")
-            if not getattr(row, "_pruning", False)
-        ]
+        raw_rows = list(self.query(f".{row_class}"))
+        rows = [row for row in raw_rows if not getattr(row, "_pruning", False)]
         if not rows:
+            if raw_rows:
+                # (P1-C final fix round, M5) Every row the query found is being
+                # replaced: the list is NOT empty, so its filter is not the
+                # answer -- the fallback below would park entry focus there
+                # while the replacement rows mount a frame later. Wait for
+                # them instead, the same as the M-4 preferred-control rule.
+                self._retry_library_list_entry_focus_while_armed()
+                return
             if (
                 row_class == "library-skill-row"
                 and self._library_skills_browse_controller.visible_result.items

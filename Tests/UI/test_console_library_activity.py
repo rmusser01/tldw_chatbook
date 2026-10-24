@@ -254,6 +254,81 @@ async def test_message_affordance_selects_turn_opens_inspector_and_focuses_activ
         assert pilot.app.focused.id == "console-selected-turn-library-activity-heading"
 
 
+async def test_a_click_elsewhere_during_the_activity_focus_retry_keeps_that_focus() -> (
+    None
+):
+    """P1-C final fix round, M2: ``_focus_library_activity`` re-attempts for up
+    to twenty refreshes while the heading it wants is being replaced. A click
+    made inside that window is the user's; a retry that then finds a live
+    heading must leave focus where the user put it."""
+    from Tests.UI.test_console_right_rail import make_console_pilot
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    heading_id = "console-selected-turn-library-activity-heading"
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = screen._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        user = store.append_message(
+            session_id, role=ConsoleMessageRole.USER, content="Question"
+        )
+        assistant = store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content="Answer"
+        )
+        store.admit_library_activity(session_id, user.id, _view().actions[0].event)
+        screen._library_activity.invalidate_projection()
+        await screen._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        await pilot.click(f"#console-library-activity-{assistant.id}")
+        await pilot.pause(0.05)
+        await pilot.pause()
+        assert pilot.app.focused is not None
+        assert pilot.app.focused.id == heading_id
+
+        rail = screen._library_activity._inspector_rail()
+        assert rail is not None
+        selected_turn = screen.query_one(
+            "#console-selected-turn", ConsoleSelectedTurnActivity
+        )
+        old_heading = screen.query_one(f"#{heading_id}", Static)
+        # The composer bar takes focus itself on a click in its visible text
+        # (``ConsoleComposerBar.on_click``); its ``Input`` is a hidden carrier.
+        composer = screen.query_one("#console-native-composer")
+
+        # Open the window: the heading is being removed when the user asks.
+        removal = old_heading.remove()
+        assert old_heading._pruning is True
+        rail.request_library_activity_focus()
+        await removal
+        # The user clicks the composer inside the settle window...
+        await pilot.click("#console-command-visible-text")
+        await pilot.pause()
+        assert pilot.app.focused is composer, pilot.app.focused
+        # ...and a replacement heading then mounts while retries are pending.
+        selected_turn.sync_state(_view(), citation_count=5, flush_result=None)
+        for _ in range(60):
+            await pilot.pause()
+            live = [
+                h
+                for h in screen.query(f"#{heading_id}")
+                if h is not old_heading and h.is_attached and not h._pruning
+            ]
+            if live:
+                break
+        assert live, "the replacement heading never mounted"
+        await pilot.pause(0.5)
+        assert pilot.app.focused is composer, pilot.app.focused
+        # The retry chain runs one pass per refresh and may already be spent;
+        # this IS the pass that finds the live heading after the user's click.
+        rail._focus_library_activity()
+        await pilot.pause()
+        assert pilot.app.focused is composer, (
+            f"the activity-focus retry took focus from the composer: {pilot.app.focused!r}"
+        )
+
+
 async def test_inspector_retry_delegates_to_store_owned_callback() -> None:
     from Tests.UI.test_console_right_rail import make_console_pilot
 

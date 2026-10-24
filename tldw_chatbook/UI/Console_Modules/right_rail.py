@@ -66,6 +66,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
+from textual.dom import NoScreen
 from textual.events import DescendantBlur, DescendantFocus, Key, Resize
 from textual.geometry import Size
 from textual.message import Message
@@ -571,6 +572,10 @@ class ConsoleInspectorRail(Vertical):
         self._outer_reconcile_owner_demand = False
         self._outer_owner_reconcile_count = 0
         self._library_activity_focus_pending = False
+        #: (P1-C final fix round, M2) ``screen.focused`` when the activity
+        #: focus was requested; a retry that finds focus moved to another
+        #: live widget since then is a user's keystroke or click, not ours.
+        self._library_activity_focus_anchor: Widget | None = None
         self._inspector_focus_active = False
         self._navigation_generation = 0
         #: TASK-24704: the boundary `n`/`p` last moved to, kept ONLY while the
@@ -650,6 +655,13 @@ class ConsoleInspectorRail(Vertical):
         """Focus activity after the selected-turn and outer rail settle."""
 
         self._library_activity_focus_pending = True
+        # (P1-C final fix round, M2) Remember where focus was when the user
+        # asked; ``_focus_library_activity`` compares against it on every
+        # retry so a click or keystroke made inside the settle window wins.
+        try:
+            self._library_activity_focus_anchor = self.screen.focused
+        except NoScreen:
+            self._library_activity_focus_anchor = None
         self.request_outer_reconcile()
 
     @on(ConsoleSelectedTurnActivity.RetryRequested)
@@ -784,6 +796,24 @@ class ConsoleInspectorRail(Vertical):
     #: section recomposes several times while the inspector settles.
     _LIBRARY_ACTIVITY_FOCUS_ATTEMPTS = 20
 
+    #: Widget ids the screen's reveal-inspector path may focus when it opens
+    #: this rail (``chat_screen.CONSOLE_FOCUS_REGISTRY``'s entry targets for
+    #: ``console-right-rail``, plus the body scroller). Focus landing on one
+    #: of these inside the activity-focus settle window is the rail opening,
+    #: not the user moving focus (P1-C final fix round, M2).
+    _RAIL_ENTRY_CHROME_IDS = frozenset(
+        {
+            "console-inspector-rail-body",
+            "console-inspector-rail-collapse",
+            CONSOLE_AUTHORITY_SUMMARY_ID,
+        }
+    )
+
+    def _is_rail_entry_chrome(self, widget: Widget) -> bool:
+        """True for the rail root or one of its entry-chrome widgets."""
+
+        return widget is self or (widget.id or "") in self._RAIL_ENTRY_CHROME_IDS
+
     def _focus_library_activity(
         self, attempts: int = _LIBRARY_ACTIVITY_FOCUS_ATTEMPTS
     ) -> None:
@@ -799,11 +829,33 @@ class ConsoleInspectorRail(Vertical):
         removed the focus is re-attempted after the next refresh, bounded by
         ``attempts``, never against a rail or screen that has itself gone.
 
+        (P1-C final fix round, M2) Each pass also compares ``screen.focused``
+        with the anchor ``request_library_activity_focus`` captured: focus on
+        a DIFFERENT live widget means the user clicked or typed inside the
+        settle window, and the request yields to them. Two moves are not the
+        user's and the pass goes ahead: focus on nothing (the anchor itself
+        may have been pruned by the same recompose), and focus on the rail's
+        own entry chrome -- the rail root, its body scroller, the authority
+        summary or the collapse button -- which is where the screen's
+        reveal-inspector path parks focus when it opens the rail for this
+        very request (``CONSOLE_FOCUS_REGISTRY``'s ``console-right-rail``
+        entry targets).
+
         Args:
             attempts: Refresh passes left to find a live heading.
         """
 
         if not self.is_attached or self._pruning:
+            return
+        try:
+            current = self.screen.focused
+        except NoScreen:
+            return
+        if (
+            current is not None
+            and current is not self._library_activity_focus_anchor
+            and not self._is_rail_entry_chrome(current)
+        ):
             return
         headings = [
             heading
