@@ -1,6 +1,6 @@
 ---
 id: TASK-36526
-title: 'Test isolation hazards: bootstrap-profile hub tests write into the shared cached config, and four suites stub json.loads process-wide'
+title: Bootstrap-profile Settings hub tests assign into the shared cached config
 status: To Do
 created_date: 2026-10-24 00:26
 labels:
@@ -28,18 +28,9 @@ Found by TASK-36381's implementation and review (branch fu/h-settingsreds, 2026-
 - `test_settings_console_behavior_saves_display_name_exactly` (dev :7547)
 - `test_settings_provider_category_saves_provider_defaults_without_sampling` (:9453)
 - `test_settings_provider_switch_does_not_save_stale_endpoint` (:11067)
-
-**Process-wide json.loads stubs.** `monkeypatch.setattr(module.json, "loads", stub)` replaces the stdlib function for the whole process. TASK-36381's red came from exactly this: the probe's storage admission called `json.loads(data, object_pairs_hook=...)` and got a `TypeError` (lesson in lessons-testing-evidence.md). These stubs accept only one positional argument, so any guarded read that runs inside their window fails the same way:
-- `test_sync_crypto.py:58-61`
-- `test_prompts_db_retained_history.py:433-455`
-- `test_run_log_service_wiring.py:688-704`
-- `test_model_discovery_disk_cache.py:157-162`
-
-The four files pass on dev (178 passed together with the discovery file, whose one failure is the TASK-36381 red).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 No bootstrap-profile test in test_settings_configuration_hub.py saves config or assigns into app.app_config; each one that did runs on a private profile or works on a copy
-- [ ] #2 The four named suites scope their json.loads stubs to the module under test, and each still fails when the behaviour it pins is removed
 <!-- AC:END -->

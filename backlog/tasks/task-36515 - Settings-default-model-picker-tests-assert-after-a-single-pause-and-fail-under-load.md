@@ -22,7 +22,7 @@ dependencies:
 Found by TASK-36380's review round 1 (PR #3224, 2026-10-23). `Tests/UI/test_settings_default_model_picker.py` is listed whole in `scripts/ui_pr_gate_census.txt`, so its flakes fail the required UI Fast Lane. Several of its tests change an Input or press keys, wait one `pilot.pause()`, and then assert state that the change reaches through queued messages (Input.Changed, the picker's adapter, the category draft). One pause is enough only when the screen's queue drains in one idle window.
 
 The sites on dev 5b5920b8e2:
-- `test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with_s`: pause at :263, asserts at :266-271.
+- `test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with_s`: pause at :263, asserts at :265-271.
 - `test_revert_puts_the_saved_default_back_in_the_picker`: pause at :364, asserts at :365-366.
 - `test_an_unlisted_model_id_is_entered_through_custom_id_and_validated`: pauses at :395, :397, :400 and :403, asserts at :398-409; and `field.value = ...` then one pause at :411-416.
 - `test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left`: :438-444.

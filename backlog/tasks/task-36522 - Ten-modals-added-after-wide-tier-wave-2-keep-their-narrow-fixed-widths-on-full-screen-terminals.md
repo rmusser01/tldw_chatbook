@@ -19,7 +19,7 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found by TASK-36382 (PR #3227, 2026-10-23). The wide-tier contract's reverse sweep had been hiding 15 ModalScreen classes behind three stale skip names. TASK-36382 triaged them by base width. Five are tiny or already wider than the tier. The other ten carry fixed widths that the tier's ladder would relax (base width at most 80 gets a cap of 120, 84-96 gets 150, 104 or more gets 170, at `WIDE_VIEWPORT_COLUMNS` = 150 and above). They went into `MODAL_WIDE_TIER_SKIPPED` marked "follow-up wave", which the registry comment calls a queued gap, not a verdict:
+Found by TASK-36382 (PR #3227, 2026-10-23). The wide-tier contract's reverse sweep had been hiding 15 ModalScreen classes behind three stale skip names. TASK-36382 triaged them by base width. Five are tiny or already wider than the tier. The other ten carry fixed widths that the tier's ladder would relax (base width at most 80 gets a cap of 120, 84-96 gets 150, 100 or more gets 170, at `WIDE_VIEWPORT_COLUMNS` = 150 and above; the registry already gives base 100 the 170 cap, as for `#notes-recovery-dialog` and `ChatbookTemplatesWindow`). They went into `MODAL_WIDE_TIER_SKIPPED` marked "follow-up wave", which the registry comment calls a queued gap, not a verdict:
 - `ConsoleGoalSetupModal`, `ConsoleGoalHistory` (base 76) and `ConsoleGoalStatus` (90)
 - `DreamsGoalsModal` and `DreamsStoryModal` (76)
 - `GuardianRuleEditModal` (76)
