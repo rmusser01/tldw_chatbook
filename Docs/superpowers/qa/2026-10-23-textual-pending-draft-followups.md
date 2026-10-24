@@ -176,3 +176,18 @@ Qualified native integration selection:387 passed, zero failures/errors/skips, J
 All exact native aggregate commands ran on frozen combined owned source. Eleven pass, including CSS reproduction, diagnostic/path/schema/index/timestamp/backlog, both safety guards and the current census. Canvas alone rejects local Python3.12.10 against its unchanged3.12.11 manifest pin; no builder, artifact or pin is changed, and fresh hosted qualification remains mandatory. The changed fixture and ratchet pass normal-rule Ruff and formatting; whitespace checks pass. Fresh scoped Superpowers review and final-head hosted CI remain the next publication gates; previous c3d results do not qualify the new combined source.
 
 B2a publication checkpoint: fresh scoped Superpowers review of8e06b3bb found no Critical, Important or Minor issues and approved publication for fresh CI. The read-only reviewer independently verified the rebase/range-diff, all13 Dictionary receipts, unchanged acceptance ASTs/58 positions, lowered16878 ceiling and11/12 native guard limitation. TASK-36455 is closed through the CLI after review. This closure changes metadata only; new-head hosted qualification remains mandatory and will be recorded in PR #3228.
+
+
+### PR #3231 census integration (2026-10-24)
+
+ADR required: no
+ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
+Reason: reconcile the existing 17-shard capacity qualification with TASK-36512's incoming split-file coverage, keeping every gate and timeout.
+
+Live dev `f5585b020d` includes PR #3231/TASK-36512: four heavy whole-file entries are split by function/case, with completeness guards. All 704 incoming selectors and all 58 PR regressions are retained, exactly once (762 selectors). The two existing timing blocks, Phase 7 (zero-based195,92 entries) and the tail (zero-based664,98 entries), are re-dealt for17 shards; every one of the572 outside positions stays fixed. No test, assertion, dependency, job cap or per-test timeout is removed or relaxed. Production source is unchanged from reviewed `cd76774780`.
+
+A literal append to dev's13-shard ordering predicted an over-cap17-shard job. The existing replay's file/node attribution and deterministic pair swaps re-deal only those blocks. Costs take the worst per-selector observation from the complete qualified17-shard runs40072763102 and40086080161, plus the measured new upstream module costs from successful run40095575123 (29.20s Import,7.26s notes skips,27.60s focus). The29 swaps give a789.77s maximum pytest-work estimate;110s setup and15% variance give1018.24s, below the1020s planning target and unchanged1200s cap. This is a model, not a hosted pass. Fresh current-head CI remains required.
+
+TASK-36512's incoming completeness guards remain intact; its three-run observation criterion is not claimed complete. TASK-36514 separately proposes15 shards and a committed full-deal tool; this integration retains the already qualified17-shard count and does not mark that task complete. Reassess its count-specific proposal against the final merged matrix rather than duplicating this coverage work.
+
+Targeted integration verification: all228 CI/census/replay/workflow/queue checks pass on the final combined census. Three intermediate shard-description assertions were red until the17-shard metadata was restored; no tests were changed to obtain the green. Checker Ruff and whitespace checks pass.

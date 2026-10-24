@@ -453,7 +453,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-35865..35870 add seven representative mounted regressions and retain
 # all 408 prior entries. Measured whole-file slot swaps preserve every node,
 # the ten shards and all time limits; TASK-35834 headroom work stays open.
-# TASK-35834 (2026-10-20): lane grew to thirteen. The model-defaults whole-file selector
+# TASK-35834: lane now runs thirteen. The model-defaults whole-file selector
 # becomes all 16 function selectors (+15); see its coverage guard in Tests/CI.
 # TASK-35597 raised it further: the five Tools-hub suites were made
 # PR-gate-lane safe and re-censused (3 whole files + 112 node ids) on top of
@@ -495,12 +495,23 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # A static node (an AST walk, about 5-10 s with its private-profile child),
 # appended at the tail after TASK-35648's.
 # TASK-36360..36363 append48 nodes after the complete616-entry dev census.
-# TASK-36454..36458: append 56 exact mounted cases, retaining all 664 inherited
-# selectors. Current UI lane: 17 shards. Conservative timing replay preserves
-# the first 181 entries and all 56 new positions; see the 2026-10-23 QA report.
-# Required-aggregate follow-up: append the two completion-safety controls.
-MINIMUM_FILES = 725
-# Latest dev adds three P1-C module selectors at the tail; none are dropped.
+# 2026-10-23, TASK-34000.20 (P1-C batch, task 1) appends one whole-file entry at
+# the tail -- Tests/UI/test_library_ingest_tilde_path_and_enter_waits.py (three
+# 160x45 boots, ~15 s locally) -- so no existing entry changes shard: 664 -> 665.
+# 2026-10-23, TASK-34000.16 (P1-C batch, task 2) appends one whole-file entry at
+# the tail -- Tests/UI/test_library_notes_sync_skips_bad_files_by_name.py (one
+# 160x45 boot) -- so no existing entry changes shard: 665 -> 666.
+# 2026-10-24, TASK-34000.26 (P1-C batch, task 3) appends one whole-file entry at
+# the tail -- Tests/UI/test_library_focus_never_lands_on_a_removed_widget.py
+# (three 80x24 boots of the real app, ~15 s locally) -- so no existing entry
+# changes shard: 666 -> 667.
+# TASK-36512 lists four heavy whole-file entries by function (the MCP
+# permissions handoff by parametrize case), so no shard takes one whole:
+# every test still runs once, and the floor follows the entry count.
+# Current UI lane: 17 shards.
+# TASK-36454..36458 append all 58 exact mounted regressions after dev's
+# measured split-file tail (TASK-36512), preserving its slots and coverage.
+MINIMUM_FILES = 762
 
 
 def read_census(path: Path) -> list[str]:
@@ -628,7 +639,9 @@ def _scalar_id(value: object) -> str | None:
     return None
 
 
-def _value_id(node: ast.AST, argname: str, index: int, scope: dict[str, ast.AST]) -> str:
+def _value_id(
+    node: ast.AST, argname: str, index: int, scope: dict[str, ast.AST]
+) -> str:
     """The id pytest gives one parameter value (``_idval`` in pytest 8.4)."""
     if isinstance(node, ast.Name) and isinstance(
         scope.get(node.id), (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -707,7 +720,9 @@ def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str
                     if not isinstance(param_id, str):
                         raise _Unresolvable(f"pytest.param id {param_id!r}")
                     given = _ascii_escaped(param_id)
-            values = ast.Tuple(elts=list(item.args)) if len(argnames) > 1 else item.args[0]
+            values = (
+                ast.Tuple(elts=list(item.args)) if len(argnames) > 1 else item.args[0]
+            )
         # pytest.param(id=...) wins over ids=[...] (pytest 8.4 _resolve_ids).
         if given is None and explicit is not None and index < len(explicit):
             given = explicit[index]
@@ -719,7 +734,9 @@ def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str
             continue
         if isinstance(values, ast.Name) and values.id in scope:
             values = scope[values.id]
-        if not isinstance(values, (ast.Tuple, ast.List)) or len(values.elts) != len(argnames):
+        if not isinstance(values, (ast.Tuple, ast.List)) or len(values.elts) != len(
+            argnames
+        ):
             raise _Unresolvable(f"multi-argument value {ast.unparse(values)!r}")
         ids.append(
             "-".join(
@@ -741,7 +758,11 @@ def _is_parametrize(node: ast.AST) -> bool:
 def _fixture_call(decorator: ast.AST) -> ast.Call | None:
     """The ``@pytest.fixture(...)`` call of a decorator, or None."""
     target = decorator.func if isinstance(decorator, ast.Call) else decorator
-    name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", None)
+    name = (
+        target.attr
+        if isinstance(target, ast.Attribute)
+        else getattr(target, "id", None)
+    )
     if name != "fixture":
         return None
     return decorator if isinstance(decorator, ast.Call) else ast.Call(target, [], [])
@@ -791,7 +812,9 @@ def _parametrized_fixture(
         directory = directory.parent
     for conftest in reversed(conftests):  # nearer conftests override
         try:
-            available.update(_fixtures(ast.parse(conftest.read_text(encoding="utf-8")).body))
+            available.update(
+                _fixtures(ast.parse(conftest.read_text(encoding="utf-8")).body)
+            )
         except (OSError, SyntaxError, ValueError):
             continue
     available.update(_fixtures(tree.body))
@@ -900,7 +923,11 @@ def resolve_node(path: Path, node: str) -> str | None:
         combined = [""]
         for decorator in decorators:  # closest to the function first
             ids = _parametrize_ids(decorator, scope)
-            combined = [f"{left}-{right}" if left else right for left in combined for right in ids]
+            combined = [
+                f"{left}-{right}" if left else right
+                for left in combined
+                for right in ids
+            ]
     except _Unresolvable as reason:
         return (
             f"parametrize id [{wanted}] cannot be resolved statically ({reason}). "
@@ -941,7 +968,9 @@ def overlapping_targets(targets: list[str] | tuple[str, ...]) -> list[str]:
             if inner == outer:
                 continue
             inner_file = inner.split("::", 1)[0].rstrip("/")
-            if inner.startswith(outer_path + "::") or inner.startswith(outer_path + "["):
+            if inner.startswith(outer_path + "::") or inner.startswith(
+                outer_path + "["
+            ):
                 kind = "whole-file entry" if "::" not in outer else "listed target"
                 problems.append(
                     f"node id overlaps a {kind}: {inner}\n"
