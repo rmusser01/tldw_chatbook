@@ -527,3 +527,7 @@ $ds-portrait-blink-min: 3s;
 $ds-portrait-blink-max: 7s;
 $ds-portrait-idle-cycle: 6s;
 $ds-portrait-idle-offset-px: 1;
+
+/* Offline portrait review uses the Console renderer at a fixed cell budget. */
+$ds-portrait-review-cols: 24;
+$ds-portrait-review-lines: 13;

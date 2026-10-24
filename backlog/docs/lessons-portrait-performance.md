@@ -67,3 +67,17 @@ Do not reset runtime or recovery registries to conceal the refusal. The new
 performance and existing geometry files then run independently with actual owner
 retirement. Under NO_COLOR, compare shade glyphs instead of absent background
 colours; a HEAD-source probe reproduced the old colour-only assertion failure.
+
+## Distinguish the Console owner from its mounted harness (TASK-36547, 2026-10-23)
+
+**Incident.** The first Personas-to-Console handoff test pushed Personas onto the
+TldwCli returned by the reused Console fixture, but the Pilot belonged to the
+fixture's separate `ConsoleHarness`. The Pilot remained on ChatScreen. Pushing on
+`pilot.app` exercised the real mounted Console session and its invalidation path;
+loading the Roleplay sheet on that host and retaining the Personas screen allowed
+Apply/Remove to verify red prepared pixels and the original yellow still.
+
+**What to do.** Read a reused fixture's yielded owner/host contract. Use its Pilot's
+actual App for mounted navigation and workers, while preserving the captured owner
+as the screen's application service source. Do not replace runtime ownership or
+recovery registries to make a UI test mount.

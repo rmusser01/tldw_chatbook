@@ -378,7 +378,7 @@ widget/clock; revision/tombstone/spec replacement invalidates its predecessor.
 Cheap context facts are rechecked without transcript/DB access at publication.
 ### Unit 6 — TASK-36547: imported artwork preparation and review
 
-**Files:** Create `Character_Chat/portrait_performance_authoring.py`, `Widgets/Persona_Widgets/portrait_performance_editor.py`, `Tests/Character_Chat/test_portrait_performance_authoring.py`, `Tests/UI/test_personas_portrait_performance.py`. Modify `personas_character_editor_widget.py`, `personas_pane_messages.py`, `UI/Screens/personas_screen.py`; use token-backed source widget CSS and rebuild.
+**Files:** Create `Character_Chat/portrait_performance_authoring.py`, `Widgets/Persona_Widgets/portrait_performance_editor.py`, `Tests/Character_Chat/test_portrait_performance_authoring.py`, `Tests/UI/test_personas_portrait_performance.py`. Create focused `UI/Persona_Modules/portrait_performance.py` orchestration; move existing thumbnail helpers unchanged into `UI/Persona_Modules/character_avatar_helpers.py` with screen aliases. Modify `personas_character_editor_widget.py`, `personas_visual_identity_pack_widget.py`, `UI/Screens/personas_screen.py` and the avatar offline-preview API; use token-backed source widget CSS and rebuild.
 
 **Consumes:** Unit 1 storage/source and Unit 5 preview renderer. **Produces:**
 
@@ -389,17 +389,16 @@ class PortraitPerformanceDraft:
     def frames(self) -> tuple[PerformanceFrame, ...]: ...
     def cancel(self) -> None: ...
 class PortraitPerformanceEditor(Widget): ...  # inline child; owns no database/provider authority
-class CharacterPerformancePrepareRequested(Message): ...  # carries requested source expression
-# PersonasScreen source/authority capture and async handlers:
-def _capture_portrait_performance_authority(self) -> object | None: ...
-async def _import_portrait_performance_frame(self, role: FrameRole, path: Path) -> None: ...
-async def _apply_portrait_performance(self) -> bool: ...
-async def _remove_portrait_performance(self) -> bool: ...
+class CharacterPerformanceRequested(Message): ...  # explicit action, source expression and role
+# Screen-owned focused controller, reached through the normal parent message handler:
+class PortraitPerformanceController:
+    async def handle(self, message, *, path: str | None = None) -> bool: ...
+    async def close(self) -> None: ...
 ```
 
 The ephemeral authority value is an existing-style frozen capture of actual DB/service/profile/editor token and persisted binding/source; compare those values rather than inventing a serializable permission token. The view emits Import/Apply/Remove/Cancel messages to PersonasScreen through its normal parent path. No new screen or modal authority is introduced.
 
-- [ ] **1. Add red draft and mounted tests.** Reuse `personas_editor_with_saved_character` / `personas_editor_with_bound_pack` from `Tests/UI/test_personas_expression_slots.py`; import their `expr_db` dependency too. Add the following draft assertions with a source/PNG fixture seeded as in Unit 1:
+- [x] **1. Add red draft and mounted tests.** Reuse `personas_editor_with_saved_character` / `personas_editor_with_bound_pack` from `Tests/UI/test_personas_expression_slots.py`; import their `expr_db` dependency too. Add the following draft assertions with a source/PNG fixture seeded as in Unit 1:
 
 ```python
 def test_incomplete_draft_cannot_publish(source, source_bytes, frames):
@@ -416,11 +415,11 @@ def test_incomplete_draft_cannot_publish(source, source_bytes, frames):
 ```
 
 Mounted tests stage an unsaved replacement via `set_avatar_image` and assert preparation is refused with Save guidance and no implicit DB write. Unrelated dirty text remains allowed. Include server/local same-ID selection, profile/service replacement, source/binding changes during import, mismatched frames, transaction failure, Cancel, Remove, editor reopen and same-source Console handoff.
-- [ ] **2. Run new files red.** Assertions must enter actual screen handlers and workers; invoking normalization alone does not prove UI admission.
-- [ ] **3. Implement the source-bound inline view and handlers.** Reuse `_local_character_actions_allowed`, existing editor session tokens, actual DB object identity, visual source capture and the `EnhancedFileOpen`/Filters pattern. Read/normalize off-thread; only stage returned data after source/authority revalidation. Guard duplicate workers and clear busy state in `finally`. Use existing finite-operation DB guards inside worker callbacks.
-- [ ] **4. Implement offline preview and Apply/Remove/Cancel.** Cycle all six roles deterministically and compare with source using the Console fit/renderer and current measured image-box budget. Also support real idle/blink preview. Apply requires all roles and expected revision; publish a local revision invalidation after commit. Cancel discards the draft, never the active set. Display profile-local/export limitations. Remove retains a revision tombstone via Unit 1.
-- [ ] **5. Run mounted and pure tests green, plus affected Personas expression/visual-pack tests and token/CSS checks.** Prove import-to-Console changed pixels, keyboard focus restoration and no active source or conversation change. Update user guidance for ready-made imports and local storage.
-- [ ] **6. Commit.** Suggested message: `feat: review and apply imported portrait performance artwork`.
+- [x] **2. Run new files red.** Assertions must enter actual screen handlers and workers; invoking normalization alone does not prove UI admission.
+- [x] **3. Implement the source-bound inline view and handlers.** Reuse `_local_character_actions_allowed`, existing editor session tokens, actual DB object identity, visual source capture and the `EnhancedFileOpen`/Filters pattern. Read/normalize off-thread; only stage returned data after source/authority revalidation. Guard duplicate workers and clear busy state in `finally`. Use existing finite-operation DB guards inside worker callbacks.
+- [x] **4. Implement offline preview and Apply/Remove/Cancel.** Cycle all six roles deterministically and compare with source using the Console fit/renderer and current measured image-box budget. Also support real idle/blink preview. Apply requires all roles and expected revision; publish a local revision invalidation after commit. Cancel discards the draft, never the active set. Display profile-local/export limitations. Remove retains a revision tombstone via Unit 1.
+- [x] **5. Run mounted and pure tests green, plus affected Personas expression/visual-pack tests and token/CSS checks.** Prove import-to-Console changed pixels, keyboard focus restoration and no active source or conversation change. Update user guidance for ready-made imports and local storage.
+- [x] **6. Commit.** Suggested message: `feat: review and apply imported portrait performance artwork`.
 
 ### Unit 7 — TASK-36548: reference generation and guarded sample speech
 

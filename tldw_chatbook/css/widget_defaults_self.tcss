@@ -3069,6 +3069,17 @@ PetdexImportReviewDialog .petdex-actions Button {
     width: 1fr; min-width: 0; border: none;
 }
 
+/* ===== WIDGET: PortraitPerformanceEditor (Widgets/Persona_Widgets/portrait_performance_editor.py) ===== */
+
+    PortraitPerformanceEditor { height: auto; width: 1fr; }
+    PortraitPerformanceEditor .portrait-review-row { height: auto; width: 1fr; }
+    PortraitPerformanceEditor Button { width: auto; margin-right: 1; }
+    PortraitPerformanceEditor .portrait-review-images { height: auto; width: 1fr; }
+    PortraitPerformanceEditor .portrait-review-image { width: 24; height: 13; margin-right: 2; }
+    PortraitPerformanceEditor .portrait-review-copy { height: auto; color: $text-muted; }
+    PortraitPerformanceEditor.portrait-review-compact .portrait-review-row,
+    PortraitPerformanceEditor.portrait-review-compact .portrait-review-images { layout: vertical; }
+
 /* ===== WIDGET: ToolPackImportOptionsModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
 
 ToolPackImportOptionsModal {

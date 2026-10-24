@@ -16,6 +16,7 @@ from textual.widgets import Static
 from tldw_chatbook.Audio.speech_presentation import SpeechPresentationSnapshot
 from tldw_chatbook.Character_Chat.portrait_performance import (
     FRAME_ROLES,
+    FrameRole,
     PortraitPerformanceRecord,
 )
 from tldw_chatbook.Chat.character_expression_playback import (
@@ -58,6 +59,7 @@ class CharacterExpressionAvatar(Widget):
         self._fallback_decode_identity = fallback_decode_identity
         self._performance = performance
         self._read_speech = read_speech
+        self._preview_mode: str | None = None
         self._performance_clock: PortraitPerformanceClock | None = None
         self._last_pose: tuple[int, float] | None = None
         self._performance_disabled = False
@@ -353,7 +355,39 @@ class CharacterExpressionAvatar(Widget):
             else "rest"
         )
 
+    def set_preview_mode(self, mode: FrameRole | str) -> None:
+        """Select an offline pose/cycle/idle without creating a speech owner."""
+        if mode not in (*FRAME_ROLES, "cycle", "idle"):
+            raise ValueError("portrait_performance_preview_mode_invalid")
+        self._preview_mode = mode
+        if isinstance(self._prepared, PreparedPerformance):
+            motion = self._prepared.motion
+            self._performance_clock = PortraitPerformanceClock(
+                motion=motion,
+                interval=lambda: random.uniform(motion.blink_min_s, motion.blink_max_s),
+            )
+        self._elapsed_ms = 0.0
+        self._last_tick = None
+        self._last_pose = None
+
+    def _preview_index(self) -> int | None:
+        if self._preview_mode == "cycle":
+            return int(
+                self._elapsed_ms / (self._prepared.motion.blink_hold_s * 1000)
+            ) % len(FRAME_ROLES)
+        if self._preview_mode in FRAME_ROLES:
+            return FRAME_ROLES.index(self._preview_mode)
+        return None
+
     def _pose_is_current(self, index: int) -> bool:
+        if (
+            isinstance(self._prepared, PreparedPerformance)
+            and self._preview_mode is not None
+        ):
+            preview_index = self._preview_index()
+            return (
+                index == preview_index if preview_index is not None else index % 3 == 0
+            )
         if not isinstance(self._prepared, PreparedPerformance) or index % 3 == 0:
             return True
         return index % 3 == ("rest", "small", "open").index(
@@ -382,7 +416,12 @@ class CharacterExpressionAvatar(Widget):
                 return
             mouth = self._mouth(now)
             pose = self._performance_clock.sample(mouth, now=self._elapsed_ms / 1000)
-            key = (FRAME_ROLES.index(pose.role), round(pose.offset_px, 2))
+            preview_index = self._preview_index()
+            key = (
+                (preview_index, 0.0)
+                if preview_index is not None
+                else (FRAME_ROLES.index(pose.role), round(pose.offset_px, 2))
+            )
             if key != self._last_pose:
                 try:
                     if await self._paint(key[0], offset_px=key[1]):

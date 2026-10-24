@@ -626,3 +626,111 @@ async def test_missing_historical_art_never_borrows_a_neutral_talking_set(
     assert screen._active_character_avatar is not None
     assert not screen._active_character_avatar["animate"]
     assert screen._active_character_avatar.get("performance") is None
+
+
+@pytest.mark.asyncio
+async def test_offline_preview_cycles_exact_six_roles_and_idle_without_speech():
+    from tldw_chatbook.Character_Chat.portrait_performance import FRAME_ROLES
+
+    app, _snapshot = performance_app()
+    app.avatar._read_speech = None
+    app.avatar.set_preview_mode("cycle")
+    before = preparation_bytes()
+    async with app.run_test(size=(40, 16)) as pilot:
+        await wait_ready(app.avatar, pilot)
+        app.avatar._timer.stop()
+        child = app.avatar.query_one(Static)
+        for index, _role in enumerate(FRAME_ROLES):
+            app.avatar._elapsed_ms = (
+                (index + 0.25) * app.avatar._prepared.motion.blink_hold_s * 1000
+            )
+            app.avatar._last_tick = None
+            await app.avatar._tick()
+            assert app.avatar._frame_index == index
+            assert app.avatar.current_image.getpixel(
+                (3, 3)
+            ) == app.avatar._prepared.frames[index].getpixel((3, 3))
+            assert app.avatar.query_one(Static) is child
+        app.avatar.set_preview_mode("idle")
+        await app.avatar._tick()
+        assert app.avatar._frame_index == 0
+        app.avatar._elapsed_ms = 7100
+        app.avatar._last_tick = None
+        await app.avatar._tick()
+        assert app.avatar._frame_index == 3
+    assert preparation_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_personas_apply_and_remove_handoff_to_mounted_console(
+    console_screen_with_db_and_pilot,
+    monkeypatch,
+):
+    import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as handler
+    from Tests.UI.test_personas_dictionaries import patch_character_paging
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        EditCharacterRequested,
+    )
+    from tldw_chatbook.Widgets.Persona_Widgets.portrait_performance_editor import (
+        CharacterPerformanceRequested,
+    )
+
+    app, console, db, pilot = console_screen_with_db_and_pilot
+    frames = performance_record().frames
+    character_id = db.add_character_card(
+        {"name": "Reviewed Ada", "image": frames[3].png}
+    )
+    _set_active_console_character(console, character_id, "Reviewed Ada")
+    monkeypatch.setattr(app, "character_persona_scope_service", None)
+    monkeypatch.setattr(
+        handler,
+        "fetch_all_characters",
+        lambda: [db.get_character_card_by_id(character_id)],
+    )
+    monkeypatch.setattr(
+        handler,
+        "fetch_character_by_id",
+        lambda _id: db.get_character_card_by_id(character_id),
+    )
+    patch_character_paging(monkeypatch)
+    host = pilot.app
+    from Tests.UI.consolidated_css import CSS_DIR
+
+    host.stylesheet.read(CSS_DIR / "screen_feature_roleplay.tcss")
+    host.stylesheet.reparse()
+    host.stylesheet.update(host)
+    personas = PersonasScreen(app)
+    host.install_screen(personas, "portrait-authoring")
+    await host.push_screen("portrait-authoring")
+    await pilot.pause()
+    await host.workers.wait_for_complete()
+    await personas._select_character(str(character_id), "Reviewed Ada")
+    await pilot.pause()
+    await host.workers.wait_for_complete()
+    personas.post_message(EditCharacterRequested(str(character_id)))
+    await pilot.pause()
+    await host.workers.wait_for_complete()
+    controller = personas._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    for frame in frames:
+        controller.draft.stage(frame)
+    assert await controller.handle(CharacterPerformanceRequested("apply"))
+    await host.pop_screen()
+    await pilot.pause()
+    await console._character._refresh_active_character_avatar_if_scope_changed(
+        force=True
+    )
+    assert console._active_character_avatar["performance"].revision == 1
+    widget = console.query_one(CharacterExpressionAvatar)
+    await wait_ready(widget, pilot)
+    assert widget.current_image.getpixel((3, 3)) == (255, 0, 0, 255)
+    await host.push_screen("portrait-authoring")
+    assert await controller.handle(CharacterPerformanceRequested("remove"))
+    await host.pop_screen()
+    await pilot.pause()
+    await console._character._refresh_active_character_avatar_if_scope_changed(
+        force=True
+    )
+    assert console._active_character_avatar.get("performance") is None
+    assert console._active_character_avatar["pil"].getpixel((3, 3)) == (255, 255, 0, 255)

@@ -169,6 +169,28 @@ too. **✨ Generate all** asks first — "This will overwrite the existing avata
 and/or expression images. Continue?" (**Generate all** / **Cancel**) — and
 reports "{k}/{N} generated.".
 
+### Editor — living portrait imports
+
+Open **Living portrait** under a saved local character's artwork. Choose `idle`
+for the active portrait, an operational expression (`thinking`, `speaking`,
+`error`), or a saved pack expression key, then **Prepare saved artwork**. Save
+changed portrait artwork or Apply reaction-artwork changes first. Prepare never
+saves unrelated text edits. Server characters are read-only.
+
+Select each of the six slots and **Import / replace…** a still PNG, JPEG or WebP:
+`rest`, `small`, `open`, `blink_rest`, `blink_small`, `blink_open`. All images must
+have matching dimensions. Each image is limited to 1,048,576 pixels and 4 MiB;
+the complete normalized set is limited to 16 MiB. Animated images are refused.
+**Clear slot** only changes the draft. Compare the source with the Console-sized
+preview, cycle all six poses, inspect individual poses, or run **Idle + blink**
+without generating images or playing speech.
+
+**Apply performance** publishes all six poses together. **Cancel draft** keeps the
+applied artwork; **Remove applied** restores ordinary artwork. Changing the
+character, profile or source invalidates the draft. Reopen and Prepare to inspect
+the stored set. Performances stay in the local profile and its full backups;
+character cards, Actor Packs, sync and server exports do not carry them.
+
 ### Editor — saving and validation
 
 The footer lists problems under **"Validation errors:"** — **"name:

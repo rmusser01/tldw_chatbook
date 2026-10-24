@@ -357,6 +357,10 @@ $ds-portrait-blink-max: 7s;
 $ds-portrait-idle-cycle: 6s;
 $ds-portrait-idle-offset-px: 1;
 
+
+$ds-portrait-review-cols: 24;
+$ds-portrait-review-lines: 13;
+
 /* ===== MODULE: core/_reset.tcss ===== */
 
 

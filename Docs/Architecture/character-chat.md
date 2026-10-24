@@ -78,8 +78,7 @@ permanent character deletion cascades through the parent and frames.
 
 These attachments are profile-local (ADR-242). Native full-profile SQLite backup
 and recovery schema admission include them; original artwork, character cards,
-Actor Packs, Chatbooks and sync formats are unchanged. The authoring editor remains
-a later unit. See [ADR-242](../../backlog/decisions/242-console-radio-portrait-performance.md).
+Actor Packs, Chatbooks and sync formats are unchanged. See [ADR-242](../../backlog/decisions/242-console-radio-portrait-performance.md).
 
 `prepare_performance` reuses existing per-image decode reservations to prepare six
 aligned fitted frames off-thread. Small artwork is fitted once, keeping idle offset
@@ -128,3 +127,15 @@ ADR-037 (roleplay assistant identity / persona-user profile separation), ADR-046
 3. `{{persona}}` is a character-side alias (the AI's name), not the user persona.
 4. Character sessions bypass the agent bridge (`force_plain`) — no tool calls in roleplay.
 5. Macros are expanded before persistence boundaries but stored templates keep them raw (trusted provenance, ADR-046).
+
+`UI/Persona_Modules/portrait_performance.py` owns one disposable authoring draft.
+The inline `PortraitPerformanceEditor` emits explicit actions through PersonasScreen;
+it has no DB or provider authority. Preparation captures the actual local DB/service,
+editor session, canonical persisted source and local authority ID. Native file work
+normalizes a bounded still off-thread and recaptures the source before staging;
+Apply and Remove use the storage CAS and emit Console invalidation after commit.
+The existing Personas context poll discards obsolete drafts without another timer.
+Worker draining retains actual publication results through cancellation, and closes
+only operation-owned thread-local DB connections. Dirty artwork/bindings require
+explicit Save/Apply; unrelated text is never saved by this flow. Preview uses the
+same bounded avatar renderer/timer, with explicit offline pose/cycle/idle modes.

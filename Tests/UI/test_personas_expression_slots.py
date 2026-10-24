@@ -56,6 +56,8 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
 from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character_paging
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 @pytest.fixture
 def expr_db(tmp_path):
     db = CharactersRAGDB(tmp_path / "personas_char_expression.db", "test-client")
