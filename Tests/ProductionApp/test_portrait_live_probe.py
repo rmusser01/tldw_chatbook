@@ -127,3 +127,53 @@ def test_opted_in_probe_refuses_existing_evidence_before_transport(
             ]
         )
     assert error.value.code == 2 and marker.read_text() == "prior evidence"
+
+
+@pytest.mark.parametrize("interruption_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("complete_manifest", [True, False])
+def test_interrupted_probe_keeps_request_uncertainty_and_cleans_private_files(
+    tmp_path, monkeypatch, capsys, interruption_type, complete_manifest
+):
+    from Tests.Backup_Recovery import test_home_citation_retirement as runner
+
+    interruption = interruption_type("interrupted transport")
+    private_roots = []
+    manifest = '[{"index":0}]' if complete_manifest else '[{"index":'
+
+    def interrupt(root, *args, **kwargs):
+        private_roots.append(root)
+        assert (root / "image-settings.toml").is_file()
+        artifacts = root / "home/portrait-artifacts"
+        artifacts.mkdir(parents=True)
+        (artifacts / "requests.json").write_text(manifest)
+        (artifacts / "response-0.png").write_bytes(b"returned-artwork")
+        (root / "restart-output.log").write_text("private-fixture-secret")
+        raise interruption
+
+    monkeypatch.setattr(runner, "_run", interrupt)
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[image_generation]\ndefault_backend="gemini"\nenabled_backends=["gemini"]\ngemini_image_api_key="private-fixture-secret"\n'
+    )
+    output = tmp_path / "evidence"
+    with pytest.raises(interruption_type) as caught:
+        runpy.run_path(str(PROBE))["main"](
+            [
+                "--config",
+                str(config),
+                "--output",
+                str(output),
+                "--accept-five-image-requests",
+            ]
+        )
+    assert caught.value is interruption
+    report = (output / "availability.json").read_text()
+    result = json.loads(report)
+    assert result["status"] == "failed_or_uncertain" and not result["live_qualified"]
+    assert result["image_requests"] == (1 if complete_manifest else None)
+    assert (output / "artifacts/requests.json").read_text() == manifest
+    assert (output / "artifacts/response-0.png").read_bytes() == b"returned-artwork"
+    assert not (output / "restart-output.log").exists()
+    assert len(private_roots) == 1 and not private_roots[0].exists()
+    captured = capsys.readouterr()
+    assert "private-fixture-secret" not in report + captured.out + captured.err

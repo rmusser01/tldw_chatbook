@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/243-source-bound-portrait-compositing.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 17:53
+updated_date: 2026-10-24 21:55
 ---
 
 ## Description
@@ -35,6 +35,7 @@ Verify the new workflow end to end and document which pairing, persistence and r
 - [ ] #5 Pixel invariants, encoding-equivalence controls, hashes, actual bounded pair-viewer captures and real generated-patch provenance are recorded; real configured in-app adapter qualification is distinct from external patch evidence.
 - [x] #6 Targeted new/affected tests, lint/format, migration packaging, SQL allowlist, token/CSS and Backlog checks pass or unrelated failures are reproduced on pre-change source; no full sweep runs without explicit user request.
 - [x] #7 User/architecture guidance and final self-review explain neutral-base/region reuse, fresh versus retry semantics, canonical identity, three-request consent, in-app raw-frame pair review and import/capability limits; unavailable live evidence stays open.
+- [x] #8 Interrupting opt-in qualification preserves recorded request/artifact evidence and an honest uncertainty report before private temporary cleanup and re-raising the interruption; incomplete logs are retained with an unknown count, and no retry or private-log/credential disclosure occurs.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,13 +43,14 @@ Verify the new workflow end to end and document which pairing, persistence and r
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/243-source-bound-portrait-compositing.md
-Reason: Qualify the implemented component workflow across installed UI, native recovery and unchanged playback/export boundaries; no new architecture.
+Reason: Existing qualification/privacy and uncertain-paid-request contracts apply; no new provider or architecture.
 
-1. Read Unit 5 and installed Console/restore harnesses; identify actual configured reference-capable backends without exposing credentials.
-2. Extend the installed production journey through region Save/reopen, exactly three validated component requests, real pair viewer, retry, manual/Apply and Console behavior using fake external transport only.
-3. Extend full native F9 backup/restore/fresh-open through recovered settings/provenance and another one-request component retry/Apply, with original source and stale ownership controls.
-4. Add an explicit opt-in real-adapter qualification probe and run it only when a supported configured destination is available and authorized; keep missing live coverage open and accurately documented.
-5. Run affected installed/restore/export/core/UI checks, verify artifact hashes and final docs, self-review every criterion and commit proved qualification work. Do not mark Done with unfulfilled live acceptance criteria.
+The installed authoring/Console/F9 restore qualification and existing evidence remain recorded in the linked plan/review. AC5 remains open for a supported configured live image adapter.
+
+Full-review correction:
+1. Add red opt-in probe tests that record a dispatched request and then raise KeyboardInterrupt/SystemExit. Assert safe evidence/report preservation, private temporary cleanup, propagation and no retries; include an incomplete manifest.
+2. Preserve safe artifacts/count uncertainty before temporary cleanup, write the availability report, then re-raise interruption. Keep private transport logs/credentials out of evidence and subprocess arguments.
+3. Run all probe controls, final affected/installed/restore checks and lint/format; review all three corrections, update plan/task evidence and commit. Keep unavailable live qualification AC5 open and status In Progress.
 <!-- SECTION:PLAN:END -->
 
 ## Final Summary
@@ -69,4 +71,17 @@ Implemented and self-reviewed installed-wheel authoring/pair-viewer/Console qual
 Evidence: installed journey 1 passed (42.88s); native F9 restore/edit 1 passed (52.81s); probe controls 6 passed (0.32s); affected core/draft/repository/migration/exports/SQL/token/CSS gate 99 passed (40.85s). Both wheels match all 18 changed production files and include exact v83 SQL; 15 visual capture hashes recorded. Ruff/format and git diff checks pass. No full suite, push or merge.
 
 AC5 REMAINS OPEN; status intentionally In Progress. Actual current default/only enabled image backend is SwarmUI, unsupported by this reference-image path; zero live image requests sent and no fallback selected. Historical external ChatGPT patch evidence is distinct from real in-app adapter qualification. No new hardware/live TTS claim. See Docs/superpowers/reviews/2026-10-24-task-36555-review.md and Docs/superpowers/qa/portrait-compositing/2026-10-24/qualification.md. ADR required: yes; existing backlog/decisions/243-source-bound-portrait-compositing.md applies.
+
+Full-review corrections: all three findings are fixed and regression-tested. Probe
+interruptions preserve safe evidence/reporting before private cleanup and re-raise;
+incomplete manifests retain unknown counts, with no retry or private-log/credential
+exposure. Four new red controls now pass among ten probe cases. Installed/restore
+fixtures await actual load workers and rendered confirm focus. Final gates: 108
+manual/Console/recovery, 68 region/generation/pair, 10 probe and 13 CSS/token tests;
+two fresh installed/native journeys passed in 91.15s with original timeouts. Both
+wheels match all 18 production files and v83 SQL. All ten revised Python files pass
+Ruff/format; diff is clean. Combined corrections review found and fixed an additional
+queued-cancellation race; no further defect found. See the corrections review and
+QA corrections/ evidence. ADR-243 applies. AC8 satisfied; AC5 remains open, zero live
+requests, current default/only enabled backend SwarmUI unsupported by reference path.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

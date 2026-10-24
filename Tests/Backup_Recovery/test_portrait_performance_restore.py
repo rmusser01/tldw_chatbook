@@ -63,8 +63,15 @@ _CHECK = r"""
    personas=app.screen
    await pilot.pause();await ready(lambda:bool(personas.query('PersonasPreviewPane')))
    await personas._select_character(str(evidence['character']),'Restored radio')
+   for worker in tuple(app.workers):
+    if worker.group=='ccp-load-character':await worker.wait()
+   await pilot.pause()
+   await ready(lambda:str(personas.character_handler.current_character_id)==str(evidence['character']))
    personas.post_message(EditCharacterRequested(str(evidence['character'])))
-   await ready(lambda:personas._edit_mode=='edit' and personas._character_editor_is_active());await pilot.pause()
+   await ready(lambda:personas._edit_mode=='edit' and personas._character_editor_is_active())
+   for worker in tuple(app.workers):
+    if worker.group=='personas-visual-identity-load':await worker.wait()
+   await pilot.pause()
    controller=personas._portrait_performance()
    original_reference=portrait_regions.performance_reference
    def reencoded(raw,digest):
@@ -81,7 +88,10 @@ _CHECK = r"""
    before=controller.draft.frames()
    retry=personas.run_worker(controller.handle(CharacterPerformanceRequested('regenerate',component='small')))
    await ready(lambda:isinstance(app.screen,ConfirmationDialog))
-   app.screen.query_one('#confirm-button',Button).focus();await pilot.press('enter')
+   button=app.screen.query_one('#confirm-button',Button)
+   button.scroll_visible(immediate=True);button.focus();await pilot.pause()
+   assert app.focused is button
+   await pilot.press('enter')
    assert await retry.wait()
    assert len(images.calls)==1 and controller.draft.can_apply
    assert all(old.png==new.png for old,new in zip(before,controller.draft.frames()) if old.role not in {'small','blink_small'})

@@ -92,8 +92,14 @@ async def main():
    screen=app.screen
    await pilot.pause();await ready(lambda:bool(screen.query('PersonasPreviewPane')))
    await screen._select_character(str(cid),'Radio Journey')
+   for worker in tuple(app.workers):
+    if worker.group=='ccp-load-character':await worker.wait()
+   await pilot.pause()
+   await ready(lambda:str(screen.character_handler.current_character_id)==str(cid))
    screen.post_message(EditCharacterRequested(str(cid)))
    await ready(lambda:screen._edit_mode=='edit' and screen._character_editor_is_active())
+   for worker in tuple(app.workers):
+    if worker.group=='personas-visual-identity-load':await worker.wait()
    await pilot.pause()
    view=screen.query_one(PortraitPerformanceEditor)
    view.query_one(Collapsible).collapsed=False

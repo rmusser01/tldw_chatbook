@@ -72,7 +72,10 @@ small-mouth retry and eyelid retry. It retains request/result hashes, raw respon
 frames/recipe and actual viewer captures. Credentials are held in a disposable mode-0600
 config file, never embedded in subprocess arguments or retained evidence; keyring-only
 credentials are not copied into the isolated null-keyring profile. Transport uncertainty
-is recorded without automatic retries. Existing evidence is rejected before dispatch.
+is recorded without automatic retries. Interruptions preserve safe artifacts and the
+availability report before private cleanup, then re-raise the interruption. If an
+interrupted manifest is incomplete, it is retained and `image_requests` is `null`
+(unknown), rather than an invented zero. Existing evidence is rejected before dispatch.
 Even a completed run reports `executed_review_required`, with `live_qualified=false`,
 until a human/agent inspects the actual artwork and captures. Synthetic speech/device
 boundaries remain in that probe and must not be described as live audio qualification.
@@ -105,3 +108,19 @@ uses the active saved record and hydrated `PreparedPerformance`, and observes re
 speech-driven non-rest frames. No production playback workaround was added.
 
 No full suite, new live image call, new hardware audio qualification, push or merge.
+
+
+## Full-review corrections and refreshed evidence
+
+The three follow-up findings are fixed and regression-tested; see
+[the corrections review](../../../reviews/2026-10-24-portrait-compositing-corrections-review.md).
+Manual authoring survives an unavailable generation reference, open dialogs retire
+on persisted source/region changes, and interrupted qualification retains uncertainty
+evidence before cleanup. A queued-validation race was also caught and fixed before
+completion. The final installed and native F9 restore/edit journeys both pass with
+real worker/render readiness barriers and the original timeouts.
+
+`corrections/` preserves fresh installed/native results, both wheel/source/SQL identities,
+zero-request backend inventory and verification counts. Earlier captures/results above
+remain historical evidence rather than being relabeled as the corrected build. There
+is still no live reference-image adapter execution or new hardware audio evidence.

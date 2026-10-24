@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         "image_requests": 0,
         "live_qualified": False,
     }
+    interruption: BaseException | None = None
     args.output.mkdir(parents=True, exist_ok=True, mode=0o700)
     if backend not in enabled or not supported:
         report.update(
@@ -93,12 +94,15 @@ def main(argv: list[str] | None = None) -> int:
                     live_adapter_exercised=True,
                     reason="Inspect retained actual viewer and Console output; structural pairs do not prove artwork semantics.",
                 )
-            except Exception:  # noqa: BLE001 -- never print private transport logs or retry uncertain paid requests
+            except BaseException as error:  # noqa: BLE001 -- preserve evidence before interrupt cleanup, then re-raise
                 artifacts = root / "home/portrait-artifacts"
                 requests = artifacts / "requests.json"
-                count = (
-                    len(json.loads(requests.read_text())) if requests.is_file() else 0
-                )
+                count = 0
+                if requests.is_file():
+                    try:
+                        count = len(json.loads(requests.read_text()))
+                    except (OSError, ValueError, TypeError):
+                        count = None  # Interrupted manifest writes leave an unknown paid count.
                 if artifacts.is_dir() and not (args.output / "artifacts").exists():
                     shutil.copytree(artifacts, args.output / "artifacts")
                 report.update(
@@ -106,8 +110,12 @@ def main(argv: list[str] | None = None) -> int:
                     image_requests=count,
                     reason="Qualification did not complete; no automatic retry was made. Private transport logs were discarded.",
                 )
+                if not isinstance(error, Exception):
+                    interruption = error
     (args.output / "availability.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report, sort_keys=True))
+    if interruption is not None:
+        raise interruption
     return 0
 
 

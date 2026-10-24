@@ -455,3 +455,16 @@ other implemented checks are committed independently; TASK-36555 stays In Progre
 - [x] Every To Do task has outcome AC, only existing lower-numbered dependencies, linked ADR/spec/plan and no premature notes/checkmarks.
 
 Planning self-review is documented separately; these boxes track the implemented contracts, not unavailable live-provider quality. TASK-36551–36554 are Done after sequential inline self-review. TASK-36555 retains its explicit live-adapter acceptance criterion and In Progress status; all other available qualification work is complete. No chats/subagents were created.
+
+
+## Full-implementation review corrections
+
+User authorization: fix all three findings, add regression tests and review again.
+Existing ADR-243 applies; these restore approved contracts and add no architecture.
+
+- [x] TASK-36553: optional compositing reference failure preserves ordinary manual Prepare/import/Apply/reopen/Remove, with the valid 4096×4096 regression.
+- [x] TASK-36554: open pair/region dialogs detect persisted source/settings changes through the existing poll; coalesced native work, queued/late owners, own Save and close are fenced and tested.
+- [x] TASK-36555: interrupted paid qualification preserves safe evidence and unknown counts before private cleanup and re-raising; no retry or credential/log disclosure.
+- [x] Final installed restore/edit verification and combined corrections review are recorded; existing live-adapter AC5 remains open independently.
+
+See [corrections review](../reviews/2026-10-24-portrait-compositing-corrections-review.md).
