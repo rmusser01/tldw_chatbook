@@ -1,11 +1,21 @@
 # Console radio portrait qualification
 
-Date: 2026-10-23 (local). TASK-36550 **Done**, with the qualification limits below. ADR-242 applies;
+Date: 2026-10-23 (local). TASK-36550 **Done** after the corrected artwork review. ADR-242 applies;
 ADR-052 still governs the packaged ComfyUI image-edit workflow. The completed
 implementation is in the isolated `codex/console-radio-portraits` worktree.
 Runtime, package hashes and the final sink source digest are in `runtime.json`.
 
 ## Verified
+
+**Artwork correction, 2026-10-24.** User review rejected v1 for exposure drift
+and unmatched mouth/blink pairs. The user then explicitly authorized local
+compositing. The corrected `paired-v2` set reuses one original base, each mouth
+patch across both eye states, and one eyelid patch across all mouth states.
+Full-size visual review and exact pixel assertions pass; the actual mounted app
+journey passes on this corrected set. Prior v1 captures are historical evidence,
+not approved final artwork. Audio and storage evidence remains valid.
+See `imagegen-v1-rejection.json`, `paired-manifest.json`, `paired-review.png`
+and `paired-observations.json`.
 
 - Installed wheel / actual TldwCli: six marked imported poses, explicit Apply,
   navigation to Console, automatic portrait timer paint from an issued synthetic
@@ -95,14 +105,14 @@ three obsolete architecture/bare-shell checks reproduced on pre-feature source,
 six unchanged module-budget violations, and two Actor Pack golden-byte baselines.
 They are not counted as new passing checks here.
 
-## User-selected ChatGPT artwork qualification
+## Original ChatGPT artwork journey — v1 rejected
 
 The user replaced unreachable ComfyUI/MOSS with ChatGPT image generation. Built-in
 reference edits produced six individual Samira poses plus a selected `blink_small`
 replacement. All seven originals are 1254×1254 PNGs. They are preserved byte-for-byte;
 the production boundary rejected all seven at the unchanged 1-megapixel limit.
 After explicit user authorization, Pillow LANCZOS resized separate copies to
-1024×1024, without cropping. The final six-file `selected/` set uses the replacement.
+1024×1024, without cropping. The historical six-file `selected/` set uses the replacement; use `paired-v2/selected/` for the correction.
 [Exact prompts, original/prepared hashes and selected files](imagegen-manifest.json)
 are recorded. Assets are in workspace `output/imagegen/console-radio-samira-2026-10-23/`
 (ignored local deliverables, not shipped defaults).
@@ -129,9 +139,49 @@ capture witness the actual rail. An intermediate wait also observed an empty rai
 during fit; the final probe waits for the currently visible widget rather than a
 pre-fit child. No production visibility, ownership or allocation gate was bypassed.
 
-These real external edits plus the existing import path satisfy the user-selected
-artwork qualification. They do not qualify live in-app adapter generation. No
-ChatGPT provider was added and no ComfyUI job was submitted.
+These checks proved the external-art import workflow, but user review subsequently
+rejected the actual v1 artwork. The corrected set below supersedes it. Neither run
+qualifies live in-app adapter generation. No ChatGPT provider was added and no
+ComfyUI job was submitted.
+
+## Corrected paired artwork — 2026-10-24
+
+After explicit authorization, `compose_portrait_matrix.py` composites only mouth
+and eyelid patches from the preserved generated copies onto the original Samira
+portrait. No new generation or dependency is involved. The output is six separate
+1024×1024 PNGs in `output/imagegen/console-radio-samira-2026-10-23/paired-v2/selected/`.
+The original rest frame is pixel-identical to the original source. Every pixel
+outside the two disjoint feathered masks equals the source exactly; every mouth
+is identical across its open/closed-eye pair, and eyelids match across mouth
+states. Six raster hashes are distinct; all original input file hashes remain
+unchanged. These are decoded-pixel assertions, not a subjective lighting score.
+
+The labeled [2×3 face-detail comparison](paired-review.png) was visually inspected
+for mouth/eyelid state, lighting, alignment and patch edges. It shows three mouth
+states, each with open and closed eyes. The rest of the portrait remains untouched.
+[Manifest](paired-manifest.json) records source/patch/final hashes and dimensions;
+[v1 rejection measurements](imagegen-v1-rejection.json) retain the prior failure.
+The compositor refuses to overwrite an existing correction.
+
+`PYTHONPATH=. .venv/bin/python Docs/superpowers/qa/console-radio-portraits/2026-10-23/paired_artwork_probe.py`
+passes through actual TldwCli in a guarded owned private profile. It imports the
+corrected files, temporarily places a rejected v1 `blink_small` as a replacement
+control, then replaces it with corrected `blink_small`. All six normalized draft
+frames match the corrected matrix and the other five slots remain unchanged.
+Explicit Apply, six normal timer-painted Console previews, idle, exact reopen,
+Remove and original-byte preservation pass. [Observations](paired-observations.json)
+record six distinct fitted rasters and revisions 1 → 2. Color rest/open/blink-open
+actual-app captures were inspected; the fixed 23×12-cell / 24×24-pixel mosaic still
+makes facial details subtle. The full-resolution matrix is the visual-pair witness.
+This artwork-only run publishes no speech observations and makes no new TTS claim.
+
+The dedicated probe reuses the original guarded artwork journey with checked
+replacement anchors; it preserves that historical probe and its Pocket TTS caller.
+Ruff lint/format, artifact SHA/dimension/size/JSON checks and `git diff --check` pass.
+No production renderer, image-generation pipeline, default artwork or profile was
+changed. Local compositing repaired this sample set; automatic generation still
+requires reviewing all six poses before Apply. Existing speech/recovery results
+remain applicable; no redundant device run or full suite was performed.
 
 ## Real Pocket TTS qualification
 

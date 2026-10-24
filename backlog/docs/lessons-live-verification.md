@@ -4527,3 +4527,15 @@ tail, independently of portrait amplitude analysis; invalid timing keeps ACK fal
 Keep an early-ACK future-tail control and a held-close/settle control. Driver timing
 and device-submitted WAVs are not physical-loopback or audible-syllable evidence.
 Evidence: `Docs/superpowers/qa/console-radio-portraits/2026-10-23/qualification.md`.
+
+### A common image reference does not guarantee paired animation frames (TASK-36550)
+
+On 2026-10-24, user review rejected seven ChatGPT reference edits that had passed
+six-slot import and fitted-preview checks: exposure drifted and mouth shapes did
+not match across blink pairs despite each request using the same original. Tiny
+24×24 mosaic previews hid the problem. After explicit local-edit authorization,
+shared mouth/eyelid patches on one original base produced exact paired frames.
+Review a full-resolution labeled 2×3 matrix as well as the actual rail preview;
+role names and six distinct hashes prove neither state correctness nor consistency.
+Assert invariant pixels and paired expression regions when compositing is used.
+Evidence: `Docs/superpowers/qa/console-radio-portraits/2026-10-23/qualification.md`.

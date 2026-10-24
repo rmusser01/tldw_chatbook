@@ -491,7 +491,11 @@ handle character names safely. No new design token was needed. See the atomic
 
 ### Unit 9 — TASK-36550: integrated qualification and documentation
 
-**Execution checkpoint:** qualified and reviewed with stated coverage limits.
+**Execution checkpoint:** complete after the 2026-10-24 artwork correction.
+V1 visual approval is withdrawn; explicitly authorized local composites now provide
+exact paired mouths/eyelids on one unchanged base. Full-size review and the corrected
+mounted import/replacement/preview/Apply/reopen/Remove journey pass. Audio and storage
+evidence remains valid.
 Installed artwork/native recovery and export journeys, real local waveform timing,
 afplay fallback, user-selected ChatGPT reference edits/import/replacement, and real
 Pocket TTS/native-device checks pass. Native completion respects the measured final

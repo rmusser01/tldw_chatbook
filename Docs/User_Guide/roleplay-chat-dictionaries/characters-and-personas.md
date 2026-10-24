@@ -188,7 +188,11 @@ smaller copies. The app does not resize over-limit imports automatically.
 
 **Clear slot** only changes the draft. Compare the source with the Console-sized
 preview, cycle all six poses, inspect individual poses, or run **Idle + blink**
-without generating images or playing speech.
+without generating images or playing speech. Review a 2×3 matrix: each mouth state
+(closed, small, open) needs both open and closed eyes. Check matching mouth shapes
+within each pair and consistent lighting, head position and background across all
+six. Using one generation reference does not guarantee those matches; replace any
+inconsistent slot before Apply.
 
 **Apply performance** publishes all six poses together. **Cancel draft** keeps the
 applied artwork; **Remove applied** restores ordinary artwork. Changing the
