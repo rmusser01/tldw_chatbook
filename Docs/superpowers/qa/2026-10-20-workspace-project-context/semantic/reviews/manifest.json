@@ -1,0 +1,25 @@
+{
+  "scope": "Original Task4 review records and the controller-consolidated read-only harness audit; historical source ranges remain explicit",
+  "files": [
+    {
+      "path": "task-4-review-report.md",
+      "bytes": 6593,
+      "sha256": "429992a7eb3a473f1d275a8fffde9ef3308b04b3c0f0ad3ce090521ea3eecbdd"
+    },
+    {
+      "path": "task-4-fix-round-1-review-report.md",
+      "bytes": 6668,
+      "sha256": "44d27a7b8bfc47dce75ef43bc5e11ac315fad187c780d07540578ebb303497d9"
+    },
+    {
+      "path": "task-4-fix-round-2-review-report.md",
+      "bytes": 3320,
+      "sha256": "612ee5fb35866ea00c9cc949d81199b586abce353d151d930495e1df7c048def"
+    },
+    {
+      "path": "task4-scale-harness-readonly-check.md",
+      "bytes": 4510,
+      "sha256": "776cfa1eafac81c1f015b464ccb4be6b3cfa98cab00db694d1a036343fd7d642"
+    }
+  ]
+}
