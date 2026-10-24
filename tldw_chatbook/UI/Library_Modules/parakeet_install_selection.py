@@ -70,6 +70,7 @@ def apply_parakeet_install_result(
         self.app_instance.notify(
             f"Parakeet v2 install failed: {error or 'unknown error'}",
             severity="error",
+            markup=False,
         )
         return
     try:

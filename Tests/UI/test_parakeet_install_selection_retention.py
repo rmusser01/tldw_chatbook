@@ -290,3 +290,34 @@ async def test_install_retains_later_selection(request, monkeypatch, tmp_path, c
     finally:
         release.set()
         queue_release.set()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_install_failure_notification_renders_markup_shaped_text_literally(
+    request,
+):
+    """Use the real notification and Toast renderer at the completion boundary."""
+    from textual.app import App
+    from textual.widgets._toast import Toast
+
+    from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
+    from tldw_chatbook.UI.Library_Modules.parakeet_install_selection import (
+        apply_parakeet_install_result,
+    )
+
+    app = App()
+    screen = SimpleNamespace(
+        _ingest_state=SimpleNamespace(form=LibraryIngestFormState()),
+        _parakeet_v2_pending_selection=None,
+        query_one=app.query_one,
+        app_instance=app,
+    )
+    error = "Install failed near [/] and [b]model"
+    expected = f"Parakeet v2 install failed: {error}"
+    async with app.run_test(notifications=True) as pilot:
+        apply_parakeet_install_result(screen, None, error)
+        await pilot.pause()
+        toast = app.query_one(Toast)
+        assert toast.render().plain == expected
+        assert screen._parakeet_v2_pending_selection is None

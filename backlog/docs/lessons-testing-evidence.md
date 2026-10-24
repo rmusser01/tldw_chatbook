@@ -21668,3 +21668,10 @@ and ticks through the real gate.
 **Incident (PR #3228, 2026-10-23).** The seventeen-shard follow-up passed 140 targeted CI checks, then a historical-header wording cleanup removed the `the 92` suffix in `ui_pr_gate_census.txt`. The existing replay-boundary test parses that suffix; independent review reproduced its failure although every selector and Python AST was unchanged. Restoring the parseable header and rerunning the affected modules repaired the regression before publication.
 
 **What to do.** Search readers before editing census headers or other structured comments. A prior test receipt does not qualify a later prose edit when tests or scripts parse that prose; rerun those consumers after the final edit.
+
+
+## Runtime and checker-unit passes do not qualify the aggregate's current-tree scans
+
+**Incident (PR #3228, 2026-10-23).** All23 prerequisite jobs passed, including17 UI shards and actual execution of56 new regressions, before the required aggregate rejected two extracted completions: an unguarded post-await Dictionary-pane lookup and a Parakeet failure notification still parsing runtime markup. The earlier guard unit selections tested checker behavior, not every current-tree command in the aggregate. Native controls reproduced NoMatches and MarkupError; safe missing-pane publication and literal notification text repaired both without new allowlist rows.
+
+**What to do.** Enumerate and run the aggregate's actual current-tree commands before publishing, rather than treating their unit tests or green runtime lanes as substitutes. Preserve environment preconditions separately: the Canvas builder pins Python3.12.11 and rejects the workstation's3.12.10, so its unchanged assets still need that exact hosted check; do not relax the pin to obtain a local green.
