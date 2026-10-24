@@ -246,6 +246,16 @@ async def dispatch_trace_call_recovery_action(
                 await finished
 
 
+def _set_copy(widget: Static, text: str) -> None:
+    """Write ``text`` unless ``widget`` already shows it.
+
+    ``Static.update`` always requests a whole-screen layout, and the callout
+    re-syncs on every 0.2 s run tick while it is hidden (TASK-33620.15.7).
+    """
+    if widget.content != text:
+        widget.update(text)
+
+
 class TraceCallRecoveryCallout(Vertical):
     """Terminal-native warning with explicit, focusable recovery actions."""
 
@@ -365,14 +375,15 @@ class TraceCallRecoveryCallout(Vertical):
             if state is not None and state.resend_pause is not None
             else ""
         )
-        self.query_one("#console-trace-title", Static).update(
+        _set_copy(
+            self.query_one("#console-trace-title", Static),
             "Context limit reached; your message is held"
             if hold is not None
             else f"{library or resend}; your message was not sent"
             if library or resend
             else "Save chat to capture this send"
             if temporary
-            else "Trace capture blocked"
+            else "Trace capture blocked",
         )
         detail_rows = tuple(self.query(".console-trace-detail"))
         if len(detail_rows) >= 3:
@@ -389,24 +400,24 @@ class TraceCallRecoveryCallout(Vertical):
                     budget_tokens=hold.budget_tokens,
                     estimated=hold.estimated,
                 )
-                detail_rows[1].update(usage)
-                detail_rows[2].update(choices)
+                _set_copy(detail_rows[1], usage)
+                _set_copy(detail_rows[2], choices)
             else:
-                detail_rows[1].update(
-                    (
-                        f"Problem: {library} before this send could use it."
-                        if library
-                        else _RESEND_PROBLEMS.get(state.resend_pause, "")
-                        if resend
-                        else "Problem: Temporary chats cannot store durable captures."
-                        if temporary
-                        else "Problem: This send's trace record could not be saved."
-                        if state is not None and state.provenance
-                        else "Problem: Trace capture could not be saved."
-                    )
+                _set_copy(
+                    detail_rows[1],
+                    f"Problem: {library} before this send could use it."
+                    if library
+                    else _RESEND_PROBLEMS.get(state.resend_pause, "")
+                    if resend
+                    else "Problem: Temporary chats cannot store durable captures."
+                    if temporary
+                    else "Problem: This send's trace record could not be saved."
+                    if state is not None and state.provenance
+                    else "Problem: Trace capture could not be saved.",
                 )
-                detail_rows[2].update(
-                    "Impact: The provider was not contacted. Choose how to continue."
+                _set_copy(
+                    detail_rows[2],
+                    "Impact: The provider was not contacted. Choose how to continue.",
                 )
         for button in self.query(Button):
             button.display = state is not None
@@ -435,10 +446,11 @@ class TraceCallRecoveryCallout(Vertical):
         self.query_one("#console-trace-send-uncompacted", Button).display = (
             hold is not None
         )
-        self.query_one("#console-trace-status", Static).update(
+        _set_copy(
+            self.query_one("#console-trace-status", Static),
             "Working… actions are temporarily disabled."
             if self._busy
-            else self._status_copy or "Choose one action."
+            else self._status_copy or "Choose one action.",
         )
 
     @on(Button.Pressed)

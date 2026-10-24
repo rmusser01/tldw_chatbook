@@ -130,7 +130,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the row's new exact measurement.
     #: Rebased 2026-10-23 onto dev, which measures 24341 (TASK-33620.15.3's row
     #: above): +3 for the cadence hooks; the row is the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24344, 736),
+    #: Lowered by TASK-33620.15.7 (run-tick layout requests): the avatar
+    #: caption sync moved to Console_Modules/left_rail.py::
+    #: sync_character_caption and the blank-avatar test to
+    #: ::character_avatar_spec_is_blank, so the screen's new equality gates
+    #: cost no line. Dev 906497d9b4 measured 24335/736; with the change,
+    #: 24312/736, the exact measurement.
+    #: Rebased 2026-10-23 onto dev 24341/736 (TASK-33620.15.3's row above); the row is
+    #: this branch's exact measurement after the rebase.
+    #: Re-measured 2026-10-23 after rebasing onto dev 5b5920b8e2+ (the cadence's
+    #: +3 landed via #3191): 24321/736, this branch's exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

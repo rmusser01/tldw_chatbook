@@ -348,7 +348,11 @@ class ConsoleSendAuthoritySummary(Static):
         self._projection = projection
         for label, attribute, row in rows:
             value = getattr(projection, attribute)
-            row.update(Text(f"{label}: {value}"))
+            copy = Text(f"{label}: {value}")
+            # TASK-33620.15.7: an Inspector snapshot change rarely changes
+            # every fact; an unchanged row must not request a screen layout.
+            if not (isinstance(row.content, Text) and row.content == copy):
+                row.update(copy)
         self._sync_compact_tooltip()
         self.recompute_tooltips()
         self.refresh()
