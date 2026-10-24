@@ -19,6 +19,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
+from textual.worker import Worker, get_current_worker
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ...Image_Generation.worker import build_request, run_generation
@@ -106,6 +107,8 @@ class ImageGenDemoScreen(BaseAppScreen):
         # call_from_thread(). Everything (incl. the render/decode step) stays
         # inside this try/except so no failure mode can crash the app --
         # @work defaults to exit_on_error=True.
+        worker = get_current_worker()
+        app = self.app
         try:
             req = build_request(
                 backend=backend,
@@ -118,12 +121,27 @@ class ImageGenDemoScreen(BaseAppScreen):
             # task-34935: decode/thumbnail/pixel conversion also run on the
             # worker thread; only the widget updates marshal to the loop.
             pixels, meta = self._decode_result(res, req)
-            self.app.call_from_thread(self._apply_result, pixels, meta)
+            app.call_from_thread(self._publish_generation, worker, pixels, meta)
         except Exception as exc:  # surface any failure (incl. render/decode) as status
             logger.warning("Image Gen (dev) generation failed: {}", exc)
             # Marshal the DOM write onto the UI thread -- query_one() must not
             # run on the worker thread.
-            self.app.call_from_thread(self._set_status, f"Error: {exc}")
+            app.call_from_thread(
+                self._publish_generation, worker, error=f"Error: {exc}"
+            )
+
+    def _publish_generation(
+        self, worker: Worker, pixels=None, meta: str = "", *, error: str | None = None
+    ) -> None:
+        """Publish only while the originating worker and screen are still live."""
+        # Exclusive workers cancel predecessors, but their threads (and queued
+        # UI callbacks) can outlive cancellation. Check at the actual DOM write.
+        if worker.is_cancelled or not self.is_attached:
+            return
+        if error is not None:
+            self._set_status(error)
+        else:
+            self._apply_result(pixels, meta)
 
     def _decode_result(self, res, req):
         """Decode + downscale + pixel-convert on the worker thread (TASK-34935).
