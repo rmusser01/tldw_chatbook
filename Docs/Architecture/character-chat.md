@@ -74,8 +74,15 @@ is authoritative, not a merge; a new rest-only candidate cannot inherit old slot
 Composed publication requires all three components and six roles. Successful manual
 imports switch to ordinary six-role readiness; failed edits preserve lineage.
 These core contracts and the settings repository are implemented in TASK-36551/36552.
-The selection UI and three-request provider workflow remain follow-up work at this
-checkpoint; existing generation still uses its original six-request path until integration.
+`UI/Persona_Modules/portrait_regions.py` implements source-bound preparation and
+independent region Save; `PortraitRegionEditor` contains numeric/two-corner selection,
+centered mosaic mapping and a coalesced static source/crop/mask preview. It shares
+compositor decode reservations, returns only Rich text and rejects retired render work.
+The controller retires the exact modal/sample, reuses canonical settings, recovers
+only invariant-checked components and installs a rest-only candidate on changed Save.
+Apply preserves candidate provenance; manual imports still drop lineage on success.
+The three-request provider workflow remains Unit 4; existing generation still uses
+its original six-request path until integration.
 
 
 `Character_Chat/portrait_performance.py` normalizes six aligned still poses

@@ -57,6 +57,11 @@ class PortraitPerformanceController:
         self._generation_event: threading.Event | None = None
         self._speech_task: asyncio.Task | None = None
         self._presentation = None
+        self._regions = None
+        self._regions_revision = 0
+        self._reference = None
+        self._base_pixel_sha256 = ""
+        self._region_modal = None
 
     def _capture(self) -> _Authority:
         screen = self._screen()
@@ -122,6 +127,12 @@ class PortraitPerformanceController:
     def discard(self) -> None:
         """Fence in-flight work before dropping any draft or preview bytes."""
         self._epoch += 1
+        if self._region_modal is not None:
+            self._region_modal.retire()
+            self._region_modal = None
+        self._regions = self._reference = None
+        self._regions_revision = 0
+        self._base_pixel_sha256 = ""
         if self._generation_event is not None:
             self._generation_event.set()
         if self._speech_task is not None:
@@ -220,7 +231,10 @@ class PortraitPerformanceController:
                         character_id=authority.character_id,
                         expression_key=source.expression_key,
                     )
-                    return source, data, local, record
+                    from .portrait_regions import prepare_regions
+
+                    regions = prepare_regions(authority.db, source, data, record)
+                    return source, data, local, record, regions
 
                 outcome = await self._native(authority, prepare)
                 cancellation = outcome.cancellation
@@ -233,13 +247,21 @@ class PortraitPerformanceController:
                     or not self._current(authority)
                 ):
                     return False
-                source, data, self._local_authority, record = outcome.value
+                source, data, self._local_authority, record, regions = outcome.value
+                (
+                    self._reference,
+                    self._base_pixel_sha256,
+                    self._regions,
+                    self._regions_revision,
+                    candidate,
+                ) = regions
                 self.draft = PortraitPerformanceDraft(
                     source, data, expected_revision=record.revision if record else 0
                 )
                 if record is not None and record.active and record.source == source:
-                    for frame in record.frames:
-                        self.draft.stage(frame)
+                    self.draft.stage_group(record.frames)
+                    if candidate is not None:
+                        self.draft.replace_composition(candidate)
                 self._source_request = requested
                 view.applied = bool(
                     record and record.active and record.source == source
@@ -250,6 +272,10 @@ class PortraitPerformanceController:
             else:
                 draft = self.draft
                 requested, local = self._source_request, self._local_authority
+                if message.action == "regions":
+                    from .portrait_regions import edit_regions
+
+                    return await edit_regions(self, authority, draft, epoch)
                 if message.action in {"generate", "regenerate"}:
                     from ...Character_Chat.portrait_performance import FRAME_ROLES
 
@@ -335,6 +361,12 @@ class PortraitPerformanceController:
                             draft.source,
                             frames,
                             expected_revision=draft.expected_revision,
+                            composition_recipe=draft.composition.recipe
+                            if draft.composition
+                            else None,
+                            expected_regions_revision=draft.composition.regions_revision
+                            if draft.composition
+                            else None,
                         )
 
                     outcome = await self._native(authority, publish)
@@ -418,6 +450,11 @@ class PortraitPerformanceController:
                 screen.call_after_refresh(restore_focus)
             if cancellation is not None:
                 raise cancellation
+
+    async def _save_regions(self, authority, draft, epoch, recipe) -> bool:
+        from .portrait_regions import save_regions
+
+        return await save_regions(self, authority, draft, epoch, recipe)
 
     async def _invalidate(self, character_id: int) -> None:
         screen = self._screen()

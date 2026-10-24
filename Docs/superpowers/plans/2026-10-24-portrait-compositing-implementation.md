@@ -298,7 +298,7 @@ workflow change is claimed by this unit.
 
 **Consumes:** Unit 1 recipe/geometry validation and Unit 2 settings CAS. **Produces:** Explicit Edit/Save regions workflow and reusable region state for generation.
 
-- [ ] **1. Add red coordinate and mounted interaction tests.** Expose a pure transform on the region widget, `image_pixel_at(cell_x: int, cell_y: int) -> tuple[int, int] | None`, derived from the currently rendered contain/crop transform. Exercise wide/tall images, terminal pixel aspect, letterbox clicks and resize; compare the same image point after resize. Use mounted labeled fields to save three rectangles and confirm the neutral base, without calling repository saves directly from the test:
+- [x] **1. Add red coordinate and mounted interaction tests.** Expose a pure transform on the region widget, `image_pixel_at(cell_x: int, cell_y: int) -> tuple[int, int] | None`, derived from the currently rendered contain/crop transform. Exercise wide/tall images, terminal pixel aspect, letterbox clicks and resize; compare the same image point after resize. Use mounted labeled fields to save three rectangles and confirm the neutral base, without calling repository saves directly from the test:
 
 ```python
 assert editor.image_pixel_at(letterbox_x, letterbox_y) is None
@@ -309,8 +309,8 @@ assert db.get_character_portrait_performance(character_id=cid, expression_key="n
 ```
 
 Test fixtures must await the actual selected-character load worker and visible editor, rather than just the scheduling wrapper.
-- [ ] **2. Run `Tests/UI/test_portrait_region_editor.py` red** using the existing bootstrap-profile/file-backed DB fixture and `-q -o addopts=''`.
-- [ ] **3. Implement the smallest complete selection UI.** Three labeled region choices, two-corner pointer selection, x/y/width/height fields, source/detail-mask preview, neutral-base checkbox and Save/Cancel. Numeric fields provide complete keyboard operation even without graphics. Store only source-pixel rectangles; reset unfinished pointer anchors on resize. All preview image work is off-thread, bounded and fenced. Capture source/owner/region revision when opening; Save revalidates after its await and commits only settings. Reopening matching settings preloads them even if the prepared PNG encoding differs but its canonical RGBA identity is equal. Cancel leaves durable settings and active artwork alone. Save uses the captured settings revision, never a newly reread value that would hide a concurrent edit:
+- [x] **2. Run `Tests/UI/test_portrait_region_editor.py` red** using the existing bootstrap-profile/file-backed DB fixture and `-q -o addopts=''`.
+- [x] **3. Implement the smallest complete selection UI.** Three labeled region choices, two-corner pointer selection, x/y/width/height fields, source/detail-mask preview, neutral-base checkbox and Save/Cancel. Numeric fields provide complete keyboard operation even without graphics. Store only source-pixel rectangles; reset unfinished pointer anchors on resize. All preview image work is off-thread, bounded and fenced. Capture source/owner/region revision when opening; Save revalidates after its await and commits only settings. Reopening matching settings preloads them even if the prepared PNG encoding differs but its canonical RGBA identity is equal. Cancel leaves durable settings and active artwork alone. Save uses the captured settings revision, never a newly reread value that would hide a concurrent edit:
 
 ```python
 def save_regions():
@@ -322,8 +322,14 @@ outcome = await controller._native(authority, save_regions)
 ```
 
 This uses the existing `_native(authority, function, *args)` worker/transaction ownership seam rather than a new write executor. After awaiting, check the editor/source/region epoch before publishing the saved state.
-- [ ] **4. Add stale and accessibility controls.** No Save/Generate for missing or invalid regions/neutral confirmation. Source/profile/editor changes, stale concurrent Save, visual binding replacement and late preview results cannot reach a new owner. Saving changed regions first stops/awaits only this draft sample through the existing scoped cancellation, then installs a rest-only/zero-component snapshot for the new recipe, requiring a fresh batch; manual frames remain usable and applied frames remain untouched. Verify Tab/focus, named fields, keyboard entry, production CSS, narrow layouts and Static/Reduce motion. No reserved terminal/global binding is introduced.
-- [ ] **5. Verify and commit.** Run the new widget file plus affected mounted Personas tests, token governance, component-pattern and CSS sync guards if CSS changes; Ruff/diff checks. Document one-time-save semantics and neutral-base requirement. Review actual source/mask captures at full detail and a narrow layout, then commit `feat: select and reuse portrait expression regions`.
+- [x] **4. Add stale and accessibility controls.** No Save/Generate for missing or invalid regions/neutral confirmation. Source/profile/editor changes, stale concurrent Save, visual binding replacement and late preview results cannot reach a new owner. Saving changed regions first stops/awaits only this draft sample through the existing scoped cancellation, then installs a rest-only/zero-component snapshot for the new recipe, requiring a fresh batch; manual frames remain usable and applied frames remain untouched. Verify Tab/focus, named fields, keyboard entry, production CSS, narrow layouts and Static/Reduce motion. No reserved terminal/global binding is introduced.
+- [x] **5. Verify and commit.** Run the new widget file plus affected mounted Personas tests, token governance, component-pattern and CSS sync guards if CSS changes; Ruff/diff checks. Document one-time-save semantics and neutral-base requirement. Review actual source/mask captures at full detail and a narrow layout, then commit `feat: select and reuse portrait expression regions`.
+
+**Execution checkpoint (2026-10-24):** Unit 3 implemented and self-reviewed.
+Source-space selection, independent Save/reopen, neutral confirmation, changed-draft
+reset, exact sample/modal retirement and bounded coalesced previews are verified.
+See [TASK-36553 review](../reviews/2026-10-24-task-36553-review.md) and the source,
+mask, keyboard and narrow-layout captures under `qa/portrait-compositing/2026-10-24/`.
 
 ## Unit 4 — TASK-36554: component generation and dependent retries
 

@@ -3090,6 +3090,25 @@ PetdexImportReviewDialog .petdex-actions Button {
     PortraitPerformanceEditor.portrait-review-compact .portrait-review-row,
     PortraitPerformanceEditor.portrait-review-compact .portrait-review-images { layout: vertical; }
 
+/* ===== WIDGET: PortraitRegionEditor (Widgets/Persona_Widgets/portrait_region_editor.py) ===== */
+
+    PortraitRegionEditor { align: center middle; }
+    PortraitRegionEditor > VerticalScroll {
+        width: 120; max-width: 100%;
+        height: 100%; max-height: 100%;
+        padding: 1 2;
+        background: $panel; border: tall $primary;
+    }
+    PortraitRegionEditor .region-copy { height: auto; color: $text-muted; }
+    PortraitRegionEditor #portrait-regions-source { height: 13; width: 100%; }
+    PortraitRegionEditor #portrait-regions-detail { height: auto; width: 100%; }
+    PortraitRegionEditor .region-fields { height: auto; width: 100%; }
+    PortraitRegionEditor .region-field { width: 1fr; height: auto; }
+    PortraitRegionEditor .region-fields Input { width: 100%; }
+    PortraitRegionEditor .dialog-buttons { height: auto; }
+    PortraitRegionEditor.region-compact .region-fields,
+    PortraitRegionEditor.region-compact .dialog-buttons { layout: vertical; }
+
 /* ===== WIDGET: ToolPackImportOptionsModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
 
 ToolPackImportOptionsModal {

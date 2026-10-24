@@ -200,6 +200,25 @@ character, profile or source invalidates the draft. Reopen and Prepare to inspec
 the stored set. Performances stay in the local profile and its full backups;
 character cards, Actor Packs, sync and server exports do not carry them.
 
+### Editor — reusable eye and mouth regions
+
+After **Prepare saved artwork**, choose **Edit regions…**. Mark the image-left eye,
+image-right eye and mouth by clicking two opposite corners, or use the labeled
+X/Y/Width/Height fields entirely by keyboard. Values are prepared-image pixels;
+letterboxing is excluded and resizing the view leaves saved coordinates unchanged.
+Each region must be at least 3×3 pixels, inside the base and separate from the others.
+The source crop and feather mask help check the selected boundaries. The overview's
+L/R/M markers identify the three regions.
+
+Confirm **Base: open eyes, closed mouth**, then **Save regions**. If this condition is
+false, use another saved base or ready-made imports. Regions are local preparation
+settings, reused when the exact source is prepared again. Save does not activate new
+artwork. Changing regions stops only the current draft sample and starts a new
+rest-only draft; the applied performance stays active. An unchanged Save keeps its
+revision and draft. Cancel in the region dialog discards only unsaved region edits.
+Saved regions survive **Remove applied** and full-profile backup/restore; portable
+character/Actor Pack/Chatbook exports and sync omit them.
+
 ### Editor — generate poses and hear a sample
 
 After preparing saved artwork, **Generate 6 frames…** offers six image-edit requests

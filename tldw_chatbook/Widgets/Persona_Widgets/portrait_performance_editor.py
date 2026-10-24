@@ -76,6 +76,9 @@ class PortraitPerformanceEditor(Vertical):
                 id="portrait-performance-status",
                 markup=False,
             )
+            yield Button(
+                "Edit regions…", id="portrait-performance-regions", disabled=True
+            )
             yield Static("", id="portrait-performance-slots", markup=False)
             with Horizontal(classes="portrait-review-row"):
                 yield Select(
@@ -148,6 +151,10 @@ class PortraitPerformanceEditor(Vertical):
     def on_resize(self) -> None:
         self.call_after_refresh(self._sync_layout)
 
+    @on(Collapsible.Expanded)
+    def _expanded(self) -> None:
+        self.call_after_refresh(self._sync_layout)
+
     def _sync_layout(self) -> None:
         if self.is_mounted:
             required = sum(
@@ -188,13 +195,13 @@ class PortraitPerformanceEditor(Vertical):
                 busy or not self._allowed or (action != "prepare" and draft is None)
             )
             if action == "apply" and draft is not None:
-                button.disabled |= draft.staged_roles != FRAME_ROLES
+                button.disabled |= not draft.can_apply
             if action == "sample":
                 button.label = (
                     "Stop sample" if self.sample_running else "Play speech sample…"
                 )
                 button.disabled = not self.sample_running and (
-                    busy or draft is None or draft.staged_roles != FRAME_ROLES
+                    busy or draft is None or not draft.can_apply
                 )
             if action == "remove":
                 button.disabled |= not self.applied
@@ -252,7 +259,7 @@ class PortraitPerformanceEditor(Vertical):
         )
         if not current():
             return
-        complete = draft.staged_roles == FRAME_ROLES
+        complete = draft.can_apply
         selected = self.query_one("#portrait-performance-role", Select).value
         frame = draft.frame(selected)
         if not complete and frame is None:
