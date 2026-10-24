@@ -104,7 +104,9 @@ Tests/UI/test_console_voice_accessibility.py
 Tests/UI/test_console_workspace_details_tray.py
 Tests/UI/test_css_generated_comments.py
 Tests/UI/test_design_style_utilities.py
-Tests/UI/test_destination_rail_row.py
+# TASK-36454..36458 CI: swap slots 77/432 after measured shard-3 caps;
+# all tests/caps retained (ADR-103). This task-35597 whole file now runs on 12.
+Tests/UI/test_mcp_permissions_handoff.py
 Tests/UI/test_dictation_export_path.py
 Tests/UI/test_disabled_action_recovery_tooltips.py
 Tests/UI/test_enhanced_file_dialog_bundle_css.py
@@ -769,10 +771,11 @@ Tests/UI/test_settings_model_defaults_rows.py::test_inherit_after_an_option_clea
 Tests/UI/test_settings_model_defaults_rows.py::test_temperature_states_and_holds_the_providers_own_range
 # task-35597: the Tools-hub UI suites are PR-gate-lane safe now (bootstrap
 # profile / private-profile isolation against the ADR-126 config-participant
-# admission) and re-enter the census. Three whole files; the two files that
-# still carry dev-red nodes are gated by node id instead (see below).
+# admission) and re-enter the census. Two whole files here; MCP handoff is
+# above after the measured TASK-36454..36458 CI swap with destination-rail.
+# The two files still carrying dev-red nodes are gated by node id (below).
 Tests/UI/test_settings_tools_hub.py
-Tests/UI/test_mcp_permissions_handoff.py
+Tests/UI/test_destination_rail_row.py
 Tests/UI/test_settings_footer_hints.py
 # task-35597: footer ownership + the two BUNDLED_CSS/bundle drift guards
 # (the bundle guard now locates the footer block structurally because the
