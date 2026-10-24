@@ -498,7 +498,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # 2026-10-23, TASK-34000.20 (P1-C batch, task 1) appends one whole-file entry at
 # the tail -- Tests/UI/test_library_ingest_tilde_path_and_enter_waits.py (three
 # 160x45 boots, ~15 s locally) -- so no existing entry changes shard: 664 -> 665.
-MINIMUM_FILES = 665
+# 2026-10-23, TASK-34000.16 (P1-C batch, task 2) appends one whole-file entry at
+# the tail -- Tests/UI/test_library_notes_sync_skips_bad_files_by_name.py (one
+# 160x45 boot) -- so no existing entry changes shard: 665 -> 666.
+MINIMUM_FILES = 666
 
 
 def read_census(path: Path) -> list[str]:

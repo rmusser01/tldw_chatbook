@@ -731,21 +731,22 @@ see [File notes](file-notes.md).
 **What a folder has to be before it can be checked.** The folder itself must be
 a real folder (not a link to one) on a local disk, outside Chatbook's own data
 directory, not already connected as a sync folder, and not the Folder files
-root. Every `.md` file inside it must also pass, and one bad file stops the
-whole folder: each must be one you own or share a group with and can write,
-UTF-8 text, 10 MB or smaller, an ordinary file with a single name on disk, and
-consistent in its line endings — all Unix or all Windows, not a mix, and not
-the carriage-return-only style old Mac editors wrote.
+root. Every `.md` file inside it is checked too — it must be one you own or
+share a group with and can write, UTF-8 text, 10 MB or smaller, an ordinary
+file with a single name on disk, and consistent in its line endings (all Unix
+or all Windows, not a mix, and not the carriage-return-only style old Mac
+editors wrote). A file that fails is listed in the review as a skipped row that
+names it and says what to do (`notes.md · Mixed line endings — save it with one
+style`); the rest of the folder syncs as usual, and the file is picked up by
+the next Check once it is fixed or removed.
 
-**Check changes** refuses anything else and names which rule it was, in the
-setup pane's status line, with the next action — for example "That folder is
-inside Chatbook's own data directory. Pick a folder outside it, then Check
-again", "Another Chatbook window is using that folder", "That folder is
-already connected", "Some files there use a mix of line endings. Save them
-with one style, then Check again", or "Some files there are larger than 10 MB".
-When several files fail for different reasons, the message names the most
-common one. A refusal changes nothing: pick a different folder, or fix the
-cause, and **Check changes** again in the same session.
+**Check changes** refuses a folder that fails its own rules and names which
+rule it was, in the setup pane's status line, with the next action — for
+example "That folder is inside Chatbook's own data directory. Pick a folder
+outside it, then Check again", "Another Chatbook window is using that folder",
+or "That folder is already connected". A refusal changes nothing: pick a
+different folder, or fix the cause, and **Check changes** again in the same
+session.
 
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not

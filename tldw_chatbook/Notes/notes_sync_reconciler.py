@@ -160,6 +160,14 @@ class ReconciliationInput:
     made notes out of all three, so the same pass runs here behind the same
     per-root toggle.
     """
+    refused_files: tuple[ReconciliationItemSkip, ...] = ()
+    """Files the walk saw but could not read as sync text (TASK-34000.16).
+
+    Each is planned as a per-file skip and nothing else: it is not a
+    deletion (the file exists), not a candidate (its text is unknown), and
+    it is part of the observation token, so fixing the file changes the
+    review. A refused path can never also be a binding's ``relative_path``.
+    """
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -171,6 +179,20 @@ class ReconciliationInput:
             raise TypeError("bindings must be a tuple of BindingObservation values.")
         if len({item.binding_id for item in self.bindings}) != len(self.bindings):
             raise ValueError("binding identifiers must be unique.")
+        if type(self.refused_files) is not tuple or any(
+            type(item) is not ReconciliationItemSkip for item in self.refused_files
+        ):
+            raise TypeError(
+                "refused_files must be a tuple of ReconciliationItemSkip values."
+            )
+        refused = {skip.relative_path for skip in self.refused_files}
+        if len(refused) != len(self.refused_files):
+            raise ValueError("refused file paths must be unique.")
+        # TASK-34000.16 Review Focus: a refused file is NOT in the observed
+        # set, so a binding at that path would be read as a deleted file and
+        # a Check alone could plan a deletion for a file that exists.
+        if any(binding.relative_path in refused for binding in self.bindings):
+            raise ValueError("a refused file cannot also be observed as a binding.")
         for name in ("observation_generation", "expected_generation"):
             value = getattr(self, name)
             if type(value) is not int or value < 0:
@@ -337,6 +359,11 @@ def _observation_token(request: ReconciliationInput) -> str:
         "write_capable": request.write_capable,
         "capability_generation": request.capability_generation,
         "obsidian_mode": request.obsidian_mode,
+        # TASK-34000.16: the refused set is part of what the review depends
+        # on -- converting or removing a bad file must change the token.
+        "refused_files": [
+            [skip.relative_path, skip.reason_code] for skip in request.refused_files
+        ],
         "bindings": [
             {
                 "binding_id": binding.binding_id,
@@ -727,6 +754,9 @@ def plan_reconciliation(request: ReconciliationInput) -> ReconciliationPlan:
             attention.append(issue)
         if effect is not None:
             effects.append(effect)
+    # TASK-34000.16: a file the walk could not read as sync text is one named
+    # row, never a deletion or a candidate; the rest of the folder is planned.
+    item_skips.extend(request.refused_files)
 
     deletions = tuple(
         item

@@ -35,6 +35,25 @@ from tldw_chatbook.Notes.sync_paths import (
 
 _UTF8_BOM = b"\xef\xbb\xbf"
 
+#: TASK-34000.16: every reason ``PosixNotesSyncFilesystem.observe`` can raise
+#: for ONE file (``missing_target`` is the file vanishing mid-walk, which the
+#: runtime already ignores). A root walk records these per file and plans the
+#: rest of the folder; only a failure of the root itself refuses the root.
+FILE_GATE_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "unsupported_encoding",
+        "mixed_newlines",
+        "unsupported_newline",
+        "unsupported_metadata",
+        "max_file_bytes_exceeded",
+        "non_regular",
+        "multiple_links",
+        "link_or_reparse",
+        "target_changed_during_read",
+        "operation_failed",
+    }
+)
+
 
 def _windows_stable_identity_digest(identity: Any) -> str:
     payload = f"{identity.device}\0{identity.inode}"

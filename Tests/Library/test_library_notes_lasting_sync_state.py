@@ -30,6 +30,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ManagedPlacementEffectKind,
     ReconciliationAttention,
     ReconciliationAttentionKind,
+    ReconciliationItemSkip,
     ReconciliationPlan,
     ReconciliationSkip,
     ReconciliationSkipKind,
@@ -851,3 +852,61 @@ def test_recovery_refusals_read_as_plain_copy_with_a_forward_action(reason: str)
     assert next_action in {"resolve_cleanup", "sync_now", "reconnect_folder"}
     assert next_action != "review_changes"
     assert reason in lasting_state._CHECK_REFUSAL_COPY
+
+
+def test_the_row_phrase_table_and_the_refusal_copy_table_cover_the_same_codes() -> None:
+    """TASK-34000.16 AC#4: a code with copy can never fall back to a class name."""
+    assert set(lasting_state._CHECK_FAILURE_ROW) == set(lasting_state._CHECK_REFUSAL_COPY)
+    for reason, (phrase, next_action) in lasting_state._CHECK_FAILURE_ROW.items():
+        assert next_action in lasting_state._ROOT_NEXT_ACTIONS, reason
+        assert phrase and "Error" not in phrase and "Refused" not in phrase, reason
+
+
+def test_every_file_gate_reason_code_has_a_plain_skip_effect() -> None:
+    """TASK-34000.16 AC#2: every per-file gate the walk can record has row copy."""
+    from tldw_chatbook.Notes.notes_sync_filesystem import FILE_GATE_REASON_CODES
+
+    assert FILE_GATE_REASON_CODES <= set(lasting_state._ITEM_SKIP_EFFECTS)
+    assert set(lasting_state._FILE_GATE_SKIP_EFFECTS) == FILE_GATE_REASON_CODES
+
+
+def test_file_gate_skips_project_as_rows_that_name_the_file_and_the_fix() -> None:
+    """TASK-34000.16 AC#2: the row names the file, the cause and what to do."""
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+        item_skips=(
+            ReconciliationItemSkip("latin1.md", "unsupported_encoding"),
+            ReconciliationItemSkip("notes.md", "mixed_newlines"),
+        ),
+    )
+    review = build_reconciliation_review(plan)
+    skipped = [
+        (row.relative_path, row.effect)
+        for row in review.rows
+        if row.category == "skipped"
+    ]
+    assert skipped == [
+        ("latin1.md", "Not UTF-8 text — convert it to UTF-8 or move it out of the folder"),
+        ("notes.md", "Mixed line endings — save it with one style"),
+    ]
+    assert review.skip_count == 2
+
+
+def test_a_gate_code_root_refusal_row_never_shows_the_class_name() -> None:
+    """TASK-34000.16 AC#4: the belt under the runtime's skip channel."""
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootRefused
+
+    failure, next_action = lasting_state.check_failure_row(
+        NotesSyncRootRefused(
+            "root_discovery_incomplete", reason_code="unsupported_encoding"
+        ),
+        root_id="root-1",
+    )
+    assert failure == "Check failed — some files there aren't UTF-8 text"
+    assert next_action == "sync_now"

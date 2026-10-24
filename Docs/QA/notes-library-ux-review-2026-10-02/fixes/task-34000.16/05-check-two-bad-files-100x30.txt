@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌───────────────────────────┐  N    N  Add files to Library notes.
+│ Navigation                │  a    o  Review setup effects before activating this root.
+│     Import…               │  v    t  3 safe · 0 need attention · 2 skipped · 0 folder moves
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e  Syncs .md, .markdown and .txt only; other files are left
+│ ▊ Search Library…   ▎▊x▎  │       s  alone.
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │          Create a Library note (3)
+│                           │          ok-1.md · Create a Library note · Vault sync
+│ ────────────────────────  │          ok-2.md · Create a Library note · Vault sync
+│ Browse               ▾    │<---      ok-3.md · Create a Library note · Vault sync
+│    Media (23)             │          Skipped (2)
+│    Conversations (0)      │          latin1.md · Not UTF-8 text — convert it to UTF-8 or move it
+│  ▸ Notes (123)            │     ---> out of the folder
+│    Prompts (0) — reuse    │          mixed.md · Mixed line endings — save it with one style
+│    Skills (1)           ▂ │
+│    Collections (0)        │
+│    Search / RAG           │<---
+│ ────────────────────────  │
+│ Artifacts            ▾    │
+│    All artifacts          │
+│    Chatbooks              │
+│    Reports                │
+│    Dreams                 │          Resolution history unavailable — it starts after this root is
+│  ▾ scroll for more        │          activated
+└───────────────────────────┘             Activate reviewed root     ○ Resolution history     ‹ Not
+  enter act | esc notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

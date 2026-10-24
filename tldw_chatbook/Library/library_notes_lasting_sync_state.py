@@ -53,15 +53,42 @@ def _row_effect(message: str) -> str:
 #: task-32535: DERIVED from Import once's own copy, not re-typed beside it —
 #: the guide now promises both paths skip the same files for the same reasons,
 #: so the two surfaces must not be able to drift.
-_ITEM_SKIP_EFFECTS = {
-    reason: _row_effect(message)
-    for reason, message in _DISCOVERY_MESSAGES.items()
-    if reason.startswith("obsidian_")
-} | {
-    # task-32605: Import once has no counterpart sentence for this -- it is
-    # the one skip that exists because the OTHER path already ran.
-    "already_imported": "Already imported by Import once — left as it is",
+#: TASK-34000.16: a file the walk could not read as sync text is a row that
+#: names the file, says what is wrong in plain words and what to do. Keyed
+#: by the filesystem's own gate codes (``FILE_GATE_REASON_CODES``); the
+#: equality test in ``Tests/Library/test_library_notes_lasting_sync_state.py``
+#: fails if either side grows alone.
+_FILE_GATE_SKIP_EFFECTS: dict[str, str] = {
+    "unsupported_encoding": (
+        "Not UTF-8 text — convert it to UTF-8 or move it out of the folder"
+    ),
+    "mixed_newlines": "Mixed line endings — save it with one style",
+    "unsupported_newline": (
+        "Older Mac line endings — save it with Unix or Windows line endings"
+    ),
+    "unsupported_metadata": "Not writable by you — make it writable",
+    "max_file_bytes_exceeded": "Larger than 10 MB — move it out of the folder",
+    "non_regular": "Not an ordinary file — move it out of the folder",
+    "multiple_links": "More than one name on disk — leave a single copy",
+    "link_or_reparse": "A link, not a file — move it out of the folder",
+    "target_changed_during_read": "Changed while it was being read — Check again",
+    "operation_failed": (
+        "Couldn't be read — check that you can open it, then Check again"
+    ),
 }
+_ITEM_SKIP_EFFECTS = (
+    {
+        reason: _row_effect(message)
+        for reason, message in _DISCOVERY_MESSAGES.items()
+        if reason.startswith("obsidian_")
+    }
+    | {
+        # task-32605: Import once has no counterpart sentence for this -- it is
+        # the one skip that exists because the OTHER path already ran.
+        "already_imported": "Already imported by Import once — left as it is",
+    }
+    | _FILE_GATE_SKIP_EFFECTS
+)
 _DESTINATION_MAX_CHARS = 1024
 
 LastingSyncReviewSource = Literal["setup", "root", "migration"]
@@ -1212,6 +1239,31 @@ _CHECK_FAILURE_ROW: dict[str, tuple[str, str]] = {
     "changed_since_resolution": ("the note or file changed since", "sync_now"),
     "undo_expired": ("undo is no longer available", "sync_now"),
     "stale_operation_token": ("refers to an older check", "sync_now"),
+    # TASK-34000.16 AC#4: every code with refusal copy has a row phrase, so a
+    # root row can never fall back to an exception class name. The per-file
+    # codes are kept as a belt -- the runtime now records them as skips.
+    "private_path_overlap": ("folder is inside Chatbook's own data", "review_settings"),
+    "private_path_check_failed": (
+        "folder's location couldn't be confirmed",
+        "review_settings",
+    ),
+    "file_notes_overlap": ("folder is used by Folder files", "review_settings"),
+    "lasting_root_overlap": ("folder is already connected", "none"),
+    "passive_process": ("another Chatbook window has this folder", "open_active_process"),
+    "lock_unavailable": ("folder couldn't be claimed", "close_other_process_and_restart"),
+    "root_not_directory": ("folder isn't a folder", "reconnect_folder"),
+    "root_link_or_reparse": ("folder is a link, not a folder", "reconnect_folder"),
+    "writable_filesystem_unsupported": ("folder's disk can't be written", "reconnect_folder"),
+    "root_discovery_incomplete": ("some files there couldn't be listed", "sync_now"),
+    "unsupported_metadata": ("some files there aren't writable", "sync_now"),
+    "unsupported_encoding": ("some files there aren't UTF-8 text", "sync_now"),
+    "mixed_newlines": ("some files there mix line endings", "sync_now"),
+    "unsupported_newline": ("some files there use old Mac line endings", "sync_now"),
+    "max_file_bytes_exceeded": ("some files there are larger than 10 MB", "sync_now"),
+    "non_regular": ("some entries there aren't ordinary files", "sync_now"),
+    "multiple_links": ("some files there have more than one name on disk", "sync_now"),
+    "link_or_reparse": ("some entries there are links, not files", "sync_now"),
+    "target_changed_during_read": ("a file changed during the check", "sync_now"),
 }
 
 
