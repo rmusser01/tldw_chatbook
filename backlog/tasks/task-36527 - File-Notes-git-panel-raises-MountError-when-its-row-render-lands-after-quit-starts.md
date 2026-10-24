@@ -10,7 +10,6 @@ labels:
 - bug
 priority: medium
 references:
-- tldw_chatbook/Widgets/Library/library_file_notes_workspace.py
 - tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py
 dependencies:
 - TASK-36383

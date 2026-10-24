@@ -10,11 +10,6 @@ priority: low
 references:
 - Tests/UI/test_settings_configuration_hub.py
 - Tests/UI/app_factory.py
-- Tests/Sync_Interop/test_sync_crypto.py
-- Tests/Prompts_DB/test_prompts_db_retained_history.py
-- Tests/Agents/test_run_log_service_wiring.py
-- Tests/LLM_Provider_Catalog/test_model_discovery_disk_cache.py
-- backlog/docs/lessons-testing-evidence.md
 dependencies:
 - TASK-36381
 ---

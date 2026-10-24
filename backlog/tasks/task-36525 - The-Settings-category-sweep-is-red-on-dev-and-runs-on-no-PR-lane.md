@@ -11,8 +11,7 @@ priority: medium
 references:
 - Tests/UI/test_settings_category_sweep.py
 - Tests/UI/test_settings_theme_picker_screen.py
-- Tests/Chat/test_local_server_discovery.py
-- .github/workflows/derived-artifacts.yml
+- scripts/ui_pr_gate_census.txt
 dependencies:
 - TASK-36381
 ---
