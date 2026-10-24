@@ -139,3 +139,12 @@ Worker draining retains actual publication results through cancellation, and clo
 only operation-owned thread-local DB connections. Dirty artwork/bindings require
 explicit Save/Apply; unrelated text is never saved by this flow. Preview uses the
 same bounded avatar renderer/timer, with explicit offline pose/cycle/idle modes.
+
+`PortraitRadio` projects the current owned snapshot through the character controller
+and the existing avatar frame clock/Console sync; it owns no timer or audio service.
+Its fixed status/meter rows update without layout invalidation. Fresh qualified PCM
+levels fill the bar; stale/unqualified timing hides it with visibility, retaining the
+row. Measured compact layout alone removes that row. The existing rail allocator
+subtracts frame borders and identification/status rows before contain fitting.
+Character captions and workbench labels render as plain text, including card names
+that resemble Rich markup. Source styles use design tokens and generated CSS.

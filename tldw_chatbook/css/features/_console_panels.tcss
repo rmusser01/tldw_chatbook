@@ -792,7 +792,16 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     border-left: solid $ds-status-error;
 }
 
+#console-character-identity {
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    text-style: $ds-text-strong;
+}
+
 #console-character-avatar-frame {
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;

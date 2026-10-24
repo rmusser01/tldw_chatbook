@@ -11383,8 +11383,7 @@ class ChatScreen(BaseAppScreen):
     ) -> Widget:
         """Build a disposable avatar from the controller's immutable spec.
 
-        Animation/performance buffers belong to the widget; static images use
-        the existing render cache. Missing art degrades to a text placeholder.
+        Widget-owned animation; cached static images and a missing-art fallback.
         Renderer and fit failures must not escape into Console sync.
 
         Args:
@@ -11423,6 +11422,7 @@ class ChatScreen(BaseAppScreen):
                 fallback_decode_identity=spec.get("animation_fallback_identity"),
                 performance=spec.get("performance"),
                 read_speech=spec.get("read_speech"),
+                on_frame=self._character.sync_radio,
             )
         if not spec or (
             spec.get("pil") is None

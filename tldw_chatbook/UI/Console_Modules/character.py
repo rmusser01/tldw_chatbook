@@ -99,6 +99,7 @@ class ConsoleCharacterController:
         is_mounted: Callable[[], bool],
         render_character_avatar: Callable[..., Awaitable[None]],
         speech_presentation: Callable[[], Any | None] = lambda: None,
+        render_radio: Callable[..., None] = lambda *args, **kwargs: None,
     ) -> None:
         self._app_config_accessor = app_config_accessor
         self._chat_store_accessor = chat_store_accessor
@@ -121,6 +122,7 @@ class ConsoleCharacterController:
         self._is_mounted = is_mounted
         self._render_character_avatar = render_character_avatar
         self._speech_presentation = speech_presentation
+        self._render_radio = render_radio
 
         self._active_character_avatar: dict | None = None
         self._active_character_avatar_name: str | None = None
@@ -640,6 +642,20 @@ class ConsoleCharacterController:
             is_current=is_current,
         )
 
+    def sync_radio(self) -> None:
+        """Project only this character's owned snapshot, without I/O or a timer."""
+        config = self._live_config()
+        scope = self._actor_scope_accessor()
+        self._render_radio(
+            self._read_character_speech(),
+            show=resolve_show_character_avatar(config),
+            motion=expression_motion_enabled(
+                config,
+                react=resolve_react_character_expressions(config),
+                manual=bool(scope and self._manual_reaction_key(scope)),
+            ),
+        )
+
     async def _refresh_active_character_avatar_if_scope_changed(
         self,
         *,
@@ -647,6 +663,7 @@ class ConsoleCharacterController:
         invalidate_actor: tuple[str, str] | None = None,
     ) -> None:
         """Consume live beats, then resolve one race-fenced avatar request."""
+        self.sync_radio()
         if invalidate_actor is not None:
             self._invalidate_actor(*invalidate_actor)
             force = True

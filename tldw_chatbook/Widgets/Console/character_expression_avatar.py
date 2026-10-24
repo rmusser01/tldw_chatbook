@@ -46,6 +46,7 @@ class CharacterExpressionAvatar(Widget):
         fallback_decode_identity: tuple[str, ...] | None = None,
         performance: PortraitPerformanceRecord | None = None,
         read_speech: Callable[[], SpeechPresentationSnapshot | None] | None = None,
+        on_frame: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(id=id)
         self._data = data
@@ -59,6 +60,7 @@ class CharacterExpressionAvatar(Widget):
         self._fallback_decode_identity = fallback_decode_identity
         self._performance = performance
         self._read_speech = read_speech
+        self._on_frame = on_frame
         self._preview_mode: str | None = None
         self._performance_clock: PortraitPerformanceClock | None = None
         self._last_pose: tuple[int, float] | None = None
@@ -404,6 +406,8 @@ class CharacterExpressionAvatar(Widget):
         if not self._visible():
             self._last_tick = None
             return
+        if self._on_frame is not None:
+            self._on_frame()
         now = time.monotonic()
         if self._last_tick is not None:
             self._elapsed_ms += (now - self._last_tick) * 1000

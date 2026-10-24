@@ -464,7 +464,7 @@ Use the Unit 6 mounted fixture and invoke the six-role worker before these asser
 
 **Consumes:** Units 4/5 owner snapshot/current frame. **Produces:** Stable frame/status/meter using existing Character controls; pure `portrait_radio_status(snapshot: SpeechPresentationSnapshot | None) -> str` in `Chat/portrait_performance_state.py` for one consistent status mapping.
 
-- [ ] **1. Write red status and mounted geometry tests.** Use the real Console harness in `Tests/UI/test_console_character_avatar.py` and production styles; reuse `_geometry_snapshot` pattern from `test_console_edge_rail_geometry.py`. In the status-only fallback case assert:
+- [x] **1. Write red status and mounted geometry tests.** Use the real Console harness in `Tests/UI/test_console_character_avatar.py` and production styles; reuse `_geometry_snapshot` pattern from `test_console_edge_rail_geometry.py`. In the status-only fallback case assert:
 
 ```python
 assert portrait_radio_status(None) == "Ready"
@@ -476,11 +476,18 @@ assert before_bounds == after_bounds
 ```
 
 Construct `playing_without_timing` using Unit 2 Snapshot with state `playing`, invalid timing and rest mouth in an ordinary layout; capture `before_bounds`/`after_bounds` across that real publication. Extend the outer-rail geometry snapshot with the actual portrait, meter row and Character controls so equal outer bounds cannot conceal an internal shift. Give the status and meter these stable IDs. Across timing loss/recovery and rest/transmission, assert unchanged row height, image box and controls. In a separate compact-layout case assert meter `display is False`, and that speech changes alone never toggle compactness. Also assert Preparing voice is tied to a speech request, pause is transport-confirmed, silence/underrun empties the meter, failure access is readable, and text-stream-only activity is not transmission.
-- [ ] **2. Run the new radio file red** with the existing narrow/tall rail cases as controls.
-- [ ] **3. Compose token-backed framing inside measured Character budget.** Reserve identification/status/meter rows before fitting the image. Preserve authored portrait colors; use existing surface/status/focus tokens and canonical classes, including the motion values already added in Unit 5. Add any missing frame-specific values centrally before use; do not introduce unrelated theme literals or a new settings surface. A brief effect uses `$ds-duration-fast` and fixed border geometry.
-- [ ] **4. Integrate statuses and capability/motion fallback.** Suppress the meter for invalid timing and suppress all animated meter/effect work under Static/Reduce motion. In ordinary layouts use a token-backed class with `visibility: hidden` for suppressed meter contents, retaining `display: block` and the reserved row; no extra wrapper is required. Only compact layout uses `display: none` to remove that row before controls become inaccessible. Compactness follows measured layout budget, not voice state or timing availability; restore visibility from current capability/motion state after resize. Keep existing keyboard bindings, rail scrolling, contain fit, focus and viewer behavior.
-- [ ] **5. Rebuild CSS and run new/affected geometry tests plus token and bundle guards green.** Cover widths 80/120/200 and heights 24/45/80, with active speech, long character names and resized/collapsed rails. Equal geometry and stable widget identity must hold through state transitions; do not replace these checks with screenshots alone.
-- [ ] **6. Commit.** Suggested message: `feat: frame living portraits with truthful radio voice status`. Update the Console appearance guide with actual behavior.
+- [x] **2. Run the new radio file red** with the existing narrow/tall rail cases as controls.
+- [x] **3. Compose token-backed framing inside measured Character budget.** Reserve identification/status/meter rows before fitting the image. Preserve authored portrait colors; use existing surface/status/focus tokens and canonical classes, including the motion values already added in Unit 5. Add any missing frame-specific values centrally before use; do not introduce unrelated theme literals or a new settings surface. A brief effect uses `$ds-duration-fast` and fixed border geometry.
+- [x] **4. Integrate statuses and capability/motion fallback.** Suppress the meter for invalid timing and suppress all animated meter/effect work under Static/Reduce motion. In ordinary layouts use a token-backed class with `visibility: hidden` for suppressed meter contents, retaining `display: block` and the reserved row; no extra wrapper is required. Only compact layout uses `display: none` to remove that row before controls become inaccessible. Compactness follows measured layout budget, not voice state or timing availability; restore visibility from current capability/motion state after resize. Keep existing keyboard bindings, rail scrolling, contain fit, focus and viewer behavior.
+- [x] **5. Rebuild CSS and run new/affected geometry tests plus token and bundle guards green.** Cover widths 80/120/200 and heights 24/45/80, with active speech, long character names and resized/collapsed rails. Equal geometry and stable widget identity must hold through state transitions; do not replace these checks with screenshots alone.
+- [x] **6. Commit.** Suggested message: `feat: frame living portraits with truthful radio voice status`. Update the Console appearance guide with actual behavior.
+
+Implementation file-map adjustment: `Widgets/Console/portrait_radio.py` owns the
+small Textual projection and `UI/Console_Modules/left_rail.py` owns measured frame/
+compact allocation. Wiring injects the projection; the existing avatar clock calls
+it. Shared control-bar and workbench Static labels explicitly disable markup to
+handle character names safely. No new design token was needed. See the atomic
+[TASK-36549 review](../reviews/2026-10-23-task-36549-review.md) for evidence and limits.
 
 ### Unit 9 — TASK-36550: integrated qualification and documentation
 

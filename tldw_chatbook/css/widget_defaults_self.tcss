@@ -1773,6 +1773,16 @@ ConsoleWorkspaceActionMenu Button:focus {
 
 WorkspaceArchiveReceiptModal { align: center middle; }
 
+/* ===== WIDGET: PortraitRadio (Widgets/Console/portrait_radio.py) ===== */
+
+    PortraitRadio { height: auto; width: 100%; min-width: 0; }
+    PortraitRadio Static { height: 1; width: 100%; text-wrap: nowrap; text-overflow: ellipsis; }
+
+
+
+
+    PortraitRadio.voice-compact #console-character-voice-meter { display: none; }
+
 /* ===== WIDGET: LibraryEmergencyReturn (Widgets/Library/library_emergency_return.py) ===== */
 
 LibraryEmergencyReturn {

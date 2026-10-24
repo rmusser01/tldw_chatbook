@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 
-from tldw_chatbook.Audio.speech_presentation import MouthPose
+from tldw_chatbook.Audio.speech_presentation import (
+    MouthPose,
+    SpeechPresentationSnapshot,
+)
 from tldw_chatbook.Character_Chat.portrait_performance import FrameRole
 
 
@@ -122,3 +125,38 @@ class PortraitPerformanceClock:
             math.sin(now * math.tau / self.motion.idle_cycle_s)
             * self.motion.idle_offset_px,
         )
+
+
+def portrait_radio_status(snapshot: SpeechPresentationSnapshot | None) -> str:
+    """Describe owned transport, independently of text streaming or timing support."""
+    return (
+        {
+            "preparing": "Preparing voice",
+            "playing": "Transmitting",
+            "paused": "Paused",
+            "stopped": "Ready",
+            "failed": "Voice unavailable",
+        }.get(snapshot.state, "Voice unavailable")
+        if snapshot is not None
+        else "Ready"
+    )
+
+
+def portrait_radio_level(
+    snapshot: SpeechPresentationSnapshot | None, *, now: float
+) -> float | None:
+    """Return a measured display fraction, with silence empty and stale timing hidden."""
+    from tldw_chatbook.Audio.speech_presentation import _FRESH_SECONDS
+
+    if (
+        snapshot is None
+        or snapshot.state != "playing"
+        or not snapshot.timing_valid
+        or not 0 <= now - snapshot.observed_at <= _FRESH_SECONDS
+    ):
+        return None
+    if snapshot.level_dbfs is None:
+        return 0.0
+    if not math.isfinite(snapshot.level_dbfs):
+        return None
+    return max(0.0, min(1.0, (snapshot.level_dbfs + 60) / 60))
