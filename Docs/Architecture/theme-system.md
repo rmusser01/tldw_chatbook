@@ -27,6 +27,25 @@ This document describes theming: the shipped theme catalog and its readability g
 - User-theme loading is hostile-input tolerant: unreadable files, files without `primary`, and non-regular files (symlinks/hardlinks) are skipped with a warning that carries only the file **name** — one bad file never blocks startup. `sanitize_theme_variables` rejects unsafe variable values: it keeps only a colour (optionally with " NN%"), space-separated text-style keywords, or `auto NN%`. Its rules are name-aware (TASK-33003.16): `auto NN%` is dropped on a guard variable and on every name Textual generates except the seven it generates as auto (`text`, `text-muted`, `text-disabled`, `link-color`, `link-color-hover`, `block-cursor-foreground`, `button-color-foreground`), and a text style on a colour name, a colour on a text-style name, and `none` combined with other words are dropped too.
 - Reserved names: saved themes may not use the `custom_` or `unreadable:` prefixes.
 
+## Editor Save completion
+
+The editor snapshots the submitted theme and its live name, dark flag and raw
+palette controls before Save/Save-as resolves the file target. Completion writes
+and registers only that submitted theme. A later same-session edit stays visible
+and dirty, including invalid raw text and controls whose `Changed` messages are
+still queued; only an unchanged submission returns automatically to the picker.
+The `Saved` handoff carries that session and raw draft snapshot; the pane checks
+both again before switching, so child input accepted before its `Changed`
+message cannot be hidden during message delivery either.
+
+`_loaded_user_theme` records the name actually saved, independently of a later
+Name-box draft. Save-as updates an unchanged Name box to the saved identity while
+retaining a newer palette; a later name remains untouched. The next explicit
+Save uses the existing name-to-file resolution and overwrite confirmation rules.
+Session fences and the existing Back/category/destination/quit and backup guards
+continue to apply. Regression coverage: `Tests/UI/test_theme_pending_save_drafts.py`
+(TASK-36457).
+
 ## How themes relate to `$ds-*` tokens (the load-bearing rule)
 
 A theme's `variables` dict only has runtime effect for names **no `.tcss` source defines**. Every `$ds-*` token is defined in `css/core/_variables.tcss`, and file tokens win over app tokens — so per-theme `ds-*` entries are **inert** (only `agentic_terminal` keeps any, as documented reference values pinned by a test). Real theming of the token layer happens through polarity-aware references inside `_variables.tcss` (e.g. `$ds-status-error-readable: $text-error`, `$ds-grid-line: $tldw-boundary`) that Textual regenerates per theme. A governance test fails the build when a `$ds-*` token is referenced but undefined. Consequence: to make a theme change a token's value, change what the referenced Textual theme variable resolves to — never try to override the token from the theme dict.

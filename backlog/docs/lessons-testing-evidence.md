@@ -14327,6 +14327,12 @@ wrong, not evidence the test needs help.
 
 ---
 
+## A screen helper extraction can consume the preimport module budget
+
+**TASK-36458 / PR #3228, 2026-10-23.** Extracting Parakeet completion reduced LibraryScreen size, but its top-level helper import made Perf Guard run 40015030825 fail at 559/558 preimport modules. The existing native guard reproduced the same count. Scoped request/completion imports restored 558/558 while retaining the 37,525-line screen ceiling; both preimport and first-send warmup controls passed (2/2, 18.818 seconds). No ratchet was raised.
+
+When extracting a screen helper, check whether it belongs on screen preloading or only on the action path, and run the existing preimport guard along with the owner size check. ADR-097 governs this cost even when behavior and total code size barely change.
+
 ## Two ratchets can measure the same cost, so paying one breaches the other
 
 **What happened.** 2026-08-29, task-24458. Deferring modules off the boot import path made
@@ -21655,3 +21661,22 @@ attributes they touch. Do not list them from the domain model. Read mutable
 inputs by value at read time, because a held reference compares equal to
 itself after an in-place write. Give each input a test that changes it alone
 and ticks through the real gate.
+
+
+## Census prose can be a machine-readable contract
+
+**Incident (PR #3228, 2026-10-23).** The seventeen-shard follow-up passed 140 targeted CI checks, then a historical-header wording cleanup removed the `the 92` suffix in `ui_pr_gate_census.txt`. The existing replay-boundary test parses that suffix; independent review reproduced its failure although every selector and Python AST was unchanged. Restoring the parseable header and rerunning the affected modules repaired the regression before publication.
+
+**What to do.** Search readers before editing census headers or other structured comments. A prior test receipt does not qualify a later prose edit when tests or scripts parse that prose; rerun those consumers after the final edit.
+
+
+## Runtime and checker-unit passes do not qualify the aggregate's current-tree scans
+
+**Incident (PR #3228, 2026-10-23).** All23 prerequisite jobs passed, including17 UI shards and actual execution of56 new regressions, before the required aggregate rejected two extracted completions: an unguarded post-await Dictionary-pane lookup and a Parakeet failure notification still parsing runtime markup. The earlier guard unit selections tested checker behavior, not every current-tree command in the aggregate. Native controls reproduced NoMatches and MarkupError; safe missing-pane publication and literal notification text repaired both without new allowlist rows.
+
+**What to do.** Enumerate and run the aggregate's actual current-tree commands before publishing, rather than treating their unit tests or green runtime lanes as substitutes. Preserve environment preconditions separately: the Canvas builder pins Python3.12.11 and rejects the workstation's3.12.10, so its unchanged assets still need that exact hosted check; do not relax the pin to obtain a local green.
+
+
+### PR #3228: verify the live base ref before calling a PR current
+
+At final delivery of TASK-36454 through TASK-36458, the completed c3d727a95e run had all required checks green. Both the GraphQL baseRefOid and REST pull-request base.sha still reported1381e70735, so comparing that recorded SHA showed a clean ancestor. The live git/ref/heads/dev endpoint instead reportedae85e59e8f, and compare/dev...the-branch showed25 commits behind with actual B2a conflicts. The final mergeability read caught the discrepancy before handoff. Fetch the target branch or read its live Git ref when establishing current-base integration; the PR's recorded base SHA is insufficient evidence. Preserve the earlier green run as evidence for its exact source, then qualify the resolved combined source separately.

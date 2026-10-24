@@ -169,6 +169,7 @@ from ...Library.library_ingest_state import (
     LibraryIngestCanvasState,
     LibraryIngestLastSubmission,
     active_ingest_start_confirm_line,
+    build_ingest_options_snapshot,
     build_library_ingest_state,
     clamp_chunk_size,
     library_ingest_analyze_skipped_ids,
@@ -4102,6 +4103,7 @@ class LibraryScreen(BaseAppScreen):
         # a second trigger, matching the single busy notification already
         # shown to the user.
         self._parakeet_v2_install_worker: Worker | None = None
+        self._parakeet_v2_pending_selection: tuple[Any, ...] | None = None
         # TASK-1696: the immutable PreflightReport a completed preflight
         # worker handed to the consent modal -- read back by
         # ``_run_parakeet_v2_install`` (kept zero-argument; see
@@ -29225,6 +29227,9 @@ class LibraryScreen(BaseAppScreen):
                 severity="information",
             )
             return
+        from ..Library_Modules import parakeet_install_selection as selection
+
+        self._parakeet_v2_pending_selection = selection.capture_selection(self)
         self._parakeet_v2_install_worker = self._run_parakeet_v2_preflight()
 
     @on(LibraryIngestCanvas.TranscribeCppGGUFRequested)
@@ -29394,6 +29399,7 @@ class LibraryScreen(BaseAppScreen):
         """Show the plan-driven consent modal, or a sanitized preflight failure."""
         self._parakeet_v2_install_worker = None
         if error is not None or report is None:
+            self._parakeet_v2_pending_selection = None
             self.app_instance.notify(
                 f"Parakeet v2 preflight failed: {error or 'unknown error'}",
                 severity="error",
@@ -29414,6 +29420,7 @@ class LibraryScreen(BaseAppScreen):
     def _confirm_parakeet_v2_install(self, confirmed: bool) -> None:
         """Start the installer worker after explicit confirmation."""
         if not confirmed:
+            self._parakeet_v2_pending_selection = None
             return
         worker = getattr(self, "_parakeet_v2_install_worker", None)
         if worker is not None and not worker.is_finished:
@@ -29468,51 +29475,10 @@ class LibraryScreen(BaseAppScreen):
         installed: Path | None,
         error: str | None,
     ) -> None:
-        """Populate the current batch form only after verified publication."""
-        self._parakeet_v2_install_worker = None
-        self._parakeet_v2_pending_report = None
-        self._parakeet_v2_install_progress = None
-        self._library_model_install_progress_label = ""
-        self._library_model_install_progress_owner = None
-        try:
-            self.query_one(
-                "#library-model-install-progress-label", Static
-            ).display = False
-            self.query_one(
-                "#library-model-install-progress", ModelInstallProgress
-            ).display = False
-        except NoMatches:
-            pass
-        if error is not None or installed is None:
-            self.app_instance.notify(
-                f"Parakeet v2 install failed: {error or 'unknown error'}",
-                severity="error",
-            )
-            return
-        try:
-            self.app_instance._ensure_parakeet_source_service().prefer_managed(
-                ParakeetSourceKey.V2_INT8
-            )
-        except Exception as exc:
-            logger.warning(
-                "Could not prefer the installed Library Parakeet source "
-                "(error_type={}).",
-                type(exc).__name__,
-            )
-            self.app_instance.notify(
-                "Parakeet v2 installed, but its source preference could not be updated.",
-                severity="error",
-            )
-            return
-        options = self._ingest_state.form.type_options.setdefault("audio_video", {})
-        options["transcription_provider"] = "parakeet-onnx"
-        options["transcription_precision"] = "int8"
-        options.pop("transcription_model_dir", None)
-        self.app_instance.notify(
-            "Parakeet v2 INT8 installed and selected for this batch.",
-            severity="information",
-        )
-        self.refresh(recompose=True)
+        """Publish installation through the original UI-thread callback owner."""
+        from ..Library_Modules import parakeet_install_selection as selection
+
+        selection.apply_parakeet_install_result(self, installed, error)
 
     def _invalidate_library_external_submission(self) -> None:
         """Fence and release any not-yet-enqueued external-root submission."""
@@ -30609,67 +30575,8 @@ class LibraryScreen(BaseAppScreen):
             form.type_options.setdefault(group, {}).update(dict(stored))
 
     def _build_ingest_options_snapshot(self) -> dict[str, dict[str, Any]]:
-        """Capture the current per-type ingestion options as a snapshot.
-
-        Returns a shallow copy of ``self._ingest_state.form.type_options``,
-        with the top-level generic toggles (analyze, chunk, chunk_size)
-        merged into the ``generic`` group so the downstream pipeline has a
-        single canonical options map.
-
-        Returns:
-            A group-keyed dict mapping type group ids (``generic``, ``pdf``,
-            ``audio_video``, ``ebook``) to their option name/value maps.
-        """
-        form = self._ingest_state.form
-        snapshot: dict[str, dict[str, Any]] = {
-            group: dict(opts) for group, opts in form.type_options.items()
-        }
-        generic = snapshot.setdefault("generic", {})
-        generic["analyze"] = form.analyze
-        generic["chunk"] = form.chunk
-        # Prefer the generic panel's chunk_size when the user has set one;
-        # otherwise fall back to the legacy top-level form field.
-        if "chunk_size" not in generic:
-            generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
-        # (task-3301) The panel's number Inputs hand back display TEXT
-        # ("1000"); this snapshot is both what the job pipeline consumes
-        # and what gets persisted to config, so numbers are coerced to
-        # ints here, at the boundary, and never downstream. The values
-        # were already gate-validated (``collect_ingest_option_errors``
-        # blocks Start on a non-integer), so the clamp/fallback below is
-        # defensive, not a second validator.
-        generic["chunk_size"] = clamp_chunk_size(str(generic["chunk_size"]))
-        if "chunk_overlap" in generic:
-            try:
-                generic["chunk_overlap"] = max(
-                    0, int(str(generic["chunk_overlap"]).strip())
-                )
-            except (TypeError, ValueError):
-                generic.pop("chunk_overlap")  # fall back to the schema default
-        # Preserve a complete generic form state in every job snapshot. The
-        # generic capability schema owns these defaults, including the
-        # server-only ``keep_original_file`` value; backend projection decides
-        # whether a snapshot value can reach a particular ingest path.
-        for field in get_capabilities("generic").fields:
-            generic.setdefault(field.name, field.default)
-        # (task-3303 xhigh review round 2, F11) The ebook chunk-method is
-        # scheme IDENTITY, so every NEW snapshot must carry it explicitly
-        # even when untouched: the job-option builder treats an ABSENT
-        # value as "this snapshot predates the field" and falls back to
-        # the pre-branch sentences scheme for requeue parity. Without this
-        # seed a fresh untouched submission would be indistinguishable
-        # from a legacy job and lose the chapters default.
-        ebook = snapshot.setdefault("ebook", {})
-        if not str(ebook.get("chunk_method") or "").strip():
-            ebook["chunk_method"] = next(
-                (
-                    field.default
-                    for field in get_capabilities("ebook").fields
-                    if field.name == "chunk_method"
-                ),
-                "chapters",
-            )
-        return snapshot
+        """Capture copied, coerced form options through their pure state owner."""
+        return build_ingest_options_snapshot(self._ingest_state.form)
 
     def _library_ingest_job_by_id(self, job_id: str) -> LibraryIngestJob | None:
         """Resolve a job by id from the live registry snapshot, or ``None``.

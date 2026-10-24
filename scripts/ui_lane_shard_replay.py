@@ -24,8 +24,8 @@ Usage:
     # entries appended after it; such entries must not be blank-separated,
     # or --write carries the blank into the block):
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
-    python scripts/ui_lane_shard_replay.py --shards 13 run1 run2
-    python scripts/ui_lane_shard_replay.py --shards 13 --tail 92 --write run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 17 run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 17 --tail 92 --write run1 run2
 """
 
 from __future__ import annotations

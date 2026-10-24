@@ -76,7 +76,6 @@ tldw_chatbook/UI/Screens/personas_screen.py::_create_actor_pack_worker	1
 tldw_chatbook/UI/Screens/personas_screen.py::_delete_entity	6
 tldw_chatbook/UI/Screens/personas_screen.py::_delete_marked_worker	1
 tldw_chatbook/UI/Screens/personas_screen.py::_generate_visual_identity_assets_admitted	1
-tldw_chatbook/UI/Screens/personas_screen.py::_handle_dictionary_settings_save	2
 tldw_chatbook/UI/Screens/personas_screen.py::_handle_edit_requested	1
 tldw_chatbook/UI/Screens/personas_screen.py::_handle_lore_enable_toggled	1
 tldw_chatbook/UI/Screens/personas_screen.py::_handle_lore_settings_save	2

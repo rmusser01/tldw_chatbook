@@ -108,12 +108,12 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane runs its census as shards (TASK-34353; thirteen since
-  TASK-35834), the Console P0 gate is a third lane (TASK-33621.27), and the PR
+  grown since: the UI lane currently runs 17 shards (TASK-34353 and the
+  dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
   tracking tests and the Dreams and Guardian boundary contracts are jobs of
   their own (TASK-34916, TASK-34929, TASK-34986), so an ordinary unlabeled,
-  non-GGUF PR now runs nineteen test runners at once, twenty with perf-guard
+  non-GGUF PR now requests 23 test runners in parallel, 24 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -273,8 +273,8 @@ the aggregate.
 2026-10-20 (TASK-35834): thirteen UI shards replace ten, retaining the serial
 round-robin checker, all gated tests, dependencies, 20-minute job cap,
 180-second test timeout and fail-closed aggregation. TASK-35834: thirteen UI
-shards. The current total is nineteen concurrent test runners per PR, twenty
-with perf-guard. Historical counts above retain their dates.
+shards. At that point the total was nineteen concurrent test runners per PR,
+twenty including perf-guard. Historical counts retain their dates.
 
 The model-defaults whole-file selector becomes all 16 function selectors,
 including every parameter case (415 -> 430 census entries). Only the existing
@@ -286,3 +286,25 @@ makes thirteen the smallest evaluated layout below the 1020s acceptance cap
 logged to correct node attribution; unknown costs in older top-25 logs share
 only the unmeasured file remainder. Hosted qualification, including three
 post-change PR attempts, is recorded in the TASK-35834 QA report.
+
+
+2026-10-23 (TASK-36454..36458 CI qualification): repeated 20-minute UI job
+cancellations require the existing replay/reorder/add-capacity policy. Current
+UI lane: 17 shards. The current total is 23 eligible test jobs per PR;
+Perf Guard can add one more. This is a scheduling count, not a concurrency or
+queue-latency guarantee. Every selected test, the serial minimal-dependency
+checker, 20-minute job cap, 180-second test timeout and fail-closed aggregate
+remain unchanged. Timing qualification and the bounded inherited reordering
+are recorded in the pending-draft QA report; no hosted pass is implied here.
+
+Worst-observed file/node timing replay over the two recorded layouts requires
+at least 17 shards even with ideal balance under the existing 1020s target
+(110s setup reserve plus 15% variance). The selected bounded reordering projects
+999.83s at seventeen; this is an estimate requiring current-head hosted CI.
+The first 181 and last 104 census entries stay fixed, with all 720 unique
+selectors preserved. See [qualification evidence](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md).
+
+The same follow-up later appends two completion-safety regressions after the
+original 720 positions (722 selectors total). The seventeen-shard matrix,
+existing caps and aggregation policy stay unchanged; the QA report separates
+the earlier passing component timings from final-head qualification.
