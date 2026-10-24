@@ -361,7 +361,8 @@ jobs:
     # and then 1737 s and 1590 s on CI, so expect about 5 min of pytest and
     # 6-7 min with setup: a hung test's report ends well over 20 min under the
     # cap. TASK-33620.15.1.3 appends one mounted Console file (two tests,
-    # ~8 s serial).
+    # ~8 s serial). TASK-33620.15.4 appends the durable commit window file
+    # (three cases on a real file-backed commit, ~7 s serial).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -460,6 +461,7 @@ jobs:
             Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config \
             Tests/Wizards/test_first_run_setup_wizard.py::test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list \
             Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone \
+            Tests/Chat/test_console_durable_commit_window.py \
             --timeout=300 \
             --tb=short
 

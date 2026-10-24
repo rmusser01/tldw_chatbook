@@ -521,6 +521,10 @@ ADMISSION_2_TARGETS = (
     "Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config",
     "Tests/Wizards/test_first_run_setup_wizard.py::test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list",
     "Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone",
+    # TASK-33620.15.4: a send's ordinary durable commit opens the store's
+    # commit window while it runs on its thread, and closes it after success,
+    # failure and a cancelled caller (bootstrap_profile, three cases, ~7 s).
+    "Tests/Chat/test_console_durable_commit_window.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
