@@ -27,9 +27,23 @@ from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 from Tests.private_profile import private_profile_test
 
 
+@pytest.mark.parametrize(
+    "case",
+    (
+        "normal",
+        "wrong_count",
+        "wrong_dimension_late",
+        "stop_after_first",
+        "source_change_after_first",
+        "manifest_change_before_publish",
+        "max_dimension",
+    ),
+)
 @private_profile_test
-async def test_model_free_four_page_semantic_stage_timing(tmp_path, request, monkeypatch):
-    """Diagnose four actual SQLite/lease pages without loading a model."""
+async def test_model_free_local_batch128_tail_and_native32_commits(
+    tmp_path, request, monkeypatch, case
+):
+    """Local provider pages retain native bounds and fail before unsafe work."""
     from collections import defaultdict
 
     from Tests.Workspaces.test_project_index_service import Rig
@@ -38,11 +52,14 @@ async def test_model_free_four_page_semantic_stage_timing(tmp_path, request, mon
     from tldw_chatbook.Workspaces.project_index import semantic
 
     rig = Rig(tmp_path)
-    text = "canine companion\n" * 128
+    source_chunks = 33 if case == "max_dimension" else 129
+    text = "canine companion\n" * source_chunks
     (rig.root / "dog.py").write_text(text, encoding="utf-8")
     phases = defaultdict(list)
     closed = []
     batch_sizes = []
+    committed_ids = []
+    mutated = False
 
     class Carrier:
         model_name = "deterministic"
@@ -61,22 +78,34 @@ async def test_model_free_four_page_semantic_stage_timing(tmp_path, request, mon
         async def create_embeddings_async(self, texts):
             started = time.perf_counter()
             batch_sizes.append(len(texts))
-            vectors = [[1.0, 0.0] for _ in texts]
+            vector = [1.0] * 16384 if case == "max_dimension" else [1.0, 0.0]
+            vectors = [vector] * len(texts)
+            if case == "wrong_count":
+                vectors = vectors[:-1]
+            if case == "wrong_dimension_late":
+                vectors[32] = [1.0, 0.0, 0.0]
             phases["wrapper"].append(time.perf_counter() - started)
             return vectors
 
         def close(self):
             closed.append("wrapper")
 
-    monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
-    monkeypatch.setattr(semantic, "_require_current_catalog", lambda *args: (None, None))
     monkeypatch.setattr(
-        semantic, "_target", lambda *args: SimpleNamespace(artifact_fingerprint=digest("artifact-a"))
+        semantic, "_issue_project_projection_scope", lambda *args: Carrier()
+    )
+    monkeypatch.setattr(
+        semantic, "_require_current_catalog", lambda *args: (None, None)
+    )
+    monkeypatch.setattr(
+        semantic,
+        "_target",
+        lambda *args: SimpleNamespace(artifact_fingerprint=digest("artifact-a")),
     )
     monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
 
     original_source = WorkspaceProjectIndexDB.semantic_source_page
     original_append = WorkspaceProjectIndexDB.semantic_append
+    original_publish = WorkspaceProjectIndexDB.semantic_publish
     original_retry = rig.service._retry_read
 
     def source_page(self, *args, **kwargs):
@@ -87,9 +116,22 @@ async def test_model_free_four_page_semantic_stage_timing(tmp_path, request, mon
             phases["source_sql"].append(time.perf_counter() - started)
 
     def append_page(self, *args, **kwargs):
+        nonlocal mutated
         started = time.perf_counter()
         try:
-            return original_append(self, *args, **kwargs)
+            result = original_append(self, *args, **kwargs)
+            if result:
+                committed_ids.append(tuple(row.chunk_id for row in args[3]))
+                if case == "stop_after_first" and len(committed_ids) == 1:
+                    next(iter(rig.service._semantic_runs.values())).stop.set()
+                if case == "source_change_after_first" and len(committed_ids) == 1:
+                    with self.transaction(semantic=True) as conn:
+                        conn.execute(
+                            "UPDATE chunks SET text='source changed' "
+                            "WHERE id=(SELECT MIN(id)+32 FROM chunks)"
+                        )
+                    mutated = True
+            return result
         finally:
             phases["append_sql"].append(time.perf_counter() - started)
 
@@ -100,23 +142,41 @@ async def test_model_free_four_page_semantic_stage_timing(tmp_path, request, mon
         finally:
             phases[operation.__name__].append(time.perf_counter() - started)
 
+    def publish_page(self, *args, **kwargs):
+        nonlocal mutated
+        if case == "manifest_change_before_publish":
+            with self.transaction(semantic=True) as conn:
+                conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
+            mutated = True
+        return original_publish(self, *args, **kwargs)
+
     monkeypatch.setattr(WorkspaceProjectIndexDB, "semantic_source_page", source_page)
     monkeypatch.setattr(WorkspaceProjectIndexDB, "semantic_append", append_page)
+    monkeypatch.setattr(WorkspaceProjectIndexDB, "semantic_publish", publish_page)
     monkeypatch.setattr(rig.service, "_retry_read", retry_read)
 
     def run():
         status = seed_keyword_ready(rig)
         store = rig.store(rig.key)
-        lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+        lease = BindingLifetime.acquire(
+            store.db_path.parent.parent / rig.key.lifetime_name
+        )
         try:
             store.bind_native_lifetime(lease)
             with store.transaction() as conn:
                 conn.execute("DELETE FROM chunk_fts")
                 conn.execute("DELETE FROM chunks")
-                for index in range(128):
+                for index in range(source_chunks):
                     chunk = conn.execute(
                         "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
-                        ("dog.py", "canine companion", index * 17, index * 17 + 16, index + 1, index + 1),
+                        (
+                            "dog.py",
+                            "canine companion",
+                            index * 17,
+                            index * 17 + 16,
+                            index + 1,
+                            index + 1,
+                        ),
                     ).lastrowid
                     conn.execute(
                         "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
@@ -137,15 +197,53 @@ async def test_model_free_four_page_semantic_stage_timing(tmp_path, request, mon
         job = rig.service._semantic_runs[job_id]
         job.thread.join(120)
         elapsed = time.perf_counter() - started
-        assert not job.thread.is_alive() and job.native_retired and job.error is None
+        assert not job.thread.is_alive() and job.native_retired
         ready = rig.service.semantic_state(rig.key)
-        assert ready.state == "Ready" and ready.ready_generation_id
-        assert batch_sizes == [32] * 4
-        assert len(phases["append_page"]) == 4
+        if case == "normal":
+            assert (
+                job.error is None
+                and ready.state == "Ready"
+                and ready.ready_generation_id
+            )
+            assert batch_sizes == [128, 1]
+            assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+            assert [id for page in committed_ids for id in page] == sorted(
+                id for page in committed_ids for id in page
+            )
+            assert len({id for page in committed_ids for id in page}) == 129
+            assert len(phases["append_page"]) == 5
+        elif case in {"wrong_count", "wrong_dimension_late"}:
+            # A positively retired run drops its exception frames; the durable
+            # failure and absence of append are the contract to inspect.
+            assert committed_ids == [] and ready.state == "Error"
+            assert ready.reason == "provider_unavailable"
+            assert batch_sizes == [128]
+        elif case == "stop_after_first":
+            assert job.stop.is_set() and ready.state != "Ready"
+            assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+            assert batch_sizes == [128]
+        elif case == "source_change_after_first":
+            assert mutated and ready.state != "Ready", (committed_ids, ready.reason)
+            assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+            assert ready.reason == "source_changed"
+        elif case == "manifest_change_before_publish":
+            assert (
+                mutated and ready.state != "Ready" and ready.reason == "source_changed"
+            )
+            assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+        else:
+            assert (
+                job.error is None
+                and ready.state == "Ready"
+                and ready.ready_generation_id
+            )
+            assert batch_sizes == [33]
+            assert [len(ids) for ids in committed_ids] == [16, 16, 1]
         assert closed == ["wrapper", "carrier"]
         timing = {
             "elapsed_seconds": elapsed,
-            "source_chunks": 128,
+            "source_chunks": source_chunks,
+            "case": case,
             "batch_sizes": batch_sizes,
             "native_retired": job.native_retired,
             "phases_seconds": dict(phases),
@@ -199,6 +297,52 @@ def populated_store(tmp_path):
         scope, settings(), enabled=True, expected_semantic_revision=0
     )
     return store, scope, semantic, lease
+
+
+def test_local_source_page_trims_before_loading_text_and_validates_limit(tmp_path):
+    store, scope, state, lease = populated_store(tmp_path)
+    try:
+        text = "x" * 9000
+        with store.transaction() as conn:
+            conn.execute("DELETE FROM chunk_fts")
+            conn.execute("DELETE FROM chunks")
+            for index in range(129):
+                conn.execute(
+                    "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (
+                        "src/dog.py",
+                        text,
+                        index * 9000,
+                        (index + 1) * 9000,
+                        index + 1,
+                        index + 1,
+                    ),
+                )
+        generation = store.semantic_claim(
+            scope,
+            state,
+            manifest_revision=store.load_status(scope.key).manifest_revision,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="source-bound",
+        )
+        assert (
+            len(store.semantic_source_page(scope, generation, "source-bound", after=0))
+            == 32
+        )
+        page = store.semantic_source_page(
+            scope, generation, "source-bound", after=0, limit=128
+        )
+        assert len(page) == 116
+        assert sum(len(row.text.encode("utf-8")) for row in page) <= 1024 * 1024
+        for invalid in (0, 129, True):
+            with pytest.raises(ValueError, match="invalid_semantic_source_limit"):
+                store.semantic_source_page(
+                    scope, generation, "source-bound", after=0, limit=invalid
+                )
+    finally:
+        store.close_native()
+        lease.close()
 
 
 def seed_keyword_ready(rig):

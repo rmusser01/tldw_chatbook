@@ -1,0 +1,10 @@
+[
+  {
+    "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+    "sha256": "F0305900E4A7F8511A1C669401310DFBF353AC0E5DB654DC4095356CA2190C49"
+  },
+  {
+    "path": "Tests/UI/test_project_semantic_consent.py",
+    "sha256": "27C0DC394087BED74E25E802C48E91F45AAC33DDB6264E89F395A4712C2B3B41"
+  }
+]

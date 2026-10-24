@@ -1,0 +1,14 @@
+{
+  "utc": "2026-10-24T00:12:02.6577439Z",
+  "hashes": [
+    {
+      "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+      "sha256": "696E80795B8245AB9CCB31DD57B5661ABD0A92C07FEFB9AED0292ED1EB0CDF9C"
+    },
+    {
+      "path": ".github/workflows/derived-artifacts.yml",
+      "sha256": "2047F61C0847E7D3A66AB9C968F06D5F685DD2FE080664A6E6FB0896CF3E9DFD"
+    }
+  ],
+  "run": "task4-local128-ci-contract-01"
+}

@@ -1,0 +1,30 @@
+{"monotonic": 184679.906, "phase": "test_enter"}
+{"monotonic": 184695.156, "phase": "start_await_enter"}
+{"monotonic": 184695.156, "phase": "keyword_setup_enter"}
+{"monotonic": 184711.359, "phase": "keyword_ready"}
+{"monotonic": 184715.953, "phase": "semantic_worker_enter"}
+{"monotonic": 184715.953, "phase": "semantic_job_started"}
+{"monotonic": 184715.953, "phase": "semantic_build_enter"}
+{"monotonic": 184715.953, "phase": "start_await_return"}
+{"monotonic": 184715.953, "phase": "producer_wait_enter"}
+{"monotonic": 184742.875, "phase": "hf_constructor_enter"}
+{"device": "cpu", "dtype": "torch.float32", "monotonic": 184744.296, "phase": "hf_constructor_return"}
+{"monotonic": 184744.296, "phase": "hf_embed_enter", "text_count": 128}
+{"monotonic": 184752.25, "phase": "hf_encode_completed", "text_count": 128, "vector_count": 128}
+{"monotonic": 184752.25, "phase": "producer_wait_return"}
+{"monotonic": 184752.25, "phase": "state_read_enter"}
+{"monotonic": 184753.984, "phase": "state_read_return", "state": "Building"}
+{"monotonic": 184753.984, "phase": "disable_submitted"}
+{"disable_done": false, "monotonic": 184764.0, "phase": "disable_waiters_at_10s", "poll_done": true, "tasks": [{"done": false, "stack": ["private_profile.py:243:wrapped"], "task": "Task-2"}, {"done": false, "stack": ["python.py:1627:runtest", "_hooks.py:512:__call__", "_manager.py:120:_hookexec", "_callers.py:121:_multicall", "python.py:159:pytest_pyfunc_call", "plugin.py:773:inner", "base_events.py:678:run_until_complete", "windows_events.py:322:run_forever", "base_events.py:645:run_forever", "base_events.py:1999:_run_once", "events.py:88:_run", "test_project_semantic_app_quality.py:519:capture_waiters"], "task": "Task-232"}, {"done": false, "stack": ["console_runtime.py:4039:_watch_canvas_policy"], "task": "console-canvas-policy-watch"}, {"done": false, "stack": ["threads.py:25:to_thread"], "task": "Task-230"}], "threads": [{"stack": ["runner.py:242:<lambda>", "_hooks.py:512:__call__", "_manager.py:120:_hookexec", "_callers.py:121:_multicall", "runner.py:174:pytest_runtest_call", "plugin.py:508:runtest", "python.py:1627:runtest", "_hooks.py:512:__call__", "_manager.py:120:_hookexec", "_callers.py:121:_multicall", "python.py:159:pytest_pyfunc_call", "plugin.py:773:inner", "base_events.py:678:run_until_complete", "windows_events.py:322:run_forever", "base_events.py:645:run_forever", "base_events.py:1999:_run_once", "events.py:88:_run", "test_project_semantic_app_quality.py:508:capture_waiters"], "thread": "MainThread"}, {"stack": ["threading.py:1032:_bootstrap", "threading.py:1075:_bootstrap_inner", "threading.py:1012:run", "storage_admission.py:520:_run", "threading.py:655:wait", "threading.py:355:wait"], "thread": "chatbook-storage-admission"}, {"stack": ["threading.py:1032:_bootstrap", "threading.py:1075:_bootstrap_inner", "threading.py:1431:run", "threading.py:655:wait", "threading.py:359:wait"], "thread": "pytest_timeout Tests/Workspaces/test_project_semantic_app_quality.py::test_cached_minilm_local128_disable_retires_actual_held_producer"}, {"stack": ["threading.py:1032:_bootstrap", "threading.py:1075:_bootstrap_inner", "threading.py:1012:run", "thread.py:90:_worker"], "thread": "asyncio_0"}, {"stack": ["threading.py:1032:_bootstrap", "threading.py:1075:_bootstrap_inner", "threading.py:1012:run", "thread.py:93:_worker", "thread.py:59:run", "service.py:964:disable_semantic", "service.py:1007:_configure_semantic", "service.py:1019:_stop_semantic_local", "threading.py:1153:join", "threading.py:1169:_wait_for_tstate_lock"], "thread": "asyncio_1"}, {"stack": ["threading.py:1032:_bootstrap", "threading.py:1075:_bootstrap_inner", "threading.py:1012:run", "test_project_semantic_app_quality.py:461:observed_worker", "service.py:1253:_semantic_worker", "runners.py:195:run", "runners.py:118:run", "base_events.py:678:run_until_complete", "windows_events.py:322:run_forever", "base_events.py:645:run_forever", "base_events.py:1961:_run_once", "windows_events.py:445:select", "windows_events.py:774:_poll"], "thread": "project-semantic-owner"}, {"stack": ["threading.py:1032:_bootstrap", "threading.py:1075:_bootstrap_inner", "threading.py:1012:run", "thread.py:93:_worker", "thread.py:59:run", "activation.py:295:project_call", "model_recovery.py:385:invoke", "model_recovery.py:600:invoke", "Embeddings_Lib.py:946:embed", "test_project_semantic_app_quality.py:422:held_real_embed", "threading.py:655:wait", "threading.py:359:wait"], "thread": "asyncio_0"}, {"stack": ["threading.py:1032:_bootstrap", "threading.py:1075:_bootstrap_inner", "threading.py:1012:run", "thread.py:90:_worker"], "thread": "asyncio_2"}]}
+{"monotonic": 184764.0, "phase": "post_snapshot_state", "state": "Off"}
+{"monotonic": 184764.0, "phase": "durable_revocation"}
+{"monotonic": 184764.0, "phase": "producer_released"}
+{"monotonic": 184764.0, "phase": "hf_embed_return"}
+{"error_class": "ValueError", "error_site": "service.py:1184:_semantic_build", "monotonic": 184765.109, "phase": "semantic_build_error"}
+{"monotonic": 184765.125, "phase": "semantic_build_exit"}
+{"monotonic": 184766.437, "native_retired": true, "phase": "semantic_worker_exit", "worker_error": null}
+{"monotonic": 184766.437, "outcome": "returned", "phase": "disable_task_done", "state": "Off"}
+{"monotonic": 184766.437, "native_retired": true, "phase": "disable_returned"}
+{"monotonic": 184773.125, "phase": "finally_enter"}
+{"monotonic": 184773.125, "phase": "service_close_enter"}
+{"monotonic": 184773.125, "phase": "service_close_return"}

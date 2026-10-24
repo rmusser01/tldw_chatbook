@@ -1,0 +1,387 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F.F                                                                      [100%]
+================================== FAILURES ===================================
+________ test_cleanup_retry_never_displays_revoked_old_semantic_state _________
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-card-review-green-01\pytest-of-GDesktop-1\pytest-0\test_cleanup_retry_never_displ0\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert 'cleanup pending' in 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'
+E    +  where 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.' = str(Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'))
+E    +    where Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.') = render()
+E    +      where render = Static(classes='project-semantic-status settings-detail-row').render
+E    +        where Static(classes='project-semantic-status settings-detail-row') = query_one('.project-semantic-status', Static)
+E    +          where query_one = ProjectIndexBindingCard(classes='h-auto').query_one
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_cleanup_retry_never_displ0/private-profile-process/pytest/test_cleanup_retry_never_displ0')
+E   request = <FixtureRequest for <Coroutine test_cleanup_retry_never_displays_revoked_old_semantic_state>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B9C82B4560>
+E   
+E       @private_profile_test
+E       async def test_cleanup_retry_never_displays_revoked_old_semantic_state(
+E           tmp_path, request, monkeypatch
+E       ):
+E           from tldw_chatbook.Workspaces.project_index.models import ProjectIndexRetirementUnproven
+E       
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           actual_disable = rig.service.disable_semantic
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E                   selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+E                   rig.service.enable_semantic(
+E                       rig.key, selected,
+E                       expected_epoch=card.status.scope.epoch,
+E                       expected_semantic_revision=card.semantic_status.semantic_revision,
+E                   )
+E                   card.reload_status()
+E                   await wait_for_card(card, pilot)
+E                   assert card.semantic_status.enabled
+E       
+E                   def revoked_then_pending(*args, **kwargs):
+E                       result = actual_disable(*args, **kwargs)
+E                       assert result.state == "Off" and not result.enabled
+E                       raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
+E       
+E                   monkeypatch.setattr(rig.service, "disable_semantic", revoked_then_pending)
+E                   monkeypatch.setattr(rig.service, "semantic_close_pending", lambda key: True)
+E                   next(b for b in card.query(Button) if b.name == "semantic-disable").press()
+E                   await pilot.pause()
+E                   while card._pending:
+E                       await pilot.pause(0.02)
+E                   assert not rig.service.semantic_state(rig.key).enabled
+E   >               assert "cleanup pending" in str(card.query_one(".project-semantic-status", Static).render())
+E   E               AssertionError: assert 'cleanup pending' in 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'
+E   E                +  where 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.' = str(Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'))
+E   E                +    where Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.') = render()
+E   E                +      where render = Static(classes='project-semantic-status settings-detail-row').render
+E   E                +        where Static(classes='project-semantic-status settings-detail-row') = query_one('.project-semantic-status', Static)
+E   E                +          where query_one = ProjectIndexBindingCard(classes='h-auto').query_one
+E   
+E   Tests\UI\test_project_semantic_consent.py:415: AssertionError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   ________ test_cleanup_retry_never_displays_revoked_old_semantic_state _________
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_cleanup_retry_never_displ0/private-profile-process/pytest/test_cleanup_retry_never_displ0')
+E   request = <FixtureRequest for <Coroutine test_cleanup_retry_never_displays_revoked_old_semantic_state>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B9C82B4560>
+E   
+E       @private_profile_test
+E       async def test_cleanup_retry_never_displays_revoked_old_semantic_state(
+E           tmp_path, request, monkeypatch
+E       ):
+E           from tldw_chatbook.Workspaces.project_index.models import ProjectIndexRetirementUnproven
+E       
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           actual_disable = rig.service.disable_semantic
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E                   selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+E                   rig.service.enable_semantic(
+E                       rig.key, selected,
+E                       expected_epoch=card.status.scope.epoch,
+E                       expected_semantic_revision=card.semantic_status.semantic_revision,
+E                   )
+E                   card.reload_status()
+E                   await wait_for_card(card, pilot)
+E                   assert card.semantic_status.enabled
+E       
+E                   def revoked_then_pending(*args, **kwargs):
+E                       result = actual_disable(*args, **kwargs)
+E                       assert result.state == "Off" and not result.enabled
+E                       raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
+E       
+E                   monkeypatch.setattr(rig.service, "disable_semantic", revoked_then_pending)
+E                   monkeypatch.setattr(rig.service, "semantic_close_pending", lambda key: True)
+E                   next(b for b in card.query(Button) if b.name == "semantic-disable").press()
+E                   await pilot.pause()
+E                   while card._pending:
+E                       await pilot.pause(0.02)
+E                   assert not rig.service.semantic_state(rig.key).enabled
+E   >               assert "cleanup pending" in str(card.query_one(".project-semantic-status", Static).render())
+E   E               AssertionError: assert 'cleanup pending' in 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'
+E   E                +  where 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.' = str(Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'))
+E   E                +    where Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.') = render()
+E   E                +      where render = Static(classes='project-semantic-status settings-detail-row').render
+E   E                +        where Static(classes='project-semantic-status settings-detail-row') = query_one('.project-semantic-status', Static)
+E   E                +          where query_one = ProjectIndexBindingCard(classes='h-auto').query_one
+E   
+E   Tests\UI\test_project_semantic_consent.py:415: AssertionError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 16:35:02.721 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 16:35:02.845 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 16:35:02.845 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 16:35:02.846 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 16:35:03.763 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-card-review-green-01\pytest-of-GDesktop-1\pytest-0\test_cleanup_retry_never_displ0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   14.07s call     Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+E   1.93s setup    Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+E   1 failed, 1 warning in 17.15s
+_____ test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch _____
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-card-review-green-01\pytest-of-GDesktop-1\pytest-0\test_stale_disable_after_clear0\private-profile-process\pytest.log
+E   --- child failure: ValueError: stale_semantic_revision
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_disable_after_clear0/private-profile-process/pytest/test_stale_disable_after_clear0')
+E   request = <FixtureRequest for <Coroutine test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000131EBB24380>
+E   
+E       @private_profile_test
+E       async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E                   selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+E                   semantic = rig.service.enable_semantic(
+E                       rig.key, selected,
+E                       expected_epoch=card.status.scope.epoch,
+E                       expected_semantic_revision=card.semantic_status.semantic_revision,
+E                   )
+E                   card.reload_status()
+E                   await wait_for_card(card, pilot)
+E                   stale = card.SemanticActionRequested(
+E                       card.binding_id, card.workspace_id, card.status, semantic,
+E                       "disable", "all-MiniLM-L6-v2",
+E                   )
+E                   rig.service.clear(rig.key, expected_scope=card.status.scope)
+E                   new_keyword = rig.enable()
+E   >               newer = rig.service.enable_semantic(
+E                       rig.key, selected,
+E                       expected_epoch=new_keyword.scope.epoch,
+E                       expected_semantic_revision=0,
+E                   )
+E   
+E   Tests\UI\test_project_semantic_consent.py:196: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   tldw_chatbook\Workspaces\project_index\service.py:955: in enable_semantic
+E       return self._configure_semantic(
+E   tldw_chatbook\Workspaces\project_index\service.py:994: in _configure_semantic
+E       result = store.configure_semantic(
+E   tldw_chatbook\DB\Workspace_Project_Index_DB.py:241: in run
+E       return function(store, *args, **kwargs)
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = <tldw_chatbook.DB.Workspace_Project_Index_DB.WorkspaceProjectIndexDB object at 0x00000131EF94A1E0>
+E   scope = ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', binding_id='binding', locato...entity_fingerprint='5d1581baf14dda76bf9c00f766e02cc1d8a98727c872ffa6bcf0c2337bda89d5'), epoch=3, processing_revision=1)
+E   settings = ProjectSemanticSettings(provider_id='huggingface', model_id='all-MiniLM-L6-v2', destination_fingerprint='sha256:v1:b8c... approved_destination_fingerprint=None, provider_ref='provider:v1:huggingface', config_ref='model:v1:all-MiniLM-L6-v2')
+E   
+E       @_activated
+E       def configure_semantic(
+E           self,
+E           scope: ProjectIndexScope,
+E           settings: ProjectSemanticSettings | None,
+E           *,
+E           enabled: bool,
+E           expected_semantic_revision: int,
+E       ) -> ProjectSemanticState:
+E           """CAS only the binding's semantic consent and setting revision."""
+E           if (
+E               type(scope) is not ProjectIndexScope
+E               or (settings is not None and type(settings) is not ProjectSemanticSettings)
+E               or type(enabled) is not bool  # noqa: E721 - reject bool/int subclasses
+E               or type(expected_semantic_revision) is not int  # noqa: E721 - reject bool
+E               or expected_semantic_revision < 0
+E               or (enabled and settings is None)
+E           ):
+E               raise ValueError("invalid_semantic_configuration")
+E           with self.transaction(semantic=True) as conn:
+E               if self._current(conn, scope, create=True) is None:
+E                   raise ValueError("stale_scope")
+E               prior = conn.execute(
+E                   "SELECT namespace,semantic_revision FROM semantic_control WHERE singleton=1"
+E               ).fetchone()
+E               if prior is not None and prior["namespace"] != scope.key.namespace:
+E                   raise ValueError("key_mismatch")
+E               revision = prior["semantic_revision"] if prior is not None else 0
+E               if revision != expected_semantic_revision:
+E   >               raise ValueError("stale_semantic_revision")
+E   E               ValueError: stale_semantic_revision
+E   
+E   tldw_chatbook\DB\Workspace_Project_Index_DB.py:804: ValueError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _____ test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch _____
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_disable_after_clear0/private-profile-process/pytest/test_stale_disable_after_clear0')
+E   request = <FixtureRequest for <Coroutine test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000131EBB24380>
+E   
+E       @private_profile_test
+E       async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E                   selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+E                   semantic = rig.service.enable_semantic(
+E                       rig.key, selected,
+E                       expected_epoch=card.status.scope.epoch,
+E                       expected_semantic_revision=card.semantic_status.semantic_revision,
+E                   )
+E                   card.reload_status()
+E                   await wait_for_card(card, pilot)
+E                   stale = card.SemanticActionRequested(
+E                       card.binding_id, card.workspace_id, card.status, semantic,
+E                       "disable", "all-MiniLM-L6-v2",
+E                   )
+E                   rig.service.clear(rig.key, expected_scope=card.status.scope)
+E                   new_keyword = rig.enable()
+E   >               newer = rig.service.enable_semantic(
+E                       rig.key, selected,
+E                       expected_epoch=new_keyword.scope.epoch,
+E                       expected_semantic_revision=0,
+E                   )
+E   
+E   Tests\UI\test_project_semantic_consent.py:196: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   tldw_chatbook\Workspaces\project_index\service.py:955: in enable_semantic
+E       return self._configure_semantic(
+E   tldw_chatbook\Workspaces\project_index\service.py:994: in _configure_semantic
+E       result = store.configure_semantic(
+E   tldw_chatbook\DB\Workspace_Project_Index_DB.py:241: in run
+E       return function(store, *args, **kwargs)
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   self = <tldw_chatbook.DB.Workspace_Project_Index_DB.WorkspaceProjectIndexDB object at 0x00000131EF94A1E0>
+E   scope = ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', binding_id='binding', locato...entity_fingerprint='5d1581baf14dda76bf9c00f766e02cc1d8a98727c872ffa6bcf0c2337bda89d5'), epoch=3, processing_revision=1)
+E   settings = ProjectSemanticSettings(provider_id='huggingface', model_id='all-MiniLM-L6-v2', destination_fingerprint='sha256:v1:b8c... approved_destination_fingerprint=None, provider_ref='provider:v1:huggingface', config_ref='model:v1:all-MiniLM-L6-v2')
+E   
+E       @_activated
+E       def configure_semantic(
+E           self,
+E           scope: ProjectIndexScope,
+E           settings: ProjectSemanticSettings | None,
+E           *,
+E           enabled: bool,
+E           expected_semantic_revision: int,
+E       ) -> ProjectSemanticState:
+E           """CAS only the binding's semantic consent and setting revision."""
+E           if (
+E               type(scope) is not ProjectIndexScope
+E               or (settings is not None and type(settings) is not ProjectSemanticSettings)
+E               or type(enabled) is not bool  # noqa: E721 - reject bool/int subclasses
+E               or type(expected_semantic_revision) is not int  # noqa: E721 - reject bool
+E               or expected_semantic_revision < 0
+E               or (enabled and settings is None)
+E           ):
+E               raise ValueError("invalid_semantic_configuration")
+E           with self.transaction(semantic=True) as conn:
+E               if self._current(conn, scope, create=True) is None:
+E                   raise ValueError("stale_scope")
+E               prior = conn.execute(
+E                   "SELECT namespace,semantic_revision FROM semantic_control WHERE singleton=1"
+E               ).fetchone()
+E               if prior is not None and prior["namespace"] != scope.key.namespace:
+E                   raise ValueError("key_mismatch")
+E               revision = prior["semantic_revision"] if prior is not None else 0
+E               if revision != expected_semantic_revision:
+E   >               raise ValueError("stale_semantic_revision")
+E   E               ValueError: stale_semantic_revision
+E   
+E   tldw_chatbook\DB\Workspace_Project_Index_DB.py:804: ValueError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 16:35:42.341 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 16:35:42.464 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 16:35:42.465 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 16:35:42.466 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 16:35:43.405 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-card-review-green-01\pytest-of-GDesktop-1\pytest-0\test_stale_disable_after_clear0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   20.96s call     Tests/UI/test_project_semantic_consent.py::test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch
+E   1.96s setup    Tests/UI/test_project_semantic_consent.py::test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch
+E   1 failed, 1 warning in 24.15s
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+28.22s call     Tests/UI/test_project_semantic_consent.py::test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch
+21.24s call     Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+18.03s call     Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+
+(6 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+FAILED Tests/UI/test_project_semantic_consent.py::test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch
+2 failed, 1 passed, 1 warning in 69.63s (0:01:09)

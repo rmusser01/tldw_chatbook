@@ -1,0 +1,596 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+_ test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first] _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-local128-sourcechange-01\pytest-of-GDesktop-1\pytest-0\test_model_free_local_batch1280\private-profile-process\pytest.log
+E   --- child failure: assert (False)
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_model_free_local_batch1280/private-profile-process/pytest/test_model_free_local_batch1280')
+E   request = <FixtureRequest for <Coroutine test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001EE3282F950>
+E   case = 'source_change_after_first'
+E   
+E       @pytest.mark.parametrize(
+E           "case", (
+E               "normal", "wrong_count", "stop_after_first", "source_change_after_first",
+E               "manifest_change_before_publish", "max_dimension",
+E           )
+E       )
+E       @private_profile_test
+E       async def test_model_free_local_batch128_tail_and_native32_commits(
+E           tmp_path, request, monkeypatch, case
+E       ):
+E           """Local provider pages retain native bounds and fail before unsafe work."""
+E           from collections import defaultdict
+E       
+E           from Tests.Workspaces.test_project_index_service import Rig
+E           from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+E           from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+E           from tldw_chatbook.Workspaces.project_index import semantic
+E       
+E           rig = Rig(tmp_path)
+E           source_chunks = 33 if case == "max_dimension" else 129
+E           text = "canine companion\n" * source_chunks
+E           (rig.root / "dog.py").write_text(text, encoding="utf-8")
+E           phases = defaultdict(list)
+E           closed = []
+E           batch_sizes = []
+E           committed_ids = []
+E           active_store = []
+E           mutated = False
+E       
+E           class Carrier:
+E               model_name = "deterministic"
+E               api_key = None
+E               base_url = None
+E               local_files_only = True
+E               artifact_fingerprint = digest("artifact-a")
+E       
+E               def close(self):
+E                   closed.append("carrier")
+E       
+E           class Wrapper:
+E               def __init__(self, **kwargs):
+E                   pass
+E       
+E               async def create_embeddings_async(self, texts):
+E                   started = time.perf_counter()
+E                   batch_sizes.append(len(texts))
+E                   vector = [1.0] * 16384 if case == "max_dimension" else [1.0, 0.0]
+E                   vectors = [vector] * len(texts)
+E                   if case == "wrong_count":
+E                       vectors = vectors[:-1]
+E                   phases["wrapper"].append(time.perf_counter() - started)
+E                   return vectors
+E       
+E               def close(self):
+E                   closed.append("wrapper")
+E       
+E           monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
+E           monkeypatch.setattr(semantic, "_require_current_catalog", lambda *args: (None, None))
+E           monkeypatch.setattr(
+E               semantic, "_target", lambda *args: SimpleNamespace(artifact_fingerprint=digest("artifact-a"))
+E           )
+E           monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
+E       
+E           original_source = WorkspaceProjectIndexDB.semantic_source_page
+E           original_append = WorkspaceProjectIndexDB.semantic_append
+E           original_retry = rig.service._retry_read
+E       
+E           def source_page(self, *args, **kwargs):
+E               started = time.perf_counter()
+E               try:
+E                   return original_source(self, *args, **kwargs)
+E               finally:
+E                   phases["source_sql"].append(time.perf_counter() - started)
+E       
+E           def append_page(self, *args, **kwargs):
+E               started = time.perf_counter()
+E               try:
+E                   result = original_append(self, *args, **kwargs)
+E                   if result:
+E                       committed_ids.append(tuple(row.chunk_id for row in args[3]))
+E                       if case == "stop_after_first" and len(committed_ids) == 1:
+E                           next(iter(rig.service._semantic_runs.values())).stop.set()
+E                   return result
+E               finally:
+E                   phases["append_sql"].append(time.perf_counter() - started)
+E       
+E           def retry_read(key, operation):
+E               nonlocal mutated
+E               if case == "manifest_change_before_publish" and operation.__name__ == "publish":
+E                   with active_store[0].transaction() as conn:
+E                       conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
+E               started = time.perf_counter()
+E               try:
+E                   result = original_retry(key, operation)
+E                   if (
+E                       case == "source_change_after_first"
+E                       and operation.__name__ == "append_page"
+E                       and len(committed_ids) == 1
+E                       and not mutated
+E                   ):
+E                       with active_store[0].transaction() as conn:
+E                           conn.execute(
+E                               "UPDATE chunks SET text='source changed' "
+E                               "WHERE id=(SELECT MIN(id)+32 FROM chunks)"
+E                           )
+E                       mutated = True
+E                   return result
+E               finally:
+E                   phases[operation.__name__].append(time.perf_counter() - started)
+E       
+E           monkeypatch.setattr(WorkspaceProjectIndexDB, "semantic_source_page", source_page)
+E           monkeypatch.setattr(WorkspaceProjectIndexDB, "semantic_append", append_page)
+E           monkeypatch.setattr(rig.service, "_retry_read", retry_read)
+E       
+E           def run():
+E               status = seed_keyword_ready(rig)
+E               store = rig.store(rig.key)
+E               active_store.append(store)
+E               lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+E               try:
+E                   store.bind_native_lifetime(lease)
+E                   with store.transaction() as conn:
+E                       conn.execute("DELETE FROM chunk_fts")
+E                       conn.execute("DELETE FROM chunks")
+E                       for index in range(source_chunks):
+E                           chunk = conn.execute(
+E                               "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
+E                               ("dog.py", "canine companion", index * 17, index * 17 + 16, index + 1, index + 1),
+E                           ).lastrowid
+E                           conn.execute(
+E                               "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+E                               (chunk, "dog.py", "canine companion"),
+E                           )
+E                   state = store.configure_semantic(
+E                       status.scope, settings(), enabled=True, expected_semantic_revision=0
+E                   )
+E               finally:
+E                   store.close_native()
+E                   lease.close()
+E               started = time.perf_counter()
+E               job_id = rig.service.refresh_semantic(
+E                   rig.key,
+E                   expected_epoch=status.scope.epoch,
+E                   expected_semantic_revision=state.semantic_revision,
+E               )
+E               job = rig.service._semantic_runs[job_id]
+E               job.thread.join(120)
+E               elapsed = time.perf_counter() - started
+E               assert not job.thread.is_alive() and job.native_retired
+E               ready = rig.service.semantic_state(rig.key)
+E               if case == "normal":
+E                   assert job.error is None and ready.state == "Ready" and ready.ready_generation_id
+E                   assert batch_sizes == [128, 1]
+E                   assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+E                   assert [id for page in committed_ids for id in page] == sorted(
+E                       id for page in committed_ids for id in page
+E                   )
+E                   assert len({id for page in committed_ids for id in page}) == 129
+E                   assert len(phases["append_page"]) == 5
+E               elif case == "wrong_count":
+E                   # A positively retired run drops its exception frames; the durable
+E                   # failure and absence of append are the contract to inspect.
+E                   assert committed_ids == [] and ready.state == "Error"
+E                   assert ready.reason == "provider_unavailable"
+E                   assert batch_sizes == [128]
+E               elif case == "stop_after_first":
+E                   assert job.stop.is_set() and ready.state != "Ready"
+E                   assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+E                   assert batch_sizes == [128]
+E               elif case == "source_change_after_first":
+E                   assert mutated and ready.state != "Ready"
+E                   assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+E                   assert ready.reason == "source_changed"
+E               elif case == "manifest_change_before_publish":
+E                   assert ready.state != "Ready" and ready.reason == "source_changed"
+E                   assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+E               else:
+E                   assert job.error is None and ready.state == "Ready" and ready.ready_generation_id
+E                   assert batch_sizes == [33]
+E                   assert [len(ids) for ids in committed_ids] == [16, 16, 1]
+E               assert closed == ["wrapper", "carrier"]
+E               timing = {
+E                   "elapsed_seconds": elapsed,
+E                   "source_chunks": source_chunks,
+E                   "case": case,
+E                   "batch_sizes": batch_sizes,
+E                   "native_retired": job.native_retired,
+E                   "phases_seconds": dict(phases),
+E               }
+E               (tmp_path / "stage-timing.json").write_text(
+E                   json.dumps(timing, indent=2), encoding="utf-8"
+E               )
+E       
+E           try:
+E   >           await asyncio.to_thread(run)
+E   
+E   Tests\Workspaces\test_project_semantic_generations.py:224: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\asyncio\threads.py:25: in to_thread
+E       return await loop.run_in_executor(None, func_call)
+E   C:\Python312\Lib\concurrent\futures\thread.py:59: in run
+E       result = self.fn(*self.args, **self.kwargs)
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E       def run():
+E           status = seed_keyword_ready(rig)
+E           store = rig.store(rig.key)
+E           active_store.append(store)
+E           lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+E           try:
+E               store.bind_native_lifetime(lease)
+E               with store.transaction() as conn:
+E                   conn.execute("DELETE FROM chunk_fts")
+E                   conn.execute("DELETE FROM chunks")
+E                   for index in range(source_chunks):
+E                       chunk = conn.execute(
+E                           "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
+E                           ("dog.py", "canine companion", index * 17, index * 17 + 16, index + 1, index + 1),
+E                       ).lastrowid
+E                       conn.execute(
+E                           "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+E                           (chunk, "dog.py", "canine companion"),
+E                       )
+E               state = store.configure_semantic(
+E                   status.scope, settings(), enabled=True, expected_semantic_revision=0
+E               )
+E           finally:
+E               store.close_native()
+E               lease.close()
+E           started = time.perf_counter()
+E           job_id = rig.service.refresh_semantic(
+E               rig.key,
+E               expected_epoch=status.scope.epoch,
+E               expected_semantic_revision=state.semantic_revision,
+E           )
+E           job = rig.service._semantic_runs[job_id]
+E           job.thread.join(120)
+E           elapsed = time.perf_counter() - started
+E           assert not job.thread.is_alive() and job.native_retired
+E           ready = rig.service.semantic_state(rig.key)
+E           if case == "normal":
+E               assert job.error is None and ready.state == "Ready" and ready.ready_generation_id
+E               assert batch_sizes == [128, 1]
+E               assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+E               assert [id for page in committed_ids for id in page] == sorted(
+E                   id for page in committed_ids for id in page
+E               )
+E               assert len({id for page in committed_ids for id in page}) == 129
+E               assert len(phases["append_page"]) == 5
+E           elif case == "wrong_count":
+E               # A positively retired run drops its exception frames; the durable
+E               # failure and absence of append are the contract to inspect.
+E               assert committed_ids == [] and ready.state == "Error"
+E               assert ready.reason == "provider_unavailable"
+E               assert batch_sizes == [128]
+E           elif case == "stop_after_first":
+E               assert job.stop.is_set() and ready.state != "Ready"
+E               assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+E               assert batch_sizes == [128]
+E           elif case == "source_change_after_first":
+E   >           assert mutated and ready.state != "Ready"
+E   E           assert (False)
+E   
+E   Tests\Workspaces\test_project_semantic_generations.py:200: AssertionError
+E   --- child log tail ---
+E   _fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _ test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first] _
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_model_free_local_batch1280/private-profile-process/pytest/test_model_free_local_batch1280')
+E   request = <FixtureRequest for <Coroutine test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001EE3282F950>
+E   case = 'source_change_after_first'
+E   
+E       @pytest.mark.parametrize(
+E           "case", (
+E               "normal", "wrong_count", "stop_after_first", "source_change_after_first",
+E               "manifest_change_before_publish", "max_dimension",
+E           )
+E       )
+E       @private_profile_test
+E       async def test_model_free_local_batch128_tail_and_native32_commits(
+E           tmp_path, request, monkeypatch, case
+E       ):
+E           """Local provider pages retain native bounds and fail before unsafe work."""
+E           from collections import defaultdict
+E       
+E           from Tests.Workspaces.test_project_index_service import Rig
+E           from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+E           from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+E           from tldw_chatbook.Workspaces.project_index import semantic
+E       
+E           rig = Rig(tmp_path)
+E           source_chunks = 33 if case == "max_dimension" else 129
+E           text = "canine companion\n" * source_chunks
+E           (rig.root / "dog.py").write_text(text, encoding="utf-8")
+E           phases = defaultdict(list)
+E           closed = []
+E           batch_sizes = []
+E           committed_ids = []
+E           active_store = []
+E           mutated = False
+E       
+E           class Carrier:
+E               model_name = "deterministic"
+E               api_key = None
+E               base_url = None
+E               local_files_only = True
+E               artifact_fingerprint = digest("artifact-a")
+E       
+E               def close(self):
+E                   closed.append("carrier")
+E       
+E           class Wrapper:
+E               def __init__(self, **kwargs):
+E                   pass
+E       
+E               async def create_embeddings_async(self, texts):
+E                   started = time.perf_counter()
+E                   batch_sizes.append(len(texts))
+E                   vector = [1.0] * 16384 if case == "max_dimension" else [1.0, 0.0]
+E                   vectors = [vector] * len(texts)
+E                   if case == "wrong_count":
+E                       vectors = vectors[:-1]
+E                   phases["wrapper"].append(time.perf_counter() - started)
+E                   return vectors
+E       
+E               def close(self):
+E                   closed.append("wrapper")
+E       
+E           monkeypatch.setattr(semantic, "_issue_project_projection_scope", lambda *args: Carrier())
+E           monkeypatch.setattr(semantic, "_require_current_catalog", lambda *args: (None, None))
+E           monkeypatch.setattr(
+E               semantic, "_target", lambda *args: SimpleNamespace(artifact_fingerprint=digest("artifact-a"))
+E           )
+E           monkeypatch.setattr(embeddings_wrapper, "EmbeddingsServiceWrapper", Wrapper)
+E       
+E           original_source = WorkspaceProjectIndexDB.semantic_source_page
+E           original_append = WorkspaceProjectIndexDB.semantic_append
+E           original_retry = rig.service._retry_read
+E       
+E           def source_page(self, *args, **kwargs):
+E               started = time.perf_counter()
+E               try:
+E                   return original_source(self, *args, **kwargs)
+E               finally:
+E                   phases["source_sql"].append(time.perf_counter() - started)
+E       
+E           def append_page(self, *args, **kwargs):
+E               started = time.perf_counter()
+E               try:
+E                   result = original_append(self, *args, **kwargs)
+E                   if result:
+E                       committed_ids.append(tuple(row.chunk_id for row in args[3]))
+E                       if case == "stop_after_first" and len(committed_ids) == 1:
+E                           next(iter(rig.service._semantic_runs.values())).stop.set()
+E                   return result
+E               finally:
+E                   phases["append_sql"].append(time.perf_counter() - started)
+E       
+E           def retry_read(key, operation):
+E               nonlocal mutated
+E               if case == "manifest_change_before_publish" and operation.__name__ == "publish":
+E                   with active_store[0].transaction() as conn:
+E                       conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
+E               started = time.perf_counter()
+E               try:
+E                   result = original_retry(key, operation)
+E                   if (
+E                       case == "source_change_after_first"
+E                       and operation.__name__ == "append_page"
+E                       and len(committed_ids) == 1
+E                       and not mutated
+E                   ):
+E                       with active_store[0].transaction() as conn:
+E                           conn.execute(
+E                               "UPDATE chunks SET text='source changed' "
+E                               "WHERE id=(SELECT MIN(id)+32 FROM chunks)"
+E                           )
+E                       mutated = True
+E                   return result
+E               finally:
+E                   phases[operation.__name__].append(time.perf_counter() - started)
+E       
+E           monkeypatch.setattr(WorkspaceProjectIndexDB, "semantic_source_page", source_page)
+E           monkeypatch.setattr(WorkspaceProjectIndexDB, "semantic_append", append_page)
+E           monkeypatch.setattr(rig.service, "_retry_read", retry_read)
+E       
+E           def run():
+E               status = seed_keyword_ready(rig)
+E               store = rig.store(rig.key)
+E               active_store.append(store)
+E               lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+E               try:
+E                   store.bind_native_lifetime(lease)
+E                   with store.transaction() as conn:
+E                       conn.execute("DELETE FROM chunk_fts")
+E                       conn.execute("DELETE FROM chunks")
+E                       for index in range(source_chunks):
+E                           chunk = conn.execute(
+E                               "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
+E                               ("dog.py", "canine companion", index * 17, index * 17 + 16, index + 1, index + 1),
+E                           ).lastrowid
+E                           conn.execute(
+E                               "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+E                               (chunk, "dog.py", "canine companion"),
+E                           )
+E                   state = store.configure_semantic(
+E                       status.scope, settings(), enabled=True, expected_semantic_revision=0
+E                   )
+E               finally:
+E                   store.close_native()
+E                   lease.close()
+E               started = time.perf_counter()
+E               job_id = rig.service.refresh_semantic(
+E                   rig.key,
+E                   expected_epoch=status.scope.epoch,
+E                   expected_semantic_revision=state.semantic_revision,
+E               )
+E               job = rig.service._semantic_runs[job_id]
+E               job.thread.join(120)
+E               elapsed = time.perf_counter() - started
+E               assert not job.thread.is_alive() and job.native_retired
+E               ready = rig.service.semantic_state(rig.key)
+E               if case == "normal":
+E                   assert job.error is None and ready.state == "Ready" and ready.ready_generation_id
+E                   assert batch_sizes == [128, 1]
+E                   assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+E                   assert [id for page in committed_ids for id in page] == sorted(
+E                       id for page in committed_ids for id in page
+E                   )
+E                   assert len({id for page in committed_ids for id in page}) == 129
+E                   assert len(phases["append_page"]) == 5
+E               elif case == "wrong_count":
+E                   # A positively retired run drops its exception frames; the durable
+E                   # failure and absence of append are the contract to inspect.
+E                   assert committed_ids == [] and ready.state == "Error"
+E                   assert ready.reason == "provider_unavailable"
+E                   assert batch_sizes == [128]
+E               elif case == "stop_after_first":
+E                   assert job.stop.is_set() and ready.state != "Ready"
+E                   assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+E                   assert batch_sizes == [128]
+E               elif case == "source_change_after_first":
+E                   assert mutated and ready.state != "Ready"
+E                   assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+E                   assert ready.reason == "source_changed"
+E               elif case == "manifest_change_before_publish":
+E                   assert ready.state != "Ready" and ready.reason == "source_changed"
+E                   assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+E               else:
+E                   assert job.error is None and ready.state == "Ready" and ready.ready_generation_id
+E                   assert batch_sizes == [33]
+E                   assert [len(ids) for ids in committed_ids] == [16, 16, 1]
+E               assert closed == ["wrapper", "carrier"]
+E               timing = {
+E                   "elapsed_seconds": elapsed,
+E                   "source_chunks": source_chunks,
+E                   "case": case,
+E                   "batch_sizes": batch_sizes,
+E                   "native_retired": job.native_retired,
+E                   "phases_seconds": dict(phases),
+E               }
+E               (tmp_path / "stage-timing.json").write_text(
+E                   json.dumps(timing, indent=2), encoding="utf-8"
+E               )
+E       
+E           try:
+E   >           await asyncio.to_thread(run)
+E   
+E   Tests\Workspaces\test_project_semantic_generations.py:224: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   C:\Python312\Lib\asyncio\threads.py:25: in to_thread
+E       return await loop.run_in_executor(None, func_call)
+E   C:\Python312\Lib\concurrent\futures\thread.py:59: in run
+E       result = self.fn(*self.args, **self.kwargs)
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E       def run():
+E           status = seed_keyword_ready(rig)
+E           store = rig.store(rig.key)
+E           active_store.append(store)
+E           lease = BindingLifetime.acquire(store.db_path.parent.parent / rig.key.lifetime_name)
+E           try:
+E               store.bind_native_lifetime(lease)
+E               with store.transaction() as conn:
+E                   conn.execute("DELETE FROM chunk_fts")
+E                   conn.execute("DELETE FROM chunks")
+E                   for index in range(source_chunks):
+E                       chunk = conn.execute(
+E                           "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
+E                           ("dog.py", "canine companion", index * 17, index * 17 + 16, index + 1, index + 1),
+E                       ).lastrowid
+E                       conn.execute(
+E                           "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+E                           (chunk, "dog.py", "canine companion"),
+E                       )
+E               state = store.configure_semantic(
+E                   status.scope, settings(), enabled=True, expected_semantic_revision=0
+E               )
+E           finally:
+E               store.close_native()
+E               lease.close()
+E           started = time.perf_counter()
+E           job_id = rig.service.refresh_semantic(
+E               rig.key,
+E               expected_epoch=status.scope.epoch,
+E               expected_semantic_revision=state.semantic_revision,
+E           )
+E           job = rig.service._semantic_runs[job_id]
+E           job.thread.join(120)
+E           elapsed = time.perf_counter() - started
+E           assert not job.thread.is_alive() and job.native_retired
+E           ready = rig.service.semantic_state(rig.key)
+E           if case == "normal":
+E               assert job.error is None and ready.state == "Ready" and ready.ready_generation_id
+E               assert batch_sizes == [128, 1]
+E               assert [len(ids) for ids in committed_ids] == [32, 32, 32, 32, 1]
+E               assert [id for page in committed_ids for id in page] == sorted(
+E                   id for page in committed_ids for id in page
+E               )
+E               assert len({id for page in committed_ids for id in page}) == 129
+E               assert len(phases["append_page"]) == 5
+E           elif case == "wrong_count":
+E               # A positively retired run drops its exception frames; the durable
+E               # failure and absence of append are the contract to inspect.
+E               assert committed_ids == [] and ready.state == "Error"
+E               assert ready.reason == "provider_unavailable"
+E               assert batch_sizes == [128]
+E           elif case == "stop_after_first":
+E               assert job.stop.is_set() and ready.state != "Ready"
+E               assert len(committed_ids) == 1 and len(committed_ids[0]) == 32
+E               assert batch_sizes == [128]
+E           elif case == "source_change_after_first":
+E   >           assert mutated and ready.state != "Ready"
+E   E           assert (False)
+E   
+E   Tests\Workspaces\test_project_semantic_generations.py:200: AssertionError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 16:56:36.831 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 16:56:36.958 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 16:56:36.958 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 16:56:36.959 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ============================== warnings summary ===============================
+E   Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-local128-sourcechange-01\pytest-of-GDesktop-1\pytest-0\test_model_free_local_batch1280\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   13.55s call     Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]
+E   
+E   (2 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]
+E   1 failed, 1 warning in 14.66s
+============================== warnings summary ===============================
+Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+18.45s call     Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[source_change_after_first]
+1 failed, 1 warning in 19.71s

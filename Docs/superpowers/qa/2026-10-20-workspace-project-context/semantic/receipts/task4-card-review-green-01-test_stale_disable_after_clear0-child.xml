@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="24.149" timestamp="2026-10-23T16:35:41.000175-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch" time="23.047"><failure message="ValueError: stale_semantic_revision">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_disable_after_clear0/private-profile-process/pytest/test_stale_disable_after_clear0')
+request = &lt;FixtureRequest for &lt;Coroutine test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x00000131EBB24380&gt;
+
+    @private_profile_test
+    async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
+        tmp_path, request, monkeypatch
+    ):
+        mod = card_module()
+        rig = Rig(tmp_path)
+        rig.enable()
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        try:
+            async with CardApp(card).run_test(size=(100, 35)) as pilot:
+                await wait_for_card(card, pilot)
+                selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+                semantic = rig.service.enable_semantic(
+                    rig.key, selected,
+                    expected_epoch=card.status.scope.epoch,
+                    expected_semantic_revision=card.semantic_status.semantic_revision,
+                )
+                card.reload_status()
+                await wait_for_card(card, pilot)
+                stale = card.SemanticActionRequested(
+                    card.binding_id, card.workspace_id, card.status, semantic,
+                    "disable", "all-MiniLM-L6-v2",
+                )
+                rig.service.clear(rig.key, expected_scope=card.status.scope)
+                new_keyword = rig.enable()
+&gt;               newer = rig.service.enable_semantic(
+                    rig.key, selected,
+                    expected_epoch=new_keyword.scope.epoch,
+                    expected_semantic_revision=0,
+                )
+
+Tests\UI\test_project_semantic_consent.py:196: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook\Workspaces\project_index\service.py:955: in enable_semantic
+    return self._configure_semantic(
+tldw_chatbook\Workspaces\project_index\service.py:994: in _configure_semantic
+    result = store.configure_semantic(
+tldw_chatbook\DB\Workspace_Project_Index_DB.py:241: in run
+    return function(store, *args, **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;tldw_chatbook.DB.Workspace_Project_Index_DB.WorkspaceProjectIndexDB object at 0x00000131EF94A1E0&gt;
+scope = ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', binding_id='binding', locato...entity_fingerprint='5d1581baf14dda76bf9c00f766e02cc1d8a98727c872ffa6bcf0c2337bda89d5'), epoch=3, processing_revision=1)
+settings = ProjectSemanticSettings(provider_id='huggingface', model_id='all-MiniLM-L6-v2', destination_fingerprint='sha256:v1:b8c... approved_destination_fingerprint=None, provider_ref='provider:v1:huggingface', config_ref='model:v1:all-MiniLM-L6-v2')
+
+    @_activated
+    def configure_semantic(
+        self,
+        scope: ProjectIndexScope,
+        settings: ProjectSemanticSettings | None,
+        *,
+        enabled: bool,
+        expected_semantic_revision: int,
+    ) -&gt; ProjectSemanticState:
+        """CAS only the binding's semantic consent and setting revision."""
+        if (
+            type(scope) is not ProjectIndexScope
+            or (settings is not None and type(settings) is not ProjectSemanticSettings)
+            or type(enabled) is not bool  # noqa: E721 - reject bool/int subclasses
+            or type(expected_semantic_revision) is not int  # noqa: E721 - reject bool
+            or expected_semantic_revision &lt; 0
+            or (enabled and settings is None)
+        ):
+            raise ValueError("invalid_semantic_configuration")
+        with self.transaction(semantic=True) as conn:
+            if self._current(conn, scope, create=True) is None:
+                raise ValueError("stale_scope")
+            prior = conn.execute(
+                "SELECT namespace,semantic_revision FROM semantic_control WHERE singleton=1"
+            ).fetchone()
+            if prior is not None and prior["namespace"] != scope.key.namespace:
+                raise ValueError("key_mismatch")
+            revision = prior["semantic_revision"] if prior is not None else 0
+            if revision != expected_semantic_revision:
+&gt;               raise ValueError("stale_semantic_revision")
+E               ValueError: stale_semantic_revision
+
+tldw_chatbook\DB\Workspace_Project_Index_DB.py:804: ValueError</failure></testcase></testsuite></testsuites>

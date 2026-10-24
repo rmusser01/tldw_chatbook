@@ -1,0 +1,297 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+_ test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0] _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\pytest.log
+E   --- child failure: AssertionError: (None, Region(x=41, y=61, width=29, height=1))
+E   assert None is not None
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_actual_settings_semantic_0/private-profile-process/pytest/test_actual_settings_semantic_0')
+E   request = <FixtureRequest for <Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]>>
+E   theme = 'textual-dark', size = (80, 24)
+E   
+E       @pytest.mark.parametrize(
+E           "theme,size", [("textual-dark", (80, 24)), ("textual-light", (170, 48))]
+E       )
+E       @private_profile_test
+E       async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
+E           tmp_path, request, theme, size
+E       ):
+E           from pathlib import Path
+E       
+E           from Tests.UI.app_factory import _build_test_app
+E           from Tests.UI.test_library_rag_result_focus import _assert_painted
+E           from Tests.UI.test_settings_configuration_hub import _wait_for_selector
+E           from Tests.UI.test_settings_workspaces_category import (
+E               _settings_without_splash,
+E               _wait_for_settings_screen,
+E           )
+E           from Tests.app_module_patches import patch_app_global
+E           from textual.worker import WorkerState
+E       
+E           app = _build_test_app(configured_default="settings")
+E           app.theme = theme
+E           registry = app.workspace_registry_service
+E           registry.create_workspace(workspace_id="semantic-ui", name="Semantic UI")
+E           root = tmp_path / "project"
+E           root.mkdir()
+E           registry.add_folder_binding("semantic-ui", root)
+E           with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+E               async with app.run_test(size=size) as pilot:
+E                   boot_worker = None
+E                   for _ in range(900):
+E                       boot_worker = app._boot_worker_handles.get("chachanotes_fts_backfill")
+E                       if boot_worker is not None:
+E                           break
+E                       await pilot.pause(0.05)
+E                   assert boot_worker is not None, "chachanotes_backfill_worker_not_admitted"
+E                   await asyncio.wait_for(boot_worker.wait(), timeout=120)
+E                   assert boot_worker.state is WorkerState.SUCCESS
+E                   assert boot_worker._task is not None and boot_worker._task.done()
+E                   screen = await _wait_for_settings_screen(app, pilot)
+E                   app.theme = theme
+E                   await _wait_for_selector(screen, pilot, "#settings-category-workspaces")
+E                   screen.query_one("#settings-category-workspaces", Button).press()
+E                   for _ in range(300):
+E                       rows = [
+E                           b
+E                           for b in screen.query(".settings-workspace-row")
+E                           if "Semantic UI" in str(b.label)
+E                       ]
+E                       if rows:
+E                           break
+E                       await pilot.pause(0.02)
+E                   assert rows
+E                   rows[0].press()
+E                   for _ in range(300):
+E                       await pilot.pause(0.02)
+E                       cards = list(screen.query(card_module().ProjectIndexBindingCard))
+E                       if cards and cards[0].semantic_status is not None:
+E                           break
+E                   assert cards and cards[0].semantic_status is not None, (
+E                       cards[0].status if cards else None,
+E                       cards[0]._pending if cards else None,
+E                       str(cards[0].query_one(".project-index-feedback", Static).render())
+E                       if cards
+E                       else "",
+E                   )
+E                   card = cards[0]
+E                   for name in ("semantic-stage",):
+E                       button = next(b for b in card.query(Button) if b.name == name)
+E                       button.focus()
+E                       button.scroll_visible(animate=False)
+E                       await pilot.pause()
+E   >                   _assert_painted(screen, button)
+E   
+E   Tests\UI\test_project_semantic_consent.py:559: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   screen = SettingsScreen(classes='shell-header-compact')
+E   widget = Button(name='semantic-stage', classes='-textual-compact -style-default project-semantic-action')
+E   
+E       def _assert_painted(screen, widget):
+E           """Require the whole control inside its compositor clip, not just the DOM."""
+E           geometry = screen._compositor.visible_widgets.get(widget)
+E   >       assert geometry is not None, (widget.id, widget.region)
+E   E       AssertionError: (None, Region(x=41, y=61, width=29, height=1))
+E   E       assert None is not None
+E   
+E   Tests\UI\test_library_rag_result_focus.py:25: AssertionError
+E   --- child log tail ---
+E   n"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   --- _setup_logging START (from Logging_Config.py) ---
+E   Loguru: All pre-existing sinks removed.
+E   Loguru: Configured to forward its messages to standard Python logging system.
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   _ test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0] _
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_actual_settings_semantic_0/private-profile-process/pytest/test_actual_settings_semantic_0')
+E   request = <FixtureRequest for <Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]>>
+E   theme = 'textual-dark', size = (80, 24)
+E   
+E       @pytest.mark.parametrize(
+E           "theme,size", [("textual-dark", (80, 24)), ("textual-light", (170, 48))]
+E       )
+E       @private_profile_test
+E       async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
+E           tmp_path, request, theme, size
+E       ):
+E           from pathlib import Path
+E       
+E           from Tests.UI.app_factory import _build_test_app
+E           from Tests.UI.test_library_rag_result_focus import _assert_painted
+E           from Tests.UI.test_settings_configuration_hub import _wait_for_selector
+E           from Tests.UI.test_settings_workspaces_category import (
+E               _settings_without_splash,
+E               _wait_for_settings_screen,
+E           )
+E           from Tests.app_module_patches import patch_app_global
+E           from textual.worker import WorkerState
+E       
+E           app = _build_test_app(configured_default="settings")
+E           app.theme = theme
+E           registry = app.workspace_registry_service
+E           registry.create_workspace(workspace_id="semantic-ui", name="Semantic UI")
+E           root = tmp_path / "project"
+E           root.mkdir()
+E           registry.add_folder_binding("semantic-ui", root)
+E           with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+E               async with app.run_test(size=size) as pilot:
+E                   boot_worker = None
+E                   for _ in range(900):
+E                       boot_worker = app._boot_worker_handles.get("chachanotes_fts_backfill")
+E                       if boot_worker is not None:
+E                           break
+E                       await pilot.pause(0.05)
+E                   assert boot_worker is not None, "chachanotes_backfill_worker_not_admitted"
+E                   await asyncio.wait_for(boot_worker.wait(), timeout=120)
+E                   assert boot_worker.state is WorkerState.SUCCESS
+E                   assert boot_worker._task is not None and boot_worker._task.done()
+E                   screen = await _wait_for_settings_screen(app, pilot)
+E                   app.theme = theme
+E                   await _wait_for_selector(screen, pilot, "#settings-category-workspaces")
+E                   screen.query_one("#settings-category-workspaces", Button).press()
+E                   for _ in range(300):
+E                       rows = [
+E                           b
+E                           for b in screen.query(".settings-workspace-row")
+E                           if "Semantic UI" in str(b.label)
+E                       ]
+E                       if rows:
+E                           break
+E                       await pilot.pause(0.02)
+E                   assert rows
+E                   rows[0].press()
+E                   for _ in range(300):
+E                       await pilot.pause(0.02)
+E                       cards = list(screen.query(card_module().ProjectIndexBindingCard))
+E                       if cards and cards[0].semantic_status is not None:
+E                           break
+E                   assert cards and cards[0].semantic_status is not None, (
+E                       cards[0].status if cards else None,
+E                       cards[0]._pending if cards else None,
+E                       str(cards[0].query_one(".project-index-feedback", Static).render())
+E                       if cards
+E                       else "",
+E                   )
+E                   card = cards[0]
+E                   for name in ("semantic-stage",):
+E                       button = next(b for b in card.query(Button) if b.name == name)
+E                       button.focus()
+E                       button.scroll_visible(animate=False)
+E                       await pilot.pause()
+E   >                   _assert_painted(screen, button)
+E   
+E   Tests\UI\test_project_semantic_consent.py:559: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E   
+E   screen = SettingsScreen(classes='shell-header-compact')
+E   widget = Button(name='semantic-stage', classes='-textual-compact -style-default project-semantic-action')
+E   
+E       def _assert_painted(screen, widget):
+E           """Require the whole control inside its compositor clip, not just the DOM."""
+E           geometry = screen._compositor.visible_widgets.get(widget)
+E   >       assert geometry is not None, (widget.id, widget.region)
+E   E       AssertionError: (None, Region(x=41, y=61, width=29, height=1))
+E   E       assert None is not None
+E   
+E   Tests\UI\test_library_rag_result_focus.py:25: AssertionError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 16:39:17.611 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 16:39:17.730 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 16:39:17.731 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 16:39:17.732 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 16:39:18.620 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ---------------------------- Captured stderr call -----------------------------
+E   2026-10-23 16:39:20.054 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ pydub dependency found. Feature 'pydub' is enabled.
+E   2026-10-23 16:39:21.966 | INFO     | tldw_chatbook.app:__init__:1289 - Loaded app_config - strip_thinking_tags: True
+E   2026-10-23 16:39:22.578 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-10-23 16:39:22.579 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-10-23 16:39:22.579 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-10-23 16:39:22.579 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'media_db' completed in 0.000s
+E   2026-10-23 16:39:22.808 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\tldw-chatbook-test-lp_rp88x\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 16:39:23.757 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\tldw-chatbook-test-lp_rp88x\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 16:39:25.434 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\tldw-chatbook-test-lp_rp88x\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 16:39:25.827 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 16:39:25.831 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\tldw-chatbook-test-lp_rp88x\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 16:39:25.831 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\tldw-chatbook-test-lp_rp88x\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 16:39:26.294 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-10-23 16:39:26.417 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-10-23 16:39:26.542 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-10-23 16:39:26.664 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-10-23 16:39:26.786 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-10-23 16:39:26.905 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-10-23 16:39:26.905 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\tldw-chatbook-test-lp_rp88x\scheduled_tasks.sqlite [Client: default]
+E   2026-10-23 16:39:28.034 | DEBUG    | tldw_chatbook.app:__init__:1468 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-10-23 16:39:28.034 | DEBUG    | tldw_chatbook.app:__init__:1471 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-10-23 16:39:28.147 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\profile\config\eval_overrides.yaml
+E   2026-10-23 16:39:28.587 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:614 - Created EvalsDB schema version 7
+E   2026-10-23 16:39:28.587 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\evals.db
+E   2026-10-23 16:39:28.587 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-10-23 16:39:29.476 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:_init_worker_handlers:2219 - Worker handler registry initialized with all handlers
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1661 - === STARTUP TIMING SUMMARY ===
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1662 - Total initialization time: 8.174 seconds
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1668 -   basic_init: 1.268s (15.5%)
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1668 -   attribute_init: 0.000s (0.0%)
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1668 -   parallel_init: 0.001s (0.0%)
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1681 -     - notes_service: 0.000s (0.4% of parallel_init)
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1681 -     - providers_models: 0.000s (0.2% of parallel_init)
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1681 -     - media_db: 0.000s (0.2% of parallel_init)
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1681 -     - prompts_service: 0.000s (0.1% of parallel_init)
+E   2026-10-23 16:39:29.476 | INFO     | tldw_chatbook.app:__init__:1685 - ==============================
+E   2026-10-23 16:39:35.037 | DEBUG    | tldw_chatbook.app:on_mount:3348 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+E   ------------------------------ Captured log call ------------------------------
+E   INFO     root:app.py:1423 App __init__: Determined initial tab value: settings
+E   WARNING  root:app.py:1530 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1551 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     root:app.py:2328 Splash screen enabled: False
+E   INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:275 event=app_started component=app
+E   INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+E   INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+E   INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+E       import audioop
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-worker-settled-01\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   42.65s call     Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E   1.89s setup    Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E   1 failed, 2 warnings in 45.96s
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+50.41s call     Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+1 failed, 1 warning in 52.17s

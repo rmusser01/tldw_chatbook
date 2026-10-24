@@ -1133,13 +1133,15 @@ class ProjectIndexService:
 
             run.generation_id = self._retry_read(run.scope.key, claim)
             after = 0
+            source_limit = 128 if run.state.settings.provider_id == "huggingface" else 32
             while True:
                 def read_page():
                     with self._admitted(store, run.scope.key) as live:
                         if live != run.authority or run.stop.is_set():
                             raise ValueError("stale_semantic_page")
                         return store.semantic_source_page(
-                            run.scope, run.generation_id, run.job_id, after=after
+                            run.scope, run.generation_id, run.job_id,
+                            after=after, limit=source_limit,
                         )
 
                 page = self._retry_read(run.scope.key, read_page)
@@ -1148,14 +1150,22 @@ class ProjectIndexService:
                 vectors = await wrapper.create_embeddings_async(
                     [source.text for source in page]
                 )
+                if len(vectors) != len(page):
+                    raise ValueError("invalid_semantic_vector_count")
                 encoded = tuple(encode_vector(vector) for vector in vectors)
+                if any(len(vector) != len(encoded[0]) for vector in encoded[1:]):
+                    raise ValueError("invalid_semantic_vector_dimension")
                 # Split vector commits if a high-dimensional model exceeds the
                 # one-MiB page bound; source ownership remains one bounded page.
                 first = 0
                 while first < len(page):
                     end = first
                     total = 0
-                    while end < len(page) and total + len(encoded[end]) <= 1024 * 1024:
+                    while (
+                        end < len(page)
+                        and end - first < 32
+                        and total + len(encoded[end]) <= 1024 * 1024
+                    ):
                         total += len(encoded[end])
                         end += 1
                     if end == first:
@@ -1172,8 +1182,8 @@ class ProjectIndexService:
                             )
                     if not self._retry_read(run.scope.key, append_page):
                         raise ValueError("stale_semantic_checkpoint")
+                    after = page[end - 1].chunk_id
                     first = end
-                after = page[-1].chunk_id
         finally:
             try:
                 self._retire_registry_for_model()

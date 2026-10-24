@@ -1,5 +1,6 @@
 """Mounted, per-folder semantic consent remains separate from keyword choices."""
 
+import asyncio
 import sys
 
 import pytest
@@ -160,6 +161,55 @@ async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
             with pytest.raises(ValueError, match="stale_scope"):
                 card._execute_semantic(card.app, action)
             assert not rig.service.semantic_state(rig.key).enabled
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
+    tmp_path, request, monkeypatch
+):
+    mod = card_module()
+    rig = Rig(tmp_path)
+    rig.enable()
+    monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+    monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+    card = mod.ProjectIndexBindingCard(
+        rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+    )
+    try:
+        async with CardApp(card).run_test(size=(100, 35)) as pilot:
+            await wait_for_card(card, pilot)
+            selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+            semantic = rig.service.enable_semantic(
+                rig.key,
+                selected,
+                expected_epoch=card.status.scope.epoch,
+                expected_semantic_revision=card.semantic_status.semantic_revision,
+            )
+            card.reload_status()
+            await wait_for_card(card, pilot)
+            stale = card.SemanticActionRequested(
+                card.binding_id,
+                card.workspace_id,
+                card.status,
+                semantic,
+                "disable",
+                "all-MiniLM-L6-v2",
+            )
+            rig.service.clear(rig.key, expected_scope=card.status.scope)
+            new_keyword = rig.enable()
+            newer = rig.service.enable_semantic(
+                rig.key,
+                selected,
+                expected_epoch=new_keyword.scope.epoch,
+                expected_semantic_revision=rig.service.semantic_state(
+                    rig.key
+                ).semantic_revision,
+            )
+            with pytest.raises(ValueError, match="stale_scope|stale_semantic_revision"):
+                card._execute_semantic(card.app, stale)
+            assert rig.service.semantic_state(rig.key) == newer
     finally:
         await rig.close()
 
@@ -331,6 +381,137 @@ async def test_pending_cleanup_retries_the_captured_owner_after_app_admission_cl
         await rig.close()
 
 
+@private_profile_test
+async def test_cleanup_retry_never_displays_revoked_old_semantic_state(
+    tmp_path, request, monkeypatch
+):
+    from tldw_chatbook.Workspaces.project_index.models import (
+        ProjectIndexRetirementUnproven,
+    )
+
+    mod = card_module()
+    rig = Rig(tmp_path)
+    rig.enable()
+    monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+    monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+    card = mod.ProjectIndexBindingCard(
+        rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+    )
+    actual_disable = rig.service.disable_semantic
+    try:
+        async with CardApp(card).run_test(size=(100, 35)) as pilot:
+            await wait_for_card(card, pilot)
+            selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+            rig.service.enable_semantic(
+                rig.key,
+                selected,
+                expected_epoch=card.status.scope.epoch,
+                expected_semantic_revision=card.semantic_status.semantic_revision,
+            )
+            card.reload_status()
+            await wait_for_card(card, pilot)
+            assert card.semantic_status.enabled
+
+            def revoked_then_pending(*args, **kwargs):
+                result = actual_disable(*args, **kwargs)
+                assert result.state == "Off" and not result.enabled
+                raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
+
+            monkeypatch.setattr(rig.service, "disable_semantic", revoked_then_pending)
+            monkeypatch.setattr(rig.service, "semantic_close_pending", lambda key: True)
+            next(b for b in card.query(Button) if b.name == "semantic-disable").press()
+            await pilot.pause()
+            while card._pending:
+                await pilot.pause(0.02)
+            assert not rig.service.semantic_state(rig.key).enabled
+            assert "cleanup pending" in str(
+                card.query_one(".project-semantic-status", Static).render()
+            )
+            monkeypatch.setattr(
+                rig.service, "semantic_close_pending", lambda key: False
+            )
+            monkeypatch.setattr(rig.service, "retry_semantic_close", lambda key: True)
+            next(
+                b for b in card.query(Button) if b.name == "semantic-retry-cleanup"
+            ).press()
+            await pilot.pause()
+            while card._pending:
+                await pilot.pause(0.02)
+            semantic_text = str(
+                card.query_one(".project-semantic-status", Static).render()
+            )
+            assert "Semantic index: Off" in semantic_text
+            assert "cleanup pending" not in semantic_text
+            assert not next(
+                b for b in card.query(Button) if b.name == "semantic-disable"
+            ).display
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_semantic_read_error_preserves_last_known_state_and_retry_guidance(
+    tmp_path, request, monkeypatch
+):
+    mod = card_module()
+    rig = Rig(tmp_path)
+    rig.enable()
+    monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+    monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+    card = mod.ProjectIndexBindingCard(
+        rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+    )
+    try:
+        async with CardApp(card).run_test(size=(100, 35)) as pilot:
+            await wait_for_card(card, pilot)
+            known = card.semantic_status
+            keyword = card.status
+            card.query_one(".project-index-prefixes", Input).value = "dirty-folder"
+            actual_state = rig.service.semantic_state
+
+            def failed_read(key):
+                raise RuntimeError("semantic_read_failed")
+
+            monkeypatch.setattr(rig.service, "semantic_state", failed_read)
+            card.reload_status()
+            await pilot.pause()
+            while card._pending:
+                await pilot.pause(0.02)
+            assert card.semantic_status == known
+            assert card.status == keyword
+            assert (
+                card.query_one(".project-index-prefixes", Input).value == "dirty-folder"
+            )
+            text = str(card.query_one(".project-semantic-status", Static).render())
+            assert "unavailable" in text.lower() and "Check status" in text
+            assert not next(
+                b for b in card.query(Button) if b.name == "semantic-stage"
+            ).display
+            monkeypatch.setattr(rig.service, "semantic_state", actual_state)
+            card.reload_status()
+            await pilot.pause()
+            while card._pending:
+                await pilot.pause(0.02)
+            assert "Semantic index: Off" in str(
+                card.query_one(".project-semantic-status", Static).render()
+            )
+            from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
+
+            def busy_read(key):
+                raise LifetimeBusy("index is busy")
+
+            monkeypatch.setattr(rig.service, "semantic_state", busy_read)
+            card.reload_status()
+            await pilot.pause()
+            while card._pending:
+                await pilot.pause(0.02)
+            assert "temporarily unavailable" in str(
+                card.query_one(".project-semantic-status", Static).render()
+            )
+    finally:
+        await rig.close()
+
+
 @pytest.mark.parametrize(
     "theme,size", [("textual-dark", (80, 24)), ("textual-light", (170, 48))]
 )
@@ -348,6 +529,7 @@ async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
         _wait_for_settings_screen,
     )
     from Tests.app_module_patches import patch_app_global
+    from textual.worker import WorkerState
 
     app = _build_test_app(configured_default="settings")
     app.theme = theme
@@ -358,6 +540,13 @@ async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
     registry.add_folder_binding("semantic-ui", root)
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=size) as pilot:
+            boot_worker = None
+            for _ in range(900):
+                boot_worker = app._boot_worker_handles.get("chachanotes_fts_backfill")
+                if boot_worker is not None:
+                    break
+                await pilot.pause(0.05)
+            assert boot_worker is not None, "chachanotes_backfill_worker_not_admitted"
             screen = await _wait_for_settings_screen(app, pilot)
             app.theme = theme
             await _wait_for_selector(screen, pilot, "#settings-category-workspaces")
@@ -401,3 +590,12 @@ async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
             app.save_screenshot(
                 filename=f"task4-settings-semantic-{theme}-{size[0]}.svg", path=str(qa)
             )
+            await asyncio.wait_for(boot_worker.wait(), timeout=120)
+            assert boot_worker.state is WorkerState.SUCCESS
+            assert boot_worker._task is not None and boot_worker._task.done()
+            button = next(b for b in card.query(Button) if b.name == "semantic-stage")
+            button.focus()
+            button.scroll_visible(animate=False)
+            await pilot.pause()
+            _assert_painted(screen, button)
+            assert app.focused is button
