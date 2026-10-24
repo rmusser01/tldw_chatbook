@@ -1,13 +1,14 @@
 """P3a Task 4: PersonasScreen library-scale wiring — mounted integration
 against a REAL CharactersRAGDB.
 
-Proves the character library is now page-at-a-time (Task 1 DB seam + Task 3
-pane controls wired through the screen):
+Proves the character library reads the database in windows (B2a,
+TASK-33910.3, spec 1.5.6; it replaced P3a's pager and page offset):
 
-- first page shows PERSONAS_LIBRARY_PAGE_SIZE rows + a "1-50 of N" page bar,
-- next page is disjoint from the first,
-- a tag filter narrows the count and resets the page offset,
-- a sort change resets the page offset,
+- the first window holds PERSONAS_LIBRARY_PAGE_SIZE (200) rows, and End
+  appends the rest once, every id once, the first window untouched,
+- a tag filter narrows the count and the loaded rows,
+- a sort change reloads the whole list from row 0,
+- appending a window for an unchanged filter does not recount,
 - importing a card whose name conflicts with an OFF-PAGE character reports
   "already existed" (drives the count-based pre-import existence check that
   replaced the page-cache membership snapshot).
@@ -59,7 +60,7 @@ def _seed(db, count, *, tags_for=None):
 
 def _pane_visible_rows(pane: PersonasLibraryPane) -> int:
     """Number of selectable library rows currently rendered."""
-    return len(pane._row_lookup)
+    return len(pane.item_list.loaded_ids())
 
 
 @asynccontextmanager
@@ -79,33 +80,33 @@ async def _personas(mock_app_instance, db, monkeypatch):
 
 
 async def test_first_page_and_next(mock_app_instance, scaled_db, monkeypatch):
+    """B2a (spec 1.5.6): the first window holds PERSONAS_LIBRARY_PAGE_SIZE (200)
+    rows; End loads the rest in one append, every id once, the first window
+    untouched."""
     baseline = scaled_db.count_character_cards()
-    _seed(scaled_db, 130)
-    total = baseline + 130
+    _seed(scaled_db, 260)
+    total = baseline + 260
     async with _personas(mock_app_instance, scaled_db, monkeypatch) as (
         pilot,
         screen,
     ):
         pane = screen.query_one(PersonasLibraryPane)
-        assert screen.state.page_offset == 0
         assert screen._character_total == total
-        # First page: exactly PAGE_SIZE rows + a "1-50 of N" page bar.
         assert _pane_visible_rows(pane) == PERSONAS_LIBRARY_PAGE_SIZE
-        info = screen.query_one("#personas-library-page-info").renderable
-        assert f"1-{PERSONAS_LIBRARY_PAGE_SIZE} of {total}" in str(info)
-        assert screen.query_one("#personas-library-pagebar").display is True
-
-        first_ids = set(pane._row_lookup and _row_ids(pane))
-        await screen._on_page_changed_delta(1)
+        assert pane.item_list.more_available is True
+        first_ids = _row_ids(pane)
+        pane.item_list.focus()
+        await pilot.press("end")
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        assert screen.state.page_offset == PERSONAS_LIBRARY_PAGE_SIZE
-        second_ids = set(_row_ids(pane))
-        # Next page is a disjoint window.
-        assert first_ids and second_ids and first_ids.isdisjoint(second_ids)
+        ids = _row_ids(pane)
+        assert len(ids) == total and len(set(ids)) == total
+        assert ids[: len(first_ids)] == first_ids
+        assert pane.item_list.more_available is False
 
 
 def _row_ids(pane: PersonasLibraryPane) -> list[str]:
-    return [row.item_id for row in pane._row_lookup.values()]
+    return [pane.item_list.row(oid).item_id for oid in pane.item_list.loaded_ids()]
 
 
 async def test_tag_filter_narrows_count_and_resets_offset(
@@ -120,12 +121,12 @@ async def test_tag_filter_narrows_count_and_resets_offset(
         pilot,
         screen,
     ):
-        screen.state.page_offset = PERSONAS_LIBRARY_PAGE_SIZE  # pretend we paged
         await screen._apply_tag_filter("hero")
         await pilot.pause()
         assert screen._character_total == 3
-        assert screen.state.page_offset == 0
         assert screen.state.tag_filter == "hero"
+        pane = screen.query_one(PersonasLibraryPane)
+        assert _pane_visible_rows(pane) == 3
         # Clearing the filter (None) restores the full count.
         await screen._apply_tag_filter(None)
         await pilot.pause()
@@ -134,18 +135,19 @@ async def test_tag_filter_narrows_count_and_resets_offset(
 
 
 async def test_sort_change_resets_offset(mock_app_instance, scaled_db, monkeypatch):
+    """A sort change reloads from row 0 in the new order (no page to reset)."""
     _seed(scaled_db, 130)
     async with _personas(mock_app_instance, scaled_db, monkeypatch) as (
         pilot,
         screen,
     ):
         assert screen.state.sort_key == "name_asc"
-        screen.state.page_offset = PERSONAS_LIBRARY_PAGE_SIZE
         await screen._cycle_sort()
         await pilot.pause()
-        assert screen.state.page_offset == 0
-        # Cycle advanced off the default sort.
+        # Cycle advanced off the default sort, and the list reloaded whole.
         assert screen.state.sort_key != "name_asc"
+        pane = screen.query_one(PersonasLibraryPane)
+        assert _pane_visible_rows(pane) == screen._character_total
 
 
 async def test_character_page_reads_run_off_the_event_loop(
@@ -198,7 +200,6 @@ async def test_character_search_defaults_to_relevance_sort(
         assert screen.state.sort_key == "name_asc"
         screen._handle_search_changed(PersonaSearchChanged(query="c00"))
         assert screen.state.sort_key == "relevance"
-        assert screen.state.page_offset == 0
         # Clearing the search reverts relevance (search-only) to name.
         screen._handle_search_changed(PersonaSearchChanged(query=""))
         assert screen.state.sort_key == "name_asc"
@@ -222,17 +223,30 @@ async def test_sort_cycle_excludes_relevance_outside_characters_mode(
 
 
 async def test_page_nav_reuses_count_cache(mock_app_instance, scaled_db, monkeypatch):
-    """Sort/page navigation must not recompute the count for an unchanged filter."""
-    _seed(scaled_db, 130)
+    """Appending a window for an unchanged filter must not recount."""
+    import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+
+    _seed(scaled_db, 260)
+    counts: list[object] = []
+    original = personas_screen_module.count_character_page
+
+    def counting(*args, **kwargs):
+        counts.append(kwargs)
+        return original(*args, **kwargs)
+
     async with _personas(mock_app_instance, scaled_db, monkeypatch) as (
         pilot,
         screen,
     ):
         cache_key = screen._count_cache_key
         assert cache_key == (None, None)
-        await screen._on_page_changed_delta(1)
+        monkeypatch.setattr(personas_screen_module, "count_character_page", counting)
+        pane = screen.query_one(PersonasLibraryPane)
+        pane.item_list.focus()
+        await pilot.press("end")
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        # Page nav within the same (search, tag) keeps the cached key.
+        assert counts == []
         assert screen._count_cache_key == cache_key
 
 
@@ -242,8 +256,8 @@ async def test_import_offpage_name_conflict_message(
     """A name conflict with an OFF-PAGE character reports 'already existed',
     not 'imported new' — the page-cache snapshot would have missed it."""
     # Seed enough alphabetically-earlier characters that the conflict target
-    # ("Zzz Offpage") lands beyond the first page.
-    _seed(scaled_db, 60)
+    # ("Zzz Offpage") lands beyond the first window of 200 (spec 1.5.6).
+    _seed(scaled_db, 260)
     conflict_name = "Zzz Offpage"
     scaled_db.add_character_card({"name": conflict_name, "description": "orig"})
 
@@ -269,10 +283,12 @@ async def test_import_offpage_name_conflict_message(
     )
 
     async with _personas(mock_app_instance, scaled_db, monkeypatch) as (pilot, screen):
-        # The conflict character is not on page 0 (name_asc), proving the fix
-        # cannot lean on the page cache.
+        # The conflict character is not in the first window (name_asc),
+        # proving the fix cannot lean on the loaded rows.
         pane = screen.query_one(PersonasLibraryPane)
-        assert conflict_name not in {row.name for row in pane._row_lookup.values()}
+        assert conflict_name not in {
+            pane.item_list.row(oid).name for oid in pane.item_list.loaded_ids()
+        }
 
         notes: list[tuple[str, str]] = []
         monkeypatch.setattr(

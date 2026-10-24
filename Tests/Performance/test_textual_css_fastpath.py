@@ -323,7 +323,16 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
 #: vocabulary pinning reorganised ten of these rules away: measured 264,
 #: re-pinned at 264 + 10 so the freed headroom is banked, per the same
 #: convention.
-MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 274
+#: LOWERED 2026-10-22 (Roleplay frame B2a, TASK-33910.3; spec 2.12 item 1):
+#: the ListView and its pager left PersonasLibraryPane, and with them three
+#: counted rules (`#personas-library-rows ListItem Static`, the recovery
+#: row's `Static`, `#personas-library-pagebar Button`). Measured 272 -> 269
+#: on the slice head; pinned at the measurement, as the spec asks.
+#: RE-MEASURED 2026-10-23 after the slice moved onto dev 5b5920b8e2: dev's
+#: own count rose 272 -> 273 between 7700c63a68 and 5b5920b8e2 (not B2a's),
+#: so the slice head measures 273 -> 270, the same three rules fewer; pinned
+#: at that measurement, still 4 below dev's 274.
+MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 270
 
 #: Anti-vacuity floor: the census walking a hollow stylesheet (bundle
 #: missing, parse failure swallowed) must fail loudly, not pass at zero.

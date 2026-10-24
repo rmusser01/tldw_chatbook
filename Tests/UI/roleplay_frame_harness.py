@@ -15,11 +15,11 @@ Spec section 5.7.1 (Docs/superpowers/specs/2026-10-02-roleplay-library-frame-des
 - ``roleplay_full_app()`` is styled tier 2: a real ``TldwCli`` that reaches
   Roleplay through a real route (the initial tab, or Ctrl+4 from Home), so
   ``TldwCli._ensure_screen_owned_css`` loads the Roleplay sheet exactly as it
-  does for a user. It is seeded through the same ``ccp_character_handler``
-  seams as the mock tier (``seed_mock_characters``), not through a temporary
-  ChaChaNotes as spec 5.7.1 describes: a recorded B1 deviation, so this tier
-  proves styling and routing, not persistence. Frame slice B2a converts it to
-  DB seeding before its volume tests (TASK-33910.3 carries the note).
+  does for a user. Since frame slice B2a both styled tiers take
+  ``character_db=``, a file-backed ChaChaNotes (``open_volume_db`` copies a
+  session template of 348 or 5,000 seeded characters), so they prove
+  persistence as spec 5.7.1 asks; tests without one still seed through the
+  ``ccp_character_handler`` seams (``seed_mock_characters``).
 
 A real ``TldwCli`` that pushes ``PersonasScreen`` itself skips
 ``_ensure_screen_owned_css`` and paints the inline header without its rules
@@ -37,13 +37,17 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import shutil
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+from textual.content import Content
 from textual.css.stylesheet import CssSource
 from textual.geometry import Region
 from textual.pilot import Pilot
@@ -51,16 +55,52 @@ from textual.screen import Screen
 from textual.widget import Widget
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
+import tldw_chatbook.config as config_module
+import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, CSS_DIR, ConsolidatedCSSApp
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
-from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import RoleplayItemList
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph, set_ascii_glyph_mode
 
 #: The lazily loaded Roleplay sheet (build_css.SCREEN_OWNED_SPLITS).
 ROLEPLAY_SHEET = CSS_DIR / "screen_feature_roleplay.tcss"
+
+#: Character counts the B2a volume tests seed (spec 5.2 B2a): the volume
+#: profile's 348 and the 5,000-row latency copy.
+VOLUME_SIZES: tuple[int, ...] = (348, 5000)
+#: The character spec 1.6's 4-key find opens (``ctrl+f isolde ⏎ ⏎``).
+ISOLDE = "Captain Isolde Varga"
+#: Session templates by (pytest basetemp, count); see ``volume_db_path``.
+_VOLUME_TEMPLATES: dict[tuple[str, int], Path] = {}
+
+
+class NotYetDelivered(Exception):
+    """A journey step a later frame slice delivers (spec 5.7.3, RC-7).
+
+    A full-journey test is ``xfail(strict=True, raises=NotYetDelivered)`` and
+    raises this explicitly at each undelivered step, so a regression in a
+    delivered step fails the test instead of hiding in a plain ``xfail``. The
+    slice that delivers the last step removes the marker.
+    """
+
+
+def not_yet_delivered(step: str, owner: str) -> None:
+    """Raise ``NotYetDelivered`` for one journey step.
+
+    Args:
+        step: What the step does (``"/ focuses the items search"``).
+        owner: The frame slice that delivers it (``"B3"``).
+
+    Raises:
+        NotYetDelivered: Always.
+    """
+    raise NotYetDelivered(f"{step} (frame slice {owner})")
+
 
 #: Spec 5.7.1 geometry matrix for B1: 80x24 is the degrade check, the other
 #: three are the design centre. 60x24 joins with B7: B1's worst-case header
@@ -173,6 +213,83 @@ def seed_mock_characters(
     patch_character_paging(monkeypatch)
 
 
+def volume_character(index: int) -> dict[str, Any]:
+    """One deterministic seeded card: a unique name, a tag and a description.
+
+    Index 0 is ``ISOLDE`` (spec 1.6's 4-key find); the rest are
+    ``Character 0001`` ... in name order, so row ``n`` of the name-sorted list
+    is ``Character {n:04d}`` (row 0 is Isolde, the built-in Default Assistant
+    sorts last).
+    """
+    name = ISOLDE if index == 0 else f"Character {index:04d}"
+    return {
+        "name": name,
+        "description": f"Seeded volume character number {index}.",
+        "tags": [("fantasy", "sci-fi", "noir")[index % 3]],
+    }
+
+
+def volume_db_path(tmp_path_factory: pytest.TempPathFactory, count: int) -> Path:
+    """A closed ChaChaNotes file holding ``count`` seeded characters (plus the built-in one).
+
+    Seeded once per test session through the app's own ``add_character_card``
+    inside one transaction (measured: 0.4 s for 348, 6.3 s for 5,000), then
+    copied per test by ``open_volume_db`` (about 0.13 s at 5,000). Closing
+    checkpoints the WAL, so the template is one file.
+
+    Args:
+        tmp_path_factory: pytest's session-scoped factory.
+        count: Characters to seed.
+
+    Returns:
+        The template's path.
+    """
+    key = (str(tmp_path_factory.getbasetemp()), count)
+    if key not in _VOLUME_TEMPLATES:
+        path = tmp_path_factory.mktemp(f"roleplay-volume-{count}") / "template.db"
+        db = CharactersRAGDB(path, "roleplay-b2a-volume")
+        try:
+            with db.transaction():
+                for index in range(count):
+                    db.add_character_card(volume_character(index))
+        finally:
+            db.close_connection()
+        _VOLUME_TEMPLATES[key] = path
+    return _VOLUME_TEMPLATES[key]
+
+
+def open_volume_db(tmp_path: Path, template: Path) -> CharactersRAGDB:
+    """A per-test copy of a volume template, opened (the caller closes it)."""
+    target = tmp_path / "chachanotes.db"
+    shutil.copyfile(template, target)
+    return CharactersRAGDB(target, "roleplay-b2a-test")
+
+
+@contextmanager
+def character_db_in_use(
+    db: CharactersRAGDB, app_instance: Any = None
+) -> Iterator[None]:
+    """Route Roleplay's character and lore database reads and writes to ``db``.
+
+    Roleplay resolves its character DB through ``config.get_chachanotes_db_lazy``
+    at call time (``ccp_character_handler._default_character_db`` and
+    ``Character_Chat_Lib._get_default_chachanotes_db``); lore reads
+    ``app.chachanotes_db``. A ``:memory:`` DB cannot serve (one connection per
+    thread: the screen's off-thread page reads would see an empty database).
+
+    Args:
+        db: A file-backed database (``open_volume_db`` or a test's own).
+        app_instance: The mock tier's ``mock_app_instance``, whose
+            ``chachanotes_db`` lore reads. Never a factory-built ``TldwCli``:
+            its Actor Pack coordinator has no DB, and Roleplay's arrival
+            would run recovery against it and fail the initial load.
+    """
+    if app_instance is not None:
+        app_instance.chachanotes_db = db
+    with patch.object(config_module, "get_chachanotes_db_lazy", lambda: db):
+        yield
+
+
 def _settings_for_full_app(ascii_glyphs: bool) -> Callable[..., Any]:
     """``get_cli_setting`` for the full-app tier: no splash, chosen glyph mode.
 
@@ -222,10 +339,192 @@ async def wait_until(
 
 
 def _first_list_item_present(app) -> bool:
+    """Roleplay is up once its list shows a row, or its empty or recovery line."""
     screen = app.screen
-    return isinstance(screen, PersonasScreen) and bool(
-        screen.query("#personas-library-rows > ListItem")
+    return isinstance(screen, PersonasScreen) and (
+        bool(visible_item_ids(screen)) or list_state(screen).state != "rows"
     )
+
+
+@dataclass(frozen=True)
+class RoleplayItemView:
+    """One loaded row of the items list, read back the way a test needs it.
+
+    ``name``, ``state`` and ``meta`` are the row's data (``meta`` is line 2's
+    scent, whether or not the density paints it); ``lines`` is what the prompt
+    paints, gutter stripped, trailing blank lines dropped. ``marked`` is the
+    list's mark state; ``painted_mark`` is what the row paints: the option's
+    own prompt shows the resolved ``✓`` (``[x]`` in ASCII mode) in the
+    gutter's mark column.
+    """
+
+    option_id: str
+    kind: str
+    item_id: str
+    name: str
+    state: str | None
+    meta: str | None
+    lines: tuple[str, ...]
+    active: bool
+    marked: bool
+    painted_mark: bool
+    disabled: bool
+
+
+@dataclass(frozen=True)
+class RoleplayListState:
+    """``rows``, ``empty`` or ``recovery``, with the rows, the cursor and the status copy."""
+
+    state: str
+    items: tuple[RoleplayItemView, ...]
+    highlighted: str | None
+    text: str | None
+
+
+def _item_list(node) -> RoleplayItemList:
+    return node.query_one("#personas-library-rows", RoleplayItemList)
+
+
+def item_at(node, index: int | str) -> RoleplayItemView:
+    """The loaded row at ``index`` (0-based, list order), or by option id ``"<kind>:<id>"``.
+
+    Args:
+        node: The app, a screen or the pane (anything with ``query_one``).
+        index: A row index or an option id.
+    """
+    item_list = _item_list(node)
+    if isinstance(index, str):
+        index = item_list.get_option_index(index)
+    option = item_list.get_option_at_index(index)
+    option_id = str(option.id)
+    row = item_list.row(option_id)
+    prompt = item_list.prompt_for(option_id)
+    assert row is not None and prompt is not None, option_id
+    gutter = len(prompt.lines[0][0][0])
+    painted = ["".join(text for text, _style in line)[gutter:] for line in prompt.lines]
+    while painted and not painted[-1].strip():
+        painted.pop()
+    # The prompt OptionList paints, not the list's state or its cached spans.
+    shown = option.prompt
+    shown_text = shown.plain if isinstance(shown, Content) else str(shown)
+    mark_columns = frame_state.gutter_mark_columns()
+    mark_cell = shown_text[mark_columns.start : mark_columns.stop]
+    painted_mark = mark_cell == resolve_glyph("✓")
+    kind, _, item_id = option_id.partition(":")
+    return RoleplayItemView(
+        option_id=option_id,
+        kind=kind,
+        item_id=item_id,
+        name=row.name,
+        state=row.state,
+        meta=row.meta,
+        lines=tuple(painted),
+        active=item_list.active_id == option_id,
+        marked=option_id in item_list.marked_ids(kind),
+        painted_mark=painted_mark,
+        disabled=option.disabled,
+    )
+
+
+def visible_item_ids(node) -> tuple[str, ...]:
+    """Option ids of every loaded row, in list order (not only the viewport)."""
+    return _item_list(node).loaded_ids()
+
+
+def highlighted_item_id(node) -> str | None:
+    """The cursor row's option id, or None."""
+    return _item_list(node).highlighted_id()
+
+
+def list_state(node) -> RoleplayListState:
+    """The list's rows and cursor, and the empty or recovery copy shown beside it."""
+    item_list = _item_list(node)
+    items = tuple(item_at(node, index) for index in range(item_list.option_count))
+    status = node.query_one("#personas-library-status")
+    state, text = "rows", None
+    if status.display and status.children:
+        static = status.children[0]
+        text = str(static.render())
+        state = "empty" if static.id == "personas-library-empty" else "recovery"
+    return RoleplayListState(state, items, highlighted_item_id(node), text)
+
+
+def painted_option_rows(item_list: RoleplayItemList) -> dict[int, list[int]]:
+    """The screen rows each option index is painted on (from the ``option`` style meta)."""
+    region = item_list.content_region
+    rows: dict[int, list[int]] = {}
+    for y in range(region.y, region.bottom):
+        style = item_list.screen.get_style_at(region.x, y)
+        option = style.meta.get("option") if style is not None else None
+        if option is not None:
+            rows.setdefault(option, []).append(y)
+    return rows
+
+
+async def select_roleplay_item(
+    pilot: Pilot,
+    node,
+    item_id: str | None = None,
+    *,
+    index: int | None = None,
+    via: str = "enter",
+    load: bool = True,
+) -> None:
+    """Move the cursor to a row and, by default, load it like a user (I6).
+
+    Args:
+        pilot: The running pilot.
+        node: The app, screen or pane holding the list.
+        item_id: Option id ``"<kind>:<id>"`` (or give ``index``).
+        index: Row index when no id is given.
+        via: ``"enter"`` (cursor + Enter's action) or ``"click"`` (a real mouse
+            click on the row's name, which must be painted: an unpainted row
+            fails loudly instead of clicking nothing, census finding F2).
+        load: False only moves the cursor.
+    """
+    item_list = _item_list(node)
+    if item_id is not None:
+        index = item_list.get_option_index(item_id)
+    if index is None:
+        raise ValueError("select_roleplay_item needs item_id or index")
+    item_list.highlighted = index
+    await pilot.pause()
+    if not load:
+        return
+    if via == "click":
+        painted = painted_option_rows(item_list).get(index)
+        assert painted, f"option {index} is not painted in {item_list.content_region}"
+        name_column = len(frame_state.item_gutter(loaded=False, marked=False))
+        content = item_list.content_region
+        await pilot.click(
+            item_list,
+            offset=(
+                content.x - item_list.region.x + name_column,
+                painted[0] - item_list.region.y,
+            ),
+        )
+    elif via == "enter":
+        item_list.action_select()
+    else:
+        raise ValueError(f"unknown via {via!r}")
+    await pilot.pause()
+
+
+async def click_mark_column(pilot: Pilot, node, item_id: str) -> None:
+    """A real mouse click on a painted row's mark column (gutter col 2, spec 4.10)."""
+    item_list = _item_list(node)
+    index = item_list.get_option_index(item_id)
+    painted = painted_option_rows(item_list).get(index)
+    assert painted, f"option {index} is not painted"
+    column = frame_state.gutter_mark_columns().start
+    await pilot.click(
+        item_list,
+        offset=(
+            item_list.content_region.x - item_list.region.x + column,
+            painted[0] - item_list.region.y,
+        ),
+    )
+    await pilot.pause()
 
 
 @asynccontextmanager
@@ -236,12 +535,14 @@ async def roleplay_full_app(
     ascii_glyphs: bool = False,
     notifications: bool = False,
     on_home: Callable[[Any], None] | None = None,
+    character_db: CharactersRAGDB | None = None,
 ) -> AsyncIterator[Any]:
     """Styled tier 2: a real ``TldwCli`` arriving at Roleplay by a real route.
 
-    Seed data through the same seams first (``seed_mock_characters``; no
-    ChaChaNotes DB yet, see the module docstring). Yields the pilot once the
-    Roleplay screen shows its first list item.
+    With ``character_db`` the app reads and writes that database (frame slice
+    B2a; spec 5.7.1); without it, seed through the character seams first
+    (``seed_mock_characters``). Yields the pilot once the Roleplay screen shows
+    its first list item.
 
     Args:
         size: Terminal ``(columns, rows)``.
@@ -252,6 +553,7 @@ async def roleplay_full_app(
         notifications: Mount toasts (``run_test`` defaults to off).
         on_home: With ``entry="ctrl+4"``, called with the app while Home is
             showing, just before Ctrl+4 (to observe the pre-visit state).
+        character_db: A file-backed ChaChaNotes to run against.
     """
     if entry not in ("initial_tab", "ctrl+4"):
         raise ValueError(f"unknown entry {entry!r}")
@@ -260,7 +562,18 @@ async def roleplay_full_app(
     )
     settings = _settings_for_full_app(ascii_glyphs)
     try:
-        with patch_app_global("get_cli_setting", side_effect=settings):
+        with (
+            patch_app_global("get_cli_setting", side_effect=settings),
+            (
+                # Not ``app``: a factory-built app's Actor Pack coordinator was
+                # wired without a DB, so setting ``app.chachanotes_db`` before
+                # the visit makes recovery run against it and fail the initial
+                # load (measured while planning B2a). Lore is mock-tier only.
+                character_db_in_use(character_db)
+                if character_db is not None
+                else _no_patch()
+            ),
+        ):
             async with app.run_test(size=size, notifications=notifications) as pilot:
                 await wait_until(
                     pilot,
@@ -288,6 +601,11 @@ async def roleplay_full_app(
         set_ascii_glyph_mode(False)
 
 
+@contextmanager
+def _no_patch() -> Iterator[None]:
+    yield
+
+
 #: The two styled tiers (spec 5.7.1): ``"mock"`` (StyledRoleplayMockApp) and
 #: ``"full"`` (roleplay_full_app). ``@styled_tiers`` gives a test a
 #: ``styled_tier`` argument per tier.
@@ -304,6 +622,7 @@ async def open_styled_roleplay(
     notifications: bool = False,
     ascii_glyphs: bool = False,
     app_class: type[StyledRoleplayMockApp] = StyledRoleplayMockApp,
+    character_db: CharactersRAGDB | None = None,
 ) -> AsyncIterator[Any]:
     """Mount Roleplay under one styled tier and wait for its first list item.
 
@@ -314,10 +633,14 @@ async def open_styled_roleplay(
         notifications: Mount toasts.
         ascii_glyphs: Run with the ASCII glyph mode on (restored afterwards).
         app_class: A ``StyledRoleplayMockApp`` subclass (mock tier only).
+        character_db: A file-backed ChaChaNotes both tiers run against.
     """
     if tier == "full":
         async with roleplay_full_app(
-            size=size, notifications=notifications, ascii_glyphs=ascii_glyphs
+            size=size,
+            notifications=notifications,
+            ascii_glyphs=ascii_glyphs,
+            character_db=character_db,
         ) as pilot:
             yield pilot
         return
@@ -327,12 +650,17 @@ async def open_styled_roleplay(
     # The mock tier has no app compose that resets the process-wide mode.
     set_ascii_glyph_mode(ascii_glyphs)
     try:
-        async with app.run_test(size=size, notifications=notifications) as pilot:
-            await wait_until(
-                pilot, lambda: _first_list_item_present(app), what="Roleplay's list"
-            )
-            await settle(pilot)
-            yield pilot
+        with (
+            character_db_in_use(character_db, mock_app_instance)
+            if character_db is not None
+            else _no_patch()
+        ):
+            async with app.run_test(size=size, notifications=notifications) as pilot:
+                await wait_until(
+                    pilot, lambda: _first_list_item_present(app), what="Roleplay's list"
+                )
+                await settle(pilot)
+                yield pilot
     finally:
         set_ascii_glyph_mode(False)
 
@@ -344,9 +672,20 @@ def chrome_bottoms(screen) -> tuple[int, int]:
     return nav.bottom, header.bottom
 
 
-def first_list_item(screen) -> Widget:
-    """The first row of the items list (B2a keeps the id, replaces the type)."""
-    return screen.query("#personas-library-rows > ListItem").first()
+@dataclass(frozen=True)
+class PaintedItem:
+    """Where one option is painted (rows are option lines, not widgets)."""
+
+    region: Region
+
+
+def first_list_item(screen) -> PaintedItem:
+    """The painted region of the first row of the items list."""
+    item_list = _item_list(screen)
+    rows = painted_option_rows(item_list).get(0)
+    assert rows, "the first option is not painted"
+    region = item_list.content_region
+    return PaintedItem(Region(region.x, rows[0], region.width, len(rows)))
 
 
 def painted_rows(screen: Screen) -> list[str]:

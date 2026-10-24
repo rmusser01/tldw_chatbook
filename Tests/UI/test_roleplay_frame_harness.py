@@ -17,6 +17,7 @@ import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testi
 from Tests.UI import test_personas_dictionaries, test_personas_workbench
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.roleplay_frame_harness import (
+    ISOLDE,
     ROLEPLAY_SHEET,
     ROLEPLAY_SIZES,
     RoleplayMockApp,
@@ -24,10 +25,13 @@ from Tests.UI.roleplay_frame_harness import (
     assert_painted_inside,
     drop_rule_from_loaded_sheet,
     open_styled_roleplay,
+    open_volume_db,
     roleplay_full_app,
     seed_mock_characters,
     settle,
     styled_tiers,
+    visible_item_ids,
+    volume_db_path,
     wait_until,
 )
 
@@ -66,7 +70,7 @@ async def test_the_full_app_tier_reaches_roleplay_by_both_real_routes(
 ):
     async with roleplay_full_app(size=(120, 36), entry=entry) as pilot:
         assert type(pilot.app.screen).__name__ == "PersonasScreen"
-        assert pilot.app.screen.query("#personas-library-rows > ListItem")
+        assert visible_item_ids(pilot.app.screen)
 
 
 def test_app_stylesheets_carry_the_roleplay_sheet():
@@ -165,3 +169,35 @@ async def test_assert_painted_inside_fails_for_escape_and_cover():
             assert_painted_inside(app.query_one("#outside"), pane)
         with pytest.raises(AssertionError, match="covered"):
             assert_painted_inside(app.query_one("#covered"), app.query_one("#other"))
+
+
+# ---- Roleplay frame B2a: the DB-seeded tiers (spec 5.7.1) ----
+
+
+def test_the_volume_template_holds_the_seeded_characters(tmp_path_factory, tmp_path):
+    template = volume_db_path(tmp_path_factory, 348)
+    assert volume_db_path(tmp_path_factory, 348) == template  # seeded once per session
+    db = open_volume_db(tmp_path, template)
+    try:
+        assert db.count_character_cards() == 348 + 1  # + the built-in Default Assistant
+        first = db.list_character_cards_page(limit=2, offset=0)
+        assert [row["name"] for row in first] == [ISOLDE, "Character 0001"]
+    finally:
+        db.close_connection()
+    assert sorted(p.name for p in template.parent.iterdir()) == ["template.db"]
+
+
+@pytest.mark.parametrize("styled_tier", ["mock", "full"])
+async def test_both_styled_tiers_list_the_seeded_database(
+    styled_tier, mock_app_instance, tmp_path_factory, tmp_path
+):
+    db = open_volume_db(tmp_path, volume_db_path(tmp_path_factory, 348))
+    try:
+        async with open_styled_roleplay(
+            styled_tier, mock_app_instance, size=(120, 36), character_db=db
+        ) as pilot:
+            screen = pilot.app.screen
+            assert screen._character_total == 348 + 1
+            assert screen._characters[0]["name"] == ISOLDE
+    finally:
+        db.close_connection()

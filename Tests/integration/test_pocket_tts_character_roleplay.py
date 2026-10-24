@@ -754,7 +754,11 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
         )
 
     await _wait_for(app, character_loads_settled)
-    await context.pilot.click(f"#personas-library-row-character-{character_id}")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(
+        context.pilot, app.screen, f"character:{character_id}", via="click"
+    )
     await context.pilot.pause()
     await _wait_for(
         app,

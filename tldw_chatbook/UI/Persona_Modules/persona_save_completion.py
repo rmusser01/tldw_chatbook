@@ -57,7 +57,6 @@ async def finish_profile_save(
     screen._edit_mode = "edit"  # create -> edit stays in the editor
     screen._advance_persona_buddy_session()
     screen.state.has_unsaved_changes = False
-    screen._set_active_row_unsaved(False)
     name = str(saved.get("name") or "Saved persona")
     screen.state.select_entity(
         entity_kind="persona", entity_id=saved_id, entity_name=name
@@ -92,7 +91,6 @@ async def finish_profile_save(
         saved, submitted_snapshot=submitted_snapshot
     )
     screen._profile_save_inflight = not screen.state.has_unsaved_changes
-    screen._set_active_row_unsaved(screen.state.has_unsaved_changes)
     inspector.set_unsaved(screen.state.has_unsaved_changes)
     await screen._render_profile_rows()
     await screen._drain_persona_shared_visual_identity_authoring()

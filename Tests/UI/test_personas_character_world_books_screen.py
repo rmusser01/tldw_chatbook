@@ -6,8 +6,8 @@ Mirrors two existing harnesses rather than inventing a third:
 - ``test_personas_character_attach.py`` for character-selection plumbing
   (``PersonasTestApp``, a ``stub_characters``-style monkeypatch of
   ``ccp_character_handler.fetch_all_characters`` /
-  ``fetch_character_by_id``, and clicking a
-  ``#personas-library-row-character-<id>`` row).
+  ``fetch_character_by_id``, and a real click on the ``character:<id>``
+  option of the items list, via ``select_roleplay_item``).
 - ``test_personas_lore.py``'s Task 6 section for the real-``chachanotes_db``
   pattern (``mock_app_instance.chachanotes_db = <real CharactersRAGDB>``),
   since ``WorldBookManager.get_world_books_for_character`` (the panel's real
@@ -112,7 +112,11 @@ async def _mounted(pilot):
 
 async def _select_seeded_character(pilot, char_id):
     screen = await _mounted(pilot)
-    await pilot.click(f"#personas-library-row-character-{char_id}")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(
+        pilot, pilot.app.screen, f"character:{char_id}", via="click"
+    )
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()

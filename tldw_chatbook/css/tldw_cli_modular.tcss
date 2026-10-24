@@ -3270,27 +3270,9 @@ _CredentialClearModal {
 }
 
 
-ListItem.personas-library-row.-highlight,
 ListItem.personas-conversation-row.-highlight {
   background: $ds-grid-line;
   color: $ds-text-primary;
-  text-style: bold;
-}
-
-
-ListItem.personas-library-row.is-active {
-  border: none;
-  background: $ds-focus-bg;
-  color: $ds-focus-fg;
-  text-style: bold;
-}
-
-
-ListItem.personas-library-row.is-active.-highlight {
-  outline: none;
-  border: none;
-  background: $ds-focus-bg;
-  color: $ds-focus-fg;
   text-style: bold;
 }
 

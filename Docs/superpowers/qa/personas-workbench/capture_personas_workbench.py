@@ -138,7 +138,9 @@ async def main() -> None:
         await pilot.pause()
 
         # 1. Characters mode with a selection: card + conversations + preview.
-        await pilot.click("#personas-library-row-character-1")
+        rows = screen.query_one("#personas-library-rows")
+        rows.highlighted = rows.get_option_index("character:1")
+        rows.action_select()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -179,7 +181,8 @@ async def main() -> None:
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        await pilot.click("#personas-library-row-persona_profile-p-1")
+        rows.highlighted = rows.get_option_index("persona:p-1")
+        rows.action_select()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()

@@ -188,18 +188,6 @@ class PersonasInspectorPane(VerticalScroll):
         self._actor_pack_revision: int | None = None
         self._actor_pack_eligible = False
         self._actor_pack_reason: str | None = None
-        # F-040: marked library rows drive bulk Delete/Export JSON affordances.
-        self._marked_count = 0
-
-    def set_marked_count(self, count: int) -> None:
-        """Bulk-mark awareness for Delete/Export (F-040).
-
-        With marks active, Delete and Export JSON target the marked set
-        (their tooltips say so) and Export PNG - a single-card format - is
-        disabled with a reason. Zero restores the selection-owned gates.
-        """
-        self._marked_count = max(0, int(count))
-        self._apply_action_state()
 
     def set_card_actions_visible(self, visible: bool) -> None:
         """Retain whether card-level actions belong in the current center view.
@@ -1102,27 +1090,21 @@ class PersonasInspectorPane(VerticalScroll):
             )
         else:
             start_btn.tooltip = None
-        # F-040: an active mark set retargets Delete/Export JSON at the
-        # marked rows (tooltips say so) and sidesteps the single-selection
-        # unsaved gate (bulk actions discard/ignore edit state by design,
-        # like single Delete). Export PNG stays single-card.
-        marked = self._marked_count
+        # Frame slice B2a (spec 3.6, 3.7): these act on the open item only;
+        # bulk Export and Delete moved to the list's marks bar.
         json_button = self.query_one("#personas-export-json", Button)
         json_button.display = export_json_applies
-        json_button.disabled = (not export_enabled) and marked == 0
-        json_button.tooltip = (
-            f"Export the {marked} marked items as JSON." if marked else export_tooltip
-        )
+        json_button.disabled = not export_enabled
+        json_button.tooltip = export_tooltip
         png_button = self.query_one("#personas-export-png", Button)
         png_button.display = export_png_applies
-        png_button.disabled = marked > 0 or not (export_enabled and kind == "character")
-        png_button.tooltip = "Bulk export is JSON only." if marked else export_tooltip
+        png_button.disabled = not (export_enabled and kind == "character")
+        png_button.tooltip = export_tooltip
         actor_pack_button = self.query_one("#personas-export-actor-pack", Button)
         actor_pack_applies = selected and kind in {"character", "persona"}
         actor_pack_enabled = bool(
             actor_pack_applies
             and not unsaved
-            and marked == 0
             and self._actor_pack_eligible
             and self._actor_pack_source == "local"
             and self._actor_pack_kind == kind
@@ -1138,20 +1120,12 @@ class PersonasInspectorPane(VerticalScroll):
             else (
                 _UNSAVED_TOOLTIP
                 if unsaved
-                else (
-                    "Select one item to export."
-                    if marked
-                    else self._actor_pack_reason or _NO_SELECTION_EXPORT_TOOLTIP
-                )
+                else self._actor_pack_reason or _NO_SELECTION_EXPORT_TOOLTIP
             )
         )
         delete_button = self.query_one("#personas-delete", Button)
-        delete_button.disabled = (not selected) and marked == 0
-        delete_button.tooltip = (
-            f"Delete the {marked} marked items."
-            if marked
-            else (None if selected else _NO_SELECTION_DELETE_TOOLTIP)
-        )
+        delete_button.disabled = not selected
+        delete_button.tooltip = None if selected else _NO_SELECTION_DELETE_TOOLTIP
 
         manage = self.query_one("#personas-buddy-use", Button)
         manage.display = True

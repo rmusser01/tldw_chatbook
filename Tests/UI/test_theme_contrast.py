@@ -893,6 +893,38 @@ def test_settings_rail_focus_edge_clears_non_text_contrast(theme: Theme) -> None
             )
 
 
+ROLEPLAY_SHEET = CSS_ROOT / "features/_roleplay.tcss"
+
+
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_roleplay_items_list_focus_edge_and_cursor_clear_contrast(
+    theme: Theme,
+) -> None:
+    """Spec 1.5.3 (frame slice B2a): the items list keeps one edge column in
+    both focus states, blank at rest, so focus moves no row (D14 census F1);
+    the focus edge reads at 3:1 and the focus-only cursor row's text at
+    4.5:1 on the list's $surface, on every measurable theme. The spec's
+    $ds-action-focus edge measured below 3:1 on 27 of the 89 measurable
+    themes (1.06:1 on sweet_sorbet), so the edge is $ds-active-fg (lowest
+    4.50:1, sakura_viewing_picnic)."""
+    rest = ".roleplay-items-list"
+    assert _rule_token(ROLEPLAY_SHEET, rest, "border-left") == "blank"
+    focused = f"{rest}:focus"
+    edge_token = _rule_token(ROLEPLAY_SHEET, focused, "border-left")
+    # OptionList's own focus tint is cleared, so the list paints on $surface.
+    assert _rule_token(ROLEPLAY_SHEET, focused, "background-tint") == "transparent"
+    cursor = f"{focused} > .option-list--option-highlighted"
+    bar_token = _rule_token(ROLEPLAY_SHEET, cursor, "background")
+    ink_token = _rule_token(ROLEPLAY_SHEET, cursor, "color")
+    table = _painted_variables(theme)
+    base = Color.parse(table["surface"])
+    edge = _resolve_color(_painted(table, edge_token), base)
+    assert _ratio(edge.hex, base.hex) >= NON_TEXT, (theme.name, edge.hex)
+    bar = _over(base, Color.parse(_painted(table, bar_token)))
+    ink = _resolve_color(_painted(table, ink_token), bar)
+    assert _ratio(ink.hex, bar.hex) >= AA, (theme.name, ink.hex, bar.hex)
+
+
 HIGHLIGHT_RULES = tuple(
     (LISTS_SHEET, f"{scope} > .option-list--option-highlighted")
     for scope in (

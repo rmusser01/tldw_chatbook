@@ -338,6 +338,7 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_roleplay_header.py",
     "Tests/UI/test_roleplay_hostile_names.py",
     "Tests/UI/test_roleplay_journeys.py",
+    "Tests/UI/test_roleplay_item_list_app.py",
     "Tests/UI/test_app_factory_cleanup.py",
     # TASK-33008 (Phase 8 review): the footer drops a key the screen lists as
     # unavailable. The footer reads guarded config while it composes, so the

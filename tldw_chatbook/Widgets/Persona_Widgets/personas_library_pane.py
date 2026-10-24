@@ -1,41 +1,54 @@
-"""Mode-scoped library list pane for the Personas workbench."""
+"""Mode-scoped library list pane for the Personas workbench.
+
+Frame slice B2a (spec 1.5, D14 = A): the items list is one
+``RoleplayItemList``, an ``OptionList`` that keeps the id
+``#personas-library-rows``. Each option is one row, id ``"<kind>:<id>"``,
+whose prompt is literal ``Content`` built from
+``roleplay_frame_state.build_item_prompt`` spans (markup off, spec R33). Rows
+are option lines, not widgets, so a keystroke that changes the list calls
+``set_options`` once and mounts nothing (PERF-22). Arrows only move the
+cursor; Enter or a click loads (I6); a click on the gutter's mark column
+toggles the mark instead (spec 4.10). ``space``, ``m`` and ``s`` are the
+list's own keys, so they never fire from a focused toolbar button (RP-033).
+Only the public ``OptionList`` API is used (``set_options``, ``add_options``,
+``get_option``, ``get_option_index``, ``replace_option_prompt``).
+"""
 
 from __future__ import annotations
 
-import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from loguru import logger
-from textual import on
+from rich.cells import cell_len
+from textual import events, on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.events import Resize
-from textual.widgets import Button, Input, ListItem, ListView, Static
+from textual.message import Message
+from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets.option_list import Option
 
+from ...UI.Persona_Modules import roleplay_frame_state as frame_state
 from .personas_messages import (
     ActorPackImportRequested,
     PersonaActionRequested,
     PersonaEntityKind,
     PersonaEntitySelected,
     PersonaMarksChanged,
-    PersonaPageChanged,
     PersonaSearchChanged,
+    PersonaSearchSubmitted,
     PersonaSortCycleRequested,
     PersonaTagFilterRequested,
 )
-
-_ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 logger = logger.bind(module="PersonasLibraryPane")
 
 #: Columns one toolbar button occupies beyond its label: `padding: 0 1`
 #: plus the `margin-right: 1` gap from the pane CSS below.
 _TOOLBAR_BUTTON_CHROME_COLS = 3
-
-
-def _row_dom_id(kind: str, item_id: str) -> str:
-    return f"personas-library-row-{kind}-{_ID_SAFE.sub('-', str(item_id))}"
 
 
 def _singular_noun(noun: str) -> str:
@@ -58,79 +71,537 @@ def _noun_for_count(count: int, noun: str) -> str:
     return _singular_noun(noun) if count == 1 else noun
 
 
+def option_id_for(kind: str, item_id: str) -> str:
+    """A row's option id: ``"<kind>:<id>"`` (spec 1.5.6; ids are not DOM ids)."""
+    return f"{kind}:{item_id}"
+
+
 @dataclass(frozen=True)
 class LibraryRow:
-    """One selectable row in the workbench library list."""
+    """One selectable row in the workbench library list.
+
+    ``meta`` is line 2 (the scent, spec 1.5.2), ``state`` the book's
+    ``on``/``off`` word, ``short`` the 1-line extra (a book's entry count).
+    The list carries no unsaved marker (spec 1.5.3, R24).
+    """
 
     item_id: str
     kind: PersonaEntityKind
     name: str
-    is_unsaved: bool = False
     meta: str | None = None
+    state: str | None = None
+    short: str | None = None
 
 
-class PersonasLibraryPane(Vertical):
-    """Search, create/import toolbar, and a keyboard-first item list.
+def _prompt_content(prompt: frame_state.ItemPrompt) -> Content:
+    """Turn FS spans into one literal ``Content`` (markup never parsed)."""
+    lines = [
+        Content.assemble(*((text, style) if style else text for text, style in line))
+        for line in prompt.lines
+    ]
+    return Content("\n").join(lines)
 
-    Rows live in a ``ListView`` (the Notes-workbench idiom): arrow keys move
-    the highlight, Enter (or click) selects. Selection is explicit - mere
-    highlighting never posts ``PersonaEntitySelected``, so unsaved-edit
-    guards stay quiet while the user browses.
+
+class RoleplayItemList(OptionList):
+    """The line-based Roleplay items list (spec 1.5, D14 = A).
+
+    Owns the rows (``LibraryRow`` per option id), their prompts, the loaded
+    row, the marks per kind and the window requests; the pane and the screen
+    decide what rows to show.
     """
 
     BINDINGS = [
-        ("space", "toggle_highlighted", "Toggle on/off"),
-        # F-040: m marks rows for bulk delete/export; s cycles the sort
-        # (both no-op outside their applicable modes/rows).
-        ("m", "toggle_mark", "Mark row"),
-        ("s", "cycle_sort", "Cycle sort"),
+        Binding("space", "toggle_highlighted", "Toggle on/off", show=False),
+        Binding("m", "toggle_mark", "Mark row", show=False),
+        Binding("s", "cycle_sort", "Cycle sort", show=False),
     ]
 
-    # Structure only: colors come from the app stylesheet
-    # (.console-action-subdued rows, ListView ListItem.--highlight, and
-    # ListItem.personas-library-row.is-active in the bundle).
+    class WindowWanted(Message):
+        """More rows are wanted (spec 1.5.6 load-through).
+
+        ``reason`` is ``"near_end"`` (the cursor or scroll came within a screen
+        of the loaded end), ``"end"`` (End past the loaded rows) or ``"id"``
+        (a row to load, select or restore is not loaded yet; ``target_id``).
+        """
+
+        def __init__(
+            self,
+            item_list: RoleplayItemList,
+            *,
+            reason: str,
+            target_id: str | None = None,
+        ) -> None:
+            super().__init__()
+            self.item_list = item_list
+            self.reason = reason
+            self.target_id = target_id
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(markup=False, **kwargs)
+        self.add_class("roleplay-items-list")
+        self._rows: dict[str, LibraryRow] = {}
+        self._prompts: dict[str, frame_state.ItemPrompt] = {}
+        self._marked: dict[str, dict[str, LibraryRow]] = {}
+        self._kind = "character"
+        self._kind_total = 0
+        self._active_id: str | None = None
+        self._pending_active: str | None = None
+        self._density = 1
+        self._width = frame_state.UNMEASURED_WIDTH
+        self._more_available = False
+        self._window_requested = False
+        self._width_check_scheduled = False
+        self._tooltip_key: tuple[str, ...] | None = None
+
+    # ---- read side ----
+
+    @property
+    def kind(self) -> str:
+        """The entity kind the list shows (``character``, ``persona``, ``lore``, ``dictionary``)."""
+        return self._kind
+
+    @property
+    def density(self) -> int:
+        """1 or 2 lines per row (spec 1.5.2)."""
+        return self._density
+
+    @property
+    def active_id(self) -> str | None:
+        """The option id loaded in the work pane, if any."""
+        return self._active_id
+
+    @property
+    def more_available(self) -> bool:
+        """Whether rows past the loaded end exist."""
+        return self._more_available
+
+    def row(self, option_id: str) -> LibraryRow | None:
+        """The loaded row for ``option_id``."""
+        return self._rows.get(option_id)
+
+    def loaded_ids(self) -> tuple[str, ...]:
+        """Every loaded option id, in list order."""
+        return tuple(self._rows)
+
+    def prompt_for(self, option_id: str) -> frame_state.ItemPrompt | None:
+        """The prompt spans currently shown for ``option_id``."""
+        return self._prompts.get(option_id)
+
+    def highlighted_id(self) -> str | None:
+        """The cursor row's option id."""
+        option = self.highlighted_option
+        return str(option.id) if option is not None else None
+
+    def marked_rows(self, kind: str | None = None) -> tuple[LibraryRow, ...]:
+        """The marked rows of ``kind`` (default: the list's kind), in marking order."""
+        return tuple(self._marked.get(kind or self._kind, {}).values())
+
+    def marked_ids(self, kind: str | None = None) -> frozenset[str]:
+        """The marked option ids of ``kind`` (default: the list's kind)."""
+        return frozenset(self._marked.get(kind or self._kind, {}))
+
+    # ---- rows ----
+
+    def set_kind(self, kind: str) -> None:
+        """Switch the kind the list shows; marks of other kinds are kept.
+
+        A new kind starts with no window state: rows past the loaded end, an
+        asked-for window and a row waiting to load belong to the old kind's
+        list (B2a's final review, I1: End did nothing in Lore books after a
+        partial Characters window).
+        """
+        if kind != self._kind:
+            self._more_available = False
+            self._window_requested = False
+            self._pending_active = None
+        self._kind = kind
+
+    def _measured_width(self) -> int | None:
+        width = self.scrollable_content_region.width
+        return width if width > 0 else None
+
+    def _content_for(self, option_id: str) -> Content:
+        row = self._rows[option_id]
+        prompt = frame_state.build_item_prompt(
+            name=row.name,
+            state=row.state,
+            meta=row.meta,
+            short=row.short,
+            loaded=option_id == self._active_id,
+            marked=option_id in self._marked.get(row.kind, {}),
+            width=self._width,
+            density=self._density,
+        )
+        self._prompts[option_id] = prompt
+        return _prompt_content(prompt)
+
+    def _top_index(self) -> int:
+        return int(self.scroll_y) // max(1, self._density)
+
+    def show_rows(
+        self,
+        rows: Sequence[LibraryRow],
+        *,
+        kind_total: int,
+        anchor: frame_state.ListAnchor | None = None,
+    ) -> tuple[str, ...]:
+        """Replace every option with ``rows`` in one ``set_options``.
+
+        The cursor comes back by id (or, with an ``anchor`` whose cursor row is
+        gone, at the same index: the delete neighbour), and so does the top
+        row when an ``anchor`` is given (spec 1.5.6 "State", "Writes").
+
+        Returns:
+            The duplicate option ids that were dropped (logged, never raised).
+        """
+        cursor_id = anchor.cursor_id if anchor is not None else self.highlighted_id()
+        ids = [option_id_for(row.kind, row.item_id) for row in rows]
+        keep, dropped = frame_state.new_option_ids((), ids)
+        width = self._measured_width()
+        self._kind_total = kind_total
+        self._width = width or frame_state.UNMEASURED_WIDTH
+        self._density = frame_state.item_density(
+            inner_width=width or 0, kind_total=kind_total
+        )
+        self._rows = {ids[index]: rows[index] for index in keep}
+        self._prompts = {}
+        self.set_options(
+            [
+                Option(self._content_for(option_id), id=option_id)
+                for option_id in self._rows
+            ]
+        )
+        self._restore(
+            cursor_id=cursor_id,
+            cursor_index=anchor.cursor_index if anchor is not None else None,
+            top_index=anchor.top_index if anchor is not None else 0,
+        )
+        self._apply_pending_active()
+        self._position_changed()
+        return dropped
+
+    def append_rows(self, rows: Sequence[LibraryRow]) -> tuple[str, ...]:
+        """Append a window with ``add_options``, skipping ids already present.
+
+        Textual 8.2.8 raises ``DuplicateID`` part-way through a batch, so only
+        new ids reach ``add_options`` (spec 1.5.6 "No duplicates").
+
+        Returns:
+            The duplicate option ids that were dropped.
+        """
+        ids = [option_id_for(row.kind, row.item_id) for row in rows]
+        keep, dropped = frame_state.new_option_ids(self._rows, ids)
+        new_ids = [ids[index] for index in keep]
+        for index in keep:
+            self._rows[ids[index]] = rows[index]
+        if new_ids:
+            self.add_options(
+                [
+                    Option(self._content_for(option_id), id=option_id)
+                    for option_id in new_ids
+                ]
+            )
+        self._window_requested = False
+        self._apply_pending_active()
+        self._position_changed()
+        return dropped
+
+    def _restore(
+        self, *, cursor_id: str | None, cursor_index: int | None, top_index: int
+    ) -> None:
+        count = self.option_count
+        if not count:
+            return
+        if top_index:
+            self.scroll_to(
+                y=min(top_index, count - 1) * self._density,
+                animate=False,
+                immediate=True,
+            )
+        if cursor_id is not None and cursor_id in self._rows:
+            self.highlighted = self.get_option_index(cursor_id)
+        elif cursor_index is not None:
+            self.highlighted = min(max(cursor_index, 0), count - 1)
+
+    def _rebuild(
+        self, needs: Callable[[str, frame_state.ItemPrompt], bool], *, top: int
+    ) -> int:
+        """One ``set_options`` with new prompts for the rows ``needs`` picks.
+
+        Every other row keeps its option (and Textual's cached visual), so a
+        resize or a batch of marks rebuilds only what changed (RC-6).
+        """
+        options: list[Option] = []
+        changed = 0
+        for option_id in self._rows:
+            prompt = self._prompts.get(option_id)
+            if prompt is None or needs(option_id, prompt):
+                options.append(Option(self._content_for(option_id), id=option_id))
+                changed += 1
+            else:
+                options.append(self.get_option(option_id))
+        if changed:
+            cursor = self.highlighted_id()
+            self.set_options(options)
+            self._restore(cursor_id=cursor, cursor_index=None, top_index=top)
+        return changed
+
+    def _refresh_rows(self, option_ids: Sequence[str]) -> None:
+        """Repaint a few rows: one ``replace_option_prompt`` each, a batch as one rebuild."""
+        targets = [option_id for option_id in option_ids if option_id in self._rows]
+        if len(targets) == 1:
+            self.replace_option_prompt(targets[0], self._content_for(targets[0]))
+        elif targets:
+            wanted = set(targets)
+            self._rebuild(
+                lambda option_id, _prompt: option_id in wanted, top=self._top_index()
+            )
+
+    # ---- the loaded row and the cursor ----
+
+    def set_active(
+        self,
+        option_id: str | None,
+        *,
+        move_cursor: bool = True,
+        load_through: bool = True,
+    ) -> bool:
+        """Show ``option_id`` as loaded (``▸`` + bold) and, by default, move the cursor to it.
+
+        Args:
+            option_id: The loaded row's option id, or ``None`` for none.
+            move_cursor: False after a reload from the anchor, whose cursor
+                was already restored by id.
+            load_through: False for a plain reload (a keystroke, a sort, a
+                tag): it reads one window, so a loaded item past that window
+                is marked when a later window brings it, never fetched.
+
+        Returns:
+            False when the row is not loaded yet: with ``load_through`` it is
+            kept as pending, and a window is requested if rows past the loaded
+            end exist.
+        """
+        previous, self._active_id = self._active_id, option_id
+        if previous != option_id:
+            self._refresh_rows([x for x in (previous, option_id) if x is not None])
+        self._position_changed()
+        if option_id is None or option_id in self._rows:
+            self._pending_active = None
+            if option_id is not None and move_cursor:
+                self.highlighted = self.get_option_index(option_id)
+            return True
+        if not load_through:
+            return False
+        self._pending_active = option_id
+        if self._more_available:
+            self._request_window("id", option_id)
+        return False
+
+    def _apply_pending_active(self) -> None:
+        pending = self._pending_active
+        if pending is not None and pending in self._rows:
+            self._pending_active = None
+            self.set_active(pending)
+
+    def highlight(self, option_id: str) -> bool:
+        """Move only the cursor to ``option_id`` (False when it is not loaded)."""
+        if option_id not in self._rows:
+            return False
+        self.highlighted = self.get_option_index(option_id)
+        return True
+
+    def move_to_end(self) -> None:
+        """The cursor to the last loaded row (after End loaded every window)."""
+        super().action_last()
+
+    def _position_changed(self) -> None:
+        pane = self._pane()
+        if pane is not None:
+            pane.list_changed()
+
+    # ---- windows ----
+
+    def set_more_available(self, more: bool) -> None:
+        """Whether rows past the loaded end exist (set by the screen after each window)."""
+        self._more_available = more
+        self._window_requested = False
+
+    def reset_window_request(self) -> None:
+        """Forget a window request whose read was cancelled (the visit ended)."""
+        self._window_requested = False
+
+    def _request_window(self, reason: str, target_id: str | None = None) -> None:
+        self._window_requested = True
+        self.post_message(self.WindowWanted(self, reason=reason, target_id=target_id))
+
+    def _check_near_end(self) -> None:
+        if not self._more_available or self._window_requested or not self.option_count:
+            return
+        lines = max(1, self._density)
+        page = max(1, self.scrollable_content_region.height // lines)
+        bottom = int(self.scroll_y) // lines + page
+        cursor = self.highlighted if self.highlighted is not None else 0
+        if self.option_count - max(bottom, cursor) <= page:
+            self._request_window("near_end")
+
+    def watch_highlighted(self, highlighted: int | None) -> None:
+        super().watch_highlighted(highlighted)
+        self._check_near_end()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        self._check_near_end()
+
+    def action_last(self) -> None:
+        """End: load every remaining window first when rows are not all loaded."""
+        if self._more_available:
+            self._request_window("end")
+            return
+        super().action_last()
+
+    # ---- width (spec 1.5.6 "Many rows loaded") ----
+
+    def on_resize(self, event: Resize) -> None:
+        """Rebuild only the prompts a new width changes, once per settled width.
+
+        A height-only resize changes nothing. The check runs after the next
+        refresh, so a burst of resizes in one frame costs one rebuild, and it
+        reads no data and starts no timer or worker (spec 2.13).
+        """
+        if not self._width_check_scheduled:
+            self._width_check_scheduled = True
+            self.call_after_refresh(self._apply_width)
+
+    def _apply_width(self) -> None:
+        self._width_check_scheduled = False
+        width = self._measured_width()
+        if width is None:
+            return
+        density = frame_state.item_density(
+            inner_width=width, kind_total=self._kind_total
+        )
+        if width == self._width and density == self._density:
+            return
+        top = self._top_index()
+        self._width, self._density = width, density
+        self._rebuild(
+            lambda _option_id, prompt: prompt.needs_rebuild(
+                width=width, density=density
+            ),
+            top=top,
+        )
+
+    # ---- marks ----
+
+    def toggle_mark(self, option_id: str) -> None:
+        """Mark or unmark one loaded row (``m`` or a click on the mark column)."""
+        row = self._rows.get(option_id)
+        if row is None:
+            return
+        marks = self._marked.setdefault(row.kind, {})
+        if option_id in marks:
+            del marks[option_id]
+        else:
+            marks[option_id] = row
+        self._refresh_rows([option_id])
+        pane = self._pane()
+        if pane is not None:
+            pane.marks_changed()
+
+    def clear_marks(self, kind: str | None = None) -> bool:
+        """Drop the marks of ``kind`` (default: the list's kind) in one batch."""
+        marks = self._marked.pop(kind or self._kind, {})
+        if not marks:
+            return False
+        self._refresh_rows(list(marks))
+        return True
+
+    def clear_all_marks(self) -> bool:
+        """Drop the marks of every kind (the visit ended, spec R16); one batch."""
+        shown = self._marked.pop(self._kind, {})
+        had_marks = bool(shown) or any(self._marked.values())
+        self._marked.clear()
+        self._refresh_rows(list(shown))
+        return had_marks
+
+    def drop_marks(self, option_ids: Sequence[str]) -> None:
+        """Forget marks whose rows are gone (deleted, or pruned by a refresh)."""
+        for marks in self._marked.values():
+            for option_id in option_ids:
+                marks.pop(option_id, None)
+
+    # ---- mouse ----
+
+    def on_click(self, event: events.Click) -> None:
+        """A click on the gutter's mark column toggles the mark and never loads (spec 4.10)."""
+        index = event.style.meta.get("option")
+        offset = event.get_content_offset(self)
+        # The meta can be a frame stale after set_options shrank the list.
+        if index is None or offset is None or not 0 <= index < self.option_count:
+            return
+        if offset.x not in frame_state.gutter_mark_columns():
+            return
+        event.prevent_default()
+        event.stop()
+        option_id = str(self.get_option_at_index(index).id)
+        self.highlighted = index
+        self.toggle_mark(option_id)
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Hover tooltip: "Click to mark" on the mark column, the full name on a cut one."""
+        index = event.style.meta.get("option")
+        offset = event.get_content_offset(self)
+        key: tuple[str, ...] | None = None
+        tip: Content | None = None
+        if index is not None and offset is not None and 0 <= index < self.option_count:
+            option_id = str(self.get_option_at_index(index).id)
+            if offset.x in frame_state.gutter_mark_columns():
+                key, tip = ("mark",), Content("Click to mark")
+            else:
+                prompt = self._prompts.get(option_id)
+                row = self._rows.get(option_id)
+                if prompt is not None and prompt.name_cut and row is not None:
+                    key, tip = ("name", option_id), Content(row.name)
+        if key != self._tooltip_key:
+            self._tooltip_key = key
+            self.tooltip = tip
+
+    # ---- keys ----
+
+    def _pane(self) -> PersonasLibraryPane | None:
+        for node in self.ancestors:
+            if isinstance(node, PersonasLibraryPane):
+                return node
+        return None
+
+    def action_toggle_mark(self) -> None:
+        """m: mark or unmark the cursor row."""
+        option_id = self.highlighted_id()
+        if option_id is not None:
+            self.toggle_mark(option_id)
+
+    def action_toggle_highlighted(self) -> None:
+        """space: ask the screen to turn the cursor's book on or off."""
+        pane = self._pane()
+        if pane is not None:
+            pane.request_toggle(self.highlighted_id())
+
+    def action_cycle_sort(self) -> None:
+        """s: cycle the sort where sorting applies."""
+        pane = self._pane()
+        if pane is not None:
+            pane.action_cycle_sort()
+
+
+class PersonasLibraryPane(Vertical):
+    """Search, create/import toolbar, and the line-based items list.
+
+    Selection is explicit: highlighting never posts ``PersonaEntitySelected``,
+    so unsaved-edit guards stay quiet while the user browses.
+    """
+
+    # Structure only: colors come from the app stylesheet.
     BUNDLED_CSS = """
-    PersonasLibraryPane #personas-library-rows ListItem {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem Static {
-        width: 100%;
-        height: 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-recovery-row {
-        height: auto;
-        min-height: 6;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-recovery-row Static {
-        height: auto;
-        min-height: 6;
-        text-wrap: wrap;
-        text-overflow: clip;
-    }
-
-    /* The generic Button min-width:16 default would push "next" past the
-       pane's narrow width (2fr of the workbench split); pin the prev/next
-       buttons to a compact width and let the page-info Static fill the rest
-       so the bar never overflows its container. */
-    PersonasLibraryPane #personas-library-pagebar Button {
-        width: 5;
-        min-width: 5;
-    }
-
-    PersonasLibraryPane #personas-library-page-info {
-        width: 1fr;
-        text-align: center;
-    }
-
     /* F-030: toolbar buttons size to their labels. The Textual Button
        default min-width:16 let "New" alone fill a narrow pane and clipped
        Import/Duplicate/Tag off the right edge at supported widths. */
@@ -173,15 +644,18 @@ class PersonasLibraryPane(Vertical):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._row_lookup: dict[str, LibraryRow] = {}
         self._import_visible: bool = True
-        # F-040: marked (multi-selected) rows for bulk delete/export, as row
-        # dom ids; pruned to the rendered rows on every update_rows.
-        self._marked_ids: set[str] = set()
         self._sort_visible: bool = True
-        # The count line's filter-state text from the last update_rows; the
-        # "N marked" summary overrides it while marks exist.
-        self._base_count_text: str = ""
+        self._status_key: tuple[str, str] | None = None
+        # The list's COUNT total (the M of "#N of M") and whether a search or
+        # tag narrows the list (spec 1.5.1).
+        self._list_total: int | None = None
+        self._filtered: bool = False
+
+    @property
+    def item_list(self) -> RoleplayItemList:
+        """The items list."""
+        return self.query_one("#personas-library-rows", RoleplayItemList)
 
     def on_mount(self) -> None:
         """Initialize control visibility for default characters mode.
@@ -191,12 +665,12 @@ class PersonasLibraryPane(Vertical):
         applies to characters (task-443), so it starts visible here too.
         """
         self.query_one("#personas-library-duplicate", Button).display = True
-        self.query_one("#personas-library-pagebar").display = False
         self._sync_control_layout()
 
     def on_resize(self, event: Resize) -> None:
-        """Re-wrap the toolbar bars when the pane width changes (F-030)."""
+        """Re-fit the toolbar bars (F-030) and the marks bar to the pane's width."""
         self._sync_control_layout()
+        self._sync_marks_bar()
 
     def _required_toolbar_row_width(self) -> int:
         """Widest single-row width the currently visible bar buttons need.
@@ -243,7 +717,12 @@ class PersonasLibraryPane(Vertical):
         self.set_class(width < required, "personas-library-stacked-controls")
 
     def compose(self) -> ComposeResult:
-        """Compose the Library pane header, search controls, and rows.
+        """Compose the Library pane header, search controls, rows and marks bar.
+
+        The counts live in the pane's border titles (spec 1.5.1): the kind and
+        its count on the top border, the loaded row's ``#N of M`` on the
+        bottom. The marks bar takes the pane's bottom row only while marks
+        exist (spec 1.5.5), so the rows above it never move.
 
         Returns:
             Textual compose result for the Library pane.
@@ -311,30 +790,42 @@ class PersonasLibraryPane(Vertical):
                 tooltip="Filter characters by tag.",
                 classes="console-action-secondary",
             )
-        yield ListView(id="personas-library-rows")
-        with Horizontal(id="personas-library-pagebar", classes="ds-toolbar"):
-            yield Button(
-                "<",
-                id="personas-library-prev",
-                compact=True,
-                classes="console-action-secondary",
-            )
-            yield Static(
-                "", id="personas-library-page-info", classes="destination-purpose"
-            )
-            yield Button(
-                ">",
-                id="personas-library-next",
-                compact=True,
-                classes="console-action-secondary",
-            )
-        yield Static("", id="personas-library-count", classes="destination-purpose")
+        # The empty / recovery copy: one Static beside the list, mounted only
+        # when the state changes (rows / empty / recovery), never per row.
+        # Hidden while the list has rows, so it takes no row from it.
+        status = Vertical(id="personas-library-status")
+        status.display = False
+        yield status
+        yield RoleplayItemList(id="personas-library-rows")
+        marks = Horizontal(id="personas-library-marks")
+        marks.display = False
+        with marks:
+            yield Static("", id="personas-library-marks-count", markup=False)
+            for action, label in (
+                ("export", "Export…"),
+                ("delete", "Delete…"),
+                ("clear", "Clear esc"),
+            ):
+                yield Static(
+                    "",
+                    id=f"personas-library-marks-sep-{action}",
+                    classes="personas-library-marks-sep",
+                    markup=False,
+                )
+                yield Button(
+                    Content(label),
+                    id=f"personas-library-marks-{action}",
+                    classes="personas-library-marks-action",
+                    compact=True,
+                )
 
     def set_mode(self, mode: str) -> None:
         """Gate the library toolbar's buttons for the active workbench mode.
 
         Import and Duplicate render for characters/dictionaries/lore (with a
         mode-appropriate Import tooltip); personas mode hides both (task-443).
+        Marks are kept per kind for the visit (spec R16): a kind switch shows
+        that kind's marks and never drops another kind's.
 
         Args:
             mode: The active workbench mode id (``characters``/``personas``/
@@ -371,13 +862,10 @@ class PersonasLibraryPane(Vertical):
         self._sort_visible = sort_visible
         self.query_one("#personas-library-sort", Button).display = sort_visible
         self.query_one("#personas-library-tag", Button).display = mode == "characters"
-        if not sort_visible:
-            # dict/lore never paginate - keep the page bar hidden.
-            self.query_one("#personas-library-pagebar").display = False
         # Which buttons render changed, so the single-row fit changed too.
         self._sync_control_layout()
-        # Marks are mode-scoped: a mode switch drops them (F-040).
-        self.clear_marks()
+        self.item_list.set_kind(frame_state.KIND_FOR_MODE.get(mode, "character"))
+        self.marks_changed()
 
     async def update_rows(
         self,
@@ -386,176 +874,214 @@ class PersonasLibraryPane(Vertical):
         total: int,
         noun: str,
         filtered: bool = False,
-        filtered_total_unbounded: bool = False,
+        matched: int | None = None,
+        title: str | None = None,
         recovery_copy: str | None = None,
         recovery_id: str = "personas-library-recovery",
-        page_offset: int | None = None,
-        page_size: int | None = None,
+        anchor: frame_state.ListAnchor | None = None,
     ) -> None:
-        """Replace the visible rows and count line.
+        """Replace the visible rows (one ``set_options``) and the border titles.
+
+        Marks are kept by id (spec 1.5.5): a row a search, sort or tag hides
+        stays marked, and the marks bar counts it as hidden.
 
         Args:
             rows: Selectable library rows to render when no recovery state is
-                active.
-            total: Total number of rows known for the current mode.
-            noun: User-facing noun used in empty and count copy.
-            filtered: Whether ``rows`` is a filtered subset of ``total``.
-            filtered_total_unbounded: Whether filtered rows came from a
-                full-library search whose total match denominator is unknown.
+                active (for characters: the loaded windows, spec 1.5.6).
+            total: The kind's total: the title's count when unfiltered, the
+                "of M" when filtered, and the density rule's item count.
+            noun: User-facing noun used in the empty copy.
+            filtered: Whether a search or tag narrows the list.
+            matched: The narrowed list's COUNT (default: ``len(rows)`` when
+                filtered, else ``total``): the M of the bottom border's
+                ``#N of M``.
+            title: The top-border title; built from the kind and the counts
+                when omitted (spec 1.5.1).
             recovery_copy: Optional multi-line recovery copy. When present, the
-                pane renders a disabled recovery row instead of list or empty
-                rows.
+                pane shows it instead of list or empty rows.
             recovery_id: Stable DOM id for the recovery copy widget.
-            page_offset: Zero-based offset of ``rows`` within ``total``. When
-                given together with ``page_size``, the pane renders a page bar
-                instead of the plain count line. ``None`` (the default)
-                preserves the pre-paging behavior for callers (dictionaries,
-                lore) that never page.
-            page_size: Page window size paired with ``page_offset``.
+            anchor: Where the list stood before a reload from the anchor.
 
         Returns:
             None.
         """
-        list_view = self.query_one("#personas-library-rows", ListView)
-        await list_view.clear()
-        self._row_lookup = {}
-        items: list[ListItem] = []
+        item_list = self.item_list
         visible_rows = () if recovery_copy else rows
-        if recovery_copy:
-            items.append(
-                ListItem(
-                    Static(recovery_copy, id=recovery_id, markup=False),
-                    classes="personas-library-recovery-row",
-                    disabled=True,
-                )
+        self._filtered = filtered
+        self._list_total = (
+            None
+            if recovery_copy
+            else (
+                matched if matched is not None else (len(rows) if filtered else total)
             )
+        )
+        for dropped in item_list.show_rows(
+            visible_rows, kind_total=total, anchor=anchor
+        ):
+            logger.debug("PersonasLibraryPane dropped a duplicate row id {}", dropped)
+        if recovery_copy:
+            status: tuple[str, str] | None = (recovery_id, recovery_copy)
         elif not visible_rows:
             hint = "use New or Import" if self._import_visible else "use New"
-            items.append(
-                ListItem(
-                    Static(
-                        f"No {noun} yet - {hint} to add one.",
-                        id="personas-library-empty",
-                        markup=False,
-                    ),
-                    disabled=True,
-                )
-            )
-        seen: set[str] = set()
-        for row in visible_rows:
-            dom_id = _row_dom_id(row.kind, row.item_id)
-            if dom_id in seen:
-                suffix = 2
-                while f"{dom_id}-{suffix}" in seen:
-                    suffix += 1
-                dom_id = f"{dom_id}-{suffix}"
-            seen.add(dom_id)
-            self._row_lookup[dom_id] = row
-            classes = "personas-library-row console-action-subdued"
-            if row.is_unsaved:
-                classes += " is-unsaved"
-            # F-040: marked rows carry a glyph prefix on the name line.
-            name_text = f"● {row.name}" if dom_id in self._marked_ids else row.name
-            if row.meta:
-                item = ListItem(
-                    Vertical(
-                        Static(name_text, markup=False),
-                        Static(
-                            row.meta,
-                            markup=False,
-                            classes="personas-library-row-meta destination-purpose",
-                        ),
-                    ),
-                    id=dom_id,
-                    classes=classes,
-                )
-                # Inline override, not CSS: app-level .console-action-subdued pins height:1 and
-                # Textual ranks app CSS above widget DEFAULT_CSS regardless of specificity/!important;
-                # inline styles beat both.
-                item.add_class("h-2")
-                items.append(item)
-            else:
-                items.append(
-                    ListItem(
-                        Static(name_text, markup=False), id=dom_id, classes=classes
-                    )
-                )
-        await list_view.extend(items)
-        # F-040: a mark never outlives its row - a refresh that drops a
-        # marked row drops the mark with it.
-        pruned = self._marked_ids - seen
-        if pruned:
-            self._marked_ids -= pruned
-        pagebar = self.query_one("#personas-library-pagebar")
-        paginated = page_offset is not None and page_size is not None
-        if recovery_copy:
-            pagebar.display = False
-            self._base_count_text = f"{noun.capitalize()} unavailable"
-        elif paginated and total > page_size:
-            start = page_offset + 1 if total else 0
-            end = page_offset + len(rows)
-            self.query_one("#personas-library-page-info", Static).update(
-                f"{start}-{end} of {total} {noun}"
-            )
-            self.query_one("#personas-library-prev", Button).disabled = page_offset <= 0
-            self.query_one("#personas-library-next", Button).disabled = (
-                page_offset + page_size >= total
-            )
-            pagebar.display = True
-            self._base_count_text = ""
+            status = ("personas-library-empty", f"No {noun} yet - {hint} to add one.")
         else:
-            pagebar.display = False
-            if filtered and filtered_total_unbounded:
-                match_word = "match" if len(rows) == 1 else "matches"
-                self._base_count_text = (
-                    f"Showing {len(rows)} {_singular_noun(noun)} "
-                    f"{match_word} from full library"
+            status = None
+        await self._sync_status(status)
+        if title is None:
+            title = frame_state.items_border_title(
+                item_list.kind,
+                total=total,
+                matched=self._list_total if filtered else None,
+                failed=bool(recovery_copy),
+            )
+        self.set_title(title)
+
+    async def _sync_status(self, status: tuple[str, str] | None) -> None:
+        """Show the empty or recovery copy; mount only when the state changes."""
+        if status == self._status_key:
+            return
+        container = self.query_one("#personas-library-status", Vertical)
+        await container.remove_children()
+        if status is not None:
+            await container.mount(
+                Static(
+                    status[1],
+                    id=status[0],
+                    markup=False,
+                    classes="personas-library-status-copy",
                 )
-            elif filtered:
-                self._base_count_text = (
-                    f"{len(rows)} of {total} {_noun_for_count(total, noun)}"
-                )
-            else:
-                # F-033: the plain total renders once, in the screen's merged
-                # purpose line ("Characters — who the AI plays · N") - the
-                # pane's own count line only speaks for filtered states.
-                self._base_count_text = ""
-        self._sync_marked_count_line()
-        if pruned:
-            self._post_marks_changed()
+            )
+        container.display = status is not None
+        self._status_key = status
 
-    def mark_active_row(self, kind: str, item_id: str) -> None:
-        """Move the list highlight and the .is-active marker to one row."""
-        active_id = _row_dom_id(kind, item_id)
-        list_view = self.query_one("#personas-library-rows", ListView)
-        for index, item in enumerate(list_view.children):
-            is_active = item.id == active_id
-            item.set_class(is_active, "is-active")
-            if is_active:
-                list_view.index = index
+    def mark_active_row(
+        self,
+        kind: str,
+        item_id: str,
+        *,
+        move_cursor: bool = True,
+        load_through: bool = True,
+    ) -> bool:
+        """Show one row as loaded and move the cursor to it (``RoleplayItemList.set_active``)."""
+        return self.item_list.set_active(
+            option_id_for(kind, item_id),
+            move_cursor=move_cursor,
+            load_through=load_through,
+        )
 
-    def highlight_row(self, kind: str, item_id: str) -> None:
-        """Move only the ListView cursor to one row (no active-marker change)."""
-        target = _row_dom_id(kind, item_id)
-        list_view = self.query_one("#personas-library-rows", ListView)
-        for index, item in enumerate(list_view.children):
-            if item.id == target:
-                list_view.index = index
-                return
+    def list_anchor(self) -> frame_state.ListAnchor:
+        """Where the list stands now: the cursor (id and index), the top row and the loaded count."""
+        item_list = self.item_list
+        return frame_state.ListAnchor(
+            cursor_id=item_list.highlighted_id(),
+            cursor_index=item_list.highlighted,
+            top_index=int(item_list.scroll_y) // max(1, item_list.density),
+            loaded=item_list.option_count,
+        )
 
-    def set_row_unsaved(
-        self, kind: str | None, item_id: str | None, unsaved: bool
-    ) -> None:
-        """Toggle the ``.is-unsaved`` badge without rebuilding the rows.
+    def set_title(self, title: str, *, total: int | None = None) -> None:
+        """The top border's kind-and-count title (literal ``Content``: a tag is untrusted).
 
-        Only one row (the active editing session's) may carry the badge, so
-        setting it also clears any stale badge elsewhere; passing
-        ``unsaved=False`` (or no kind/id) clears the badge everywhere.
+        Args:
+            title: The text (``items_border_title``).
+            total: A new COUNT total for ``#N of M`` (an append keeps it).
         """
-        target = _row_dom_id(kind, item_id) if (kind and item_id) else None
-        list_view = self.query_one("#personas-library-rows", ListView)
-        for item in list_view.children:
-            item.set_class(unsaved and item.id == target, "is-unsaved")
+        if total is not None:
+            self._list_total = total
+        self.border_title = Content(title)
+        self.refresh_position()
+
+    def refresh_position(self) -> None:
+        """The bottom border's ``#N of M``: blank with nothing loaded or the row not listed (RC-10)."""
+        item_list = self.item_list
+        active = item_list.active_id
+        index = (
+            item_list.get_option_index(active)
+            if active is not None and item_list.row(active) is not None
+            else None
+        )
+        self.border_subtitle = Content(
+            frame_state.loaded_position(index, self._list_total)
+        )
+
+    def list_changed(self) -> None:
+        """Rows or the loaded row changed: re-read ``#N of M`` and the hidden-mark count."""
+        self.refresh_position()
+        self._sync_marks_bar()
+
+    def _sync_marks_bar(self) -> None:
+        """Show the one-row marks bar while this kind has marks (spec 1.5.5).
+
+        Its text degrades with the pane's width (``marks_bar_view``); it reads
+        no data and mounts nothing. When it hides while it holds focus, focus
+        moves to the list, never to ``None`` (I1).
+        """
+        try:
+            bar = self.query_one("#personas-library-marks", Horizontal)
+        except Exception:
+            return  # still composing
+        item_list = self.item_list
+        marked = item_list.marked_ids()
+        can_export = item_list.kind in ("character", "persona")
+        view = frame_state.marks_bar_view(
+            len(marked),
+            frame_state.hidden_mark_count(
+                marked, item_list.loaded_ids(), filtered=self._filtered
+            ),
+            # The bar's own content width: the pane's, less the bar's padding.
+            # Read from its styles, so it holds before the bar is first shown.
+            self.content_size.width - bar.styles.gutter.width,
+            can_export=can_export,
+        )
+        was_shown = bar.display
+        if view is None:
+            focused = self.app.focused if self.is_attached else None
+            had_focus = focused is not None and bar in focused.ancestors
+            bar.display = False
+            if had_focus:
+                item_list.focus()
+            return
+        count = self.query_one("#personas-library-marks-count", Static)
+        count.update(view.count_text)
+        count.tooltip = Content(view.count_tooltip)
+        # The narrowest form drops the count, never Delete: Delete then
+        # carries the count's words in its tooltip (literal Content, R33).
+        count.display = bool(view.count_text)
+        self.query_one("#personas-library-marks-delete", Button).tooltip = (
+            None if view.count_text else Content(view.count_tooltip)
+        )
+        labels = dict(zip(view.actions, view.labels))
+        for action in ("export", "delete", "clear"):
+            shown = action in labels
+            button = self.query_one(f"#personas-library-marks-{action}", Button)
+            separator = self.query_one(f"#personas-library-marks-sep-{action}", Static)
+            button.display = separator.display = shown
+            if shown:
+                label = labels[action]
+                button.label = Content(label)
+                # Exactly the label's cells, unpadded: the separators carry
+                # the spaces. Textual 8.2.8's Button adds two cells to an auto
+                # width and pads its label (line-pad), and its CSS parser
+                # refuses `line-pad: 0`, so both are set here.
+                # ds-runtime: the measured cell width of the label shown now.
+                button.styles.width = cell_len(label)
+                button.styles.line_pad = 0
+                separator.update(view.separator)
+        bar.display = True
+        if not was_shown:
+            # The bar takes the pane's bottom row: keep the cursor row in view.
+            item_list.call_after_refresh(item_list.scroll_to_highlight)
+
+    def focus_first_result(self) -> None:
+        """Into the list with the cursor on the first row (Enter in the search box)."""
+        item_list = self.item_list
+        item_list.focus()
+        if item_list.option_count:
+            item_list.highlighted = 0
+
+    def highlight_row(self, kind: str, item_id: str) -> bool:
+        """Move only the cursor to one row (no loaded-marker change)."""
+        return self.item_list.highlight(option_id_for(kind, item_id))
 
     def set_sort_label(self, text: str) -> None:
         """Update the sort button's label (the screen owns the sort cycle/copy)."""
@@ -565,67 +1091,48 @@ class PersonasLibraryPane(Vertical):
 
     # ===== F-040: marks (multi-select) =====
 
-    def _sync_marked_count_line(self) -> None:
-        """The count line reports active marks ahead of filter state."""
-        text = (
-            f"{len(self._marked_ids)} marked"
-            if self._marked_ids
-            else self._base_count_text
-        )
-        self.query_one("#personas-library-count", Static).update(text)
-
     def _post_marks_changed(self) -> None:
         marks = tuple(
-            (row.kind, row.item_id, row.name)
-            for dom_id, row in self._row_lookup.items()
-            if dom_id in self._marked_ids
+            (row.kind, row.item_id, row.name) for row in self.item_list.marked_rows()
         )
         self.post_message(PersonaMarksChanged(marks))
 
-    @staticmethod
-    def _render_row_marker(item: ListItem, row: LibraryRow, marked: bool) -> None:
-        """Prefix/unprefix the row's name line with the marked glyph."""
-        name_static = item.query_one(Static)
-        name_static.update(f"● {row.name}" if marked else row.name)
+    def marks_changed(self) -> None:
+        """The list's marks changed (``m``, a mark-column click, Clear, a kind switch)."""
+        self._sync_marks_bar()
+        self._post_marks_changed()
 
     def clear_marks(self) -> None:
-        """Drop every mark (mode switch, or after a bulk action consumes them)."""
-        if not self._marked_ids:
-            return
-        self._marked_ids = set()
-        list_view = self.query_one("#personas-library-rows", ListView)
-        for item in list_view.children:
-            row = self._row_lookup.get(str(item.id or ""))
-            if row is not None:
-                self._render_row_marker(item, row, False)
-        self._sync_marked_count_line()
-        self._post_marks_changed()
+        """Drop every mark of the list's kind (Clear, Escape)."""
+        if self.item_list.clear_marks():
+            self.marks_changed()
 
-    def action_toggle_mark(self) -> None:
-        """m: mark/unmark the highlighted row for bulk delete/export (F-040)."""
-        list_view = self.query_one("#personas-library-rows", ListView)
-        index = list_view.index
-        if index is None or not 0 <= index < len(list_view.children):
-            return
-        item = list_view.children[index]
-        dom_id = str(item.id or "")
-        row = self._row_lookup.get(dom_id)
-        if row is None:
-            # Placeholder/recovery rows are not markable.
-            return
-        marked = dom_id not in self._marked_ids
-        if marked:
-            self._marked_ids.add(dom_id)
-        else:
-            self._marked_ids.discard(dom_id)
-        self._render_row_marker(item, row, marked)
-        self._sync_marked_count_line()
-        self._post_marks_changed()
+    def end_visit(self) -> None:
+        """The visit ended (spec 4.11 leave hook): every kind's marks go."""
+        self.item_list.reset_window_request()
+        if self.item_list.clear_all_marks():
+            self.marks_changed()
+
+    def forget_marks(self, option_ids: Sequence[str]) -> None:
+        """Deleted rows leave the marks (spec 4.11, Delete rows); others stay marked."""
+        self.item_list.drop_marks(option_ids)
+        self.marks_changed()
 
     def action_cycle_sort(self) -> None:
         """s: cycle the list sort order where sorting applies (F-040)."""
         if self._sort_visible:
             self.post_message(PersonaSortCycleRequested())
+
+    def request_toggle(self, option_id: str | None) -> None:
+        """space on a book row (lore book or chat dictionary) asks the screen to turn it on or off."""
+        row = self.item_list.row(option_id) if option_id else None
+        if row is None or row.kind not in ("dictionary", "lore"):
+            return
+        self.post_message(
+            PersonaActionRequested(
+                action="toggle_enabled", entity_kind=row.kind, entity_id=row.item_id
+            )
+        )
 
     def set_tag_label(self, text: str) -> None:
         """Update the tag button's label (the screen owns the active tag)."""
@@ -640,17 +1147,19 @@ class PersonasLibraryPane(Vertical):
 
     @on(Input.Submitted, "#personas-library-search")
     def _search_submitted(self, event: Input.Submitted) -> None:
-        """Enter in the search box jumps into the results list."""
-        event.stop()
-        list_view = self.query_one("#personas-library-rows", ListView)
-        list_view.focus()
-        if self._row_lookup:
-            list_view.index = 0
+        """Enter in the search box jumps into the results list.
 
-    @on(ListView.Selected, "#personas-library-rows")
-    def _row_selected(self, event: ListView.Selected) -> None:
+        The screen then renders a still-pending search at once and puts the
+        cursor on its first match (spec 1.6's 4-key find).
+        """
         event.stop()
-        row = self._row_lookup.get(str(event.item.id or ""))
+        self.focus_first_result()
+        self.post_message(PersonaSearchSubmitted())
+
+    @on(OptionList.OptionSelected, "#personas-library-rows")
+    def _row_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        row = self.item_list.row(str(event.option.id))
         if row is not None:
             self.post_message(
                 PersonaEntitySelected(
@@ -659,6 +1168,27 @@ class PersonasLibraryPane(Vertical):
                     entity_name=row.name,
                 )
             )
+
+    @on(OptionList.OptionHighlighted, "#personas-library-rows")
+    def _row_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        # Highlight never loads (I6); it also fires on every programmatic
+        # cursor restore, so it stays a no-op.
+        event.stop()
+
+    @on(Button.Pressed, "#personas-library-marks-export")
+    def _marks_export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="export_marked"))
+
+    @on(Button.Pressed, "#personas-library-marks-delete")
+    def _marks_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="delete_marked"))
+
+    @on(Button.Pressed, "#personas-library-marks-clear")
+    def _marks_clear_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.clear_marks()
 
     @on(Button.Pressed, "#personas-library-new")
     def _new_pressed(self, event: Button.Pressed) -> None:
@@ -695,33 +1225,10 @@ class PersonasLibraryPane(Vertical):
         event.stop()
         self.post_message(PersonaTagFilterRequested())
 
-    @on(Button.Pressed, "#personas-library-prev")
-    def _prev_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(PersonaPageChanged(-1))
-
-    @on(Button.Pressed, "#personas-library-next")
-    def _next_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(PersonaPageChanged(1))
-
-    def action_toggle_highlighted(self) -> None:
-        """Space on a highlighted dictionary row requests an enable-toggle."""
-        list_view = self.query_one("#personas-library-rows", ListView)
-        index = list_view.index
-        if index is None or not 0 <= index < len(list_view.children):
-            return
-        row = self._row_lookup.get(str(list_view.children[index].id or ""))
-        if row is None or row.kind != "dictionary":
-            return
-        self.post_message(
-            PersonaActionRequested(
-                action="toggle_enabled", entity_kind=row.kind, entity_id=row.item_id
-            )
-        )
-
 
 __all__ = [
     "LibraryRow",
     "PersonasLibraryPane",
+    "RoleplayItemList",
+    "option_id_for",
 ]

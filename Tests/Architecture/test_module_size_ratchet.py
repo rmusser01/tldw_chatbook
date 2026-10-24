@@ -146,13 +146,31 @@ _BUDGETS: dict[str, int] = {
     # grew personas_screen.py from 16,528 to 16,567 lines; B1 brings it to
     # 16,564.
     # TASK-36097 extracts Persona completion without raising the ceiling.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16561,
+    # Roleplay frame B2a (TASK-33910.3), owner decision 2026-10-19 ("expand
+    # limits, never contort code"), applied 2026-10-22 and 2026-10-23: B2a
+    # grows personas_screen.py from 16,561 lines (dev 7700c63a68) to 16,885;
+    # the row rises in each commit that grows it.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16885,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
     # server label on one header row adds 15 lines; the row rises 369 -> 384,
     # never squeezed code.
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 384,
+    # Roleplay frame B2a (TASK-33910.3), owner decision 2026-10-19 ("expand
+    # limits, never contort code"), applied 2026-10-22: the items-list state
+    # (prompt builder, density, count text, marks-bar and delete-modal copy,
+    # window rules; spec 5.11's B2a row) adds +536 lines (384 -> 920); the
+    # row rises with it, never squeezed code. B2a Task 5, same decision and
+    # day: the marks bar's narrow forms (whole actions drop, none is cut)
+    # add +8 (920 -> 928), and the Task 5 review's fix (the count yields
+    # before Delete, so Delete never drops) adds +3 (928 -> 931).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 931,
+    # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
+    # 5.10) for the items list that replaced the ListView and its pager,
+    # pinned at its measured size (727 on dev -> 1,223; owner decision
+    # 2026-10-19, "expand limits, never contort code"; applied 2026-10-23).
+    # The final review's fixes (same decision and day) raise it to 1,234.
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1234,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
