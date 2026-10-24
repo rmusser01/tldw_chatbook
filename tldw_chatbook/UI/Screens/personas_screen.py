@@ -2557,6 +2557,12 @@ class PersonasScreen(BaseAppScreen):
         """Whether a window's fence still matches the live list."""
         return fence == self._list_fence()
 
+    def _window_read_failed(self, fence: frame_state.ListFence) -> None:
+        """A window read failed or could not start: End or a load-through it
+        was for is owed no more, and the list may ask again (TASK-33910.34)."""
+        if self._list_fence_is_current(fence):
+            self._window_state.read_failed()
+
     def _character_title(self) -> str:
         """The items pane's border title for characters (spec 1.5.1, 1.4.2)."""
         if self._character_list_failed:
@@ -3843,6 +3849,7 @@ class PersonasScreen(BaseAppScreen):
             return
         db = self._character_db()
         if db is None:
+            self._window_read_failed(fence)
             return
         term = fence.query.strip()
         search = quote_fts5_prefix(term) if term else None
@@ -3902,6 +3909,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._list_fence_is_current(fence):
                 return
             logger.opt(exception=True).warning("Character window load failed.")
+            self._window_read_failed(fence)
             if request.replace:
                 # A failed reload shows no rows of an older sort, tag or source.
                 await self._apply_character_window(
@@ -3934,6 +3942,7 @@ class PersonasScreen(BaseAppScreen):
                 request, [], total=0, more=False, blank=True
             )
         if fence.server_id is None:
+            self._window_read_failed(fence)
             return
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         query = fence.query
@@ -3941,6 +3950,7 @@ class PersonasScreen(BaseAppScreen):
             service, "search_characters" if query else "list_characters", None
         )
         if not callable(load):
+            self._window_read_failed(fence)
             return
         size = _SERVER_CHARACTER_SEARCH_MAX_RESULTS
         records: list[dict] = []
@@ -3979,6 +3989,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._list_fence_is_current(fence):
                 return
             logger.warning("Server character page load failed.")
+            self._window_read_failed(fence)
             if request.replace:
                 await self._apply_character_window(
                     request, [], total=0, more=False, failed=True
@@ -4113,10 +4124,7 @@ class PersonasScreen(BaseAppScreen):
                 # End or a load-through this list's reload deferred or
                 # cancelled, with no newer cursor move or selection since:
                 # ask for it again on the landed list (TASK-33910.34).
-                if replay.reason == "end":
-                    library.item_list.action_last()
-                elif replay.target_id is not None:
-                    library.item_list.set_active(replay.target_id)
+                library.item_list.ask_again(replay)
 
     async def _reload_character_page(
         self, *, anchor: frame_state.ListAnchor | None = None

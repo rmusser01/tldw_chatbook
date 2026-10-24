@@ -388,26 +388,39 @@ class RoleplayItemList(OptionList):
         Returns:
             False when the row is not loaded yet: with ``load_through`` the
             list owes the user the move to it, and a window is requested if
-            rows past the loaded end exist. A selection with
-            ``load_through`` is a newer selection: it replaces any owed move.
+            rows past the loaded end exist. A newer selection (another row,
+            with ``load_through``) replaces any owed move; the screen marking
+            the open row again (a background refresh) leaves it.
         """
         previous, self._active_id = self._active_id, option_id
+        newer = load_through and previous != option_id
         if previous != option_id:
             self._refresh_rows([x for x in (previous, option_id) if x is not None])
         self._position_changed()
         if option_id is None or option_id in self._rows:
-            if load_through:
+            if newer:
                 self._window.user_moved()
             if option_id is not None and move_cursor:
                 self.highlighted = self.get_option_index(option_id)
             return True
-        if not load_through:
-            return False
+        if newer:
+            self._owe_row(option_id)
+        return False
+
+    def _owe_row(self, option_id: str) -> None:
         read = self._window.more_available
         intent = self._window.want("id", option_id, read=read)
         if read:
             self._request_window("id", option_id, intent)
-        return False
+
+    def ask_again(self, intent: frame_state.WindowIntent) -> None:
+        """Ask again for an owed move a reload deferred or cancelled (once that list lands)."""
+        if intent.reason == "end":
+            self.action_last()
+        elif intent.target_id in self._rows:
+            self.set_active(intent.target_id)
+        elif intent.target_id is not None:
+            self._owe_row(intent.target_id)
 
     def _apply_pending_active(self) -> None:
         arrived = self._window.arrived(self._rows)
@@ -474,8 +487,12 @@ class RoleplayItemList(OptionList):
         self._window.user_moved()
         super().action_last()
 
-    # A cursor key is a newer move: an End or a load-through still owed is
-    # not wanted any more (TASK-33910.34).
+    # A cursor key, or Enter on a row, is a newer move: an End or a
+    # load-through still owed is not wanted any more (TASK-33910.34).
+
+    def action_select(self) -> None:
+        self._window.user_moved()
+        super().action_select()
 
     def action_first(self) -> None:
         self._window.user_moved()

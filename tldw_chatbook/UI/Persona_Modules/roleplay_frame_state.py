@@ -1026,6 +1026,13 @@ class ListWindowState:
         """An appended window answered the request."""
         self.requested = False
 
+    def read_failed(self) -> None:
+        """A window read failed or could not start: the request is answered,
+        and an End or a load-through that asked for a read is owed no more."""
+        self.requested = False
+        if self.intent is not None and self.intent.read:
+            self.intent = None
+
     def kind_switched(self) -> None:
         """A new kind starts with no window state (B2a's final review, I1)."""
         self.rows_fence = None

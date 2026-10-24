@@ -151,7 +151,12 @@ _BUDGETS: dict[str, int] = {
     # grows personas_screen.py from 16,561 lines (dev 7700c63a68) to 16,885;
     # the row rises in each commit that grows it.
     # TASK-36454..36458: narrow completion helpers lower the combined owner.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16878,
+    # TASK-33910.34 fix round 1, same decision, applied 2026-10-24: a failed
+    # or unstartable window read drops the End or load-through it was for
+    # (one helper and five calls) and the replay moves into the list; +8
+    # lines on the task's own net -3, so the row rises from dev's measured
+    # 16,878 (dev 96cae7eec0) to 16,883.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16883,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -168,8 +173,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33910.34, owner decision ("expand limits, never contort code", as
     # ruled for B2a on 2026-10-19), applied 2026-10-24: the items list's
     # window state gets one owner (ListWindowState, WindowIntent, same_list)
-    # and adds +178 lines (931 -> 1,109).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1109,
+    # and adds +178 lines (931 -> 1,109). Its fix round 1 (same day) adds
+    # ``read_failed``: +7 (1,109 -> 1,116).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1116,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision
@@ -177,8 +183,10 @@ _BUDGETS: dict[str, int] = {
     # The final review's fixes (same decision and day) raise it to 1,234.
     # TASK-33910.34, same decision, applied 2026-10-24: the list reads its
     # window state from the shared owner, and each cursor key or click forgets
-    # an owed End or load-through; +44 lines (1,234 -> 1,278).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1278,
+    # an owed End or load-through; +44 lines (1,234 -> 1,278). Its fix round
+    # 1 (same day): only a selection of another row or Enter is a newer move,
+    # and the list asks again for a replayed move; +17 (1,278 -> 1,295).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1295,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

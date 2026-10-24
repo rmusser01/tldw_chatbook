@@ -44,6 +44,7 @@ from Tests.UI.roleplay_frame_harness import (
     wait_until,
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib
+from tldw_chatbook.Character_Chat.character_events import CharacterCardChanged
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -1921,10 +1922,18 @@ async def test_enter_after_end_during_the_search_debounce_lands_on_the_first_mat
     in the search box after it is a newer cursor move (AC#2): the searched
     list lands with the cursor on its first match and End is not asked
     again. Dev dropped End here anyway (AC#3's defect), so this is green on
-    dev; it pins that AC#3's fix leaves Enter in charge."""
+    dev; it pins that AC#3's fix leaves Enter in charge.
+
+    Enter waits at most ``_SEARCH_SUBMIT_WAIT_SECONDS`` (2 s) for its render
+    on dev and here (TASK-33910.35 removes the wait). Under xdist load the
+    render can outlast that cap, and Enter then puts the cursor on the old
+    rows, as B2a's own Enter test can show. The cap is raised to 30 s here,
+    so Enter always waits for the render it pins, and every check waits on
+    its condition, not on a fixed time."""
     monkeypatch.setattr(
         personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
     )
+    monkeypatch.setattr(personas_screen_module, "_SEARCH_SUBMIT_WAIT_SECONDS", 30.0)
     async with open_styled_roleplay(
         "mock", mock_app_instance, size=SIZE, character_db=volume_348
     ) as pilot:
@@ -1946,8 +1955,11 @@ async def test_enter_after_end_during_the_search_debounce_lands_on_the_first_mat
         expected = _listed(volume_348, order_by=screen.state.sort_key, query="Seeded")
         await wait_until(
             pilot,
-            lambda: list(visible_item_ids(screen)) == expected[:200],
-            what="the searched list",
+            lambda: (
+                list(visible_item_ids(screen)) == expected[:200]
+                and highlighted_item_id(screen) == expected[0]
+            ),
+            what="the searched list with the cursor on its first match",
         )
         await settle(pilot)
         await _pause_without_settling(pilot)
@@ -2105,7 +2117,12 @@ async def test_a_window_asked_for_before_a_server_reloads_blank_never_cancels_th
     new list's rows, so a near-end request queued before the blank and
     handled after it started an offset-0 append, and that cancelled the
     reload (one exclusive worker group): the reload's anchor restore, its
-    selection mark and a deferred End were lost."""
+    selection mark and a deferred End were lost.
+
+    The request is a synthetic ``WindowWanted`` posted to the list after the
+    blank: a real near-end scroll queued before the blank cannot be timed in
+    a test. The screen's real handler (``_handle_window_wanted``) takes it,
+    after bubbling through the pane as a real one would."""
     records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 151)]
     offsets: list[int] = []
     hold, holding = asyncio.Event(), asyncio.Event()
@@ -2218,8 +2235,12 @@ async def test_a_leave_inside_a_replaces_paint_reloads_on_the_return(
     mock_app_instance, volume_348, monkeypatch
 ):
     """AC#7, the real suspend path: Roleplay left while a replace paints its
-    rows (the paint awaits the pane's status line). B2a counted those rows
-    as landed, so the return reloaded nothing, and the paint the leave
+    rows. A paint yields only where ``update_rows`` swaps the pane's status
+    line, that is when the list goes from empty (or recovery) to rows or
+    back, so the case built here is the reachable one: a search with no
+    match, then the search cleared. The hold sits exactly at that swap and
+    only when the status really changes. B2a counted the painting rows as
+    landed, so the return reloaded nothing, and the paint the leave
     cancelled never said rows lay past the new list's end: End stopped at
     row 200 for good. Now the return reloads the list, and End loads
     through."""
@@ -2229,7 +2250,7 @@ async def test_a_leave_inside_a_replaces_paint_reloads_on_the_return(
 
     async def held(self, status):
         nonlocal armed
-        if armed:
+        if armed and status != self._status_key:
             armed = False
             painting.set()
             await release.wait()
@@ -2246,10 +2267,11 @@ async def test_a_leave_inside_a_replaces_paint_reloads_on_the_return(
         app = pilot.app
         screen = app.screen
         item_list = screen.query_one(RoleplayItemList)
-        screen.state.search_query = "Character 03"
+        screen.state.search_query = "zzzz"
         await screen._reload_character_page()
         await settle(pilot)
-        assert len(visible_item_ids(screen)) == 48 and not item_list.more_available
+        assert visible_item_ids(screen) == () and not item_list.more_available
+        assert screen.query("#personas-library-empty")
         armed = True
         screen.state.search_query = ""
         reload = asyncio.create_task(screen._reload_character_page())
@@ -2273,6 +2295,200 @@ async def test_a_leave_inside_a_replaces_paint_reloads_on_the_return(
                 and highlighted_item_id(screen) == expected[-1]
             ),
             what="End loading through after the return",
+        )
+
+
+def _failing_after_row_200(fail: dict):
+    """``get_character_page_for_ui`` that raises for any window past row 0 while ``fail["on"]``."""
+    original = personas_screen_module.get_character_page_for_ui
+
+    def flaky(db, **kwargs):
+        if kwargs.get("offset") and fail["on"]:
+            raise RuntimeError("disk I/O error")
+        return original(db, **kwargs)
+
+    return flaky
+
+
+@pytest.mark.parametrize("failure", ["raise", "no_database"])
+@pytest.mark.parametrize("move", ["end", "load_through"])
+async def test_a_failed_read_leaves_no_move_owed_for_a_later_write_reload(
+    mock_app_instance, volume_348, monkeypatch, move, failure
+):
+    """Fix round 1 (review finding 1): End's or a load-through's read fails
+    (the read raises, or no database is there to read), and later an
+    unrelated write (a save, an import, a Console or agent write) reloads the
+    same list. The move must not come back then. This PR's first push kept
+    it owed, so that reload read every remaining row and moved the cursor (to
+    the last row, or to the restored row); dev drops it."""
+    fail = {"on": True}
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        if failure == "raise":
+            monkeypatch.setattr(
+                personas_screen_module,
+                "get_character_page_for_ui",
+                _failing_after_row_200(fail),
+            )
+        else:
+            database = screen._character_db
+            screen._character_db = lambda: None if fail["on"] else database()
+        item_list.focus()
+        await select_roleplay_item(pilot, screen, index=5, load=False)
+        before = highlighted_item_id(screen)
+        if move == "end":
+            await pilot.press("end")
+        else:
+            await _open_past_row_200(screen, volume_348)
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        assert len(visible_item_ids(screen)) == 200
+        assert highlighted_item_id(screen) == before
+        fail["on"] = False
+        await screen.refresh_character_library_list(None)
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        await settle(pilot)
+        assert len(visible_item_ids(screen)) == 200
+        assert highlighted_item_id(screen) == before
+
+
+async def test_a_failed_read_lets_the_list_ask_again_near_its_end(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Fix round 1 (review finding 1): a read that fails answers the request,
+    so the next move near the loaded end asks again. On dev and on this PR's
+    first push the near-end latch stayed set until another list landed, so no
+    window came."""
+    fail = {"on": True}
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        monkeypatch.setattr(
+            personas_screen_module,
+            "get_character_page_for_ui",
+            _failing_after_row_200(fail),
+        )
+        item_list.focus()
+        await pilot.press("end")
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        assert len(visible_item_ids(screen)) == 200
+        fail["on"] = False
+        item_list.highlighted = 190
+        await settle(pilot)
+        item_list.highlighted = 195
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) > 200,
+            what="the next window after the failed read",
+        )
+
+
+@pytest.mark.parametrize("failure", ["raise", "no_list_call"])
+async def test_a_failed_server_read_leaves_no_end_owed_for_a_later_write_reload(
+    mock_app_instance, failure
+):
+    """Fix round 1 (review finding 1), on a server source: End's read fails
+    (the call raises, or the service has no list call), then a write reloads
+    the list; End must not come back and load every row. This PR's first
+    push replayed it; dev drops it."""
+    records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 151)]
+    fail = {"on": False}
+
+    async def list_characters(*, mode, limit, offset):
+        if offset and fail["on"]:
+            raise RuntimeError("server unreachable")
+        return [dict(record) for record in records[offset : offset + limit]]
+
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_characters=list_characters,
+        search_characters=AsyncMock(return_value=[]),
+        get_character=AsyncMock(return_value=dict(records[0])),
+    )
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) == 100,
+            what="the first server window",
+        )
+        item_list = screen.query_one(RoleplayItemList)
+        item_list.focus()
+        await select_roleplay_item(pilot, screen, index=5, load=False)
+        before = highlighted_item_id(screen)
+        service = mock_app_instance.character_persona_scope_service
+        if failure == "raise":
+            fail["on"] = True
+        else:
+            service.list_characters = None
+        await pilot.press("end")
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        assert len(visible_item_ids(screen)) == 100
+        fail["on"] = False
+        service.list_characters = list_characters
+        await screen.refresh_character_library_list(None)
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        await settle(pilot)
+        assert len(visible_item_ids(screen)) == 100
+        assert highlighted_item_id(screen) == before
+
+
+async def test_a_background_refresh_of_the_open_card_does_not_cancel_end(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Fix round 1 (review finding 2): a Console save of the open character
+    re-selects it while End reads. That is no user move, so End still lands
+    on the last row. This PR's first push took it for a newer selection and
+    cancelled End; dev does not."""
+    gate, reading = threading.Event(), threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("offset") and not gate.is_set():
+            reading.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        opened = visible_item_ids(screen)[5]
+        await select_roleplay_item(pilot, screen, opened)
+        await wait_until(
+            pilot, lambda: item_list.active_id == opened, what="the opened row"
+        )
+        await settle(pilot)
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+        item_list.focus()
+        try:
+            await pilot.press("end")
+            await wait_until(pilot, reading.is_set, what="End's read")
+            await screen._on_character_card_changed(
+                CharacterCardChanged(int(opened.split(":")[1]))
+            )
+            await pilot.pause()
+        finally:
+            gate.set()
+        expected = _db_ids(volume_348)
+        await wait_until(
+            pilot,
+            lambda: (
+                list(visible_item_ids(screen)) == expected
+                and highlighted_item_id(screen) == expected[-1]
+            ),
+            what="End on the last row",
         )
 
 

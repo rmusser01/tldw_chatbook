@@ -728,6 +728,20 @@ def test_the_owed_row_is_met_once_it_arrives():
     assert window.intent is None
 
 
+def test_a_failed_read_answers_the_request_and_drops_only_a_move_that_read():
+    """Fix round 1 (review finding 1): a failed read owes no move any more, and
+    the list may ask again; a move that asked for no read (a row waiting for a
+    later list) stays."""
+    window = frame_state.ListWindowState()
+    window.asked_for(window.want("end", read=True), _fence())
+    window.read_failed()
+    assert window.intent is None and not window.requested
+    waiting = window.want("id", "character:7", read=False)
+    window.ask()
+    window.read_failed()
+    assert window.intent is waiting and not window.requested
+
+
 def test_a_blank_and_a_kind_switch_leave_no_rows_to_append_to():
     window = frame_state.ListWindowState()
     window.landing(_fence())
@@ -1129,6 +1143,28 @@ async def test_a_newer_cursor_move_or_selection_forgets_an_owed_end(move):
         else:
             await pilot.press(move)
         await pilot.pause()
+        assert item_list.window_state.intent is None
+
+
+async def test_a_re_mark_of_the_open_row_keeps_an_owed_end_and_enter_on_it_does_not():
+    """Fix round 1 (review finding 2): the screen re-marks the open row after a
+    background refresh (a Console save of the open card). That is no user
+    move, so End stays owed; Enter on that same row is one."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 200), total=348)
+        item_list.set_more_available(True)
+        item_list.focus()
+        pane.mark_active_row("character", "5")
+        await pilot.pause()
+        await pilot.press("end")
+        await pilot.pause()
+        owed = item_list.window_state.intent
+        assert owed is not None and owed.reason == "end"
+        pane.mark_active_row("character", "5")
+        assert item_list.window_state.intent is owed
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pilot.app.selected[-1:] == ["5"]
         assert item_list.window_state.intent is None
 
 
