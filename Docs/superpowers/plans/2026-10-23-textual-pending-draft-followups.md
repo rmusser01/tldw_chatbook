@@ -19,7 +19,7 @@ Reason: bounded asynchronous acknowledgement/publication repairs; each task link
 - Preserve existing service, storage, artifact activation, history, navigation and consent boundaries; no new dependencies or global draft owner.
 - Read applicable canonical ADRs and the design language; existing token-backed controls and stable widget identities remain.
 - Targeted local tests only. Preserve private evidence; never delete .test-tmp or use git stash.
-- Public regression tests must run in required PR CI; preserve every inherited census slot and existing shard/cap policy.
+- Public regression tests must run in required PR CI; retain every inherited selector and the existing shard/cap policy. Initial insertion preserves all inherited slots; the measured CI follow-up below permits a two-slot swap after repeated job-cap cancellations.
 - Use Superpowers requesting-code-review, never Qodo. Create PR to dev; merging this new PR is not requested.
 
 ## Review focus
@@ -77,8 +77,22 @@ ADR required: no. Existing ADR-014/025/050/033 application state and ADR-011 app
 
 ## Integration and delivery
 
-- [x] Inspect all diffs, update relevant architecture docs and task notes, add exact regression selectors to required PR lanes without moving inherited slots.
+- [x] Inspect all diffs, update relevant architecture docs and task notes, append exact regression selectors to required PR lanes, then qualify the measured two-slot CI rebalance below.
 - [x] Run targeted UI/service/static/governance verification; inspect diagnostic inventory statement delta before regeneration if necessary.
 - [x] Commit explicit files, request fresh-context Superpowers code review, verify and fix actionable feedback.
 - [x] Mark tasks Done through CLI only when AC/evidence/review checks hold; push and create/attach PR against dev.
 Delivery gate: check all CI and paginated review feedback on the current head, address failures/feedback, and record final exact-head results in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). The task/documentation closure is bundled before that run to avoid a second CI cycle solely for status metadata. CI completion is tracked by the PR check rollup and final description, rather than a subsequent source commit.
+
+
+## CI qualification follow-up: measured census rebalance
+
+ADR required: no
+ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
+Reason: apply the existing workflow's log-replay/reorder policy; no new gate, dependency, shard, test or timeout policy. Existing TASK-35834 and TASK-33664.4 own the established capacity rules.
+
+After `a7129eabea` UI shard 3 hit its 20-minute cap twice, stop unchanged retries. Attempt 1 passed all 169 tests in 1150.31s before shutdown cancellation; attempt 2 reached 98% before cancellation. Eighteen other prerequisite jobs and Perf Guard passed. Preserve both failures separately from the next source qualification.
+
+1. Replay all thirteen complete attempt-1 shard logs with the existing `ui_lane_shard_replay.py` cost attribution. Rule out test weakening: read-only native MCP profiling finds no measured robust saving, and all test controls remain intact.
+2. Swap only inherited census slots 77 and 432: `test_destination_rail_row.py` (shard 12, 94.06s) and `test_mcp_permissions_handoff.py` (shard 3, 221.69s). Keep all 720 unique selectors, all 56 appended regressions and 662 of 664 inherited positions fixed. Preserve annotation ownership.
+3. Check exact selector multiset, changed slots, all thirteen ordered disjoint checker outputs and existing census/replay/workflow contracts. Record calibrated before/after estimates as estimates, not hosted passes. Keep 13 shards, serial execution, minimal dependencies, 20-minute job and 180-second test caps unchanged.
+4. Obtain a scoped fresh-context Superpowers review of the source/evidence delta, fix actionable feedback, and publish one necessary source update. Follow normal pull-request CI on that exact head and refresh paginated feedback before delivery. No merge is authorized.
