@@ -60,6 +60,8 @@ profiles:
 
 `UI/MCP_Modules/mcp_profile_form.py` owns import text and draft/request revisions; `mcp_workbench.py` owns the picker and validated threaded file read. The actual picker callback captures a receiver from its originating panel before scheduling the read. Publication requires the same request and editor revision plus current attachment outside removal. Later typing, clearing, a new selection, Cancel or direct panel replacement invalidates the old completion. Accepted editor changes count before their Changed messages bubble, including edit then clear back to empty. Completion never looks up a replacement panel.
 
+The shared `MCP/mcp_import.py` parser rejects non-null malformed args/env containers with field-specific ValueError, retaining the existing editable Preview recovery: candidates clear, Import disables, and corrected source can be previewed again. Omitted/null inputs, supported item coercion, spawn screening and secret filtering retain their behavior (TASK-36697; ADR-161/240).
+
 Path containment, file-size and UTF-8 checks remain at the workbench boundary. TASK-36696 covers real picker callbacks and reads, including the owner's direct hide/replace paths; ADR-033/240 preserve Settings and panel ownership.
 
 ## Permission decision lifecycle (one tool call)

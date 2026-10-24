@@ -1,7 +1,7 @@
 ---
 id: TASK-36698
 title: Ignore superseded Image Gen demo worker results and errors
-status: To Do
+status: In Progress
 created_date: 2026-10-24 17:34
 labels:
 - textual-patterns
@@ -9,6 +9,9 @@ labels:
 priority: low
 documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
+assignee:
+- '@codex'
+updated_date: 2026-10-24 20:17
 ---
 
 ## Description
@@ -44,3 +47,15 @@ Reason: Routine applicability checks within the existing demo worker and media-g
 - [ ] #3 Ordinary serial generation and the existing command-palette entry keep working without real API calls in regression tests.
 - [ ] #4 Mounted held-old/new controls exercise the actual exclusive worker and UI publication for both old success and old failure, with a serial control.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required:no. ADR paths:[ADR-176](../decisions/176-one-media-generation-core.md) and [ADR-033](../decisions/033-application-session-state-ownership.md). Reason:current-request UI publication in the existing demo worker owner; unchanged media core/provider/runtime boundaries.
+1. Add mounted real Generate/exclusive-thread Worker controls for older success/error after newer completion, queued older UI publication after new admission, explicit cancellation, normal serial success/newest error and live palette reachability. Bound provider/catalog I/O and exercise real PNG decode off the UI thread.
+2. Retain stale-publication RED with actual Worker.is_cancelled observed. Fence success and error at final UI publication using current worker/request authority, preserving existing status/render behavior and low-level decode/apply contracts.
+3. Preserve off-thread request/generation/decode and current UI-thread-only widget publication. Wait distinct Generate button activation before the second request. Do not use ever-mounted state as attachment authority; retain safe cancellation/retirement semantics.
+4. Run new and directly relevant existing demo/decode controls with actual private-child XML inspection and focused lint/format. No full suite, real provider calls or unrelated service fixes.
+5. Obtain task-scoped Superpowers requesting-code-review, register every new UI regression in existing required CI, update media architecture/notes and then perform overall integration/rebase/review/PR/CI qualification.
+Master plan:Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task6).
+<!-- SECTION:PLAN:END -->

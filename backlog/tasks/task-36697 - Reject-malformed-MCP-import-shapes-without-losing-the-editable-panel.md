@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 20:01
+updated_date: 2026-10-24 20:16
 ---
 
 ## Description
@@ -42,10 +42,10 @@ Reason: Routine validation and recoverable errors within the existing importer a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Malformed args/env container shapes produce a clear import validation error without an uncaught handler exception.
-- [ ] #2 Rejected source text stays editable, Import remains disabled, and stale preview candidates cannot be submitted.
-- [ ] #3 Correcting the text and pressing Preview recovers normally; supported valid and omitted field shapes retain existing behavior.
-- [ ] #4 Parser and mounted Preview regressions cover both observed malformed shapes, a valid control and the installed keepalive semantics.
+- [x] #1 Malformed args/env container shapes produce a clear import validation error without an uncaught handler exception.
+- [x] #2 Rejected source text stays editable, Import remains disabled, and stale preview candidates cannot be submitted.
+- [x] #3 Correcting the text and pressing Preview recovers normally; supported valid and omitted field shapes retain existing behavior.
+- [x] #4 Parser and mounted Preview regressions cover both observed malformed shapes, a valid control and the installed keepalive semantics.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,13 @@ ADR required: no. ADR paths: [ADR-161](../decisions/161-component-pattern-librar
 5. Obtain task-scoped Superpowers requesting-code-review, register parser/UI regressions on their existing required lanes, update architecture and implementation notes. Final hosted qualification follows all six tasks.
 Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task5).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+The shared MCP JSON parser now rejects malformed non-null args/env containers with field-specific ValueError, including falsy wrong shapes. Omitted/null defaults, supported list/object item coercion, spawn screening and secret filtering retain behavior. The existing Preview ValueError path now handles these errors normally: raw text stays editable, stale candidates clear, Import disables, and correction/repreview recovers. No UI production code changed.
+
+Verification:64 targeted parser/security/mounted cases passed, including20 new parser cases and4 real panel recovery variants. Parent and all4 private-child XMLs have zero failures/errors/skips; root and reviewer inspected actual reports. Real installed LifecycleMixin keepalive semantics were retained in a bounded native App host. Full-app exploratory RED is qualified separately; three unchanged legacy Preview bodies also passed in an untracked private-profile diagnostic. No full suite. Ruff passes; parser formatter delta is identical to inherited deferred-import wrapping debt. Dependency warnings remain attributed.
+
+Superpowers task review approved with no blocking findings. All4 exact UI cases are registered (floor829), parser module added to PR Fast Lane and exact target contract; two focused gate checks and census validation pass. Final hosted qualification remains pending. ADR required:no; ADR-161/240 apply to existing validation/recovery ownership. Updated Docs/Architecture/mcp-hub.md. Source/tests: MCP/mcp_import.py, Tests/MCP/test_mcp_import_shapes.py and Tests/UI/test_mcp_import_validation_recovery.py.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

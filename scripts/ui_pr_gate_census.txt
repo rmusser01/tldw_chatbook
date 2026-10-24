@@ -1251,3 +1251,9 @@ Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_picker_file_validation
 # TASK-36696 review: actual owner removal/replacement without Cancel.
 Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_rejects_direct_panel_retirement[hide]
 Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_rejects_direct_panel_retirement[replace]
+
+# TASK-36697: malformed import shapes retain editable Preview and recover.
+Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[args-number]
+Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[env-list]
+Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[args-empty-object]
+Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[env-empty-list]

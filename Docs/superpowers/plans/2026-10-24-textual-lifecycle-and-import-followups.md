@@ -96,11 +96,11 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 **Interfaces:** Consumes parse_mcp_servers_json and existing ValueError Preview recovery. Produces field-specific ValueError for malformed args/env containers; preserves supported valid/omitted inputs and spawn/env security rules.
 **ADR required:** no. **ADR path:** existing 161 and 240. **Reason:** input-boundary validation within the existing contract.
 
-- [ ] Write parser and mounted Preview controls for args:42, env:["bad"], other invalid container forms, valid/omitted fields, valid-preview followed by rejected text, and correction/recovery under the installed keepalive policy.
-- [ ] Run before implementation; retain TypeError/AttributeError or stale-candidate RED evidence at the actual parser/panel boundary.
-- [ ] Validate container shapes at the parser boundary and preserve editable source, disabled Import and cleared stale candidates on rejection. Keep existing command/secret filtering intact.
-- [ ] Run new and existing parser/spawn-validation/import Preview controls; inspect private child JUnit and Ruff/format checks.
-- [ ] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
+- [x] Write parser and mounted Preview controls for args:42, env:["bad"], other invalid container forms, valid/omitted fields, valid-preview followed by rejected text, and correction/recovery under the installed keepalive policy.
+- [x] Run before implementation; retain TypeError/AttributeError or stale-candidate RED evidence at the actual parser/panel boundary.
+- [x] Validate container shapes at the parser boundary and preserve editable source, disabled Import and cleared stale candidates on rejection. Keep existing command/secret filtering intact.
+- [x] Run new and existing parser/spawn-validation/import Preview controls; inspect private child JUnit and Ruff/format checks.
+- [x] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
 
 ## Task 6: TASK-36698 — ignore superseded Image Gen demo publications
 
