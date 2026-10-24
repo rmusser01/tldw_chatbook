@@ -452,6 +452,7 @@ from ...Chat.console_rail_state import (
     normalize_console_rail_layout_scope,
     resolve_console_rail_priority,
     serialize_console_rail_stored_preferences,
+    take_console_rail_seed_flush,
     serialize_console_rail_updated_preferences,
     console_rail_right_open_explicit,
 )
@@ -7285,6 +7286,9 @@ class ChatScreen(BaseAppScreen):
         # when the session's payload has actually changed since the last
         # check, and never while a run is actively streaming.
         self._last_console_rail_state: ConsoleRailState | None = None
+        #: TASK-36385: see `take_console_rail_seed_flush`.
+        self._console_rail_unsaved_seeds: dict[str, dict[str, bool]] = {}
+        self._console_rail_seed_flush: list[tuple[str, dict[str, bool]]] = []
         # TASK-2154.1: last width band seen by the resize hook; a rebuild of
         # the (expensive) effective rail state only happens when the band
         # actually changes, not on every pixel of a resize drag.
@@ -11843,6 +11847,18 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
         with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
+            # Held seed defaults land first (the UI thread only appends).
+            while self._console_rail_seed_flush:
+                flush_key, flush_value = self._console_rail_seed_flush.pop(0)
+                try:
+                    save_setting_to_cli_config(
+                        "console.rail_state", flush_key, flush_value
+                    )
+                except Exception as exc:  # noqa: BLE001 -- the record still saves
+                    logger.warning(  # noqa: PLE1205 - Loguru brace format
+                        "Failed to persist Console rail seed defaults (error_type={})",
+                        type(exc).__name__,
+                    )
             latest: Any = serialized
             app_config = getattr(self.app_instance, "app_config", None)
             if isinstance(app_config, Mapping):
@@ -12147,14 +12163,15 @@ class ChatScreen(BaseAppScreen):
         )
         serialized = serialize_console_rail_stored_preferences(source)
         rail_state_config[selected_key.value] = serialized
-        if persist and source is None:
-            from ...Backup_Recovery.profile_open import unchanged_selected_config
-            from ...config import get_cli_config_path
-
-            # Mounting a recovered Console must not rewrite its verified config
-            # merely to serialize defaults; explicit rail edits still save below.
-            persist = not unchanged_selected_config(get_cli_config_path())
-        if persist:
+        # TASK-36385: saving defaults here rewrote config.toml on a launch that
+        # changed nothing; the next rail save writes them first instead. A
+        # copied source record is the one-time migration and still saves.
+        if source is None:
+            self._console_rail_unsaved_seeds[selected_key.value] = serialized
+        elif persist:
+            self._console_rail_seed_flush += take_console_rail_seed_flush(
+                rail_state_config, self._console_rail_unsaved_seeds, selected_key.value
+            )
             self._save_console_rail_preferences(
                 selected_key.value,
                 serialized,
@@ -12749,6 +12766,11 @@ class ChatScreen(BaseAppScreen):
                 explicit_right_toggle=explicit_right_toggle,
             )
             rail_state_config[preference_key.value] = serialized
+            self._console_rail_seed_flush += take_console_rail_seed_flush(
+                rail_state_config,
+                self._console_rail_unsaved_seeds,
+                preference_key.value,
+            )
             self._save_console_rail_preferences(
                 preference_key.value,
                 serialized,

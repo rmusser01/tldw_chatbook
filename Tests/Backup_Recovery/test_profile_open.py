@@ -356,7 +356,7 @@ def test_mounted_open_reads_actual_restored_notes_chat_and_media(tmp_path):
 
 
 @pytest.mark.parametrize("source_scope", [None, "workspace", "legacy"])
-def test_normal_console_seed_still_persists_defaults_or_stored_source(source_scope):
+def test_normal_console_seed_persists_a_stored_source_but_not_defaults(source_scope):
     from types import SimpleNamespace
 
     from tldw_chatbook.Backup_Recovery import profile_open
@@ -380,12 +380,19 @@ def test_normal_console_seed_still_persists_defaults_or_stored_source(source_sco
     screen = SimpleNamespace(
         _console_rail_state_config=lambda: records,
         _save_console_rail_preferences=lambda key, value, **kwargs: writes.append((key, value)),
+        _console_rail_unsaved_seeds={},
+        _console_rail_seed_flush=[],
     )
     expected = serialize_console_rail_stored_preferences(source)
     seeded = ChatScreen._ensure_console_rail_scope_seed(screen, selected, workspace)
+    # TASK-36385: defaults with no source are held in memory, and the next
+    # rail save writes them first.
+    expected_writes = [] if source is None else [(selected.value, expected)]
+    held = {selected.value: expected} if source is None else {}
     assert seeded == expected  # nosec B101
-    assert writes == [(selected.value, expected)]  # nosec B101
+    assert writes == expected_writes  # nosec B101
+    assert screen._console_rail_unsaved_seeds == held  # nosec B101
     ChatScreen._ensure_console_rail_scope_seed(screen, selected, workspace)
-    assert writes == [(selected.value, expected)]  # nosec B101
+    assert writes == expected_writes  # nosec B101
     if source_scope is not None:
         assert records[key] is source  # nosec B101

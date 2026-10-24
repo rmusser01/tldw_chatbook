@@ -3,28 +3,39 @@
 Every older handoff test opens the wizard over a Console that is already
 mounted, so Console's "seed what is missing" rail-scope write never lands
 between stage and consume (lessons-live-verification, TASK-33001.5 entry).
-On a fresh profile that write advances the global config generation, and the
+On a fresh profile that write advanced the global config generation, and the
 old generation fence released a perfectly good handoff with "Provider settings
 changed before Console opened. Review setup and try again." (8 of 8 live runs,
 entry-exit-handoff-04). These tests start on Home so Console has never been
 mounted, stage the handoff exactly as Start chatting does, and then let the
 app's own wizard-result route open Console for the first time.
+
+TASK-36385 stopped that mount write (its defaults were never a change). The
+fence still meets other writes in that window, so
+``Tests/Wizards/test_first_run_setup_integration.py`` makes one by hand.
 """
 
 from __future__ import annotations
 
 import time
+import tomllib
 from collections.abc import Callable
 
 import pytest
+from textual.widgets import Button
 
 from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import _test_cli_setting
+from tldw_chatbook.Chat.console_rail_state import (
+    build_console_rail_preference_key,
+    serialize_console_rail_stored_preferences,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import (
-    get_runtime_config_snapshot,
+    get_cli_config_path,
+    save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
 from tldw_chatbook.Constants import TAB_CHAT
@@ -32,6 +43,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     HandoffChannel,
 )
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_COMPLETED_KEY,
@@ -111,7 +123,6 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
             assert not any(isinstance(s, ChatScreen) for s in app.screen_stack)
-            staged_at = get_runtime_config_snapshot().generation
             assert SetupWizardContainer(app)._stage_console_first_chat_handoff()
             revision = _staged_revision(app)
 
@@ -125,9 +136,6 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
             console = app.screen
             await pilot.pause(1.0)
 
-            # The race this test exists for really happened: Console's first
-            # mount published a config write after the handoff was staged.
-            assert get_runtime_config_snapshot().generation > staged_at
             assert [text for text, severity in notices if severity == "warning"] == []
             assert not any("Provider settings changed" in text for text, _ in notices)
             await _wait_until(pilot, lambda: _handoff_status(app, revision) == "settled")
@@ -194,3 +202,177 @@ async def test_a_default_changed_after_start_chatting_names_the_model_in_use(
             assert "model-a" not in changed[0]
             shown = console._session._ensure_active_console_session_settings()
             assert shown.model == "model-b"
+
+
+_SHARED_RAIL_KEY = build_console_rail_preference_key(layout_scope="global").value
+
+
+def _saved_rail_layout(key: str = _SHARED_RAIL_KEY) -> dict:
+    data = tomllib.loads(get_cli_config_path().read_text(encoding="utf-8"))
+    return data.get("console", {}).get("rail_state", {}).get(key, {})
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_consoles_first_mount_leaves_config_alone_and_a_rail_toggle_saves(
+    request,
+) -> None:
+    """TASK-36385: mounting Console saved its default rail layout, which
+    rewrote config.toml and dropped its comments. A real toggle still saves."""
+    _persist_setup()
+    config_path = get_cli_config_path()
+    commented = b"# a note the user wrote\n" + config_path.read_bytes()
+    config_path.write_bytes(commented)
+    app = _build_test_app(first_run_setup_completed=True)
+
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            await pilot.pause(1.0)
+            assert config_path.read_bytes() == commented, (
+                "Console's mount rewrote config.toml"
+            )
+
+            # The toggle's own Pressed path; a pointer click can miss while the
+            # rail is still settling (one run in five here).
+            app.screen.query_one("#console-rail-section-toggle-model", Button).press()
+            await _wait_until(
+                pilot, lambda: _saved_rail_layout().get("model_open") is True
+            )
+            # A Global edit saves the shared layout and nothing else.
+            saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+            assert list(saved["console"]["rail_state"]) == [_SHARED_RAIL_KEY]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_per_workspace_edit_leaves_the_global_rail_layout_at_its_defaults(
+    request,
+) -> None:
+    """TASK-36385 review: the mount holds Global's defaults in memory only.
+    Seeding is still one-time: a per-workspace edit must not become Global's
+    seed at the next launch (the 2026-08-24 rail authority spec)."""
+    _persist_setup()
+
+    # Launch 1, Global: the user switches to Per workspace and closes
+    # Conversations, which saves the active workspace's record.
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            console = app.screen
+            await pilot.pause(0.5)
+            assert save_setting_to_cli_config(
+                "console", "rail_layout_scope", "workspace"
+            )
+            app.app_config["console"]["rail_layout_scope"] = "workspace"
+            context = console._workspace._current_console_workspace_context()
+            workspace_key = build_console_rail_preference_key(
+                workspace_id=context.active_workspace_id, layout_scope="workspace"
+            ).value
+            console.query_one(
+                "#console-rail-section-toggle-conversations", Button
+            ).press()
+            await _wait_until(
+                pilot,
+                lambda: _saved_rail_layout(workspace_key).get("conversations_open")
+                is False,
+            )
+
+    # Launch 2, back on Global: its layout is still the defaults.
+    assert save_setting_to_cli_config("console", "rail_layout_scope", "global")
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            await pilot.pause(0.5)
+            assert app.screen._current_console_rail_state().conversations_open is True
+            assert _saved_rail_layout().get("conversations_open") is True
+
+
+async def _mounted_console_recording_rail_saves(app, pilot, monkeypatch):
+    """Console mounted on Global, with every rail-state file write recorded."""
+    await _wait_until(
+        pilot, lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted
+    )
+    await pilot.pause(0.5)
+    writes: list[tuple[str, dict]] = []
+    real_save = chat_screen_module.save_setting_to_cli_config
+
+    def record(section: str, key: str, value: dict) -> bool:
+        saved = real_save(section, key, value)
+        writes.append((key, dict(value)))  # once the file holds it
+        return saved
+
+    monkeypatch.setattr(chat_screen_module, "save_setting_to_cli_config", record)
+    return app.screen, writes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_held_shared_defaults_are_written_before_the_workspace_record(
+    monkeypatch, request
+) -> None:
+    """TASK-36385 review 2: the save worker writes held seed defaults before
+    its own record, so that record can never be on disk without them."""
+    _persist_setup()
+    defaults = serialize_console_rail_stored_preferences(None)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            console, writes = await _mounted_console_recording_rail_saves(
+                app, pilot, monkeypatch
+            )
+            assert console._console_rail_unsaved_seeds == {_SHARED_RAIL_KEY: defaults}
+
+            app.app_config["console"]["rail_layout_scope"] = "workspace"
+            context = console._workspace._current_console_workspace_context()
+            workspace_key = build_console_rail_preference_key(
+                workspace_id=context.active_workspace_id, layout_scope="workspace"
+            ).value
+            console.query_one(
+                "#console-rail-section-toggle-conversations", Button
+            ).press()
+            # The workspace seed's copy and the edit each save the record.
+            await _wait_until(pilot, lambda: len(writes) == 3)
+
+            assert writes[0] == (_SHARED_RAIL_KEY, defaults)
+            assert [key for key, _ in writes[1:]] == [workspace_key, workspace_key]
+            assert writes[-1][1]["conversations_open"] is False
+            assert _saved_rail_layout() == defaults
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_held_seed_the_user_edits_after_it_was_queued_keeps_the_edit(
+    monkeypatch, request
+) -> None:
+    """TASK-36385 review 2: the queued defaults land before the edit's own
+    write, never after it, so a restart shows the edit."""
+    _persist_setup()
+    defaults = serialize_console_rail_stored_preferences(None)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            console, writes = await _mounted_console_recording_rail_saves(
+                app, pilot, monkeypatch
+            )
+            # Queued by another record's save whose worker has not run yet;
+            # then the user edits the held record itself.
+            edited = {**defaults, "model_open": True}
+            console._console_rail_state_config()[_SHARED_RAIL_KEY] = edited
+            console._console_rail_seed_flush.append((_SHARED_RAIL_KEY, defaults))
+            console._save_console_rail_preferences(_SHARED_RAIL_KEY, edited)
+            await _wait_until(pilot, lambda: len(writes) == 2)
+
+            assert [value["model_open"] for _, value in writes] == [False, True]
+            assert _saved_rail_layout()["model_open"] is True

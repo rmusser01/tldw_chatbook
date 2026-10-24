@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## Wrapping config's file writer in a child app made the save fail, so the file looked untouched (TASK-36385, 2026-10-23)
+
+**Incident.** To find which code rewrote config.toml on a real boot and quit, a probe child replaced `tldw_chatbook.config._write_raw_cli_config_unlocked` with a logging wrapper. The file came back byte-identical on dev, which looked like "no rewrite". The wrapper's own log showed why: the Console rail save reached it and raised `RecoveryRequired: config_source_not_installed`, because the guarded writer refuses a patched module function. With no wrapper, the same boot on dev rewrote both a commented sparse file and the full shipped template.
+
+**What to do.** To check whether a launch rewrites the config, compare the file's bytes before and after with nothing in config patched. To find the writer, patch a caller in another module (the way `Tests/ProductionApp/test_config_profile_isolation.py` patches `app_lifecycle.persist_cli_config_for_shutdown`), or read the mutation log. A byte-identical file proves nothing if the probe patched the writer.
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.
@@ -3453,6 +3459,8 @@ post-mount provider change, update both the durable config and the active sessio
 settings through their normal synchronization path. Include one deliberate
 save/reload in the test so a future cache invalidation cannot silently erase the
 fixture.
+
+**TASK-36385 follow-up, 2026-10-24: removing that mount write broke a test in the other direction.** `test_credential_round_trip_keeps_the_restored_edit_unsaved[model]` set `app.app_config["chat_defaults"]` in memory, on the same dict object as `load_settings()`'s cache. While Console's mount saved its default rail state, that write reloaded the cache from disk before the test began, so the chat took the file's defaults and the test's commit counted as user work. Without the write, the commit equalled the in-memory defaults, the chat stayed blank, and the stubbed Settings save converged it (ADR-095 D1), which refused the return. Its CI shard failed on both runs. Locally, the head failed 5 of 5 serial runs and the base passed 5 of 5. Saving the defaults through the writer made it pass at both. A test can depend on a config write it never makes; when you remove one, run the suites whose fixtures set `app.app_config` in memory, and assert the precondition the write used to create (here, `has_user_work`).
 
 ## A same-route rail press can invalidate the control a harness is about to press
 

@@ -130,7 +130,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the row's new exact measurement.
     #: Rebased 2026-10-23 onto dev, which measures 24341 (TASK-33620.15.3's row
     #: above): +3 for the cadence hooks; the row is the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24344, 736),
+    #: Raised by +19 (no method added) 2026-10-23 under the same
+    #: ruling: TASK-36385 stops the mount saving default rail state, and
+    #: holds those defaults for the next rail save to write first so seeding
+    #: stays one-time (the logic itself is in Chat/console_rail_state.py::
+    #: take_console_rail_seed_flush). The row is the exact measurement.
+    #: Review round 2 logs the seed save's error type (+3).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24366, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
