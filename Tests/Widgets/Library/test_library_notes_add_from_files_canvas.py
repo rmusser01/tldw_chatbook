@@ -1756,3 +1756,33 @@ async def test_configure_fold_hint_shows_when_the_body_actually_overflows() -> N
         )
         hint = app.query_one("#notes-sync-fold-hint", Static)
         assert hint.display is True
+
+
+async def test_activate_is_held_with_the_blocked_line_while_a_candidate_file_is_skipped() -> None:
+    """TASK-34000.16 fix round 1, I-2: the canvas paints Activate disabled and
+    its tooltip says which file and what to do."""
+
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        migration_activation_blocked_line,
+    )
+
+    blocker = "b.md · Mixed line endings — save it with one style"
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="d" * 64,
+        activation=True,
+        source="migration",
+        activation_blockers=(blocker,),
+    )
+    app = _Host(
+        replace(
+            initial_lasting_sync_snapshot(lasting_available=True),
+            phase="review",
+            review=review,
+        )
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        activate = app.query_one("#notes-sync-activate", Button)
+        assert activate.disabled is True
+        assert activate.tooltip == migration_activation_blocked_line((blocker,))

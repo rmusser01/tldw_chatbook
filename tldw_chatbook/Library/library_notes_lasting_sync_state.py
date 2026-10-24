@@ -374,10 +374,31 @@ class LastingSyncReview:
     can_apply: bool = False
     apply_blocker: LastingSyncApplyBlocker = LastingSyncApplyBlocker.NOTHING_SELECTED
     source: LastingSyncReviewSource | None = None
+    activation_blockers: tuple[str, ...] = ()
+    """TASK-34000.16 fix round 1 (I-2): one line per migrated candidate whose
+    file the walk could not read (``<file> · <what is wrong — what to do>``).
+    A migration cannot activate while one exists -- the runtime would refuse
+    it after creating the folder -- so Activate is held and the status line
+    names them. Always empty for a setup review: a refused file in a NEW
+    folder is not a candidate."""
+
+    @property
+    def can_activate(self) -> bool:
+        """Whether Activate reviewed root may be offered for this review."""
+
+        return (
+            self.activation
+            and self.attention_count == 0
+            and not self.activation_blockers
+        )
 
     def __post_init__(self) -> None:
         if type(self.root_id) is not str or type(self.observation_token) is not str:
             raise TypeError("review identifiers must be strings")
+        if type(self.activation_blockers) is not tuple or any(
+            type(item) is not str or not item for item in self.activation_blockers
+        ):
+            raise TypeError("activation_blockers must be a tuple of non-empty strings")
         if self.root_id:
             validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
         if self.observation_token:
@@ -796,6 +817,7 @@ def build_reconciliation_review(
     stale: bool = False,
     activation: bool = False,
     labels: Mapping[str, RuntimeBindingLabel] | None = None,
+    source: LastingSyncReviewSource | None = None,
 ) -> LastingSyncReview:
     """Translate a public reconciliation plan into bounded rows.
 
@@ -803,6 +825,9 @@ def build_reconciliation_review(
         labels: Binding labels keyed by binding id (``NotesSyncRuntime
             .binding_labels``). A labelled row names its file and destination
             folder; an unlabelled one degrades to the effect alone.
+        source: Which check produced the plan. A ``"migration"`` activation
+            review is held while a candidate's file is a per-file skip
+            (``activation_blockers``); nothing else reads it here.
     """
 
     if type(plan) is not ReconciliationPlan:
@@ -989,6 +1014,36 @@ def build_reconciliation_review(
         activation=activation,
         can_apply=blocker is LastingSyncApplyBlocker.NONE,
         apply_blocker=blocker,
+        source=source,
+        activation_blockers=(
+            tuple(
+                f"{skip.relative_path} · {_FILE_GATE_SKIP_EFFECTS[skip.reason_code]}"
+                for skip in plan.item_skips
+                if skip.reason_code in _FILE_GATE_SKIP_EFFECTS
+            )
+            if activation and source == "migration"
+            else ()
+        ),
+    )
+
+
+_MIGRATION_BLOCKED_LINE_NAMES = 3
+
+
+def migration_activation_blocked_line(blockers: tuple[str, ...]) -> str:
+    """The migration review's status line while Activate is held (I-2).
+
+    Names up to three files with what to do about each; the rest are counted.
+    """
+
+    count = len(blockers)
+    named = ", ".join(blockers[:_MIGRATION_BLOCKED_LINE_NAMES])
+    more = count - _MIGRATION_BLOCKED_LINE_NAMES
+    tail = f" and {more} more" if more > 0 else ""
+    return (
+        f"Activate is unavailable while {count} "
+        f"{'file' if count == 1 else 'files'} there can't be read — fix or remove "
+        f"{'it' if count == 1 else 'them'}, then Check again: {named}{tail}."
     )
 
 

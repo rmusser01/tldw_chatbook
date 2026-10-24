@@ -1148,6 +1148,10 @@ class _ProductionRuntimeAdapter:
         # gate is now that file's own skip row, recorded by path so the review
         # can name it; the root is refused only for a failure of the root.
         refused: dict[str, str] = {}
+        # Fix round 1 (I-1/I-3): a refused file's identity, from the walk's
+        # own stat, so a bound binding whose file was RENAMED onto a refused
+        # path is recognised as that file (a skip), never as a deleted one.
+        refused_identities: dict[str, str] = {}
         syncable_files = 0
         for candidate in discovery.candidates:
             relative_path = candidate.source.source_path.relative_to(
@@ -1181,6 +1185,11 @@ class _ProductionRuntimeAdapter:
                     # not the folder's. Recorded by path so the review can
                     # name it; counted (never pathed) in the log below.
                     refused[relative_path] = error.reason_code
+                    refused_identities[
+                        NotesSyncExecutor.identity_digest(
+                            candidate.identity.device, candidate.identity.inode
+                        )
+                    ] = relative_path
                     continue
                 raise NotesSyncRootRefused(
                     "root_discovery_incomplete", reason_code=error.reason_code
@@ -1270,12 +1279,6 @@ class _ProductionRuntimeAdapter:
             return digest
 
         for binding in bindings:
-            if binding.normalized_relative_path in refused:
-                # TASK-34000.16: the file EXISTS but could not be read as sync
-                # text. It is neither observed nor matched by the rename
-                # fallback below; its binding is left alone this pass, so a
-                # Check can never read it as a deleted file.
-                continue
             note = note_observations[binding.binding_id]
             file = discovered.get(binding.normalized_relative_path)
             identity_resolved = False
@@ -1294,6 +1297,20 @@ class _ProductionRuntimeAdapter:
                 # guard did.
                 identity_resolved = len(matches) == 1
                 file = matches[0] if identity_resolved else None
+                if file is None and (
+                    binding.normalized_relative_path in refused
+                    or binding.stable_identity_digest in refused_identities
+                ):
+                    # TASK-34000.16: the bound file EXISTS -- at its own path
+                    # or renamed onto a refused one -- but could not be read
+                    # as sync text. Its binding is left alone this pass (the
+                    # refused file is already a named skip row), so a Check
+                    # can never read it as a deleted file. Fix round 1 (I-1):
+                    # the identity lookup above runs FIRST, so a binding whose
+                    # path was taken by a new bad file is still observed at
+                    # the path its inode moved to -- a move, not a fresh
+                    # candidate beside a hidden claim on the same inode.
+                    continue
             if file is not None:
                 claimed_paths.add(file.observation.relative_path)
             file_digest = file.observation.content_digest if file else None
@@ -4594,6 +4611,15 @@ class NotesSyncRuntimeOwner:
             raise ValueError("stale_review")
         if self._blocked_plan_status(fresh) is not None:
             return NotesSyncControlResult(False, "needs_attention", "review_changes")
+        if setup is None and any(
+            skip.reason_code in FILE_GATE_REASON_CODES for skip in fresh.item_skips
+        ):
+            # TASK-34000.16 fix round 1 (I-2): a migrated candidate whose file
+            # the walk could not read has no action, so the candidate-coverage
+            # check below would refuse the activation AFTER the folder was
+            # created and recovery recorded. Refuse here, before any mutation;
+            # the root stays where it is, and the review names the file.
+            return NotesSyncControlResult(False, "paused", "review_migration")
         display_name = (
             setup.display_name
             if setup is not None

@@ -614,7 +614,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-20, TASK-32451 rebase onto dev 250159834c, same owner decision:
     # 2378 -> 2397. Dev itself already measures 2394 against its own 2375
     # row (a pre-existing dev red); this branch adds the same +3 above.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2397,
+    #
+    # 2026-10-24, TASK-34000.16 fix round 1 (I-2), owner decision ("expand
+    # the limits, don't modify other code to make it fit", 2026-10-04):
+    # 2397 -> 2415 (+18). A migrated candidate whose file the walk could not
+    # read holds Activate: `_review_projection` hands the review's `source`
+    # to the builder (+1), the migration check's status line names the
+    # skipped files (+4), and `activate_root` refuses before asking the
+    # runtime (+10 with its comment); the import is one line.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2415,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

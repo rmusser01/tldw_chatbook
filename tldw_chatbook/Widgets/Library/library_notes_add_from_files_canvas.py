@@ -31,6 +31,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncReviewRow,
     LastingSyncReviewSource,
     LibraryNotesLastingSyncSnapshot,
+    migration_activation_blocked_line,
     review_group_key,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
@@ -1076,7 +1077,18 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                         id="notes-sync-activate",
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=self.snapshot.review.attention_count > 0,
+                        disabled=not self.snapshot.review.can_activate,
+                        # TASK-34000.16 fix round 1 (I-2): a migrated candidate
+                        # the walk could not read holds Activate; the tooltip
+                        # names the file and the fix (markup-free copy: the
+                        # review's own skip effect, no user-typed text).
+                        tooltip=(
+                            migration_activation_blocked_line(
+                                self.snapshot.review.activation_blockers
+                            )
+                            if self.snapshot.review.activation_blockers
+                            else None
+                        ),
                     )
                 else:
                     yield ReviewActionButton(

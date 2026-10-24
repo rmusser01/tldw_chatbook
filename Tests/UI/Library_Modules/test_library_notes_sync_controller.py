@@ -3821,3 +3821,55 @@ async def test_every_runtime_status_labels_a_clean_root_honestly(
     assert row.status_label == expected_label
     # Whatever the label, the controls the canvas offers are unchanged.
     assert (row.status, row.next_action) == ("up_to_date", "sync_now")
+
+
+async def test_a_migration_review_with_a_refused_candidate_holds_activate_and_names_the_file() -> None:
+    """TASK-34000.16 fix round 1, I-2: the controller never asks the runtime to
+    activate while a migrated candidate's file is a per-file skip; the status
+    line names the file and what to do."""
+
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        migration_activation_blocked_line,
+    )
+    from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationItemSkip
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root-1", "paused", "review_migration"),),
+    )
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-1", NotesSyncActionKind.NO_CHANGE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+        item_skips=(ReconciliationItemSkip("b.md", "mixed_newlines"),),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_migration("root-1")
+    review = controller.snapshot.review
+    expected_line = migration_activation_blocked_line(
+        ("b.md · Mixed line endings — save it with one style",)
+    )
+    assert review.activation is True
+    assert review.activation_blockers == (
+        "b.md · Mixed line endings — save it with one style",
+    )
+    assert review.can_activate is False
+    assert controller.snapshot.status_line == expected_line
+
+    await controller.activate_root("root-1", TOKEN)
+
+    assert ("activate_root", "root-1", TOKEN) not in runtime.calls
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.status_line == expected_line

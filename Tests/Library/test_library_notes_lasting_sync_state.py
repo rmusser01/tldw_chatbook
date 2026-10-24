@@ -910,3 +910,56 @@ def test_a_gate_code_root_refusal_row_never_shows_the_class_name() -> None:
     )
     assert failure == "Check failed — some files there aren't UTF-8 text"
     assert next_action == "sync_now"
+
+
+def _plan_with_gate_skips(*skips: tuple[str, str]) -> ReconciliationPlan:
+    return ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+        item_skips=tuple(ReconciliationItemSkip(path, code) for path, code in skips),
+    )
+
+
+def test_a_migration_review_with_a_refused_candidate_blocks_activation_by_name() -> None:
+    """TASK-34000.16 fix round 1, I-2: Activate is blocked and the copy names the file."""
+    plan = _plan_with_gate_skips(("b.md", "mixed_newlines"))
+    review = build_reconciliation_review(plan, activation=True, source="migration")
+    assert review.source == "migration"
+    assert review.activation_blockers == (
+        "b.md · Mixed line endings — save it with one style",
+    )
+    assert review.can_activate is False
+
+
+def test_a_setup_review_with_a_refused_file_still_activates() -> None:
+    """A refused file in a NEW folder is never a candidate: Activate stays open."""
+    plan = _plan_with_gate_skips(("latin1.md", "unsupported_encoding"))
+    review = build_reconciliation_review(plan, activation=True, source="setup")
+    assert review.activation_blockers == ()
+    assert review.can_activate is True
+    # And an Obsidian skip on a migration review is not a blocker either.
+    obsidian = _plan_with_gate_skips((".obsidian/app.json", "obsidian_config"))
+    assert build_reconciliation_review(
+        obsidian, activation=True, source="migration"
+    ).activation_blockers == ()
+
+
+def test_the_migration_blocked_line_names_the_files_and_the_fix_and_stays_bounded() -> None:
+    one = lasting_state.migration_activation_blocked_line(
+        ("b.md · Mixed line endings — save it with one style",)
+    )
+    assert one == (
+        "Activate is unavailable while 1 file there can't be read — fix or remove it, "
+        "then Check again: b.md · Mixed line endings — save it with one style."
+    )
+    many = lasting_state.migration_activation_blocked_line(
+        tuple(f"f{i}.md · Not UTF-8 text — convert it to UTF-8 or move it out of the folder" for i in range(5))
+    )
+    assert many.startswith("Activate is unavailable while 5 files there can't be read — fix or remove them, then Check again: ")
+    assert many.endswith(" and 2 more.")
+    assert "f2.md" in many and "f3.md" not in many
