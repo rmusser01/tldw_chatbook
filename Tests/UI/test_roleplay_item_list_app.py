@@ -2492,6 +2492,47 @@ async def test_a_background_refresh_of_the_open_card_does_not_cancel_end(
         )
 
 
+async def test_reopening_the_open_row_past_the_loaded_window_loads_through_to_it(
+    mock_app_instance, volume_348
+):
+    """Fix round 2: the open character (name row 300) is past the loaded
+    window after a reload from row 0 (a search, then the search cleared),
+    and is opened again by a user path (here ``_select_character`` with the
+    same id, as a Console hand-off or a re-open does). Dev loads through to
+    it and puts the cursor on it; fix round 1 left it unloaded, because it
+    owed a row only when the open row changed."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        target = await _open_past_row_200(screen, volume_348)
+        await wait_until(
+            pilot,
+            lambda: highlighted_item_id(screen) == target,
+            what="the restored row past row 200",
+        )
+        screen.state.search_query = "Character 00"
+        await screen._reload_character_page()
+        screen.state.search_query = ""
+        await screen._reload_character_page()
+        await settle(pilot)
+        assert len(visible_item_ids(screen)) == 200
+        assert target not in visible_item_ids(screen)
+        assert item_list.active_id == target
+        record = volume_348.get_character_card_by_id(int(target.split(":")[1]))
+        await screen._select_character(str(record["id"]), record["name"])
+        await wait_until(
+            pilot,
+            lambda: (
+                target in visible_item_ids(screen)
+                and highlighted_item_id(screen) == target
+            ),
+            what="the re-opened row, loaded through",
+        )
+        assert item_list.active_id == target
+
+
 async def test_the_screen_and_its_list_share_one_window_state(
     mock_app_instance, volume_348
 ):

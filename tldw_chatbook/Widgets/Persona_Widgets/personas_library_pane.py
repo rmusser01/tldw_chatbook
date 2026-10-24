@@ -388,22 +388,22 @@ class RoleplayItemList(OptionList):
         Returns:
             False when the row is not loaded yet: with ``load_through`` the
             list owes the user the move to it, and a window is requested if
-            rows past the loaded end exist. A newer selection (another row,
-            with ``load_through``) replaces any owed move; the screen marking
-            the open row again (a background refresh) leaves it.
+            rows past the loaded end exist (also for the open row marked
+            again, as on dev). A selection of another loaded row replaces any
+            owed move; the screen marking the loaded open row again (a
+            background refresh) leaves it.
         """
         previous, self._active_id = self._active_id, option_id
-        newer = load_through and previous != option_id
         if previous != option_id:
             self._refresh_rows([x for x in (previous, option_id) if x is not None])
         self._position_changed()
         if option_id is None or option_id in self._rows:
-            if newer:
+            if load_through and previous != option_id:
                 self._window.user_moved()
             if option_id is not None and move_cursor:
                 self.highlighted = self.get_option_index(option_id)
             return True
-        if newer:
+        if load_through:
             self._owe_row(option_id)
         return False
 
