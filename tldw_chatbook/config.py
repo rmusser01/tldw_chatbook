@@ -4193,6 +4193,18 @@ scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
 
+# Opt-in OS notifications for background Console events (TASK-18925):
+# desktop notifications for run finished / run failed / needs approval when
+# the terminal window is buried. Off by default; the body carries only the
+# conversation/tab name and the outcome category -- never message content.
+# macOS uses osascript, Linux uses notify-send; other platforms skip with a
+# debug log. Cadence matches the in-app toasts (one per guarded event).
+[console.os_notifications]
+enabled = false
+run_finished = true
+run_failed = true
+needs_approval = true
+
 [console_ssh]
 # SSH ControlMaster lifecycle for remote workspace bindings (spec
 # 2026-09-24-ssh-remote-workspace-bindings). `control_persist` rides the
