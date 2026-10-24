@@ -108,8 +108,8 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 **Interfaces:** Consumes real exclusive thread Worker, _generate/_apply_result and off-thread decode. Produces current-request success/error publication guards; preserves serial generation and the live palette entry.
 **ADR required:** no. **ADR path:** existing 176 and 033. **Reason:** existing demo worker/media core, no provider/runtime boundary change.
 
-- [ ] Write actual Generate/worker controls for held OLD success/error after NEW completes, queued OLD UI publication after NEW admission, cancellation, ordinary serial success and newest error. Real adapters stay bounded; exercise decode/publication where available.
-- [ ] Run unchanged source and retain stale-publication RED evidence with actual Worker.is_cancelled observed.
-- [ ] Check cancellation and current-request authority at UI publication for both success and error; retain off-thread decode and existing status behavior.
-- [ ] Run new and existing demo controls, palette reachability check and focused Ruff/format checks.
-- [ ] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
+- [x] Write actual Generate/worker controls for held OLD success/error after NEW completes, queued OLD UI publication after NEW admission, cancellation, ordinary serial success and newest error. Real adapters stay bounded; exercise decode/publication where available.
+- [x] Run unchanged source and retain stale-publication RED evidence with actual Worker.is_cancelled observed.
+- [x] Check cancellation and current-request authority at UI publication for both success and error; retain off-thread decode and existing status behavior.
+- [x] Run new and existing demo controls, palette reachability check and focused Ruff/format checks.
+- [x] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.

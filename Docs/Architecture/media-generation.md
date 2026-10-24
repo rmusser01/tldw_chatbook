@@ -42,6 +42,12 @@ Video adds cooperative cancel (threaded only to adapters that support it) and a 
 - Results persist through the chat store: image bytes + metadata land as message attachments (inline up to 4 MiB) plus a generation-metadata sidecar whose `position` ties it to the attachment index; multiple images form the per-message **variant set** browsed with variant-previous/next (see [chat-pipeline.md](./chat-pipeline.md)).
 - `/generate-video` runs generation off the UI loop and saves bytes to the `VideoStore` keyed by the new message id; video metadata goes to the messages' local-only metadata JSON column — deliberately **not** the image sidecar (ADR-044 decision 7). Video bytes never enter the database.
 
+## Image Gen palette demo
+
+`UI/image_gen_command_provider.py` lazily opens `UI/Screens/image_gen_demo_screen.py`. This development screen uses the same request/validation/adapter core and persists no chat artifacts. Its exclusive thread worker also performs PIL thumbnail and rich_pixels conversion; only widget updates return to the UI loop.
+
+Both result and error callbacks carry the actual originating Worker. Immediately before UI publication, `_publish_generation` rejects canceled workers and detached screens. A newer Generate cancels the old exclusive worker, and explicit cancellation also prevents publication without a replacement. The worker may finish its existing provider/decode work; retirement adds no UI-thread join. TASK-36698 covers actual palette, provider, decode and queued publication boundaries under ADR-176/033.
+
 ## The video store
 
 `VideoStore` is an ephemeral, message-keyed file store under `<user_data_dir>/generated_videos/<message_id>/<slug>.<validated-ext>`:
@@ -51,7 +57,7 @@ Video adds cooperative cancel (threaded only to adapters that support it) and a 
 
 ## Dataflow
 
-1. `/generate-image` or `/generate-video` (or the demo screen) resolves styles/templates and optionally an LLM context prompt.
+1. `/generate-image` or `/generate-video` resolves styles/templates and optionally an LLM context prompt.
 2. The chat seam offloads to a thread; `build_request` produces the frozen contract.
 3. `run_generation` validates and dispatches to the adapter (HTTP poll APIs or a local subprocess).
 4. Artifacts persist: images → attachments + sidecar → inline card / variant set; videos → `VideoStore.save` → marker + metadata → card or tombstone.

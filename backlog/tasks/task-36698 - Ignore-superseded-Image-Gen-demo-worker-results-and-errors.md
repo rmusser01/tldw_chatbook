@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 20:17
+updated_date: 2026-10-24 20:32
 ---
 
 ## Description
@@ -42,10 +42,10 @@ Reason: Routine applicability checks within the existing demo worker and media-g
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A superseded or canceled demo request cannot replace the current image, metadata or status on success or failure.
-- [ ] #2 The newest still-applicable request publishes its normal success or error outcome.
-- [ ] #3 Ordinary serial generation and the existing command-palette entry keep working without real API calls in regression tests.
-- [ ] #4 Mounted held-old/new controls exercise the actual exclusive worker and UI publication for both old success and old failure, with a serial control.
+- [x] #1 A superseded or canceled demo request cannot replace the current image, metadata or status on success or failure.
+- [x] #2 The newest still-applicable request publishes its normal success or error outcome.
+- [x] #3 Ordinary serial generation and the existing command-palette entry keep working without real API calls in regression tests.
+- [x] #4 Mounted held-old/new controls exercise the actual exclusive worker and UI publication for both old success and old failure, with a serial control.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,13 @@ ADR required:no. ADR paths:[ADR-176](../decisions/176-one-media-generation-core.
 5. Obtain task-scoped Superpowers requesting-code-review, register every new UI regression in existing required CI, update media architecture/notes and then perform overall integration/rebase/review/PR/CI qualification.
 Master plan:Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task6).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Image Gen demo success and error callbacks now carry the originating actual Worker through a shared UI-thread publication guard. Canceled workers and detached screens cannot update widgets; checks occur after queued callbacks resume. Existing exclusive cancellation provides request authority without another counter. Request/validation/provider execution and real PNG/Pixels decoding remain off-thread; low-level decode/apply and palette contracts are unchanged.
+
+Verification:10 new real palette/Generate/worker/provider/decode controls plus2 unchanged decode/apply controls pass, with all10 private children clean. Six preimplementation failures establish stale provider completion, queued callback and explicit-cancel success/error defects. The parent13-case selection has12passes/1existing legacy profile-setup failure, not all13green. Its unchanged real-host body passes separately in an untracked private-profile diagnostic. Root verified actual XMLs and5final hashes; reviewer inspected all37 historical receipts. Ruff/format/whitespace pass. No full suite, optional skips or real provider API.
+
+Superpowers task review approved with no blocking findings. All10 new exact cases are registered in required UI gate (floor839). Overall hosted qualification remains pending. ADR required:no; existing ADR-176/033 preserve demo/media-core ownership. Updated Docs/Architecture/media-generation.md and implementation plan. Source/tests:UI/Screens/image_gen_demo_screen.py and Tests/UI/test_image_gen_demo_request_lifetime.py. Existing dependency warnings and direct legacy profile fixture limitation remain explicit.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
