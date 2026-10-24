@@ -7,6 +7,8 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULT_PREFIX = "TASK15674_RESULT="
@@ -53,6 +55,14 @@ def _result_payload(stdout: str) -> dict[str, bool]:
     return json.loads(records[0])
 
 
+# bootstrap_profile (TASK-36384): Tests/ProductionApp/conftest.py patches
+# tldw_chatbook.app by name at setup, which imports the app there. Under the
+# per-test redirect that import raises RecoveryRequired when nothing collected
+# has imported the app (a lone run). The app under test runs in a child whose
+# env is built below: every profile root under tmp_path, and from this
+# process only PATH and the locale and terminal keys. The kept profile never
+# reaches it.
+@pytest.mark.bootstrap_profile
 def test_real_app_quit_persists_only_the_effective_config(tmp_path: Path) -> None:
     home = tmp_path / "home"
     xdg_config = tmp_path / "xdg-config"

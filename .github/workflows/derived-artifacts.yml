@@ -449,6 +449,10 @@ jobs:
             Tests/UI/test_library_ingest_canvas.py::test_external_preparation_status_and_cancel_are_stable_and_path_free \
             Tests/UI/test_library_ingest_canvas.py::test_physical_external_cancel_releases_scope_and_preserves_form \
             Tests/UI/test_console_environment_refresh_off_loop.py \
+            Tests/test_config_persistence_owner.py \
+            Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config \
+            Tests/Wizards/test_first_run_setup_wizard.py::test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list \
+            Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone \
             --timeout=300 \
             --tb=short
 
