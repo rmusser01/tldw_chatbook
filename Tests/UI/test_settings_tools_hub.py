@@ -4,6 +4,7 @@ import re
 import time
 
 import pytest
+from textual.widgets import Button
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.private_profile import private_profile_test
@@ -14,7 +15,10 @@ from Tests.UI.test_settings_configuration_hub import (
     _build_test_app,
     _open_settings_category,
 )
+from Tests.UI.test_settings_tool_profiles import _profile
+from tldw_chatbook.Agents import builtin_tool_gate
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+from tldw_chatbook.Tool_Packs.service import ToolProfileListing
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Navigation.screen_registry import (
     registered_screen_aliases,
@@ -28,6 +32,9 @@ from tldw_chatbook.UI.Screens.settings_screen import (
 from tldw_chatbook.UI.Screens.settings_tools_hub import (
     TOOLS_HUB_CATEGORY_SUMMARY,
     ToolsHubPanel,
+)
+from tldw_chatbook.Widgets.Settings_Widgets.tool_profiles_panel import (
+    ToolProfilesPanel,
 )
 
 
@@ -47,6 +54,15 @@ class _PanelHarnessApp(ConsolidatedCSSApp):
         )
 
 
+class _ToolProfilesHarness(ConsolidatedCSSApp):
+    def __init__(self, panel: ToolProfilesPanel) -> None:
+        super().__init__()
+        self.panel = panel
+
+    def compose(self):
+        yield self.panel
+
+
 def test_tools_category_id_exists_and_mcp_defaults_retired():
     assert SettingsCategoryId.TOOLS.value == "tools"
     with pytest.raises(AttributeError):
@@ -54,9 +70,10 @@ def test_tools_category_id_exists_and_mcp_defaults_retired():
 
 
 _SETTINGS_PLACE = re.compile(r"Settings [▸>] ")
-#: A title ends the text or meets punctuation: "Tools & MCP Servers" is not
-#: the category "Tools & MCP".
-_TITLE_END = r"(?=$|[.,;:)!?])"
+#: A title ends the text, meets punctuation, or leads to a place inside it
+#: ("Settings ▸ Tools & MCP ▸ Servers"): "Tools & MCP Servers" is not the
+#: category "Tools & MCP".
+_TITLE_END = r"(?=$|[.,;:)!?]| ▸ )"
 _NAMED_SCREEN = re.compile(r"\bthe ([A-Z][\w&]*(?: [A-Z][\w&]*)*) screen\b")
 
 
@@ -132,6 +149,66 @@ def test_overview_rows_and_tools_badge_name_only_registered_destinations():
         "State: Immediate actions | Gates and permissions save at once; a server "
         "form has its own Save."
     )
+
+
+@pytest.mark.bootstrap_profile
+def test_state_badge_names_the_save_model_the_category_list_names():
+    """TASK-36387: Workspaces, Dreams and Guardian were listed "Immediate
+    actions" but badged "Applies immediately", Tool Profiles badged "Reviewed
+    actions", and six "Read-only" categories badged "Read-only here"."""
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    badges = {s.category: screen._persistence_badge(s.category) for s in summaries}
+    # A list status names a save model when it is a save-model list word or
+    # any badge's words ("Guided", "Local", "Console" name none).
+    save_models = {"Immediate actions", "Read-only", *badges.values()}
+    listed = {s.category: s.status for s in summaries if s.status in save_models}
+    assert set(listed) >= {
+        SettingsCategoryId.WORKSPACES,
+        SettingsCategoryId.TOOL_PROFILES,
+        SettingsCategoryId.TOOLS,
+        SettingsCategoryId.DREAMS,
+        SettingsCategoryId.GUARDIAN,
+        SettingsCategoryId.ARTIFACTS,
+        SettingsCategoryId.PERSONAS,
+        SettingsCategoryId.SKILLS,
+        SettingsCategoryId.WATCHLISTS,
+        SettingsCategoryId.WORKFLOWS,
+        SettingsCategoryId.ACP_DEFAULTS,
+    }
+    assert {category: badges[category] for category in listed} == listed
+
+
+@pytest.mark.bootstrap_profile
+async def test_tool_profiles_copy_sends_policy_editing_to_tools_and_mcp(monkeypatch):
+    """TASK-36387: Tool Profiles still said "MCP owns policy editing" and "MCP
+    Permissions", and the tool-gate breadcrumb (the Permissions legend and the
+    Tools-mode empty state) said "MCP ▸ Servers ▸ …", after task-35150 folded
+    the MCP screen into Settings."""
+    screen = SettingsScreen(_build_test_app())
+    titles = [summary.title for summary in screen._category_summaries()]
+    category = SettingsCategoryId.TOOL_PROFILES
+    texts = [
+        screen._category_state_scope_text(category),
+        screen._guided_action_message(category),
+        screen._ownership_record(category).boundary_copy,
+        *(f"{label}: {value}" for label, value in screen._inspector_guidance(category)),
+    ]
+    for local_master_off in (False, True):  # both breadcrumb sentences
+        monkeypatch.setattr(
+            builtin_tool_gate, "_off_tool_gate_status", lambda: (2, local_master_off)
+        )
+        texts.append(builtin_tool_gate.tool_gate_breadcrumb())
+    panel = ToolProfilesPanel(ToolProfileListing(profiles=(_profile("research"),)))
+    async with _ToolProfilesHarness(panel).run_test(size=(120, 30)):
+        tooltips = [str(b.tooltip) for b in panel.query(Button) if b.tooltip]
+    assert any("Tools & MCP" in tooltip for tooltip in tooltips), tooltips
+    texts.extend(tooltips)
+    for text in texts:
+        # "MCP" alone named the retired screen; the place is "Tools & MCP".
+        assert not re.search(r"(?<!Tools & )\bMCP\b", text), text
+        assert _unregistered_destinations(text, titles) == [], text
+    assert any("Tools & MCP" in text for text in texts)
 
 
 # task-35597: every test that mounts a harness app or a _build_test_app

@@ -13514,10 +13514,12 @@ def test_state_banner_leads_with_persistence_badge():
         # category at rest holds no draft, so its clean badge says so.
         SettingsCategoryId.CONSOLE_BEHAVIOR: "No changes · edits save with s",
         SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
-        SettingsCategoryId.WORKSPACES: "Applies immediately",
+        # TASK-36387, rewritten on purpose: these two badge their category
+        # list status ("Applies immediately" and "Read-only here" before).
+        SettingsCategoryId.WORKSPACES: "Immediate actions",
         SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
         SettingsCategoryId.ADVANCED_CONFIG: "Validate, then Save",
-        SettingsCategoryId.ARTIFACTS: "Read-only here",
+        SettingsCategoryId.ARTIFACTS: "Read-only",
         SettingsCategoryId.IMAGE_GENERATION: "Draft — save/revert below",
     }
     for category, badge in expected.items():

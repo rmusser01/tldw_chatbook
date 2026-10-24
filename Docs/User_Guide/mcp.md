@@ -14,17 +14,21 @@ It does not publish source or collection mutation, checking, briefing generation
 
 Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
 
-## What this screen is for
+## What this category is for
 
-MCP manages MCP servers, scoped tools, permissions, and history
+MCP is not a screen of its own: **Settings ▸ Tools & MCP**, a Settings
+category, manages MCP servers, scoped tools, permissions, and history
 (on-screen subtitle: "What your agents can use, what asks first, and what
 they did — most people never need to change anything here."). It's
 organized into four modes: Servers, Tools, Permissions, and History.
 
 ## Getting there
 
-- Press **Ctrl+9**, click **⌃9 MCP** in the nav bar, or press **Ctrl+P** →
-  "Tab Navigation: Switch to MCP".
+- Press **Ctrl+9**, which opens Settings ▸ Tools & MCP from anywhere (it has
+  no nav-bar label), or press **Ctrl+P** → "Tab Navigation: Switch to Tools &
+  MCP".
+- In Settings (**F4**), choose **Tools & MCP** in the category rail's
+  **Data & Privacy** group.
 
 ## Adding your first MCP server (step by step)
 
@@ -32,7 +36,7 @@ Local servers run as stdio processes chatbook launches for you. Secrets are
 never stored — reference them as `KEY=$ENV_VAR` and export the variable in
 your shell before connecting.
 
-1. **Open the screen** (Ctrl+9). On a fresh install the overview table is
+1. **Open Settings ▸ Tools & MCP** (Ctrl+9). On a fresh install the overview table is
    showing, with the built-in server listed and the `Add server` and
    `Import…` buttons at the top. (You can also press `a` in any mode.)
 2. **Press Add server** (or `a`). Fill in:
@@ -116,7 +120,7 @@ Supported fields are `name` (update only), `description`, `personality`,
 limits apply. Image fields, unknown fields, and delete/restore are unsupported.
 
 Both tools are persistent writes and require approval when Allow is inherited.
-An explicit per-tool Allow in MCP Permissions grants access. External stdio
+An explicit per-tool Allow in Tools & MCP's Permissions mode grants access. External stdio
 clients cannot display an approval card: they receive `permission_required`
 until an operator grants the tool under the built-in `tldw_chatbook` server.
 Revocation and the MCP kill switch apply on the next call. Restored MCP settings
@@ -279,7 +283,8 @@ If the local master is off, both the Permissions matrix's legend and the
 Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
 `web_crawl` and point to the direct Tools-mode control. Other disabled gates
 still report the total number of gates that are off, and the legend names
-where they live: **MCP ▸ Servers ▸ built-in row ▸ Tool gates**.
+where they live: **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool
+gates**.
 
 ### `expand_document` and the Library consent boundary
 
@@ -496,7 +501,8 @@ cycle and every marker it can show:
 > Allow → Ask → Off
 
 When any registration gate is off, a second legend line names where the gates
-live — **MCP ▸ Servers ▸ built-in row ▸ Tool gates** — since a gate-off tool
+live — **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates** —
+since a gate-off tool
 has no row here to find.
 
 ### The risk floor, and how an explicit Allow gets past it
