@@ -1051,8 +1051,8 @@ Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_ans
 # function (the MCP permissions handoff by parametrize case: it has one test),
 # so no shard takes one whole. TASK-36512 originally kept one selector in
 # each old slot and appended the rest here. The current integration re-deals
-# all split selectors across this tail and Phase 7; their timing input came from
-# nine PR runs' shard logs, each entry at its slowest. Tests/CI pins that
+# this tail and Phase 7; other slots stay fixed. TASK-36512's original timing
+# input came from nine PR runs' shard logs, each entry at its slowest. Tests/CI pins that
 # every function (or case) of a split file stays listed.
 # Keep this block where it is: its order was dealt for the slot it starts in.
 # Resolve a tail conflict by putting the other PR's entries AFTER it. An entry
