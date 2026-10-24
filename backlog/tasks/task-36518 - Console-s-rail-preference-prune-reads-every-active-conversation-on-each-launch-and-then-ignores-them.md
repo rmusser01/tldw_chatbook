@@ -27,6 +27,8 @@ After each launch's first Console sync (chat_screen.py:17684), `_dispatch_consol
 
 `collect_prunable_console_rail_keys` then discards that set (`del live_scope_ids`, console_rail_state.py:316). Since TASK-718, prunability depends only on the key's shape: it drops the legacy per-conversation and per-session keys, and current code never writes those keys (`build_console_rail_preference_key`, :250-292). So the scan is dead work on every launch, and the write it guards is a one-time legacy cleanup.
 
+TASK-34406 (In Progress) moves `_prune_console_rail_preferences` into its own `console-rail-prune` worker group and changes the boot-census row this task's AC#3 touches. Whichever lands second rebases onto the other.
+
 The other startup writers on TASK-36385's list were checked too, and each writes once by design:
 - `_stamp_new_profile_library_lifecycle` writes only on a profile this run created.
 - `_persist_env_key_notice_flag` writes only while the notice flag is unset (`env_keys_that_silenced_first_run`, first_run_setup_state.py:982).

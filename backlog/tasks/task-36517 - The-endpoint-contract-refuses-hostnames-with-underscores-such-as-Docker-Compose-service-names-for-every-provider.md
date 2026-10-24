@@ -22,7 +22,7 @@ Found by TASK-36380's review (PR #3224, 2026-10-23), and checked on dev 5b5920b8
 
 The endpoint contract is the cause. `_valid_dns_label` (provider_endpoint_contract.py:548-554) allows only letters, digits and hyphens, so `_canonical_host` returns None and the contract answers "Endpoint URL must include a valid host and port." (:239-243). The message is wrong: the URL has both.
 
-The refusal is not limited to koboldcpp. A probe through the scratch wrapper on dev resolved `http://kobold_cpp:5001/v1` for every key in `URL_BASED_PROVIDER_KEYS` (16 keys) and for openai, deepinfra and anthropic. Every one refused it, and every one accepted the same URL spelled `kobold-cpp`.
+The refusal is not limited to koboldcpp. A probe through the scratch wrapper on dev resolved `http://kobold_cpp:5001/v1` for every key in `URL_BASED_PROVIDER_KEYS` (14 keys) and for openai, deepinfra and anthropic, 17 providers in all. Every one refused it, and every one accepted the same URL spelled `kobold-cpp`.
 
 Two readers of the same endpoint disagree. Discovery's own URL parse accepts underscores (`supports_openai_compatible_model_discovery("vllm", "http://vllm_server:8000/v1")` and the same for `custom` return True). So Discover models can list from an endpoint that the provider save then refuses with "Endpoint is invalid." On PR #3224's branch, koboldcpp's discovery follows the contract and refuses it too.
 <!-- SECTION:DESCRIPTION:END -->
