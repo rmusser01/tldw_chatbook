@@ -1,0 +1,16 @@
+# Final semantic review and source qualification
+
+The one scoped final re-review closed all five original findings and the follow-up shared-operation, CI accounting and Library HTTP-double issues, with no remaining Critical/Important breakage at660a43816d9c0dab3d20990616af4bbea433d7af. Read scoped-final-review.md. The original whole-branch report and Task4 round4 review are retained alongside it; scoped-fix-review.diff, integration-fix-review.diff and cache-double-review.diff identify the three reviewed ranges.
+
+| Source | Actual local result | Scope |
+| --- | --- | --- |
+|441bb9|44passed/0skip314.19s;26passed/0skip156.19s|Exact then-current16-selector core lane and compatibility controls, core runtime without SentenceTransformers.|
+|441bb9|Cached MiniLM app lifecycle1passed/0skip241.88s outer;234.502s private child|Actual selected paraphrase, failed refresh, restart, refresh, Disable/Clear/detach and saved Library policy/item scopes; no attempted HTTP under the recorded witness. All34 captured source files unchanged; native/service assertions and processes retired.|
+|aa42cc0|19passed/0skip185.96s|Actual nested same/different-binding shared-operation ownership, independent peers, own-failure retry/native-child controls and exact CI accounting.|
+|660a438|Library endpoint/cache case1passed/0skip10.11s|Real OpenAI factories with only HTTP boundary replaced, default redirects preserved, endpoint vectors/cache/privacy and normal teardown. Earlier missing-dependency setup failure and intended keyword RED remain in cache-double-evidence.|
+
+The current approved Windows job has17selectors/45cases under the unchanged1200s cap. Its complete45-case hosted final-head execution is pending. The prior hosted Project index job120758047150 succeeded at d012 (33passed187.06s); it qualifies that historical revision only. app-and-hosted-originals.zip retains that original hosted job/log plus final441bb9 model receipts, source34 snapshots, runtime/trust/bootstrap and process observations. originals-manifest.json records all85 exact original members. No profile, SQLite cache or model weights are included.
+
+Earlier20k measurements retain their documented d012 source attribution, selected model/runtime and62-74second query limitation. No final-source20k/performance, universal relevance/platform, hostile-writer/hard-quota, unfinished Settings startup, mounted Ready-count observation or historical per-import trace is claimed. The original raw environment restoration flags in the tiny Library group remain false (null versus empty); finite shells retired with no persistent options, as explained in its report. No favorable test replay or raw-record rewriting occurred.
+
+Sibling final-fix-evidence, integration-fix-evidence and cache-double-evidence retain their separate immutable original RED/GREEN source/runtime/native records. The later live report is preserved here only through the441bb9 app qualification; subsequent amendments are in those sibling reports. Controller verification text is an explicitly generated transcription of actual verification results, not a newly invented raw command receipt. manifest.json indexes the files in this group with original-source or generated attribution. Existing older inventories remain unchanged. PR3237 stays draft with auto-merge off; final-head required CI and Task36423 AC6 remain open.

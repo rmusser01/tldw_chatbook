@@ -1,0 +1,2967 @@
+SCOPED FINAL RE-REVIEW PACKAGE
+Plan: Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md
+Fix base: 0d618403e19e454a4f3433ec2c10dd2f3c54488b
+Head: 441bb9aa898e946d1d57d095ce2e64e3d95d53ab
+Read only. Exactly five prior findings plus breakage introduced by this fix. Not a new whole-branch review.
+25 changed paths:20 source/test/CI/docs included below;5 new evidence artifacts separately byte-verified (25 actual HEAD blobs/366 exact originals). No old inventory re-audit.
+Raw Git stdout is preserved as bytes, without PowerShell line conversion.
+
+ .github/workflows/derived-artifacts.yml            |    2 +-
+ Docs/Architecture/project-indexing.md              |    7 +-
+ .../2026-10-20-workspace-project-semantic-index.md |   21 +
+ .../semantic/final-fix-evidence/.gitattributes     |    2 +
+ .../semantic/final-fix-evidence/README.md          |    7 +
+ .../semantic/final-fix-evidence/manifest.json      | 2201 ++++++++++++++++++++
+ .../semantic/final-fix-evidence/originals.zip      |  Bin 0 -> 2306294 bytes
+ .../semantic/final-fix-evidence/report.md          |  154 ++
+ Tests/CI/test_ci_queue_pressure_contract.py        |    4 +
+ Tests/RAG/test_embeddings_lib_logging.py           |   73 +-
+ Tests/RAG/test_project_projection_scope.py         |  156 ++
+ Tests/UI/test_project_semantic_consent.py          |    5 +
+ Tests/Workspaces/test_project_index_allocation.py  |    5 +
+ .../test_project_semantic_app_quality.py           |    4 +
+ .../test_project_semantic_generations.py           |  144 ++
+ Tests/Workspaces/test_project_semantic_search.py   |   46 +-
+ Tests/Workspaces/test_project_semantic_settings.py |   60 +
+ Tests/conftest.py                                  |   21 +
+ ...3-fast-pr-lane-and-required-gate-aggregation.md |    4 +
+ ...space-project-context-and-folder-bound-index.md |   17 +
+ tldw_chatbook/DB/Workspace_Project_Index_DB.py     |   86 +-
+ tldw_chatbook/Embeddings/Embeddings_Lib.py         |   11 +-
+ tldw_chatbook/RAG_Search/projection_scope.py       |    8 +-
+ .../RAG_Search/simplified/embeddings_wrapper.py    |   20 +-
+ tldw_chatbook/Workspaces/project_index/service.py  |  136 +-
+ 25 files changed, 3129 insertions(+), 65 deletions(-)
+
+diff --git a/.github/workflows/derived-artifacts.yml b/.github/workflows/derived-artifacts.yml
+index 87748749b2..5d731ab9a1 100644
+--- a/.github/workflows/derived-artifacts.yml
++++ b/.github/workflows/derived-artifacts.yml
+@@ -828,25 +828,25 @@ jobs:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-python@v5
+         with:
+           python-version: '3.12.10'
+       - name: Install project index contract dependencies
+         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+       - name: Qualify actual SQLite runtime
+         run: |
+           python -c "import sqlite3; from tldw_chatbook.Workspaces.project_index.allocation import _SOURCE_ID; c=sqlite3.connect(':memory:'); source=c.execute('SELECT sqlite_source_id()').fetchone()[0]; options={row[0] for row in c.execute('PRAGMA compile_options')}; print('SQLite version:',sqlite3.sqlite_version,'source:',source,'options:',sorted(options)); assert sqlite3.sqlite_version == '3.49.1' and source == _SOURCE_ID and {'TEMP_STORE=1','MAX_PAGE_SIZE=65536','THREADSAFE=1'} <= options, 'unqualified SQLite source/options'"
+       - name: Run project index contracts
+         # Mounted stage/cancel and local128/native32 need qualified SQLite allocation.
+         # The mounted node is deliberately absent from the Ubuntu UI census.
+-        run: pytest Tests/DB/test_project_semantic_schema.py Tests/Workspaces/test_project_semantic_settings.py Tests/Workspaces/test_project_index_allocation.py::test_group_semantic_peer_qualifies_keyword_target_before_native_open Tests/Workspaces/test_project_index_allocation.py::test_retained_generation_after_revoke_qualifies_peer_and_closes_probes Tests/Workspaces/test_project_index_allocation.py::test_pure_keyword_group_uses_keyword_allowance Tests/Workspaces/test_project_semantic_generations.py::test_unknown_registry_retirement_roots_model_and_native_owners Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[normal] Tests/RAG/test_project_projection_scope.py::test_project_missing_local_package_is_setup_required Tests/RAG/test_project_projection_scope.py::test_selected_keyless_compatible_endpoint_and_default_key_requirement Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call --timeout=180 --tb=short
++        run: pytest Tests/DB/test_project_semantic_schema.py Tests/Workspaces/test_project_semantic_settings.py Tests/Workspaces/test_project_index_allocation.py::test_group_semantic_peer_qualifies_keyword_target_before_native_open Tests/Workspaces/test_project_index_allocation.py::test_retained_generation_after_revoke_qualifies_peer_and_closes_probes Tests/Workspaces/test_project_index_allocation.py::test_pure_keyword_group_uses_keyword_allowance Tests/Workspaces/test_project_semantic_generations.py::test_unknown_registry_retirement_roots_model_and_native_owners Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[normal] Tests/RAG/test_project_projection_scope.py::test_project_missing_local_package_is_setup_required Tests/RAG/test_project_projection_scope.py::test_selected_keyless_compatible_endpoint_and_default_key_requirement Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[disable] Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[reconfigure] Tests/RAG/test_project_projection_scope.py::test_peer_pending_close_does_not_poison_admitted_carrier_retirement Tests/RAG/test_embeddings_lib_logging.py::test_openai_redirect_respects_project_destination_without_changing_library Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call --timeout=180 --tb=short
+ 
+   derived-artifacts:
+     # This job's name is the string the owner enters under branch protection ->
+     # required status checks. Renaming it silently detaches the gate, so keep it
+     # stable.
+     name: Derived artifacts reproduce from their sources
+     needs: [pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking, project-index-contract]
+     if: ${{ always() }}
+     runs-on: ubuntu-latest
+     timeout-minutes: 10
+ 
+     steps:
+diff --git a/Docs/Architecture/project-indexing.md b/Docs/Architecture/project-indexing.md
+index 5771fa2cd6..1e38503e76 100644
+--- a/Docs/Architecture/project-indexing.md
++++ b/Docs/Architecture/project-indexing.md
+@@ -94,24 +94,29 @@ both singleton `ScanPage` compatibility and production callback/`ScanUnit` hando
+ 
+ ## Issued semantic embedding scope (Task 2)
+ 
+ `Workspaces/project_index/semantic.py` resolves a selected current embedding catalog key and issues `ProjectionExecutionScope` only after existing-only semantic settings, exact approved destination, semantic revision, scope and live binding checks. The carrier keeps the actual admitted registry/data parent live through a finite embedding operation; all project SQL/gate/fence handles close before model loading or provider waits. Invalid, disabled, paused, legacy, stale, copied or dead authority refuses without configuring or migrating the cache. Project routing precedes Library source inference; a missing carrier still uses the Library path.
+ 
+ The actual wrapper/factory accept an explicit project carrier and `local_files_only`. A project Hugging Face model must be a complete existing snapshot and loads offline with dynamic fallback disabled. A later independent build/query issues a new accepted carrier and calls `EmbeddingsServiceWrapper.rebind_execution_scope(successor)` only after the old carrier and its native children have closed; compatible cached model state may remain but no idle project pin or source permission does. Credential rotation requires a fresh wrapper. Construction and accepted async/native transfer use `RAG_Search/activation.py`; callers finish native work before each carrier closes and close a retained wrapper under its final live carrier.
+ 
+ On Windows, `RAG_Search/model_recovery.py` uses the existing `Utils.platform_files.os` descriptor adapter to enumerate the pinned model directory. This preserves ADR-126 handle-relative closure, alias, hardlink and manifest checks; it does not introduce a path fallback. Offline factory and issued-project composition qualification are distinct from semantic generation/query quality and scale verification.
+ 
+ 
+ Selected configured embedding catalog entries precede built-ins. Keyless OpenAI-compatible destinations are valid candidates; the actual default OpenAI provider refuses a missing key before session creation. A selected Hugging Face cache root precedes the global cache and participates in safe compatibility identity. Each issued call rechecks the current safe catalog identity after its finite DB/fence closes. The existing model owner still reviews its retained artifact closure/receipt before encoding; project admission does not duplicate that full-byte review. Full artifact identity remains bound at issuance and rebind.
+ 
+-Failed project model close is classified and strongly retained by the existing `ProjectIndexService._Operation.projection_close_pending` map. It roots the actual wrapper, factory record, carrier and admitted parent across lost caller references. Only successful same-wrapper close clears its token; pending closure prevents semantic use and carrier retirement while keyword search remains independently admitted. Service shutdown reports known pending closure before waiting indefinitely. Library close behavior and unrelated native-retirement uncertainty are unchanged.
++Failed project model close is classified and strongly retained by the existing `ProjectIndexService._Operation.projection_close_pending` map. It roots the actual wrapper, factory record, carrier and admitted parent across lost caller references. Only successful same-wrapper close clears its token; pending closure prevents new semantic use and retirement of that wrapper's own carrier while keyword search remains independently admitted. An already-admitted peer carrier can retire under its issued identity, original execution, live parent and zero-child checks even while another wrapper is closing. Service shutdown reports known pending closure before waiting indefinitely. Library close behavior and unrelated native-retirement uncertainty are unchanged.
+ 
+ 
+ ## Semantic generations, search and physical retirement
+ 
+ ProjectIndexService owns semantic jobs and finite synchronous queries; semantic.py and semantic_vectors.py implement catalog admission, finite float32 codec, heap100 exact cosine and RRF60. One captured keyword manifest fences immutable members, durable claim/checkpoint and final Ready CAS. Only local Hugging Face source/provider pages may contain up to 128 contiguous chunks and 1 MiB encoded source text; hosted/other providers remain at most 32 rows / 1 MiB. Validate the complete provider result count and dimensions before append. Each native append transaction remains at most 32 rows / 1 MiB with fresh source/manifest/scope/consent checks and checkpoint advancement after its successful slice. Query vector pages remain at most 32 rows / 1 MiB; exact cosine ranking keeps its unchanged single outer `store.sql_unit()`/registry fence across all pages, rather than a transaction per page. Retained/queued source totals <=4MiB per binding; total owned regular files remain subject to the existing1GiB source-conditioned allocation contract. Failed staging stays Error; only independently compatible priorReady may remain available with a safe refresh-failed reason.
+ 
+ Query preflight uses the production-issued current artifact identity to check compatibleReady before wrapper/model/provider work, with later validation retained for races. Exact current and run-floor policy/exclusions apply before rank; existing liveCapture/hash/permission validation and10-hit/16384-byte disclosure limit remain final. Semantic unavailable differs from successful zero hits; contention or unavailable semantics keeps keyword candidates usable. One wrapper serves a whole build and one finite query; no idle model cache is retained, so release qualification must report construction cost.
+ 
+ Before model construction/encode/close or retry waits, the existing owning-thread registry seam positively retires newly owned/replacement WorkspaceDB handles. Borrowed live caller handles are preserved and semantic admission refuses. No SQL handle/fence/allocation gate or search read slot spans provider/native work. OpenAI factory records explicitly close their already-owned Session; idle/LRU eviction closes before removing records and retains a failed callback.
+ 
+ Known model-close failure roots the actual wrapper/factory/carrier/operation and binding native lease. At most one immediate same-owner retry precedes an explicit non-spinning retry wait. semantic_close_pending(key) is model-free; retry_semantic_close(key) only signals the original owner, including after failed service shutdown. Clear revokes the epoch before reporting pending cleanup. Repeated cancelled build/query observers cannot release real owners or publish staleReady. Generic uncertain registry/native retirement remains separately retained and may require process exit. Positive wrapper/carrier/native retirement precedes successful publication or shutdown.
++
++
++Semantic source disclosure applies current processing policy and authoritative binding exclusions in bounded keyset SQL before loading text, including retained rows in Partial keyword coverage. Append checks the next eligible IDs and exact source data; final completeness and member eligibility use that same set. Local128/hosted32, native32/1MiB and existing allocation limits remain unchanged. Project OpenAI-compatible wrappers force their finite transport to refuse redirects before resend; default Library transport retains its prior behavior. This nonpersisted choice does not change saved catalog fingerprints.
++
++Candidate and final public-search fences compare the captured semantic revision/settings and exact compatible Ready generation. Revocation or reconfiguration during live Capture returns unavailable without semantically selected hits, even when keyword scope/manifest did not change. Native-positive semantic tests explicitly request the exact SQLite3.49.1/source/options fixture; portable refusal, model-free status and keyword controls remain active on other builds. The required Windows lane first asserts actual qualification and must execute its positives without skips.
+diff --git a/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md b/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md
+index c4cb3c20ce..310022a2cb 100644
+--- a/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md
++++ b/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md
+@@ -196,12 +196,33 @@ ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-worksp
+ Ruling: The held-provider lifecycle test exposed that the OpenAI factory record has close=None while its embedding closure owns a requests.Session. Reference loss or factory-cache clearing is not deterministic transport retirement. Extend only the private _openai_embedder seam in tldw_chatbook/Embeddings/Embeddings_Lib.py to return the embedding callable and the existing session.close callback; the single production _build caller stores that callback in its existing CacheRecord. Adapt the direct consumer in Tests/RAG/test_embeddings_lib_logging.py and focused factory/held-provider controls. The existing factory refcount/condition, cache record, same-owner wrapper close and pending-retirement path remain the owners; do not introduce a transport manager, executor, new persistence or permission boundary. Requests/response behavior, destination approval, credentials, saved Library policy/item scopes, and keyword operation remain unchanged. Shared factory retirement now explicitly closes its already-owned OpenAI session for both project and default callers; do not silently substitute project-only no-op closure.
+ 
+ Before source changes, retain the actual None-callback diagnosis and the aborted test as adverse evidence, not proof that the original callback failed. Test explicit real Session close on the original worker after in-flight embed completion, injected failure retention and successful retry, exact cache/wrapper/carrier retirement, and default-factory closure plus sanitized provider logs. No SQL handle/gate/fence spans close. No new model quality run is required for this HTTP-only seam. Cost if wrong: close failure remains truthfully pending under the existing owner; independent Task3 review includes this producer delta.
+ 
+ ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: complete deterministic transport retirement at the existing embedding factory boundary without a new owner or storage contract.
+ 
+ 
+ ### Task3 eviction retains failed transport retirement
+ 
+ Ruling: The new explicit OpenAI session callback makes both existing idle and LRU eviction paths part of deterministic project transport retirement. They currently pop a zero-refcount CacheRecord before close, losing the owned callback if close raises. Correct only those branches in Embeddings_Lib.py to invoke the existing callback before removing the exact record under the existing factory condition. A failed close propagates while the actual record/callback remains retained for the existing wrapper/factory close path; no replacement model is built and no new ownership framework is introduced. Successful eviction retains existing capacity, refcount and concurrency behavior. Project wrappers already prevent embedding reuse after close starts. Preserve failure evidence, test both idle and LRU actual callback failure/retention and successful physical close retry, and cover the directly affected factory concurrency contract. Do not repeat cached-model quality or held HTTP qualification when this isolated ordering delta does not reach those previously exercised paths.
+ 
+ ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: retain the already-owned session across failure at both existing cache retirement entrances. Cost if wrong: safe failed embedding and retained resources until explicit existing close succeeds; never a lost native owner or false retirement.
++
++
++## Final semantic review correction contract
++
++ADR required: yes, amend existing ADR241.
++ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md.
++Reason: clarify existing eligible-source, exact provider destination, independent consent and physical-owner contracts; no schema, backend or dependency change.
++
++A Partial keyword cache may retain rows outside its current processing policy. Semantic source paging must apply the existing current policy and authoritative binding exclusions before reading text, using bounded keyset SQL. Append validation and final completeness count the same eligible set, with fresh service authority at each unit. Retained forbidden rows cannot reach a provider or prevent an otherwise complete eligible generation from becoming Ready.
++
++Project OpenAI-compatible transport refuses HTTP redirects, including 307/308, before any resend; the explicit project factory option is set only by the issued project wrapper. Default Library transport retains its existing behavior. A redirect refusal is an unavailable provider outcome, never new destination consent.
++
++New semantic work remains denied while any same-binding model close is pending. Already-admitted carriers retire independently: close verifies issued identity, live parent, original execution/thread, zero live children and only its own operation's pending model-close tokens. A peer's ordinary or failed close cannot poison physical retirement. Own failed close and unknown native closure remain retained.
++
++Semantic ranking captures its independently consented compatible Ready generation. Candidate and final disclosure fences revalidate the captured semantic revision/settings and that exact compatible generation. A mismatch returns unavailable without stale semantically selected hits. Keyword scope/manifest alone cannot attest semantic consent.
++
++Tests that perform native-positive semantic allocations explicitly require the production qualified SQLite source/version/options; unsupported runtimes skip only those positives with a precise reason. Portable keyword/refusal controls remain active. Required Windows preflight and positive assertions remain fail-closed.
++
++
++### Final semantic review regression coverage (Task36423)
++The existing approved Project index contracts job adds exactly four selectors: held public Disable, held public reconfiguration, the two peer-carrier slow/failed-close parameters, and the four real 307/308 project/Library transport parameters. Existing selected local128normal now also proves retained Partial forbidden text never reaches the provider; the settings file includes portable lease refusal and actual unsupported-runtime refusal controls. The target count changes12 to16 and measured case projection33 to44, with about91.3 seconds measured additional critical-node calls and a conservative284-second total including the extra portable lease case. Preserve the1200-second job cap, Python3.12.10 actual source/options assertions, dependencies, test timeout180,13 UI shards, required context and aggregation. Root recorded explicit GO before workflow edits. Native-positive tests alone may skip unsupported comprehensive runtimes; the required Windows preflight still fails closed and its selected positives must execute with zero skips. No new lane or optional ML dependency.
+diff --git a/Tests/CI/test_ci_queue_pressure_contract.py b/Tests/CI/test_ci_queue_pressure_contract.py
+index a5fdeeaa63..82d4c76fd5 100644
+--- a/Tests/CI/test_ci_queue_pressure_contract.py
++++ b/Tests/CI/test_ci_queue_pressure_contract.py
+@@ -651,24 +651,28 @@ EXACT_STEPS = {
+ PROJECT_INDEX_TARGETS = (
+     "Tests/DB/test_project_semantic_schema.py",
+     "Tests/Workspaces/test_project_semantic_settings.py",
+     "Tests/Workspaces/test_project_index_allocation.py::test_group_semantic_peer_qualifies_keyword_target_before_native_open",
+     "Tests/Workspaces/test_project_index_allocation.py::test_retained_generation_after_revoke_qualifies_peer_and_closes_probes",
+     "Tests/Workspaces/test_project_index_allocation.py::test_pure_keyword_group_uses_keyword_allowance",
+     "Tests/Workspaces/test_project_semantic_generations.py::test_unknown_registry_retirement_roots_model_and_native_owners",
+     "Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[normal]",
+     "Tests/RAG/test_project_projection_scope.py::test_project_missing_local_package_is_setup_required",
+     "Tests/RAG/test_project_projection_scope.py::test_selected_keyless_compatible_endpoint_and_default_key_requirement",
+     "Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model",
+     "Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix",
++    "Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[disable]",
++    "Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[reconfigure]",
++    "Tests/RAG/test_project_projection_scope.py::test_peer_pending_close_does_not_poison_admitted_carrier_retirement",
++    "Tests/RAG/test_embeddings_lib_logging.py::test_openai_redirect_respects_project_destination_without_changing_library",
+     "Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call",
+ )
+ 
+ 
+ def test_project_index_required_lane_has_real_pinned_sqlite_and_bounded_targets() -> None:
+     workflow = _workflow("derived-artifacts.yml")
+     job = workflow["jobs"]["project-index-contract"]
+     assert job["name"] == "Project index contracts"
+     assert job["runs-on"] == "windows-latest"
+     assert job["timeout-minutes"] == 20
+     assert job["if"] == LANES
+     setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5")
+diff --git a/Tests/RAG/test_embeddings_lib_logging.py b/Tests/RAG/test_embeddings_lib_logging.py
+index 31bc5845a3..b4d34eac24 100644
+--- a/Tests/RAG/test_embeddings_lib_logging.py
++++ b/Tests/RAG/test_embeddings_lib_logging.py
+@@ -126,25 +126,26 @@ def test_actual_factory_http_paths_hide_credentials(
+         def json(self):
+             return {"data": [{"embedding": [1.0, 2.0]}]}
+ 
+     class Session:
+         def __init__(self):
+             self.headers = {}
+             self.close_count = 0
+             sessions.append(self)
+ 
+         def close(self):
+             self.close_count += 1
+ 
+-        def post(self, url, *, json, timeout):
++        def post(self, url, *, json, timeout, allow_redirects=True):
++            assert allow_redirects is True
+             attempts.append(url)
+             outcome = outcomes[len(attempts) - 1]
+             if outcome == "retry":
+                 raise embeddings_lib.requests.RequestException("secret-in-cause")
+             return Response()
+ 
+     monkeypatch.setattr(embeddings_lib.requests, "Session", Session)
+     factory = embeddings_lib.EmbeddingFactory(
+         {
+             "default_model_id": "test",
+             "models": {
+                 "test": {
+@@ -280,12 +281,82 @@ def test_factory_eviction_retains_failed_openai_session(monkeypatch, eviction):
+         assert sessions[0].close_calls == 1
+         assert len(sessions) == 1  # No replacement is built after failed close.
+         assert factory.embed(["two"], model_id="second").shape == (1, 2)
+         assert sessions[0].close_calls == 2
+         assert sessions[1].model == "second"
+         assert "first" not in factory._cache
+     finally:
+         try:
+             factory.close()
+         except RuntimeError:
+             factory.close()  # Bounded cleanup of the deliberately failed fake.
+     assert sessions[1].close_calls == 1
++
++
++@pytest.mark.loopback_network
++@pytest.mark.parametrize("redirect", [307, 308])
++@pytest.mark.parametrize("project", [True, False])
++def test_openai_redirect_respects_project_destination_without_changing_library(
++    monkeypatch, redirect, project
++):
++    import json
++    import threading
++    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++
++    received = []
++
++    class Endpoint(BaseHTTPRequestHandler):
++        def do_POST(self):
++            body = self.rfile.read(int(self.headers["Content-Length"]))
++            received.append((self.path, json.loads(body)["input"]))
++            if self.path == "/v1/embeddings":
++                self.send_response(redirect)
++                self.send_header("Location", forbidden)
++                self.send_header("Content-Length", "0")
++                self.end_headers()
++            else:
++                data = json.dumps({"data": [{"embedding": [1.0, 0.0]}]}).encode()
++                self.send_response(200)
++                self.send_header("Content-Length", str(len(data)))
++                self.end_headers()
++                self.wfile.write(data)
++
++        def log_message(self, *_):
++            pass
++
++    approved = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
++    unapproved = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
++    forbidden = f"http://127.0.0.1:{unapproved.server_port}/unapproved"
++    threads = [
++        threading.Thread(target=server.serve_forever)
++        for server in (approved, unapproved)
++    ]
++    for thread in threads:
++        thread.start()
++    monkeypatch.setattr(embeddings_lib, "_BACKOFF", (0,))
++    cfg = embeddings_lib.OpenAICfg(
++        provider="openai",
++        model_name_or_path="synthetic",
++        dimension=2,
++        base_url=f"http://127.0.0.1:{approved.server_port}/v1",
++        allow_redirects=not project,
++    )
++    embed, close = embeddings_lib._openai_embedder(cfg)
++    try:
++        if project:
++            with pytest.raises(embeddings_lib.requests.RequestException):
++                embed(["project-only-secret-sentinel"])
++            assert received == [("/v1/embeddings", ["project-only-secret-sentinel"])]
++        else:
++            assert embed(["library-control"], as_list=True) == [[1.0, 0.0]]
++            assert received == [
++                ("/v1/embeddings", ["library-control"]),
++                ("/unapproved", ["library-control"]),
++            ]
++    finally:
++        close()
++        for server in (approved, unapproved):
++            server.shutdown()
++            server.server_close()
++        for thread in threads:
++            thread.join(5)
++            assert not thread.is_alive()
+diff --git a/Tests/RAG/test_project_projection_scope.py b/Tests/RAG/test_project_projection_scope.py
+index 009f802091..291473e20a 100644
+--- a/Tests/RAG/test_project_projection_scope.py
++++ b/Tests/RAG/test_project_projection_scope.py
+@@ -109,24 +109,25 @@ def test_project_missing_local_package_is_setup_required(monkeypatch):
+ 
+     def missing_package(_):
+         raise ImportError("private-path-leak")
+ 
+     monkeypatch.setattr(lib, "existing_local_hf_snapshot", missing_package)
+     with pytest.raises(
+         ProjectProjectionRequired, match="project_local_model_setup_required"
+     ) as error:
+         _local_snapshot(HFModelCfg(model_name_or_path="missing/model"))
+     assert "private-path-leak" not in str(error.value)
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_issued_scope_uses_live_parent_and_rejects_copy_after_close(
+     tmp_path, monkeypatch, request
+ ):
+     from copy import copy
+ 
+     from tldw_chatbook.RAG_Search.projection_scope import ProjectionExecutionScope
+     from tldw_chatbook.Workspaces.project_index.semantic import (
+         _issue_project_projection_scope,
+         _settings_for_project_model,
+     )
+     from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
+@@ -264,24 +265,25 @@ async def test_issued_scope_uses_live_parent_and_rejects_copy_after_close(
+     issued.close()
+     with pytest.raises(PermissionError):
+         embeddings_wrapper.EmbeddingsServiceWrapper(
+             model_name=issued.model_name,
+             api_key=issued.api_key,
+             base_url=issued.base_url,
+             device="cpu",
+             execution_scope=issued,
+         )
+     await service.aclose()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_issued_scope_sync_entry_and_stale_revision_refuse(
+     tmp_path, monkeypatch, request
+ ):
+     def run():
+         from tldw_chatbook.Workspaces.project_index.semantic import (
+             _issue_project_projection_scope,
+             _settings_for_project_model,
+         )
+         from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
+         from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
+         from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
+@@ -565,24 +567,25 @@ def test_selected_custom_cache_root_binds_actual_snapshot_and_settings(
+     target = semantic._target(spec, destination)
+     assert Path(target.model_name) == selected_snapshot
+     assert target.config["model_name_or_path"] == str(selected_snapshot)
+ 
+     selected["cache_dir"] = str(global_cache)
+     other = semantic._settings_for_project_model("selected")
+     assert chosen.config_fingerprint != other.config_fingerprint
+     other_target = semantic._target(*semantic._resolved_spec("selected"))
+     assert Path(other_target.model_name) == global_snapshot
+     assert target.artifact_fingerprint != other_target.artifact_fingerprint
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_failed_project_factory_close_retains_real_parent_until_retry(
+     tmp_path, monkeypatch, request
+ ):
+     def run():
+         import gc
+         import io
+         import weakref
+         import threading
+ 
+         from loguru import logger
+         from tldw_chatbook.Embeddings import Embeddings_Lib as lib
+@@ -753,12 +756,165 @@ async def test_failed_project_factory_close_retains_real_parent_until_retry(
+ 
+ 
+ def test_library_wrapper_cannot_be_upgraded_by_rebind(monkeypatch):
+     monkeypatch.setattr(embeddings_wrapper, "source_paths", lambda service: ())
+     monkeypatch.setattr(
+         embeddings_wrapper.EmbeddingsServiceWrapper,
+         "_ensure_initialized",
+         lambda self: None,
+     )
+     wrapper = embeddings_wrapper.EmbeddingsServiceWrapper(model_name="mock")
+     with pytest.raises(PermissionError):
+         wrapper.rebind_execution_scope(object())
++
++
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
++@pytest.mark.parametrize("failed", [False, True])
++@private_profile_test
++async def test_peer_pending_close_does_not_poison_admitted_carrier_retirement(
++    tmp_path, request, monkeypatch, failed
++):
++    def run():
++        import threading
++        from types import SimpleNamespace
++        from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
++        from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
++        from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
++        from tldw_chatbook.RAG_Search.projection_scope import ProjectProjectionRequired
++        from tldw_chatbook.Embeddings import Embeddings_Lib as lib
++        from tldw_chatbook.Workspaces.project_index.semantic import (
++            _issue_project_projection_scope,
++            _settings_for_project_model,
++        )
++
++        root = tmp_path / "project"
++        root.mkdir()
++        chain = capture_directory_chain(root)
++        factory = _AdmittedStoreFactory()
++        key = ProjectIndexKey(
++            factory.identity,
++            "workspace",
++            "binding",
++            locator_fingerprint(root),
++            root_identity_fingerprint(chain),
++        )
++        authority = ProjectIndexAuthority(key, root, chain, (), 1)
++
++        @contextmanager
++        def fence(selected):
++            yield authority if selected == key else None
++
++        service = ProjectIndexService(
++            factory,
++            ProjectScanner(),
++            lambda selected: authority if selected == key else None,
++            fence,
++        )
++        rig = SimpleNamespace(key=key, service=service, close=service.aclose)
++        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
++        scope = service.enable(
++            key,
++            ProjectIndexPolicy((), (".txt",)),
++            expected_scope=service.status(key).scope,
++        ).scope
++        candidate = _settings_for_project_model("openai-3-small")
++        selected = replace(
++            candidate,
++            approved_destination_fingerprint=candidate.destination_fingerprint,
++        )
++        with rig.service._store(rig.key) as store:
++            state = store.configure_semantic(
++                scope, selected, enabled=True, expected_semantic_revision=0
++            )
++        carrier = _issue_project_projection_scope(
++            rig.service, scope, selected, state.semantic_revision
++        )
++        monkeypatch.setattr(
++            embeddings_wrapper, "_ensure_embeddings_imported", lambda: True
++        )
++        monkeypatch.setattr(
++            embeddings_wrapper, "EmbeddingFactory", lib.EmbeddingFactory
++        )
++        monkeypatch.setattr(
++            embeddings_wrapper, "EmbeddingConfigSchema", lib.EmbeddingConfigSchema
++        )
++        monkeypatch.setattr(lib, "_embeddings_rag_available", lambda: True)
++        wrapper = embeddings_wrapper.EmbeddingsServiceWrapper(
++            model_name=carrier.model_name,
++            api_key=carrier.api_key,
++            base_url=carrier.base_url,
++            execution_scope=carrier,
++        )
++        assert wrapper.factory.config.models["default"].allow_redirects is False
++        peer_ready, peer_go, peer_done, retry = (threading.Event() for _ in range(4))
++        errors, peer_owners = [], []
++
++        def peer():
++            admitted = _issue_project_projection_scope(
++                rig.service, scope, selected, state.semantic_revision
++            )
++            peer_owners.append(admitted._parent.operation)
++            peer_ready.set()
++            assert peer_go.wait(45)
++            try:
++                admitted.close()
++            except BaseException as error:
++                errors.append(error)
++                peer_done.set()
++                assert retry.wait(45)
++                admitted.close()
++            else:
++                peer_done.set()
++
++        thread = threading.Thread(target=peer)
++        thread.start()
++        assert peer_ready.wait(30)
++        attempts = []
++
++        def close_model():
++            attempts.append(threading.get_ident())
++            if len(attempts) == 1:
++                peer_go.set()
++                assert peer_done.wait(45)
++                # New model work remains denied during an ordinary slow close
++                # as well as after an actual failure.
++                with pytest.raises(
++                    ProjectProjectionRequired, match="project_embedding_close_pending"
++                ):
++                    _issue_project_projection_scope(
++                        rig.service, scope, selected, state.semantic_revision
++                    )
++                if failed:
++                    raise RuntimeError("synthetic-close-failure")
++
++        wrapper.factory._cache["default"] = {
++            "embed": lambda *a, **k: [[1.0, 0.0]],
++            "close": close_model,
++            "last": 0.0,
++            "refs": 0,
++        }
++        try:
++            if failed:
++                with pytest.raises(
++                    RuntimeError, match="project_embedding_close_failed"
++                ):
++                    wrapper.close()
++                assert rig.service.semantic_close_pending(rig.key)
++                with pytest.raises(ProjectProjectionRequired):
++                    carrier.close()
++                wrapper.close()
++            else:
++                wrapper.close()
++        finally:
++            retry.set()
++            thread.join(45)
++            assert not thread.is_alive()
++            if wrapper.factory is not None:
++                wrapper.close()
++            carrier.close()
++            asyncio.run(rig.close())
++        assert not errors, [str(error) for error in errors]
++        assert peer_owners[0].done.is_set() and not peer_owners[0].retirement_unproven
++        assert not rig.service._operations
++        assert attempts == [threading.get_ident()] * (2 if failed else 1)
++
++    await asyncio.to_thread(run)
+diff --git a/Tests/UI/test_project_semantic_consent.py b/Tests/UI/test_project_semantic_consent.py
+index 89f267fe6c..732e24b7b5 100644
+--- a/Tests/UI/test_project_semantic_consent.py
++++ b/Tests/UI/test_project_semantic_consent.py
+@@ -38,24 +38,25 @@ async def test_mounted_semantic_controls_and_status_do_not_load_model(
+                 "semantic-stage",
+                 "semantic-approve",
+                 "semantic-refresh",
+                 "semantic-disable",
+             }
+             assert {
+                 name for name in sys.modules if name.startswith("sentence_transformers")
+             } == before
+     finally:
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call(
+     tmp_path, request, monkeypatch
+ ):
+     mod = card_module()
+     rig = Rig(tmp_path)
+     rig.enable()
+     before_keyword = rig.service.status(rig.key)
+     from tldw_chatbook.Workspaces.project_index import semantic
+ 
+     def forbidden_provider(*_args, **_kwargs):
+         raise AssertionError("cancelled_disclosure_reached_provider")
+@@ -84,24 +85,25 @@ async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_pr
+                 b for b in card.query(Button) if b.name == "semantic-approve"
+             )
+             approve.press()
+             await pilot.pause()
+             await pilot.press("escape")
+             await pilot.pause()
+             assert rig.service.semantic_state(rig.key) == state
+             assert rig.service.status(rig.key) == before_keyword
+     finally:
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_catalog_destination_change_before_disclosure_refuses_old_staged_approval(
+     tmp_path, request, monkeypatch
+ ):
+     from tldw_chatbook.Workspaces.project_index import semantic
+ 
+     mod = card_module()
+     rig = Rig(tmp_path)
+     rig.enable()
+     keyword = rig.service.status(rig.key)
+     monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+     monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+@@ -156,24 +158,25 @@ async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+                 card.semantic_status,
+                 "stage",
+                 "all-MiniLM-L6-v2",
+             )
+             rig.service.clear(rig.key, expected_scope=card.status.scope)
+             with pytest.raises(ValueError, match="stale_scope"):
+                 card._execute_semantic(card.app, action)
+             assert not rig.service.semantic_state(rig.key).enabled
+     finally:
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
+     tmp_path, request, monkeypatch
+ ):
+     mod = card_module()
+     rig = Rig(tmp_path)
+     rig.enable()
+     monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+     monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+     card = mod.ProjectIndexBindingCard(
+         rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+     )
+@@ -205,24 +208,25 @@ async def test_stale_disable_after_clear_and_reenable_cannot_revoke_new_epoch(
+                 expected_epoch=new_keyword.scope.epoch,
+                 expected_semantic_revision=rig.service.semantic_state(
+                     rig.key
+                 ).semantic_revision,
+             )
+             with pytest.raises(ValueError, match="stale_scope|stale_semantic_revision"):
+                 card._execute_semantic(card.app, stale)
+             assert rig.service.semantic_state(rig.key) == newer
+     finally:
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_approval_then_destination_change_pauses_and_preserves_keyword(
+     tmp_path, request, monkeypatch
+ ):
+     mod = card_module()
+     rig = Rig(tmp_path)
+     rig.enable()
+     before_keyword = rig.service.status(rig.key)
+     monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+     monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+     card = mod.ProjectIndexBindingCard(
+         rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+@@ -372,24 +376,25 @@ async def test_pending_cleanup_retries_the_captured_owner_after_app_admission_cl
+             await pilot.pause()
+             while card._pending:
+                 await pilot.pause(0.02)
+             assert retried == [rig.key]
+             assert "cleanup pending" not in str(
+                 card.query_one(".project-semantic-status", Static).render()
+             )
+     finally:
+         rig.service._closed = False
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_cleanup_retry_never_displays_revoked_old_semantic_state(
+     tmp_path, request, monkeypatch
+ ):
+     from tldw_chatbook.Workspaces.project_index.models import (
+         ProjectIndexRetirementUnproven,
+     )
+ 
+     mod = card_module()
+     rig = Rig(tmp_path)
+     rig.enable()
+     monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+diff --git a/Tests/Workspaces/test_project_index_allocation.py b/Tests/Workspaces/test_project_index_allocation.py
+index 4c933938e0..f6e8b85751 100644
+--- a/Tests/Workspaces/test_project_index_allocation.py
++++ b/Tests/Workspaces/test_project_index_allocation.py
+@@ -157,40 +157,42 @@ def test_preopen_refuses_windows_junction_namespace(tmp_path):
+         ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+         capture_output=True,
+         text=True,
+         check=False,
+     )
+     assert result.returncode == 0, result.stderr
+     with allocation_gate(group):
+         with pytest.raises(ValueError, match="alias"):
+             verify_pre_open(junction / "workspace_project_index.db", group)
+     assert not (outside / "workspace_project_index.db").exists()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_negative_scaled_allowance_refuses_without_clamping_or_writing(tmp_path):
+     group = tmp_path / ("f" * 64)
+     group.mkdir()
+     path = namespace(group, "a")
+     with sqlite3.connect(path, isolation_level=None, timeout=0) as conn:
+         conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+         conn.execute("CREATE TABLE records(value BLOB)")
+         previous = conn.execute("PRAGMA max_page_count").fetchone()[0]
+         before = path.read_bytes()
+         with allocation_gate(group):
+             with pytest.raises(ValueError, match="index_cache_limit"):
+                 admit_connection(conn, path, group, budget=65536)
+         assert conn.execute("PRAGMA max_page_count").fetchone()[0] == previous
+         assert path.read_bytes() == before
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_scaled_cap_reserves_other_namespace_and_every_old_page(tmp_path):
+     group = tmp_path / ("f" * 64)
+     group.mkdir()
+     path = namespace(group, "a")
+     other = namespace(group, "b")
+     other.write_bytes(b"x" * 8192)
+     with sqlite3.connect(path, isolation_level=None, timeout=0) as conn:
+         conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+         conn.execute("CREATE TABLE records(value BLOB)")
+         assert conn.execute("PRAGMA page_count").fetchone()[0] == 3
+         assert conn.execute("PRAGMA page_size").fetchone()[0] == 4096
+         with allocation_gate(group):
+@@ -578,24 +580,25 @@ async def test_keyword_lookup_during_real_scanner_wait_outside_sql(
+             None,
+             live_read,
+         )
+         result = rig.service.search(search, "marker")
+         assert result.status == "partial"
+         assert result.coverage is None
+         assert result.hits and "marker" in result.hits[0].excerpt
+     finally:
+         release.set()
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_group_semantic_peer_qualifies_keyword_target_before_native_open(
+     tmp_path, monkeypatch
+ ):
+     from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+     from Tests.Workspaces.project_index_support import (
+         make_index_key,
+         open_semantic_store,
+     )
+     from Tests.Workspaces.test_project_semantic_settings import settings
+ 
+     first = open_semantic_store(tmp_path)
+     key = make_index_key(tmp_path)
+@@ -673,24 +676,25 @@ def test_missing_group_gate_with_existing_v4_peer_refuses_repeatedly(tmp_path):
+     group = first.db_path.parent.parent
+     first.close_native()
+     gate = group / "allocation-v1.lock"
+     gate.unlink()
+     second = namespace(group, "b")
+     for _ in range(2):
+         with pytest.raises(ValueError, match="index_allocation_control_missing"):
+             module.WorkspaceProjectIndexDB(second)
+         assert not gate.exists()
+         assert not second.exists()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_retained_generation_after_revoke_qualifies_peer_and_closes_probes(
+     tmp_path, monkeypatch
+ ):
+     from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+     from Tests.Workspaces.project_index_support import (
+         make_index_key,
+         open_semantic_store,
+     )
+     from Tests.Workspaces.test_project_semantic_settings import settings
+ 
+     first = open_semantic_store(tmp_path)
+     key = make_index_key(tmp_path)
+@@ -860,24 +864,25 @@ def test_nested_other_store_write_refuses_before_peer_probe(tmp_path, monkeypatc
+             with first.connection() as conn:
+                 assert conn.execute("SELECT 1").fetchone()[0] == 1
+             monkeypatch.setattr(module, "connect_private_sqlite", observed)
+             with pytest.raises(ValueError, match="overlapping"):
+                 with second.transaction() as conn:
+                     conn.execute("CREATE TABLE should_not_exist(value TEXT)")
+             assert probes == []
+     finally:
+         first.close_native()
+         second.close_native()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_disabled_settings_without_generations_keep_keyword_allowance(
+     tmp_path, monkeypatch
+ ):
+     from tldw_chatbook.DB import Workspace_Project_Index_DB as module
+     from Tests.Workspaces.project_index_support import (
+         make_index_key,
+         open_semantic_store,
+     )
+     from Tests.Workspaces.test_project_semantic_settings import settings
+ 
+     first = open_semantic_store(tmp_path)
+     key = make_index_key(tmp_path)
+diff --git a/Tests/Workspaces/test_project_semantic_app_quality.py b/Tests/Workspaces/test_project_semantic_app_quality.py
+index c3e8d2cb9f..c453e05347 100644
+--- a/Tests/Workspaces/test_project_semantic_app_quality.py
++++ b/Tests/Workspaces/test_project_semantic_app_quality.py
+@@ -4,24 +4,25 @@ import asyncio
+ from dataclasses import replace
+ import os
+ from types import SimpleNamespace
+ from unittest.mock import patch
+ from itertools import combinations
+ 
+ 
+ import pytest
+ 
+ from Tests.private_profile import private_profile_test
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_real_app_model_free_four_page_stage_timing(
+     tmp_path, request, monkeypatch
+ ):
+     """Measure actual registry/issuer/admission around four synthetic pages."""
+     import json
+     import time
+     from collections import defaultdict
+     from contextlib import contextmanager
+     from hashlib import sha256
+ 
+     import httpx
+@@ -227,24 +228,25 @@ async def test_real_app_model_free_four_page_stage_timing(
+                 },
+                 indent=2,
+             ),
+             encoding="utf-8",
+         )
+ 
+     try:
+         await asyncio.to_thread(run)
+     finally:
+         await close_project_index_service(app)
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_all_saved_library_source_choices_survive_semantic_and_chat_changes(
+     tmp_path, request
+ ):
+     from Tests.UI.app_factory import _build_test_app
+     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+     from tldw_chatbook.Workspaces.project_index.runtime import (
+         close_project_index_service,
+         get_project_index_service,
+         project_index_key,
+     )
+     from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+@@ -300,24 +302,25 @@ async def test_all_saved_library_source_choices_survive_semantic_and_chat_change
+         screen._rag_search_state.scope_deselected = set(combo)
+         screen._rag_search_state.mode = "rag" if count % 2 else "search"
+         before = screen.save_state()
+         assert before["library_rag_scope_deselected"] == set(combo)
+         await asyncio.to_thread(transition, ordinal % 2 == 0)
+         assert screen.save_state() == before
+         provider_config["provider"] = "openai" if count % 2 else "anthropic"
+         assert screen.save_state() == before
+         assert service.status(key) == keyword
+     await close_project_index_service(app)
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_cached_minilm_local128_disable_retires_actual_held_producer(
+     tmp_path, request, monkeypatch
+ ):
+     """Revoke while the real local producer has computed but not returned."""
+     import json
+     import sys
+     import threading
+     import time
+     import traceback
+     from pathlib import Path
+ 
+@@ -642,24 +645,25 @@ async def test_cached_minilm_local128_disable_retires_actual_held_producer(
+             if watchdog is not None:
+                 await watchdog
+             if poll_task is not None:
+                 await asyncio.wait_for(poll_task, timeout=120)
+             if disable_task is not None:
+                 await asyncio.wait_for(disable_task, timeout=120)
+         finally:
+             mark("service_close_enter")
+             await close_project_index_service(app)
+             mark("service_close_return")
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_cached_minilm_real_app_paraphrase_refresh_restart_and_revoke(
+     tmp_path, request, monkeypatch
+ ):
+     from Tests.Agents.test_project_index_tool import invoke, provider
+     from Tests.UI.app_factory import _build_test_app
+     from tldw_chatbook import config
+     from tldw_chatbook.Chat.rag_scope import (
+         RagScope,
+         ScopeItem,
+         read_conversation_scope,
+         write_conversation_scope,
+diff --git a/Tests/Workspaces/test_project_semantic_generations.py b/Tests/Workspaces/test_project_semantic_generations.py
+index 211b11be3f..71d7e167a6 100644
+--- a/Tests/Workspaces/test_project_semantic_generations.py
++++ b/Tests/Workspaces/test_project_semantic_generations.py
+@@ -18,24 +18,25 @@ from Tests.Workspaces.project_index_support import (
+     make_index_key,
+     open_semantic_store,
+ )
+ from Tests.Workspaces.test_project_semantic_settings import digest, settings
+ from tldw_chatbook.Workspaces.project_index.lifetime import (
+     BindingLifetime,
+     LifetimeBusy,
+ )
+ from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+ from Tests.private_profile import private_profile_test
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @pytest.mark.parametrize(
+     "case",
+     (
+         "normal",
+         "wrong_count",
+         "wrong_dimension_late",
+         "stop_after_first",
+         "source_change_after_first",
+         "manifest_change_before_publish",
+         "max_dimension",
+     ),
+ )
+@@ -69,24 +70,25 @@ async def test_model_free_local_batch128_tail_and_native32_commits(
+         artifact_fingerprint = digest("artifact-a")
+ 
+         def close(self):
+             closed.append("carrier")
+ 
+     class Wrapper:
+         def __init__(self, **kwargs):
+             pass
+ 
+         async def create_embeddings_async(self, texts):
+             started = time.perf_counter()
+             batch_sizes.append(len(texts))
++            assert "retained-forbidden-provider-sentinel" not in texts
+             vector = [1.0] * 16384 if case == "max_dimension" else [1.0, 0.0]
+             vectors = [vector] * len(texts)
+             if case == "wrong_count":
+                 vectors = vectors[:-1]
+             if case == "wrong_dimension_late":
+                 vectors[32] = [1.0, 0.0, 0.0]
+             phases["wrapper"].append(time.perf_counter() - started)
+             return vectors
+ 
+         def close(self):
+             closed.append("wrapper")
+ 
+@@ -173,24 +175,48 @@ async def test_model_free_local_batch128_tail_and_native32_commits(
+                             "dog.py",
+                             "canine companion",
+                             index * 17,
+                             index * 17 + 16,
+                             index + 1,
+                             index + 1,
+                         ),
+                     ).lastrowid
+                     conn.execute(
+                         "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+                         (chunk, "dog.py", "canine companion"),
+                     )
++            if case == "normal":
++                from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
++
++                rig.live = replace(
++                    rig.live, exclusions=(SensitiveExclusion("file", "private.py"),)
++                )
++                secret = "retained-forbidden-provider-sentinel"
++                with store.transaction() as conn:
++                    conn.execute(
++                        "INSERT INTO files VALUES(?,?,?,?,?,?)",
++                        (
++                            "private.py",
++                            "denied",
++                            123,
++                            len(secret),
++                            sha256(secret.encode()).hexdigest(),
++                            secret,
++                        ),
++                    )
++                    conn.execute(
++                        "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
++                        ("private.py", secret, 0, len(secret), 1, 1),
++                    )
++                    conn.execute("UPDATE control SET state='Partial'")
+             state = store.configure_semantic(
+                 status.scope, settings(), enabled=True, expected_semantic_revision=0
+             )
+         finally:
+             store.close_native()
+             lease.close()
+         started = time.perf_counter()
+         job_id = rig.service.refresh_semantic(
+             rig.key,
+             expected_epoch=status.scope.epoch,
+             expected_semantic_revision=state.semantic_revision,
+         )
+@@ -290,24 +316,25 @@ def populated_store(tmp_path):
+             "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
+             (chunk, "src/dog.py", text),
+         )
+         conn.execute(
+             "UPDATE control SET state='Ready',manifest_revision=manifest_revision+1"
+         )
+     semantic = store.configure_semantic(
+         scope, settings(), enabled=True, expected_semantic_revision=0
+     )
+     return store, scope, semantic, lease
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_local_source_page_trims_before_loading_text_and_validates_limit(tmp_path):
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         text = "x" * 9000
+         with store.transaction() as conn:
+             conn.execute("DELETE FROM chunk_fts")
+             conn.execute("DELETE FROM chunks")
+             for index in range(129):
+                 conn.execute(
+                     "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) "
+                     "VALUES(?,?,?,?,?,?)",
+                     (
+@@ -437,24 +464,25 @@ def start_held_semantic(rig, monkeypatch, started, release, *, close=None):
+     finally:
+         store.close_native()
+         lease.close()
+     job = rig.service.refresh_semantic(
+         rig.key,
+         expected_epoch=status.scope.epoch,
+         expected_semantic_revision=state.semantic_revision,
+     )
+     assert started.wait(45)
+     return status, state, rig.service._semantic_runs[job]
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_retry(
+     tmp_path, request, monkeypatch
+ ):
+     from Tests.Workspaces.test_project_index_service import Rig
+     from tldw_chatbook.Workspaces.project_index.models import (
+         ProjectIndexRetirementUnproven,
+         ProjectIndexSearchAuthority,
+     )
+ 
+     rig = Rig(tmp_path)
+     (rig.root / "dog.py").write_text("canine companion", encoding="utf-8")
+@@ -515,24 +543,25 @@ async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_r
+                 break
+             if rig.service.semantic_close_pending(rig.key):
+                 rig.service.retry_semantic_close(rig.key)
+             await asyncio.to_thread(run.thread.join, 2)
+         if clear_task is not None:
+             try:
+                 await asyncio.wait_for(asyncio.shield(clear_task), timeout=10)
+             except Exception:
+                 pass
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @pytest.mark.parametrize("change", ["detach", "exclusion", "settings"])
+ @private_profile_test
+ async def test_held_semantic_refuses_publication_after_binding_or_settings_change(
+     tmp_path, request, monkeypatch, change
+ ):
+     from Tests.Workspaces.test_project_index_service import Rig
+     from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+     from tldw_chatbook.Workspaces.project_index import semantic
+ 
+     rig = Rig(tmp_path)
+     (rig.root / "dog.py").write_text("canine companion", encoding="utf-8")
+     started, release = threading.Event(), threading.Event()
+@@ -590,24 +619,25 @@ async def test_held_semantic_refuses_publication_after_binding_or_settings_chang
+             current = store.load_status(rig.key)
+             assert store.load_semantic_state(current.scope).ready_generation_id is None
+         finally:
+             store.close_native()
+             lease.close()
+     finally:
+         release.set()
+         if change_task is not None:
+             await asyncio.wait_for(asyncio.shield(change_task), timeout=10)
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path):
+     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+ 
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         manifest = store.load_status(scope.key).manifest_revision
+         first = store.semantic_claim(
+             scope,
+             state,
+             manifest_revision=manifest,
+             artifact_fingerprint=digest("artifact-a"),
+             claim_token="first",
+@@ -661,24 +691,25 @@ def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path)
+                 (state.settings.model_id, first),
+             )
+             conn.execute(
+                 "UPDATE semantic_control SET settings_json=? WHERE singleton=1",
+                 (json.dumps(asdict(settings("changed"))),),
+             )
+         assert store.load_semantic_state(scope).coverage is None
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_failed_first_generation_has_no_ready_projection(tmp_path):
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         generation = store.semantic_claim(
+             scope,
+             state,
+             manifest_revision=store.load_status(scope.key).manifest_revision,
+             artifact_fingerprint=digest("artifact-a"),
+             claim_token="first",
+         )
+         assert store.semantic_fail(
+             scope, generation, "first", reason="provider_unavailable"
+@@ -686,24 +717,25 @@ def test_failed_first_generation_has_no_ready_projection(tmp_path):
+         failed = store.load_semantic_state(scope)
+         assert failed.state == "Error"
+         assert failed.ready_generation_id is None
+         assert failed.coverage is None
+         assert (
+             store.semantic_ready_generation(scope, failed, digest("artifact-a")) is None
+         )
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_ready_zero_members_is_distinct_from_unavailable_semantics(tmp_path):
+     from tldw_chatbook.Workspaces.project_index.semantic import rank_semantic
+ 
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         assert (
+             rank_semantic(
+                 store, scope, state, digest("artifact-a"), [1, 0], (), limit=10
+             )
+             is None
+         )
+         with store.transaction() as conn:
+@@ -725,24 +757,25 @@ def test_ready_zero_members_is_distinct_from_unavailable_semantics(tmp_path):
+         assert ready.coverage == 0
+         assert (
+             rank_semantic(
+                 store, scope, ready, digest("artifact-a"), [1, 0], (), limit=10
+             )
+             == ()
+         )
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
+     from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
+     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+ 
+     first, scope, state, first_lease = populated_store(tmp_path)
+     other_key = replace(scope.key, binding_id="binding-2")
+     other_path = tmp_path / other_key.binding_namespace / other_key.namespace
+     other_path.mkdir(parents=True)
+     second = WorkspaceProjectIndexDB(other_path / "workspace_project_index.db")
+     second_lease = BindingLifetime.acquire(other_path.parent / other_key.lifetime_name)
+     try:
+         second.bind_native_lifetime(second_lease)
+@@ -811,24 +844,25 @@ def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
+             second_scope, second_state, digest("artifact-a"), (), after=0
+         )[0]
+         assert first_member.relative_path == second_member.relative_path
+         assert first_member.vector == encode_vector([1, 0])
+         assert second_member.vector == encode_vector([0, 1])
+     finally:
+         first.close_native()
+         second.close_native()
+         first_lease.close()
+         second_lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_failed_rebuild_with_changed_artifact_cannot_project_prior_ready(tmp_path):
+     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+ 
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         manifest = store.load_status(scope.key).manifest_revision
+         first = store.semantic_claim(
+             scope,
+             state,
+             manifest_revision=manifest,
+             artifact_fingerprint=digest("artifact-a"),
+             claim_token="first",
+@@ -849,24 +883,25 @@ def test_failed_rebuild_with_changed_artifact_cannot_project_prior_ready(tmp_pat
+             scope, second, "second", reason="provider_unavailable"
+         )
+         failed = store.load_semantic_state(scope)
+         assert failed.state == "Error"
+         assert (
+             store.semantic_ready_generation(scope, failed, digest("artifact-b")) is None
+         )
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
+     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+ 
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         manifest = store.load_status(scope.key).manifest_revision
+         generation = store.semantic_claim(
+             scope,
+             state,
+             manifest_revision=manifest,
+             artifact_fingerprint=digest("artifact-a"),
+             claim_token="claim",
+@@ -877,24 +912,25 @@ def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
+         assert not store.semantic_append(
+             scope, generation, "claim", rows, [encode_vector([1, 0])]
+         )
+         assert not store.semantic_publish(scope, generation, "claim")
+         assert store.load_semantic_state(scope).ready_generation_id is None
+         assert store.semantic_fail(scope, generation, "claim", reason="source_changed")
+         assert store.load_semantic_state(scope).state == "Error"
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @pytest.mark.parametrize("mutation_point", ["between_pages", "final_cas"])
+ def test_multipage_generation_refuses_changed_manifest_at_page_or_final_cas(
+     tmp_path, mutation_point
+ ):
+     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+ 
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         with store.transaction() as conn:
+             for index in range(32):
+                 conn.execute(
+                     "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) "
+@@ -947,24 +983,25 @@ def test_multipage_generation_refuses_changed_manifest_at_page_or_final_cas(
+                 conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
+         assert not store.semantic_publish(scope, generation, "multipage")
+         assert store.load_semantic_state(scope).ready_generation_id is None
+         assert store.semantic_fail(
+             scope, generation, "multipage", reason="source_changed"
+         )
+         assert store.load_semantic_state(scope).state == "Error"
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_stale_semantic_failure_cannot_settle_new_claim_or_reconfigured_control(
+     tmp_path,
+ ):
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         manifest = store.load_status(scope.key).manifest_revision
+         first = store.semantic_claim(
+             scope,
+             state,
+             manifest_revision=manifest,
+             artifact_fingerprint=digest("artifact-a"),
+             claim_token="first",
+@@ -983,24 +1020,25 @@ def test_stale_semantic_failure_cannot_settle_new_claim_or_reconfigured_control(
+             settings(),
+             enabled=True,
+             expected_semantic_revision=state.semantic_revision,
+         )
+         assert changed.semantic_revision > state.semantic_revision
+         assert not store.semantic_fail(scope, second, "second", reason="source_changed")
+         assert store.load_semantic_state(scope).state == "Pending"
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_semantic_checkpoint_refuses_binding_allocation_quota(tmp_path, monkeypatch):
+     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+     from tldw_chatbook.Workspaces.project_index.service import binding_bytes
+     import importlib
+ 
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         generation = store.semantic_claim(
+             scope,
+             state,
+             manifest_revision=store.load_status(scope.key).manifest_revision,
+             artifact_fingerprint=digest("artifact-a"),
+@@ -1019,24 +1057,25 @@ def test_semantic_checkpoint_refuses_binding_allocation_quota(tmp_path, monkeypa
+                     "quota",
+                     rows,
+                     [encode_vector([1.0] * 16384)],
+                 )
+         assert store.load_semantic_state(scope).ready_generation_id is None
+         assert store.semantic_fail(scope, generation, "quota", reason="quota_refused")
+         assert store.load_semantic_state(scope).state == "Error"
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
+     tmp_path, request, monkeypatch
+ ):
+     from Tests.Workspaces.test_project_index_service import Rig
+     from tldw_chatbook.Workspaces.project_index import semantic
+     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+     from tldw_chatbook.Workspaces.project_index.models import (
+         FileCapture,
+         ProjectIndexSearchAuthority,
+     )
+ 
+@@ -1203,24 +1242,25 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
+             text=True,
+             timeout=10,
+         )
+         assert child.returncode == 0 and child.stdout.strip() == "busy"
+         release.set()
+         await asyncio.to_thread(rig.service._semantic_runs[job_id].thread.join)
+         assert rig.service.semantic_state(rig.key).ready_generation_id
+     finally:
+         release.set()
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_unknown_registry_retirement_roots_model_and_native_owners(
+     tmp_path, request, monkeypatch
+ ):
+     """An uncertain native close cannot unwind the actual model owner."""
+     from contextlib import contextmanager
+     import gc
+     import sqlite3
+     import weakref
+ 
+     from Tests.Workspaces.test_project_index_service import Rig
+     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+@@ -1308,24 +1348,25 @@ async def test_unknown_registry_retirement_roots_model_and_native_owners(
+         )
+         with pytest.raises(
+             (ProjectIndexRetirementUnproven, RuntimeError),
+             match="retirement_unproven",
+         ):
+             await asyncio.wait_for(rig.service.aclose(), timeout=5)
+     finally:
+         # This intentionally unprovable owner is quarantined until process exit.
+         # A foreign-thread test cleanup would invalidate the ownership control.
+         pass
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_retired_semantic_error_drops_traceback_but_keeps_live_join_record(
+     tmp_path, request, monkeypatch
+ ):
+     from Tests.Workspaces.test_project_index_service import Rig
+     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+     from tldw_chatbook.Workspaces.project_index import semantic
+     from tldw_chatbook.Workspaces.project_index.service import _SemanticRun
+ 
+     rig = Rig(tmp_path)
+     (rig.root / "dog.py").write_text("canine companion", encoding="utf-8")
+ 
+@@ -1411,24 +1452,25 @@ def test_vector_codec_round_trips_finite_float32_and_refuses_corrupt_bytes():
+         decode_vector,
+         encode_vector,
+     )
+ 
+     encoded = encode_vector([3.0, 4.0])
+     assert decode_vector(encoded, 2) == (3.0, 4.0)
+     with pytest.raises(ValueError):
+         decode_vector(encoded[:-1], 2)
+     with pytest.raises(ValueError):
+         decode_vector(b"\x00\x00\xc0\x7f", 1)
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_actual_cached_local_model_builds_async_generation_offline(
+     tmp_path, request, monkeypatch
+ ):
+     """Qualify the production async page path with an existing cached model."""
+     from contextlib import contextmanager
+     from dataclasses import replace
+ 
+     from tldw_chatbook import config
+     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+     from tldw_chatbook.Workspaces.project_index.models import (
+         ProjectIndexAuthority,
+@@ -1540,24 +1582,25 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
+             job.thread.join(150)
+             assert not job.thread.is_alive()
+             assert job.native_retired and job.error is None
+             ready = service.semantic_state(key)
+             assert ready.state == "Ready" and ready.ready_generation_id
+             assert not attempted
+         finally:
+             asyncio.run(service.aclose())
+ 
+     await asyncio.to_thread(run)
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @pytest.mark.loopback_network
+ @private_profile_test
+ async def test_actual_http_provider_wait_allows_keyword_lookup(
+     tmp_path, request, monkeypatch
+ ):
+     """Hold a local OpenAI-compatible response during a real async build."""
+     from contextlib import contextmanager
+     from dataclasses import replace
+     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+     import json
+     import time
+     import requests
+@@ -1798,12 +1841,113 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
+                     active.thread.join(2)
+             if "observer" in locals():
+                 observer.join(5)
+             asyncio.run(service.aclose())
+ 
+     try:
+         await asyncio.to_thread(run)
+     finally:
+         release.set()
+         server.shutdown()
+         server_thread.join(5)
+         server.server_close()
++
++
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
++@pytest.mark.parametrize("denied", ["prefix", "suffix", "exclusion"])
++def test_partial_retained_sources_filter_before_text_and_complete_eligible_set(
++    tmp_path, denied
++):
++    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
++    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
++
++    store, scope, state, lease = populated_store(tmp_path)
++    try:
++        path = {
++            "prefix": "other/private.py",
++            "suffix": "src/private.txt",
++            "exclusion": "src/private.py",
++        }[denied]
++        secret = "retained-forbidden-provider-sentinel"
++        with store.transaction() as conn:
++            conn.execute(
++                "INSERT INTO files VALUES(?,?,?,?,?,?)",
++                (
++                    path,
++                    "denied",
++                    123,
++                    len(secret),
++                    sha256(secret.encode()).hexdigest(),
++                    secret,
++                ),
++            )
++            conn.execute(
++                "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
++                (path, secret, 0, len(secret), 1, 1),
++            )
++        scope = store.configure(
++            scope.key,
++            ProjectIndexPolicy(("src",), (".py",)),
++            enabled=True,
++            expected_scope=scope,
++        )
++        with store.transaction() as conn:
++            conn.execute("UPDATE control SET state='Partial'")
++        state = store.configure_semantic(
++            scope,
++            settings(),
++            enabled=True,
++            expected_semantic_revision=state.semantic_revision,
++        )
++        floor = (
++            (SensitiveExclusion("file", "src/private.py"),)
++            if denied == "exclusion"
++            else ()
++        )
++        generation = store.semantic_claim(
++            scope,
++            state,
++            manifest_revision=store.load_status(scope.key).manifest_revision,
++            artifact_fingerprint=digest("artifact-a"),
++            claim_token="eligible",
++        )
++        # Pass the current authority exactly as the service does. Legacy callers
++        # remain valid, but project callers may never omit their live floor.
++        kwargs = {"exclusions": floor}
++        rows = store.semantic_source_page(
++            scope, generation, "eligible", after=0, **kwargs
++        )
++        assert [row.relative_path for row in rows] == ["src/dog.py"]
++        assert secret not in [row.text for row in rows]
++        assert store.semantic_append(
++            scope, generation, "eligible", rows, [encode_vector([1, 0])], **kwargs
++        )
++        assert (
++            store.semantic_source_page(
++                scope, generation, "eligible", after=rows[-1].chunk_id, **kwargs
++            )
++            == ()
++        )
++        if denied == "exclusion":
++            assert not store.semantic_publish(
++                scope, generation, "eligible", exclusions=()
++            )
++            # Equal counts cannot substitute one currently forbidden member
++            # for a different eligible source during final completeness.
++            swapped = (SensitiveExclusion("file", "src/dog.py"),)
++            assert not store.semantic_publish(
++                scope, generation, "eligible", exclusions=swapped
++            )
++        assert store.semantic_publish(scope, generation, "eligible", **kwargs)
++        assert store.load_semantic_state(scope).coverage == 1
++        store.revoke(scope.key, clear=False, expected_scope=scope)
++        assert not store.semantic_append(
++            scope, generation, "eligible", rows, [encode_vector([1, 0])], **kwargs
++        )
++        assert not store.semantic_publish(scope, generation, "eligible", **kwargs)
++        with pytest.raises(ValueError, match="stale_semantic_page"):
++            store.semantic_source_page(
++                scope, generation, "eligible", after=rows[-1].chunk_id, **kwargs
++            )
++    finally:
++        store.close_native()
++        lease.close()
+diff --git a/Tests/Workspaces/test_project_semantic_search.py b/Tests/Workspaces/test_project_semantic_search.py
+index f7a6c75d46..a6d75abc58 100644
+--- a/Tests/Workspaces/test_project_semantic_search.py
++++ b/Tests/Workspaces/test_project_semantic_search.py
+@@ -21,24 +21,25 @@ def test_rrf_deduplicates_metadata_before_live_validation():
+     from tldw_chatbook.Workspaces.project_index.semantic import fuse_candidates
+ 
+     def candidate(path, rank):
+         return IndexCandidate(path, "identity", "hash", 1, 1, rank)
+ 
+     lexical = (candidate("a.py", 0), candidate("b.py", 1))
+     semantic = (candidate("b.py", 0), candidate("c.py", 1))
+     fused = fuse_candidates(lexical, semantic)
+     assert [item.relative_path for item in fused] == ["b.py", "a.py", "c.py"]
+     assert len(fused) == 3
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_rank_filters_forbidden_dominant_match_before_top_k(tmp_path):
+     from tldw_chatbook.Workspaces.project_index.semantic import rank_semantic
+ 
+     store, scope, state, lease = populated_store(tmp_path)
+     try:
+         text = "canine companion"
+         with store.transaction() as conn:
+             conn.execute(
+                 "INSERT INTO files VALUES(?,?,?,?,?,?)",
+                 (
+                     "private/secret.py",
+                     "identity-2",
+@@ -107,27 +108,29 @@ def test_rank_filters_forbidden_dominant_match_before_top_k(tmp_path):
+                 "UPDATE semantic_members SET vector=? WHERE relative_path='src/dog.py'",
+                 (b"\x00" * (4 * 16385),),
+             )
+         with pytest.raises(ValueError, match="invalid_semantic_vector"):
+             rank_semantic(
+                 store, scope, state, digest("artifact-a"), [1, 0], floor, limit=1
+             )
+     finally:
+         store.close_native()
+         lease.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
++@pytest.mark.parametrize("mutation", [None, "disable", "reconfigure"])
+ @private_profile_test
+ async def test_service_search_fuses_synonym_hit_then_live_validates(
+-    tmp_path, request, monkeypatch
++    tmp_path, request, monkeypatch, mutation
+ ):
+     from Tests.Workspaces.test_project_index_service import Rig
+     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+     from tldw_chatbook.Workspaces.project_index import semantic
+     from tldw_chatbook.Workspaces.project_index.models import (
+         FileCapture,
+         ProjectIndexSearchAuthority,
+     )
+ 
+     rig = Rig(tmp_path)
+     file = rig.root / "dog.py"
+     file.write_text("canine companion", encoding="utf-8")
+@@ -213,51 +216,86 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
+             assert store.semantic_append(
+                 status.scope,
+                 generation,
+                 "search",
+                 rows,
+                 [encode_vector([1.0, 0.0]) for _ in rows],
+             )
+             assert store.semantic_publish(status.scope, generation, "search")
+         finally:
+             store.close_native()
+             lease.close()
+ 
++        entered, release = threading.Event(), threading.Event()
++
+         def read(candidate):
++            if mutation is not None:
++                entered.set()
++                assert release.wait(45)
+             data = file.read_text(encoding="utf-8")
+             return FileCapture(
+                 candidate.relative_path,
+                 candidate.file_identity,
+                 123,
+                 len(data),
+                 sha256(data.encode()).hexdigest(),
+                 data,
+             )
+ 
+         authority = ProjectIndexSearchAuthority(
+             status.scope,
+             rig.live.root,
+             rig.live.chain,
+             (),
+             1,
+             lambda: True,
+             None,
+             read,
+         )
+-        result = rig.service.search(authority, "hound")
+-        assert [hit.relative_path for hit in result.hits] == ["dog.py"]
++        if mutation is None:
++            result = rig.service.search(authority, "hound")
++            assert [hit.relative_path for hit in result.hits] == ["dog.py"]
++        else:
++            task = asyncio.create_task(
++                asyncio.to_thread(rig.service.search, authority, "hound")
++            )
++            try:
++                assert await asyncio.to_thread(entered.wait, 30)
++                before = rig.service.status(rig.key)
++                if mutation == "disable":
++                    await asyncio.to_thread(
++                        rig.service.disable_semantic,
++                        rig.key,
++                        expected_epoch=scope.epoch,
++                        expected_semantic_revision=state.semantic_revision,
++                    )
++                else:
++                    with rig.service._store(rig.key) as changed:
++                        changed.configure_semantic(
++                            scope,
++                            settings("new-destination"),
++                            enabled=True,
++                            expected_semantic_revision=state.semantic_revision,
++                        )
++                assert rig.service.status(rig.key) == before
++            finally:
++                release.set()
++                result = await task
++            assert result.status == "unavailable" and result.hits == ()
++            assert result.semantic_status != "ready"
+     finally:
+         await rig.close()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_query_close_retry_keeps_keyword_available_and_exact_owner(
+     tmp_path, request, monkeypatch
+ ):
+     from Tests.Workspaces.test_project_index_service import Rig
+     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+     from tldw_chatbook.Workspaces.project_index import semantic
+     from tldw_chatbook.Workspaces.project_index.models import (
+         FileCapture,
+         ProjectIndexRetirementUnproven,
+         ProjectIndexSearchAuthority,
+     )
+@@ -375,24 +413,25 @@ async def test_query_close_retry_keeps_keyword_available_and_exact_owner(
+         assert rig.service.retry_semantic_close(rig.key)
+         with pytest.raises(RuntimeError, match="project_index_closed"):
+             await asyncio.wait_for(pending_search, timeout=5)
+         assert closed.is_set() and len(set(calls)) == 1
+         assert not rig.service.semantic_close_pending(rig.key)
+         assert not rig.service.retry_semantic_close(rig.key)
+         await rig.service.aclose()
+     finally:
+         if rig.service.semantic_close_pending(rig.key):
+             rig.service.retry_semantic_close(rig.key)
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @private_profile_test
+ async def test_incompatible_ready_artifact_skips_query_model(
+     tmp_path, request, monkeypatch
+ ):
+     from contextlib import contextmanager
+ 
+     from tldw_chatbook import config
+     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+     from tldw_chatbook.Workspaces.project_index import semantic
+     from tldw_chatbook.Workspaces.project_index.models import (
+         FileCapture,
+@@ -565,24 +604,25 @@ async def test_incompatible_ready_artifact_skips_query_model(
+             lambda: True,
+             None,
+             read,
+         )
+         result = service.search(search, "canine")
+         assert [hit.relative_path for hit in result.hits] == ["dog.txt"]
+         assert result.semantic_status == "unavailable"
+         assert issued == [True] and constructed == []
+     finally:
+         await service.aclose()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ @pytest.mark.loopback_network
+ @private_profile_test
+ async def test_cancelled_query_tool_observers_keep_native_close_owner(
+     tmp_path, request, monkeypatch
+ ):
+     """Cancelled tool waiters cannot retire a held provider on a foreign thread."""
+     import json
+     from concurrent.futures import ThreadPoolExecutor
+     from contextlib import contextmanager
+     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+     import requests
+     from urllib.parse import urlsplit
+diff --git a/Tests/Workspaces/test_project_semantic_settings.py b/Tests/Workspaces/test_project_semantic_settings.py
+index 9f6c7aa1bd..1ba34045db 100644
+--- a/Tests/Workspaces/test_project_semantic_settings.py
++++ b/Tests/Workspaces/test_project_semantic_settings.py
+@@ -20,24 +20,25 @@ def digest(value):
+ def settings(destination="local-model-a"):
+     return ProjectSemanticSettings(
+         provider_id="huggingface",
+         model_id="e5-small-v2",
+         destination_fingerprint=digest(destination),
+         config_fingerprint=digest("config-a"),
+         approved_destination_fingerprint=digest(destination),
+         provider_ref="provider:v1:huggingface",
+         config_ref="model:v1:e5-small-v2",
+     )
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_semantic_consent_cas_preserves_keyword_scope_and_state(tmp_path):
+     store = open_semantic_store(tmp_path)
+     key = make_index_key(tmp_path)
+     scope = store.configure(
+         key,
+         ProjectIndexPolicy(("src",), (".py",)),
+         enabled=True,
+         expected_scope=store.load_status(key).scope,
+     )
+     keyword_before = store.load_status(key)
+     first = store.configure_semantic(
+         scope, settings(), enabled=True, expected_semantic_revision=0
+@@ -86,24 +87,36 @@ def test_semantic_admission_refuses_observed_other_native_writer(tmp_path):
+ 
+ def test_semantic_admission_requires_actual_current_native_lease(tmp_path):
+     store = open_semantic_store(tmp_path)
+     key = make_index_key(tmp_path)
+     scope = store.load_status(key).scope
+     lease = BindingLifetime.acquire(store.db_path.parent.parent / key.lifetime_name)
+     store._owned_lifetime_name = key.lifetime_name  # A name is not ownership.
+     try:
+         with pytest.raises(ValueError, match="legacy_retirement_unproven"):
+             store.configure_semantic(
+                 scope, settings(), enabled=True, expected_semantic_revision=0
+             )
++    finally:
++        lease.close()
++        store.close_native()
++
++
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
++def test_semantic_admission_accepts_actual_current_native_lease(tmp_path):
++    store = open_semantic_store(tmp_path)
++    key = make_index_key(tmp_path)
++    scope = store.load_status(key).scope
++    lease = BindingLifetime.acquire(store.db_path.parent.parent / key.lifetime_name)
++    try:
+         store.bind_native_lifetime(lease)
+         result = store.configure_semantic(
+             scope, settings(), enabled=True, expected_semantic_revision=0
+         )
+         assert result.enabled and result.semantic_revision == 1
+     finally:
+         lease.close()
+         store.close_native()
+ 
+ 
+ def test_semantic_status_is_read_only_and_imports_no_embedding_backend(tmp_path):
+     store = open_semantic_store(tmp_path)
+@@ -122,24 +135,25 @@ def test_semantic_status_is_read_only_and_imports_no_embedding_backend(tmp_path)
+         for name in sys.modules
+         if name.startswith(
+             ("sentence_transformers", "chromadb", "tldw_chatbook.Embeddings")
+         )
+     }
+     assert state.semantic_revision == 0 and not state.enabled
+     assert before == after
+     with store.connection() as conn:
+         assert conn.execute("SELECT COUNT(*) FROM semantic_control").fetchone()[0] == 0
+     store.close_native()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_full_revoke_disables_semantics_but_keyword_reconfigure_does_not(tmp_path):
+     store = open_semantic_store(tmp_path)
+     key = make_index_key(tmp_path)
+     scope = store.load_status(key).scope
+     semantic = store.configure_semantic(
+         scope, settings(), enabled=True, expected_semantic_revision=0
+     )
+     keyword = store.configure(
+         key,
+         ProjectIndexPolicy((), (".txt",)),
+         enabled=True,
+         expected_scope=scope,
+@@ -236,35 +250,81 @@ def test_semantic_settings_refuse_credential_shapes_before_persistence(
+         with pytest.raises(ValueError) as error:
+             replace(settings(), **change)
+         assert "secret" not in str(error.value)
+         assert store.load_semantic_state(scope).semantic_revision == 0
+         with store.connection() as conn:
+             assert (
+                 conn.execute("SELECT COUNT(*) FROM semantic_control").fetchone()[0] == 0
+             )
+     finally:
+         store.close_native()
+ 
+ 
++@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+ def test_semantic_settings_accept_versioned_refs_and_changed_approval(tmp_path):
+     store = open_semantic_store(tmp_path)
+     key = make_index_key(tmp_path)
+     scope = store.load_status(key).scope
+     selected = settings()
+     approved = ProjectSemanticSettings(
+         selected.provider_id,
+         selected.model_id,
+         selected.destination_fingerprint,
+         selected.config_fingerprint,
+         digest("previous-destination"),
+         selected.provider_ref,
+         selected.config_ref,
+     )
+     try:
+         state = store.configure_semantic(
+             scope, approved, enabled=True, expected_semantic_revision=0
+         )
+         assert state.state == "Paused"
+         assert state.reason == "destination_approval_required"
+         assert state.settings == approved
+     finally:
+         store.close_native()
++
++
++@pytest.mark.parametrize("mismatch", ["version", "source"])
++def test_native_positive_guard_skips_unqualified_runtime_but_keyword_stays_active(
++    tmp_path, request, monkeypatch, mismatch
++):
++    import sqlite3
++    from tldw_chatbook.Workspaces.project_index import allocation
++    from Tests.Workspaces.project_index_support import open_index_store
++
++    if mismatch == "version":
++        monkeypatch.setattr(sqlite3, "sqlite_version", "unqualified-test-runtime")
++    else:
++        monkeypatch.setattr(allocation, "_SOURCE_ID", "unqualified-test-source")
++    with pytest.raises(
++        pytest.skip.Exception,
++        match="native-positive project semantics require SQLite 3.49.1",
++    ):
++        request.getfixturevalue("qualified_project_semantic_sqlite")
++    store = open_index_store(tmp_path)
++    try:
++        key = make_index_key(tmp_path)
++        scope = store.configure(
++            key,
++            ProjectIndexPolicy((), ()),
++            enabled=True,
++            expected_scope=store.load_status(key).scope,
++        )
++        assert store.load_status(key).scope == scope
++    finally:
++        store.close_native()
++    native_root = tmp_path / "native-refusal"
++    native_root.mkdir()
++    native = open_semantic_store(native_root)
++    try:
++        native_key = make_index_key(native_root)
++        before = native.load_status(native_key)
++        with pytest.raises(ValueError, match="index_allocation_sqlite_unqualified"):
++            native.configure_semantic(
++                before.scope, settings(), enabled=True, expected_semantic_revision=0
++            )
++        assert native.load_semantic_state(before.scope).semantic_revision == 0
++        assert native.load_status(native_key) == before
++    finally:
++        native.close_native()
+diff --git a/Tests/conftest.py b/Tests/conftest.py
+index 9d1899ea03..e74be586a6 100644
+--- a/Tests/conftest.py
++++ b/Tests/conftest.py
+@@ -2071,12 +2071,33 @@ def reset_visual_identity_decode_memos():
+             "_reset_portrait_memo",
+         ),
+     ):
+         module = sys.modules.get(module_name)
+         reset = getattr(module, reset_name, None) if module is not None else None
+         if callable(reset):
+             resets.append(reset)
+     for reset in resets:
+         reset()
+     yield
+     for reset in resets:
+         reset()
++
++
++@pytest.fixture
++def qualified_project_semantic_sqlite():
++    """Run native-positive semantic allocations only on their source envelope."""
++    from contextlib import closing
++    import sqlite3
++
++    from tldw_chatbook.Workspaces.project_index.allocation import _SOURCE_ID
++
++    with closing(sqlite3.connect(":memory:")) as conn:
++        source = conn.execute("SELECT sqlite_source_id()").fetchone()[0]
++        options = {row[0] for row in conn.execute("PRAGMA compile_options")}
++    if (
++        sqlite3.sqlite_version != "3.49.1"
++        or source != _SOURCE_ID
++        or not {"TEMP_STORE=1", "MAX_PAGE_SIZE=65536", "THREADSAFE=1"} <= options
++    ):
++        pytest.skip(
++            "native-positive project semantics require SQLite 3.49.1 with the exact qualified source ID and TEMP_STORE=1/MAX_PAGE_SIZE=65536/THREADSAFE=1"
++        )
+diff --git a/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md b/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
+index 9aeeeb0b83..3687351773 100644
+--- a/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
++++ b/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
+@@ -286,12 +286,16 @@ makes thirteen the smallest evaluated layout below the 1020s acceptance cap
+ logged to correct node attribution; unknown costs in older top-25 logs share
+ only the unmeasured file remainder. Hosted qualification, including three
+ post-change PR attempts, is recorded in the TASK-35834 QA report.
+ 
+ 
+ ## Consent/release required PR runtime coverage (2026-10-23, TASK-36423)
+ 
+ The source-qualified project allocation positives need real SQLite3.49.1 with the recorded source/options/VFS envelope. Add one bounded project-index contract job to the existing derived-artifacts required aggregation, using Windows with exact Python3.12.10 and core/test dependencies only. Record actual runtime identity and run positive contracts; unsupported source must fail, never spoof or skip all positives. This candidate pin follows CPythonv3.12.10 PCbuild/get_externals.bat selecting sqlite-3.49.1.0; actual hosted execution remains required before claiming CI qualification. Keep the existing required context name/install-free artifact job, fail-closed needs/verdicts, current lane caps and13UIshards. The new job has a20-minute ceiling; measure selectors/setup plus one test-timeout headroom and runner variance before final membership. Nineteen current test runners become twenty, twenty-one including perf-guard; no general matrix or optionalML addition. Critical schema/settings/native/project-admission and missing-embedding keyword controls are explicit nonoverlapping targets. New mounted consent tests are deliberately classified by the governed UI census; measure placement rather than blindly appending costly work. Update exact Tests/CI/test_ci_queue_pressure_contract.py expectations only for this intentional boundary. Real cached-model/app/20k qualification is retained separately, not inferred from deterministic PR controls.
+ 
+ References: https://raw.githubusercontent.com/python/cpython/v3.12.10/PCbuild/get_externals.bat ; https://github.com/actions/setup-python/blob/main/docs/advanced-usage.md . These are source/pin references, not a hosted runtime certificate.
+ 
+ Task4 placement refinement: the mounted stage/cancel consent node uses the real project SQLite store and allocation gate, so it must execute in that same positive Windows/Python3.12.10 project-index job, not in the Ubuntu UI shards whose native SQLite source is unqualified. The one uncommitted local census addition is withdrawn; its original floor and all thirteen shards remain, with the node's Windows inclusion and Ubuntu absence pinned by the exact CI contract. This adds one bounded target to the existing job, not another lane, dependency set or required context. Local cost is only a candidate; the hosted PR job must still qualify runtime and budget.
++
++
++### Final semantic review regression coverage (Task36423)
++The existing approved Project index contracts job adds exactly four selectors: held public Disable, held public reconfiguration, the two peer-carrier slow/failed-close parameters, and the four real 307/308 project/Library transport parameters. Existing selected local128normal now also proves retained Partial forbidden text never reaches the provider; the settings file includes portable lease refusal and actual unsupported-runtime refusal controls. The target count changes12 to16 and measured case projection33 to44, with about91.3 seconds measured additional critical-node calls and a conservative284-second total including the extra portable lease case. Preserve the1200-second job cap, Python3.12.10 actual source/options assertions, dependencies, test timeout180,13 UI shards, required context and aggregation. Root recorded explicit GO before workflow edits. Native-positive tests alone may skip unsupported comprehensive runtimes; the required Windows preflight still fails closed and its selected positives must execute with zero skips. No new lane or optional ML dependency.
+diff --git a/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md b/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
+index 13525b52cd..14117e420f 100644
+--- a/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
++++ b/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
+@@ -428,12 +428,29 @@ Ruling: The new explicit OpenAI session callback makes both existing idle and LR
+ ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: retain the already-owned session across failure at both existing cache retirement entrances. Cost if wrong: safe failed embedding and retained resources until explicit existing close succeeds; never a lost native owner or false retirement.
+ 
+ 
+ ### Mounted semantic consent and release coverage
+ 
+ Use the existing perbinding Settings card and independently revisioned semantic snapshots; explicit model/destination setup occurs on a worker, while compose/status stays model-free. Destination changes stage Paused before approval; cancelled disclosure causes no provider work and no saved Library mutation. A pending Retrycleanup retains the actual old service/key after failed shutdown and only signals its already-owned worker; signal acknowledgement is not physical retirement. Compatible priorReady with failedrefresh is displayed truthfully. RequiredPRcoverage follows the bounded actual-runtime ADR103 amendment; actual cached-model app relevance, retained20k scale, optionaldependency independence and tracked raw/sourceproof remain separate release gates. No new persistence owner, global Library collection or semantic auto-merge.
+ 
+ Task4 consent refinement: the destination description shown by the disclosure dialog and the staged settings approved after it must derive from one inspected catalog snapshot. If its provider/model/destination/config fingerprint differs from the staged revision, refuse before opening the dialog and ask for a new stage. The service's later current-catalog check and existing epoch/revision CAS still apply; no UI-only approval substitutes for them.
+ 
+ Task4 precision correction: a cached-model diagnostic on a CUDA-capable Windows host selected `device="cpu"` yet the existing Hugging Face embedder loaded float16 parameters on CPU because it chose dtype from CUDA availability before resolving the requested device. Resolve the actual target device before `AutoModel.from_pretrained`; choose float32 for CPU and float16 only for actual CUDA, preserving `auto`/CUDA and existing factory, cache, close and authority ownership. This is numerical correctness, not an assertion that CPU precision caused the retained 20k throughput failure: that attempt was operator-stopped after 4,864 chunks and raw timing attributes most delay outside the embedder call. Any service performance change or second retained scale run needs a separate measured ruling.
+ 
+ Task4 measured local batching amendment (recorded before source changes): the stopped 20k run logged about 1.70 seconds inside each Hugging Face embedding body and about 5.90 seconds between body logs. A separate four-page actual-carrier comparison measured about 6.32 seconds per complete decorated wrapper call, including repeated real projection admission; deterministic vectors on a comparable 20k keyword state did not reproduce the model-carrier interval. Reduce only local Hugging Face source/provider admission frequency by fetching and embedding at most 128 contiguous chunks with at most 1 MiB encoded source text. Hosted and non-Hugging Face providers keep the existing 32-row source/provider page. Before any native append, validate the complete provider result count and dimensions. Split the returned local vectors into separately admitted, contiguous native append transactions of at most 32 rows and at most 1 MiB encoded vector/source payload each; query vector pages remain at most 32 rows and 1 MiB. The unchanged paged query rank retains one outer `store.sql_unit()`/registry fence across those pages, so the page limit is not a per-page query transaction claim. Recheck live source/manifest, scope, semantic epoch/revision, consent and destination at each committed slice and before the final Ready CAS; advance the durable checkpoint only after each successful contiguous slice. Do not hold SQL, registry fence or allocation gate across embedding await. Preserve the 4 MiB queued-source and 1 GiB binding limits, native allocation formula, existing owner and cancellation/retirement gates. Raw encoded 128-vector local results are bounded to 8 MiB at the supported maximum dimension 16,384 per representation; this is not a bound on total Python object/RSS memory. Verify a 129-plus-chunk tail, source-byte trim, maximum-dimension split, wrong-count and wrong-dimension refusal before append, cancellation/source change between slices, actual native retirement and memory before another retained 20k qualification. This prospective amendment does not certify improved throughput or relax the original 3,600-second scale bound.
++
++
++## Final semantic review correction contract
++
++ADR required: yes, amend existing ADR241.
++ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md.
++Reason: clarify existing eligible-source, exact provider destination, independent consent and physical-owner contracts; no schema, backend or dependency change.
++
++A Partial keyword cache may retain rows outside its current processing policy. Semantic source paging must apply the existing current policy and authoritative binding exclusions before reading text, using bounded keyset SQL. Append validation and final completeness count the same eligible set, with fresh service authority at each unit. Retained forbidden rows cannot reach a provider or prevent an otherwise complete eligible generation from becoming Ready.
++
++Project OpenAI-compatible transport refuses HTTP redirects, including 307/308, before any resend; the explicit project factory option is set only by the issued project wrapper. Default Library transport retains its existing behavior. A redirect refusal is an unavailable provider outcome, never new destination consent.
++
++New semantic work remains denied while any same-binding model close is pending. Already-admitted carriers retire independently: close verifies issued identity, live parent, original execution/thread, zero live children and only its own operation's pending model-close tokens. A peer's ordinary or failed close cannot poison physical retirement. Own failed close and unknown native closure remain retained.
++
++Semantic ranking captures its independently consented compatible Ready generation. Candidate and final disclosure fences revalidate the captured semantic revision/settings and that exact compatible generation. A mismatch returns unavailable without stale semantically selected hits. Keyword scope/manifest alone cannot attest semantic consent.
++
++Tests that perform native-positive semantic allocations explicitly require the production qualified SQLite source/version/options; unsupported runtimes skip only those positives with a precise reason. Portable keyword/refusal controls remain active. Required Windows preflight and positive assertions remain fail-closed.
+diff --git a/tldw_chatbook/DB/Workspace_Project_Index_DB.py b/tldw_chatbook/DB/Workspace_Project_Index_DB.py
+index 0a5d797399..1caa63b36c 100644
+--- a/tldw_chatbook/DB/Workspace_Project_Index_DB.py
++++ b/tldw_chatbook/DB/Workspace_Project_Index_DB.py
+@@ -976,42 +976,67 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
+                     manifest_revision,
+                     claim_token,
+                     None,
+                     "Building",
+                     0,
+                 ),
+             )
+             conn.execute(
+                 "UPDATE semantic_control SET state='Building',reason=NULL WHERE singleton=1"
+             )
+             return generation_id
+ 
++    @contextmanager
++    def _semantic_eligibility(self, conn, scope, exclusions):
++        """Use the same current source set for disclosure and completeness."""
++        row = self._current(conn, scope)
++        allowed = (
++            self._eligibility_predicate(
++                ProjectIndexPolicy(*json.loads(row["policy"])), exclusions
++            )
++            if row is not None
++            else lambda path: 0
++        )
++        conn.create_function("index_path_allowed", 1, allowed)
++        try:
++            yield
++        finally:
++            conn.create_function("index_path_allowed", 1, None)
++
+     def semantic_source_page(
+-        self, scope: ProjectIndexScope, generation_id: str, claim_token: str, *,
+-        after: int, limit: int = 32,
++        self,
++        scope: ProjectIndexScope,
++        generation_id: str,
++        claim_token: str,
++        *,
++        after: int,
++        limit: int = 32,
++        exclusions=(),
+     ) -> tuple[SemanticSourceChunk, ...]:
+         """Materialize a validated bounded keyset page under 1 MiB source."""
+         if type(after) is not int or after < 0:  # noqa: E721
+             raise ValueError("invalid_semantic_cursor")
+         if type(limit) is not int or not 1 <= limit <= 128:  # noqa: E721
+             raise ValueError("invalid_semantic_source_limit")
+-        with self.connection() as conn:
++        with self.connection() as conn, self._semantic_eligibility(
++            conn, scope, exclusions
++        ):
+             generation = self._semantic_live(conn, scope, generation_id, claim_token)
+             if generation is None or after != (generation["checkpoint_chunk_id"] or 0):
+                 raise ValueError("stale_semantic_page")
+             heads = conn.execute(
+                 "SELECT c.id,f.path,f.identity,f.content_sha256,c.line_start,c.line_end,"
+                 "length(CAST(c.text AS BLOB)) AS byte_count "
+                 "FROM chunks c JOIN files f ON f.path=c.path "
+-                "WHERE c.id>? ORDER BY c.id LIMIT ?",
++                "WHERE c.id>? AND index_path_allowed(f.path)=1 ORDER BY c.id LIMIT ?",
+                 (after, limit),
+             ).fetchall()
+             selected = []
+             total = 0
+             for head in heads:
+                 if total + head[6] > 1024 * 1024:
+                     if not selected:
+                         raise ValueError("semantic_source_page_limit")
+                     break
+                 selected.append(head)
+                 total += head[6]
+             if not selected:
+@@ -1021,54 +1046,65 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
+             texts = dict(
+                 conn.execute(
+                     f"SELECT id,text FROM chunks WHERE id IN ({placeholders})", ids
+                 ).fetchall()
+             )
+             return tuple(
+                 SemanticSourceChunk(*tuple(head)[:6], texts[head[0]])
+                 for head in selected
+             )
+ 
+     @_activated
+     def semantic_append(
+-        self, scope, generation_id, claim_token, rows, vectors
++        self, scope, generation_id, claim_token, rows, vectors, *, exclusions=()
+     ) -> bool:
+         """Checkpoint one bounded page only if every source revision still matches."""
+         rows, vectors = tuple(rows), tuple(vectors)
+         if not rows or len(rows) > 32 or len(rows) != len(vectors):
+             raise ValueError("invalid_semantic_page")
+         if (
+             sum(len(row.text.encode("utf-8")) for row in rows) > 1024 * 1024
+             or sum(len(vector) for vector in vectors) > 1024 * 1024
+             or any(type(vector) is not bytes for vector in vectors)  # noqa: E721
+         ):
+             raise ValueError("semantic_page_limit")
+-        from tldw_chatbook.Workspaces.project_index.semantic_vectors import decode_vector
++        from tldw_chatbook.Workspaces.project_index.semantic_vectors import (
++            decode_vector,
++        )
+ 
+         dimension = len(vectors[0]) // 4
+         for vector in vectors:
+             decode_vector(vector, dimension)
+         ids = [row.chunk_id for row in rows]
+         if ids != sorted(set(ids)):
+             raise ValueError("invalid_semantic_page")
+-        with self.transaction(semantic=True) as conn:
++        with self.transaction(semantic=True) as conn, self._semantic_eligibility(
++            conn, scope, exclusions
++        ):
+             generation = self._semantic_live(conn, scope, generation_id, claim_token)
+             if generation is None or ids[0] <= (generation["checkpoint_chunk_id"] or 0):
+                 return False
+             if generation["dimension"] not in (0, dimension):
+                 return False
++            expected = conn.execute(
++                "SELECT c.id FROM chunks c JOIN files f ON f.path=c.path "
++                "WHERE c.id>? AND index_path_allowed(f.path)=1 ORDER BY c.id LIMIT ?",
++                (generation["checkpoint_chunk_id"] or 0, len(rows)),
++            ).fetchall()
++            if ids != [item[0] for item in expected]:
++                return False
+             for row in rows:
+                 source = conn.execute(
+                     "SELECT f.path,f.identity,f.content_sha256,c.line_start,c.line_end,c.text "
+-                    "FROM chunks c JOIN files f ON f.path=c.path WHERE c.id=?",
++                    "FROM chunks c JOIN files f ON f.path=c.path WHERE c.id=? AND index_path_allowed(f.path)=1",
+                     (row.chunk_id,),
+                 ).fetchone()
+                 if source is None or tuple(source) != (
+                     row.relative_path, row.identity, row.content_sha256,
+                     row.line_start, row.line_end, row.text,
+                 ):
+                     return False
+             conn.executemany(
+                 "INSERT INTO semantic_members VALUES(?,?,?,?,?,?,?,?)",
+                 [
+                     (
+                         generation_id, row.chunk_id, row.relative_path, row.identity,
+@@ -1076,40 +1112,54 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
+                     )
+                     for row, vector in zip(rows, vectors)
+                 ],
+             )
+             conn.execute(
+                 "UPDATE semantic_generations SET dimension=?,checkpoint_chunk_id=?,"
+                 "chunk_count=chunk_count+? WHERE generation_id=?",
+                 (dimension, ids[-1], len(rows), generation_id),
+             )
+             return True
+ 
+     @_activated
+-    def semantic_publish(self, scope, generation_id, claim_token) -> bool:
++    def semantic_publish(
++        self, scope, generation_id, claim_token, *, exclusions=()
++    ) -> bool:
+         """Atomically point Ready at a complete immutable source snapshot."""
+-        with self.transaction(semantic=True) as conn:
++        with self.transaction(semantic=True) as conn, self._semantic_eligibility(
++            conn, scope, exclusions
++        ):
+             generation = self._semantic_live(conn, scope, generation_id, claim_token)
+             if generation is None:
+                 return False
+-            count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+-            if count != generation["chunk_count"]:
++            count = conn.execute(
++                "SELECT COUNT(*) FROM chunks c JOIN files f ON f.path=c.path "
++                "WHERE index_path_allowed(f.path)=1"
++            ).fetchone()[0]
++            forbidden = conn.execute(
++                "SELECT 1 FROM semantic_members WHERE generation_id=? "
++                "AND index_path_allowed(relative_path)=0 LIMIT 1",
++                (generation_id,),
++            ).fetchone()
++            if count != generation["chunk_count"] or forbidden is not None:
+                 return False
+             conn.execute(
+                 "UPDATE semantic_generations SET state='Ready',claim_token=NULL "
+-                "WHERE generation_id=?", (generation_id,)
++                "WHERE generation_id=?",
++                (generation_id,),
+             )
+             conn.execute(
+                 "UPDATE semantic_control SET state='Ready',reason=NULL,ready_generation_id=? "
+-                "WHERE singleton=1", (generation_id,)
++                "WHERE singleton=1",
++                (generation_id,),
+             )
+             return True
+ 
+     @_activated
+     def semantic_fail(self, scope, generation_id, claim_token, *, reason: str) -> bool:
+         """Leave a compatible old Ready pointer intact after staging failure."""
+         if not re.fullmatch(r"[a-z_]{1,64}", reason):
+             raise ValueError("invalid_semantic_reason")
+         with self.transaction(semantic=True) as conn:
+             generation = self._semantic_live(
+                 conn, scope, generation_id, claim_token, require_manifest=False
+             )
+@@ -1134,25 +1184,26 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
+                 and prior["processing_revision"] == generation["processing_revision"]
+                 and prior["semantic_revision"] == generation["semantic_revision"]
+                 and prior["provider_id"] == generation["provider_id"]
+                 and prior["model_id"] == generation["model_id"]
+                 and prior["destination_fingerprint"] == generation["destination_fingerprint"]
+                 and prior["config_fingerprint"] == generation["config_fingerprint"]
+                 and prior["artifact_fingerprint"] == generation["artifact_fingerprint"]
+                 and prior["format_id"] == "float32-le-v1"
+                 and (prior["chunk_count"] == 0 or prior["dimension"] > 0)
+             )
+             conn.execute(
+                 "UPDATE semantic_generations SET state='Error',claim_token=NULL "
+-                "WHERE generation_id=?", (generation_id,)
++                "WHERE generation_id=?",
++                (generation_id,),
+             )
+             conn.execute(
+                 "UPDATE semantic_control SET state=?,reason=? WHERE singleton=1",
+                 (
+                     "Ready" if compatible else "Error",
+                     "previous_index_refresh_failed_" + reason if compatible else reason,
+                 ),
+             )
+             return True
+ 
+     @staticmethod
+     def _compatible_ready(conn, scope, state, artifact_fingerprint):
+@@ -1190,25 +1241,28 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
+             or generation["provider_id"] != state.settings.provider_id
+             or generation["model_id"] != state.settings.model_id
+             or generation["destination_fingerprint"]
+             != state.settings.destination_fingerprint
+             or generation["config_fingerprint"] != state.settings.config_fingerprint
+             or generation["artifact_fingerprint"] != artifact_fingerprint
+             or generation["format_id"] != "float32-le-v1"
+         ):
+             return None
+         return generation
+ 
+     def semantic_ready_generation(
+-        self, scope: ProjectIndexScope, state: ProjectSemanticState, artifact_fingerprint: str
++        self,
++        scope: ProjectIndexScope,
++        state: ProjectSemanticState,
++        artifact_fingerprint: str,
+     ) -> ProjectSemanticGeneration | None:
+         """Project compatible Ready without invalidating on a later manifest alone."""
+         with self.connection() as conn:
+             row = self._compatible_ready(conn, scope, state, artifact_fingerprint)
+             if row is None:
+                 return None
+             return ProjectSemanticGeneration(
+                 row["generation_id"], scope, row["semantic_revision"],
+                 row["provider_id"], row["model_id"],
+                 row["destination_fingerprint"], row["config_fingerprint"],
+                 row["artifact_fingerprint"], row["format_id"], row["dimension"],
+                 row["manifest_revision"], row["claim_token"],
+diff --git a/tldw_chatbook/Embeddings/Embeddings_Lib.py b/tldw_chatbook/Embeddings/Embeddings_Lib.py
+index 59d1520ac8..38f37e286b 100644
+--- a/tldw_chatbook/Embeddings/Embeddings_Lib.py
++++ b/tldw_chatbook/Embeddings/Embeddings_Lib.py
+@@ -251,24 +251,26 @@ class HFModelCfg(BaseModel):
+     trust_remote_code: bool = False
+     local_files_only: bool = False
+     max_length: int = 512
+     device: Optional[str] = None
+     batch_size: int = 32
+     pooling: Optional[PoolingFn] = None  # default: masked mean
+     dimension: Optional[int] = None
+     cache_dir: Optional[str] = None  # Custom cache directory for model downloads
+     revision: Optional[str] = None  # Git revision (commit/tag) for security pinning
+ 
+ 
+ class OpenAICfg(BaseModel):
++    # Finite project transport choice; never persist it as catalog identity.
++    allow_redirects: bool = Field(default=True, exclude=True)
+     provider: Literal["openai"] = "openai"
+     model_name_or_path: str = "text-embedding-3-small"
+     api_key: Optional[str] = Field(default=None, repr=False)
+     base_url: Optional[HttpUrl] = Field(
+         default=None
+     )  # CHANGED: Added base_url, made it HttpUrl for validation
+     dimension: Optional[int] = None
+ 
+     @model_validator(mode="after")
+     def _default_api_key(self) -> "OpenAICfg":
+         # base_url is validated only after the whole model has been parsed.
+         if self.api_key:
+@@ -590,26 +592,33 @@ def _openai_embedder(
+     def _embed(
+         texts: List[str], *, as_list: bool = False
+     ) -> np.ndarray | List[List[float]]:
+         _ensure_numpy()
+         payload = {
+             "input": texts,
+             "model": cfg.model_name_or_path,
+         }  # CHANGED: Use cfg.model_name_or_path
+         for attempt, wait in enumerate(_BACKOFF, 1):
+             t0 = time.perf_counter()
+             try:
+                 resp = session.post(
+-                    embeddings_endpoint, json=payload, timeout=30
++                    embeddings_endpoint,
++                    json=payload,
++                    timeout=30,
++                    allow_redirects=cfg.allow_redirects,
+                 )  # CHANGED: Use dynamic endpoint
++                if not cfg.allow_redirects and 300 <= resp.status_code < 400:
++                    raise requests.RequestException(
++                        "embedding_provider_redirect_refused"
++                    )
+                 resp.raise_for_status()
+                 data = resp.json()["data"]
+                 arr = np.asarray([d["embedding"] for d in data], dtype=np.float32)
+                 latency = time.perf_counter() - t0
+                 logger.debug("openai_embed {} texts in {:.3f}s", len(texts), latency)
+                 return arr.tolist() if as_list else arr
+             except requests.RequestException as exc:
+                 if attempt == len(_BACKOFF):
+                     logger.error(
+                         "openai_embed failed after {} attempts ({})",
+                         attempt,
+                         type(exc).__name__,
+diff --git a/tldw_chatbook/RAG_Search/projection_scope.py b/tldw_chatbook/RAG_Search/projection_scope.py
+index 35c8a34ba5..3cb17ed17b 100644
+--- a/tldw_chatbook/RAG_Search/projection_scope.py
++++ b/tldw_chatbook/RAG_Search/projection_scope.py
+@@ -77,34 +77,36 @@ class ProjectionExecutionScope:
+         return dict(self.__config)
+ 
+     def __repr__(self):
+         return "ProjectionExecutionScope(<issued project operation>)"
+ 
+     @classmethod
+     def require(cls, value):
+         if type(value) is not cls or value not in _issued:
+             raise ProjectProjectionRequired()
+         value._check_live()
+         return value
+ 
+-    def _check_live(self):
++    def _check_live(self, *, retiring=False):
+         if (
+             self not in _issued
+             or self._closed
+             or self._parent.pin.closed
+             or self._parent.operation.done.is_set()
+             or self._parent.operation not in self._service._operations
+         ):
+             raise ProjectProjectionRequired()
+-        self._service._require_projection_open(self.scope.key)
++        self._service._require_projection_open(
++            self.scope.key, retiring=self if retiring else None
++        )
+ 
+     def validate_constructor(
+         self,
+         *,
+         model_name,
+         api_key,
+         base_url,
+         device,
+         cache_dir,
+         embedding_cache_db,
+         local_files_only,
+     ):
+@@ -207,25 +209,25 @@ class ProjectionExecutionScope:
+             or successor.artifact_fingerprint != self.artifact_fingerprint
+             or successor.model_name != self.model_name
+             or successor.api_key != self.api_key
+             or successor.base_url != self.base_url
+             or successor.local_files_only is not self.local_files_only
+         ):
+             raise ProjectProjectionRequired("project_projection_target_changed")
+         if execution_identity() != successor._identity:
+             raise ProjectProjectionRequired()
+         return successor
+ 
+     def close(self):
+-        self.require(self)
++        self._check_live(retiring=True)
+         if execution_identity() != self._identity:
+             raise ProjectProjectionRequired()
+         with self._lock:
+             if self._children:
+                 raise ProjectProjectionRequired("project_projection_native_work_active")
+             self._parent.stack.close()
+             self._closed = True
+ 
+     def __enter__(self):
+         self.require(self)
+         return self
+ 
+diff --git a/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py b/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py
+index 4f4858c3af..4e9930f355 100644
+--- a/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py
++++ b/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py
+@@ -394,25 +394,30 @@ class EmbeddingsServiceWrapper:
+             return
+ 
+         if not _ensure_embeddings_imported():
+             raise ImportError(
+                 "Embeddings dependencies not available. Install with: pip install tldw_chatbook[embeddings_rag]"
+             )
+ 
+         # Build configuration if not already done
+         if self._config_dict is None:
+             self._config_dict = (
+                 {
+                     "default_model_id": "default",
+-                    "models": {"default": self._projection_execution_scope._config},
++                    "models": {
++                        "default": {
++                            **self._projection_execution_scope._config,
++                            "allow_redirects": False,
++                        }
++                    },
+                 }
+                 if self._projection_execution_scope is not None
+                 else self._build_config(
+                     self.model_name,
+                     self.device,
+                     self._api_key,
+                     self._base_url,
+                     self._cache_dir,
+                 )
+             )
+ 
+         if recovered:
+@@ -498,25 +503,27 @@ class EmbeddingsServiceWrapper:
+         """
+         if self._projection_execution_scope is not None and store is not None:
+             from ..projection_scope import ProjectProjectionRequired
+             raise ProjectProjectionRequired("project_embedding_cache_unsupported")
+         self._embedding_cache_db = store
+ 
+     def _embedding_cache_model_id(self) -> str:
+         """Keep local model keys stable and isolate effective hosted endpoints."""
+         if not self.model_name.startswith("openai/"):
+             return self.model_name
+         config = self.factory.config
+         model = config.models[config.default_model_id]
+-        base_url = str(model.base_url) if model.base_url else "https://api.openai.com/v1"
++        base_url = (
++            str(model.base_url) if model.base_url else "https://api.openai.com/v1"
++        )
+         endpoint = base_url.rstrip("/") + "/embeddings"
+         # The validated factory config supplies the exact effective endpoint.
+         # Persist only its digest: URLs can contain credentials or query secrets.
+         digest = hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
+         return f"{self.model_name}@endpoint:{digest}"
+ 
+     async def _async_cache_call(self, operation, store, *args):
+         """Retain finite SQLite work and retire only its new worker connection."""
+         if store is None:
+             return operation(*args, store)
+         from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+ 
+@@ -536,27 +543,30 @@ class EmbeddingsServiceWrapper:
+ 
+         completion = asyncio.create_task(asyncio.to_thread(native_worker(self, invoke)))
+         await join_retained_task(completion)
+         return completion.result()
+ 
+     def _lookup_cached_embeddings(
+         self, content_hashes: List[str], store: Optional[Any]
+     ) -> Dict[str, List[float]]:
+         """Batch-lookup cached vectors; never raises (a cache cannot fail an embed)."""
+         if store is None:
+             return {}
+         try:
+-            return store.get_cached_embeddings(
+-                self._embedding_cache_model_id(), content_hashes
+-            ) or {}
++            return (
++                store.get_cached_embeddings(
++                    self._embedding_cache_model_id(), content_hashes
++                )
++                or {}
++            )
+         except Exception as e:
+             log_counter(
+                 "embeddings_persistent_cache_error",
+                 labels={"operation": "lookup", "error_type": type(e).__name__},
+             )
+             logger.warning(
+                 "Persistent embedding-cache lookup failed; embedding without cache "
+                 f"(error_type={type(e).__name__})"
+             )
+             return {}
+ 
+     def _store_cached_embeddings(
+diff --git a/tldw_chatbook/Workspaces/project_index/service.py b/tldw_chatbook/Workspaces/project_index/service.py
+index c93ee7ae4c..7026a8a5d5 100644
+--- a/tldw_chatbook/Workspaces/project_index/service.py
++++ b/tldw_chatbook/Workspaces/project_index/service.py
+@@ -209,41 +209,46 @@ class ProjectIndexService:
+         retire = operation.retire_registry_for_model
+         if retire is not None:
+             retire()
+ 
+     def _retain_uncertain_model(self, *owners: object) -> None:
+         """Keep actual owners when native registry retirement cannot be proved."""
+         operation = getattr(self._operation_local, "operation", None)
+         if operation is None:
+             raise ProjectIndexRetirementUnproven("index_operation_owner_missing")
+         operation.retirement_unproven = True
+         operation.retained.extend(owner for owner in owners if owner is not None)
+ 
+-    def _require_projection_open(self, key: ProjectIndexKey) -> None:
++    def _require_projection_open(self, key: ProjectIndexKey, *, retiring=None) -> None:
+         """Refuse new semantic use of a binding with unresolved model close."""
+         with self._lock:
+             pending = any(
+                 selected == key
+                 for operation in self._operations
+-                for selected, _ in operation.projection_close_pending.values()
++                for selected, wrapper in operation.projection_close_pending.values()
++                if retiring is None or wrapper._projection_execution_scope is retiring
+             )
+         if pending:
+             from tldw_chatbook.RAG_Search.projection_scope import (
+                 ProjectProjectionRequired,
+             )
+ 
+             raise ProjectProjectionRequired("project_embedding_close_pending")
+ 
+     def _mark_projection_close_pending(
+-        self, operation: _Operation, key: ProjectIndexKey, token: object, wrapper: object
++        self,
++        operation: _Operation,
++        key: ProjectIndexKey,
++        token: object,
++        wrapper: object,
+     ) -> None:
+         """Root the actual wrapper/factory under its accepted operation before close."""
+         with self._lock:
+             if operation not in self._operations or operation.done.is_set():
+                 raise RuntimeError("project_embedding_close_parent_unavailable")
+             existing = operation.projection_close_pending.get(token)
+             if existing is not None and existing != (key, wrapper):
+                 raise RuntimeError("project_embedding_close_parent_unavailable")
+             operation.projection_close_pending[token] = (key, wrapper)
+ 
+     def _settle_projection_close_pending(
+         self, operation: _Operation, token: object, wrapper: object
+@@ -275,34 +280,38 @@ class ProjectIndexService:
+             query = self._semantic_query
+             if query is not None and query.key == key and query.close_pending:
+                 query.signal.set()
+                 signalled = True
+         return signalled
+ 
+     def semantic_close_pending(self, key: ProjectIndexKey) -> bool:
+         """Project exact-binding retained close state without opening a model/DB."""
+         if type(key) is not ProjectIndexKey:
+             return False
+         with self._lock:
+             return (
+-                self._semantic_query is not None
+-                and self._semantic_query.key == key
+-                and self._semantic_query.close_pending
+-            ) or any(
+-                run.scope.key == key and run.close_pending
+-                for run in self._semantic_runs.values()
+-            ) or any(
+-                selected == key
+-                for operation in self._operations
+-                for selected, _ in operation.projection_close_pending.values()
++                (
++                    self._semantic_query is not None
++                    and self._semantic_query.key == key
++                    and self._semantic_query.close_pending
++                )
++                or any(
++                    run.scope.key == key and run.close_pending
++                    for run in self._semantic_runs.values()
++                )
++                or any(
++                    selected == key
++                    for operation in self._operations
++                    for selected, _ in operation.projection_close_pending.values()
++                )
+             )
+ 
+     def _admission_closed(self):
+         return (
+             self._closed and getattr(self._operation_local, "operation", None) is None
+         )
+ 
+     @contextmanager
+     def _store(self, key, *, cleanup_only=False):
+         with self.registry_connection_scope(), self._store_owned(
+             key, cleanup_only=cleanup_only
+         ) as store:
+@@ -788,58 +797,76 @@ class ProjectIndexService:
+                     return unavailable
+                 admitted = replace(
+                     authority,
+                     exclusions=tuple(set(authority.exclusions + live.exclusions)),
+                     authority_revision=live.authority_revision,
+                 )
+                 if status.state == "Building" and not store.has_compatible_files(
+                     admitted.scope, admitted.exclusions
+                 ):
+                     return unavailable
+                 candidates = store.lexical_candidates(admitted, query, limit=100)
+             semantic_status = "unavailable"
++            semantic_generation = None
+             if semantic_query is not None:
+                 semantic_state, artifact, vector = semantic_query
+                 from . import semantic
+ 
+                 try:
+                     spec, destination = semantic._require_current_catalog(
+                         semantic_state.settings
+                     )
+-                    if semantic._target(spec, destination).artifact_fingerprint == artifact:
+-                        with store.sql_unit(), self._fence(authority.scope.key) as current:
++                    if (
++                        semantic._target(spec, destination).artifact_fingerprint
++                        == artifact
++                    ):
++                        with store.sql_unit(), self._fence(
++                            authority.scope.key
++                        ) as current:
+                             if current == live:
+                                 ranked = semantic.rank_semantic(
+                                     store, admitted.scope, semantic_state, artifact,
+                                     vector, admitted.exclusions,
+                                 )
+                                 if ranked is not None:
++                                    semantic_generation = (
++                                        store.semantic_ready_generation(
++                                            admitted.scope, semantic_state, artifact
++                                        )
++                                    )
+                                     semantic_status = "ready"
+                                     candidates = semantic.fuse_candidates(candidates, ranked)
+                 except (ValueError, ImportError, OSError):
+                     pass
+             hits = []
+             stale = False
+             for candidate in candidates:
+                 if not authority.guard():
+                     return unavailable
+                 # No worker read while holding a registry transaction. The
+                 # witness is checked again before accepting any disclosure.
+                 with store.sql_unit(), self._fence(authority.scope.key) as current:
+                     current_status = store.load_status(authority.scope.key)
+                     if (
+                         current != live
+                         or current_status.scope != status.scope
+                         or current_status.state not in {"Ready", "Partial", "Building"}
+                         or current_status.manifest_revision != status.manifest_revision
++                        or (
++                            semantic_generation is not None
++                            and store.semantic_ready_generation(
++                                admitted.scope, semantic_state, artifact
++                            )
++                            != semantic_generation
++                        )
+                         or not _path_allowed(
+                             candidate.relative_path, admitted.exclusions
+                         )
+                     ):
+                         return unavailable
+                 capture = authority.live_reader(candidate)
+                 if not authority.guard():
+                     return unavailable
+                 if (
+                     capture is None
+                     or capture.relative_path != candidate.relative_path
+                     or capture.identity != candidate.file_identity
+@@ -881,24 +908,31 @@ class ProjectIndexService:
+                 hits.append(hit)
+                 if len(hits) >= limit:
+                     break
+             if not authority.guard():
+                 return unavailable
+             with store.sql_unit(), self._fence(authority.scope.key) as current:
+                 final = store.load_status(authority.scope.key)
+                 if (
+                     current != live
+                     or final.scope != status.scope
+                     or final.manifest_revision != status.manifest_revision
+                     or final.state not in {"Ready", "Partial", "Building"}
++                    or (
++                        semantic_generation is not None
++                        and store.semantic_ready_generation(
++                            admitted.scope, semantic_state, artifact
++                        )
++                        != semantic_generation
++                    )
+                 ):
+                     return unavailable
+                 result = ProjectSearchResult(
+                     "partial" if stale or final.state != "Ready" else "ready",
+                     tuple(hits),
+                     None,
+                     stale,
+                     semantic_status,
+                 )
+                 # A later stale candidate enlarges the final wrapper. Trim
+                 # whole hits only, preserving valid JSON and honest evidence.
+                 while (
+@@ -1124,33 +1158,39 @@ class ProjectIndexService:
+                 with self._admitted(store, run.scope.key) as live:
+                     if live != run.authority or run.stop.is_set():
+                         raise ValueError("stale_semantic_claim")
+                     manifest = store.load_status(run.scope.key).manifest_revision
+                     return store.semantic_claim(
+                         run.scope, run.state, manifest_revision=manifest,
+                         artifact_fingerprint=carrier.artifact_fingerprint,
+                         claim_token=run.job_id,
+                     )
+ 
+             run.generation_id = self._retry_read(run.scope.key, claim)
+             after = 0
+-            source_limit = 128 if run.state.settings.provider_id == "huggingface" else 32
++            source_limit = (
++                128 if run.state.settings.provider_id == "huggingface" else 32
++            )
+             while True:
+                 def read_page():
+                     with self._admitted(store, run.scope.key) as live:
+                         if live != run.authority or run.stop.is_set():
+                             raise ValueError("stale_semantic_page")
+                         return store.semantic_source_page(
+-                            run.scope, run.generation_id, run.job_id,
+-                            after=after, limit=source_limit,
++                            run.scope,
++                            run.generation_id,
++                            run.job_id,
++                            after=after,
++                            limit=source_limit,
++                            exclusions=live.exclusions,
+                         )
+ 
+                 page = self._retry_read(run.scope.key, read_page)
+                 if not page:
+                     break
+                 vectors = await wrapper.create_embeddings_async(
+                     [source.text for source in page]
+                 )
+                 if len(vectors) != len(page):
+                     raise ValueError("invalid_semantic_vector_count")
+                 encoded = tuple(encode_vector(vector) for vector in vectors)
+                 if any(len(vector) != len(encoded[0]) for vector in encoded[1:]):
+@@ -1167,26 +1207,30 @@ class ProjectIndexService:
+                         and total + len(encoded[end]) <= 1024 * 1024
+                     ):
+                         total += len(encoded[end])
+                         end += 1
+                     if end == first:
+                         raise ValueError("semantic_vector_page_limit")
+                     def append_page():
+                         with self._admitted(store, run.scope.key) as live:
+                             return (
+                                 live == run.authority
+                                 and not run.stop.is_set()
+                                 and store.semantic_append(
+-                                    run.scope, run.generation_id, run.job_id,
+-                                    page[first:end], encoded[first:end],
++                                    run.scope,
++                                    run.generation_id,
++                                    run.job_id,
++                                    page[first:end],
++                                    encoded[first:end],
++                                    exclusions=live.exclusions,
+                                 )
+                             )
+                     if not self._retry_read(run.scope.key, append_page):
+                         raise ValueError("stale_semantic_checkpoint")
+                     after = page[end - 1].chunk_id
+                     first = end
+         finally:
+             try:
+                 self._retire_registry_for_model()
+             except BaseException as error:
+                 self._retain_uncertain_model(wrapper, carrier, store)
+                 if isinstance(error, ProjectIndexRetirementUnproven):
+@@ -1222,67 +1266,81 @@ class ProjectIndexService:
+                                 break
+             try:
+                 carrier.close()
+             except BaseException as error:
+                 self._retain_uncertain_model(carrier, store)
+                 raise ProjectIndexRetirementUnproven(
+                     "index_projection_retirement_unproven"
+                 ) from error
+         # Only a positively closed wrapper/carrier may publish Ready. The
+         # selected config and complete artifact identity are checked again
+         # after model retirement, outside the final finite SQL/fence unit.
+         spec, destination = semantic._require_current_catalog(run.state.settings)
+-        if semantic._target(spec, destination).artifact_fingerprint != carrier.artifact_fingerprint:
++        if (
++            semantic._target(spec, destination).artifact_fingerprint
++            != carrier.artifact_fingerprint
++        ):
+             raise ValueError("semantic_artifact_changed")
+ 
+         def publish():
+             with self._admitted(store, run.scope.key) as live:
+                 return (
+                     live == run.authority
+                     and not run.stop.is_set()
+-                    and store.semantic_publish(run.scope, run.generation_id, run.job_id)
++                    and store.semantic_publish(
++                        run.scope,
++                        run.generation_id,
++                        run.job_id,
++                        exclusions=live.exclusions,
++                    )
+                 )
+ 
+         if not self._retry_read(run.scope.key, publish):
+             raise ValueError("stale_semantic_publication")
+ 
+     def _semantic_worker(self, run: _SemanticRun, store) -> None:
+         run.store = store
+         try:
+             with self._bind(run.pin), self.registry_connection_scope():
+                 try:
+                     asyncio.run(self._semantic_build(run, store))
+                 except ProjectIndexRetirementUnproven:
+                     raise
+                 except BaseException as error:
+                     run.error = error
+                     if run.generation_id is not None:
+                         reason = (
+                             "quota_refused"
+                             if (
+                                 isinstance(error, ValueError)
+                                 and str(error) == "index_cache_limit"
+-                            ) or (
++                            )
++                            or (
+                                 isinstance(error, sqlite3.OperationalError)
+-                                and getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL
++                                and getattr(error, "sqlite_errorcode", None)
++                                == sqlite3.SQLITE_FULL
+                             )
+-                            else "interrupted" if run.stop.is_set()
+-                            else "source_changed" if (
++                            else "interrupted"
++                            if run.stop.is_set()
++                            else "source_changed"
++                            if (
+                                 isinstance(error, ValueError)
+-                                and str(error) in {
++                                and str(error)
++                                in {
+                                     "stale_semantic_page",
+                                     "stale_semantic_checkpoint",
+                                     "stale_semantic_publication",
+                                 }
+-                            ) else "provider_unavailable"
++                            )
++                            else "provider_unavailable"
+                         )
+                         def fail():
+                             with self._admitted(store, run.scope.key) as live:
+                                 if live == run.authority:
+                                     store.semantic_fail(
+                                         run.scope, run.generation_id, run.job_id,
+                                         reason=reason,
+                                     )
+                         self._retry_read(run.scope.key, fail)
+                 finally:
+                     try:
+                         store.close_native()
+@@ -2126,37 +2184,47 @@ class ProjectIndexService:
+                 semantic_runs = tuple(self._semantic_runs.values())
+                 searches = tuple(self._searches)
+                 operations = tuple(self._operations)
+                 for run in runs:
+                     run.stop.set()
+                 for run in semantic_runs:
+                     run.stop.set()
+                 return runs, semantic_runs, searches, operations
+ 
+         async def drain():
+             _, semantic_runs, _, operations = await asyncio.to_thread(stop_and_snapshot)
+             if (
+-                self._semantic_query is not None and self._semantic_query.close_pending
+-            ) or any(run.close_pending for run in semantic_runs) or any(
+-                self._projection_close_pending(operation) for operation in operations
++                (
++                    self._semantic_query is not None
++                    and self._semantic_query.close_pending
++                )
++                or any(run.close_pending for run in semantic_runs)
++                or any(
++                    self._projection_close_pending(operation)
++                    for operation in operations
++                )
+             ):
+                 raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
+             if self._cleanup_thread is not None:
+                 await asyncio.to_thread(self._cleanup_thread.join)
+             for operation in operations:
+                 while not operation.done.is_set():
+                     if (
+-                        self._semantic_query is not None
+-                        and self._semantic_query.close_pending
+-                    ) or any(run.close_pending for run in semantic_runs) or self._projection_close_pending(operation):
++                        (
++                            self._semantic_query is not None
++                            and self._semantic_query.close_pending
++                        )
++                        or any(run.close_pending for run in semantic_runs)
++                        or self._projection_close_pending(operation)
++                    ):
+                         raise ProjectIndexRetirementUnproven(
+                             "project_embedding_close_pending"
+                         )
+                     await asyncio.to_thread(operation.done.wait, 0.1)
+                 if self._projection_close_pending(operation):
+                     raise ProjectIndexRetirementUnproven(
+                         "project_embedding_close_pending"
+                     )
+             # An already-admitted start may have dispatched while close waited.
+             # Its operation retires before this final writer/search snapshot.
+             runs, semantic_runs, searches, _ = await asyncio.to_thread(stop_and_snapshot)
+             for search in searches:

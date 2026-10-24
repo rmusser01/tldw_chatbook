@@ -1,0 +1,5 @@
+Controller transcription of actual read-only verification output; not raw process stdout.
+At441bb9: HEAD BLOB PASS:25 explicit paths;366 exact original-byte ZIP members (root independently verified).
+Ataa42cc0: HEAD BLOB PASS:15 explicit paths;176 exact original-byte ZIP members;1303964 archive bytes;sha256 b08cf282ec5eccb2c70d47a2cd6e2772013328e354c390ac91f1b38b833f7da1.
+At660a438: HEAD BLOB PASS:6 explicit paths;123 exact original-byte ZIP members;743673 archive bytes;sha256 0b22c65deeaa7d835ae769cc6797fddd3df313df25ca1a03cd02780b92449054.
+Root also independently compared all34 final app pre/post/current source originals after natural retirement at441bb9.
