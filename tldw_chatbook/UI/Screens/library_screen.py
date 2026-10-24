@@ -11151,10 +11151,12 @@ class LibraryScreen(BaseAppScreen):
             except (NoMatches, QueryError):
                 continue
             if getattr(control, "_pruning", False):
-                # TASK-34000.26: a canvas recompose has already marked this
-                # control for removal; it still answers the query but a
-                # focus write onto it would die with it (review S-10).
-                continue
+                # TASK-34000.26 (fix round 1, M-4): a canvas recompose has
+                # already marked this control for removal. It is still the
+                # PREFERRED control, so stop here rather than fall through
+                # to a lower-preference one; the caller sees ``_pruning``
+                # and retries against the replacement (review S-10).
+                return control
             if not getattr(control, "disabled", False):
                 return control
         return None
@@ -11234,6 +11236,11 @@ class LibraryScreen(BaseAppScreen):
             if row_class == "library-media-row":
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
+                    if getattr(control, "_pruning", False):
+                        # TASK-34000.26: the preferred control is being
+                        # replaced; wait for its replacement instead.
+                        self._retry_library_list_entry_focus_while_armed()
+                        return
                     self._library_notes_programmatic_focus_target = control
                     self.set_focus(control)
                     if self.focused is control:

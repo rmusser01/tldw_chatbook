@@ -1036,7 +1036,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: entry picker never offers a ``_pruning`` row, filter or Media fallback
     #: control, and the retry tick returns on a detached screen (review S-10,
     #: the dead keyboard): 37600 -> 37623 (measured). Methods unchanged at 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37623, 1354),
+    #: 2026-10-24, TASK-34000.26 fix round 1 (same owner decision): the Media
+    #: empty-list fallback stops at a pruning preferred control and the picker
+    #: retries instead of falling through to a lower-preference one (M-4):
+    #: 37623 -> 37630 (measured). Methods unchanged at 1354.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37630, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

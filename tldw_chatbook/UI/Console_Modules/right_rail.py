@@ -779,13 +779,45 @@ class ConsoleInspectorRail(Vertical):
             self._library_activity_focus_pending = False
             self._focus_library_activity()
 
-    def _focus_library_activity(self) -> None:
-        """Focus and reveal the settled selected-turn activity heading."""
+    #: Refresh passes the activity-heading focus waits for a LIVE heading.
+    #: Each pass is one frame; twenty covers a rail whose selected-turn
+    #: section recomposes several times while the inspector settles.
+    _LIBRARY_ACTIVITY_FOCUS_ATTEMPTS = 20
 
+    def _focus_library_activity(
+        self, attempts: int = _LIBRARY_ACTIVITY_FOCUS_ATTEMPTS
+    ) -> None:
+        """Focus and reveal the settled selected-turn activity heading.
+
+        TASK-34000.26 fix round 1: the heading this runs after is often the
+        one a selected-turn recompose is still replacing -- it answers the
+        query while ``_pruning``. Textual 8.2.8 used to accept the focus
+        write and leave the keyboard dead on the detached heading (review
+        S-10, in Console); ``BaseAppScreen.set_focus`` now refuses it, which
+        left focus on the rail instead of the heading. So only an attached,
+        non-pruning heading is a target, and when every match is being
+        removed the focus is re-attempted after the next refresh, bounded by
+        ``attempts``, never against a rail or screen that has itself gone.
+
+        Args:
+            attempts: Refresh passes left to find a live heading.
+        """
+
+        if not self.is_attached or self._pruning:
+            return
+        headings = [
+            heading
+            for heading in self.query(
+                "#console-selected-turn-library-activity-heading"
+            ).results(Static)
+            if heading.is_attached and not getattr(heading, "_pruning", False)
+        ]
+        if not headings:
+            if attempts > 0:
+                self.call_after_refresh(self._focus_library_activity, attempts - 1)
+            return
+        heading = headings[0]
         try:
-            heading = self.query_one(
-                "#console-selected-turn-library-activity-heading", Static
-            )
             body = self.query_one("#console-inspector-rail-body", VerticalScroll)
         except (NoMatches, QueryError):
             return

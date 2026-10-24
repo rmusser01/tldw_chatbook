@@ -138,3 +138,31 @@ async def test_a_live_focus_is_left_alone() -> None:
         await pilot.pause()
         await pilot.press("a")
         assert field.value == "a" and app.screen.focused is field
+
+
+async def test_a_key_after_exit_logs_nothing() -> None:
+    """Fix round 1, M-1: Textual's ``is_attached`` answers False for every node
+    once ``App.exit()`` has set ``_exit``, so without the exit check each key
+    processed during shutdown would log a false "removed widget" warning to
+    the persistent sink (and pollute AC#5's defect counter)."""
+    import io
+
+    from loguru import logger
+
+    app = _GuardedApp()
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING", format="{message}")
+    try:
+        async with app.run_test() as pilot:
+            field = app.query_one("#field", Input)
+            field.focus()
+            await pilot.pause()
+            assert app.screen.focused is field
+            app.exit()
+            assert app._exit is True and not field.is_attached
+            from textual import events
+
+            await app.on_event(events.Key("f1", None))
+    finally:
+        logger.remove(handler_id)
+    assert "removed widget" not in sink.getvalue(), sink.getvalue()

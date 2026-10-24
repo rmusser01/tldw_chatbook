@@ -2623,6 +2623,11 @@ async def test_library_lifecycle_recompose_does_not_steal_newer_user_focus() -> 
 
             await pilot.pause()
             assert screen.query("#library-search-input")
+            # TASK-34000.26: the hub recomposed above, so the captured button
+            # is a corpse and a focus write onto it is now refused. The user's
+            # newer target is the LIVE hub action.
+            newer_target = screen.query_one("#library-hub-action-import", Button)
+            assert newer_target.is_attached
             screen.set_focus(newer_target)
             screen._restore_library_lifecycle_focus("#library-search-input")
             assert screen.focused is newer_target

@@ -200,3 +200,51 @@ async def test_the_entry_focus_retry_lands_on_the_replacement_filter(
                 timeout=3.0,
             )
             await _help_opens(app, pilot)
+
+
+async def test_the_picker_alone_never_writes_focus_onto_a_removed_widget(
+    tmp_path, monkeypatch
+):
+    """Fix round 1, M-2: the picker and ``_tick`` seam pinned on its own. With
+    ``LibraryScreen.set_focus`` routed to the BASE ``Screen.set_focus`` (the
+    screen refusal out of the way), twenty rapid rail switches still record
+    zero focus writes onto a pruning or detached widget, because the picker
+    never offers one. Reverting the picker changes fails this arm."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    dead_writes: list[tuple[str | None, bool, bool]] = []
+    real_set_focus = Screen.set_focus
+
+    def recording_set_focus(self, widget, *args, **kwargs):
+        if widget is not None and (
+            getattr(widget, "_pruning", False) or not widget.is_attached
+        ):
+            dead_writes.append(
+                (getattr(widget, "id", None), bool(widget._pruning), widget.is_attached)
+            )
+        return real_set_focus(self, widget, *args, **kwargs)
+
+    monkeypatch.setattr(Screen, "set_focus", recording_set_focus)
+    # The screen's own override steps aside: whatever the picker offers goes
+    # straight to Textual.
+    monkeypatch.setattr(LibraryScreen, "set_focus", recording_set_focus)
+
+    events: list = []
+    app, _profile = _library_app(tmp_path, monkeypatch, events, read=lambda profile: None)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = await _library(app, pilot)
+            await _open_notes(screen, pilot)
+
+            for _ in range(10):
+                screen.query_one("#library-row-browse-media", Button).press()
+                await pilot.pause(0.05)
+                screen.query_one("#library-row-browse-notes", Button).press()
+                await pilot.pause(0.05)
+
+            await _until(
+                pilot,
+                lambda: screen.focused is None or screen.focused.is_attached,
+                "focus to settle on nothing or a live widget",
+            )
+            assert dead_writes == [], dead_writes

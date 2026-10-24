@@ -257,14 +257,24 @@ class DetachedFocusGuard:
     here on purpose: a key that found a corpse must never be delivered to a
     widget the user did not choose (Enter would press it).
 
-    A strict no-op whenever ``focused`` is ``None`` or attached: the check is
-    two attribute reads on a key event and touches nothing else.
+    A strict no-op whenever ``focused`` is ``None`` or attached. The check is
+    one ``_pruning`` read plus ``is_attached``, which walks the ancestor chain
+    (O(depth): about 2 us per key at depth 30, a few percent of key dispatch)
+    and touches nothing else. Skipped once the app is exiting: Textual's
+    ``is_attached`` answers False for every node after ``App.exit()``, which
+    would otherwise log a false "removed widget" warning per key during
+    shutdown (fix round 1, M-1).
     ``_pruning`` is private Textual state -- listed with its other readers in
     ``lessons-textual.md`` (TASK-23025 entry).
     """
 
     async def on_event(self, event: events.Event) -> None:
-        if isinstance(event, events.Key) and not event.is_forwarded:
+        if (
+            isinstance(event, events.Key)
+            and not event.is_forwarded
+            # M-1: after ``App.exit()`` every node reads as detached.
+            and not getattr(self, "_exit", False)
+        ):
             try:
                 focused = self.focused  # type: ignore[attr-defined]
                 dead = focused is not None and (
