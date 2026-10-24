@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from .visual_identity import SAMIRA_EXPRESSION_KEYS, SAMIRA_REACTION_LABELS
 
 if TYPE_CHECKING:
+    from .portrait_compositing import ComponentRole
     from .portrait_performance import FrameRole
 
 
@@ -180,4 +181,24 @@ def compose_performance_prompt(*, role: FrameRole, expression_key: str) -> str:
         "background, lighting, palette, clothing, crop and exact pixel alignment. "
         "Change only eyelids and mouth; no head motion, gestures, text or new objects. "
         "Return one still image with the reference dimensions."
+    )
+
+
+def compose_performance_component_prompt(
+    *, component: ComponentRole, expression_key: str
+) -> str:
+    """Request one expression component without relying on backend-native masks."""
+    directions = {
+        "eyelids": "Close both eyes in a natural blink; keep the mouth gently closed.",
+        "small": "Keep open eyes and slightly part the lips for quiet speech.",
+        "open": "Keep open eyes and open the mouth moderately for speech.",
+    }
+    if component not in directions:
+        raise ValueError("portrait_composition_component_invalid")
+    return (
+        f"Edit the reference portrait's {component} component for expression {expression_key}. "
+        f"{directions[component]} Preserve identity, mood, camera, head position, "
+        "background, lighting, palette, clothing, crop and exact pixel alignment. "
+        "Change only the requested eyelids or mouth; no head motion, gestures, text or new objects. "
+        "Return one still image with exactly the reference dimensions."
     )

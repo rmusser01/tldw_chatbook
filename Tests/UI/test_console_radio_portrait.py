@@ -181,6 +181,8 @@ async def test_voice_states_and_motion_keep_reserved_rows(
 async def test_markup_shaped_character_name_is_literal_in_console_controls(
     console_screen_with_db_and_pilot,
 ):
+    import asyncio
+
     _app, screen, db, pilot = console_screen_with_db_and_pilot
     name = "[/bold][reverse]Radio name[/reverse]"
     character_id = db.add_character_card(
@@ -190,6 +192,10 @@ async def test_markup_shaped_character_name_is_literal_in_console_controls(
     await screen._sync_native_console_chat_ui()
     await pilot.pause()
     label = screen.query_one("#console-assistant-label", Static)
+    # A concurrent Console tick can coalesce the explicit sync; await painted state.
+    async with asyncio.timeout(5):
+        while name not in label.render().plain:
+            await pilot.pause()
     assert name in label.render().plain
 
 

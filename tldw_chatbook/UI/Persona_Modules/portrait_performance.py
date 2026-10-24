@@ -62,6 +62,7 @@ class PortraitPerformanceController:
         self._reference = None
         self._base_pixel_sha256 = ""
         self._region_modal = None
+        self._pair_review = None
 
     def _capture(self) -> _Authority:
         screen = self._screen()
@@ -127,6 +128,7 @@ class PortraitPerformanceController:
     def discard(self) -> None:
         """Fence in-flight work before dropping any draft or preview bytes."""
         self._epoch += 1
+        self._retire_pair_review()
         if self._region_modal is not None:
             self._region_modal.retire()
             self._region_modal = None
@@ -276,15 +278,15 @@ class PortraitPerformanceController:
                     from .portrait_regions import edit_regions
 
                     return await edit_regions(self, authority, draft, epoch)
+                if message.action == "review":
+                    return await self._review_pairs(authority, draft, epoch)
                 if message.action in {"generate", "regenerate"}:
-                    from ...Character_Chat.portrait_performance import FRAME_ROLES
-
+                    if message.action == "regenerate" and message.component is None:
+                        raise ValueError("Choose a component to retry.")
                     return await self._generate(
                         authority,
                         draft,
-                        FRAME_ROLES
-                        if message.action == "generate"
-                        else (message.role,),
+                        None if message.action == "generate" else message.component,
                         epoch,
                     )
                 if message.action == "sample":
@@ -343,11 +345,13 @@ class PortraitPerformanceController:
                     ):
                         return False
                     draft.stage(outcome.value)
+                    self._retire_pair_review()
                     view.status(
                         f"{message.role.replace('_', ' ')} ready. All six poses must have matching dimensions."
                     )
                 elif message.action == "clear":
                     draft.remove(message.role)
+                    self._retire_pair_review()
                 elif message.action in {"apply", "remove"}:
                     frames = draft.frames() if message.action == "apply" else None
 
@@ -489,191 +493,47 @@ class PortraitPerformanceController:
             raise outcome.cancellation
         return outcome.completed and epoch == self._epoch and self._current(authority)
 
-    async def _generate(self, authority, draft, roles, epoch) -> bool:
-        from ...Character_Chat.expression_generation import compose_performance_prompt
-        from ...Character_Chat.portrait_performance import FRAME_ROLES
-        from ...Character_Chat.portrait_performance_authoring import (
-            performance_reference,
-        )
-        from ...Image_Generation.adapter_registry import get_registry
-        from ...Image_Generation.adapters.base import ImageGenResult
-        from ...Image_Generation.capabilities import (
-            resolve_backend_reference_image_capability,
-        )
-        from ...Image_Generation.config import get_image_generation_config
-        from ...Image_Generation.worker import build_request, run_generation
-        from ...Utils.input_validation import escape_markup
-        from ...Widgets.confirmation_dialog import ConfirmationDialog
-        from ...Widgets.Console.console_auto_speak_consent import (
-            sanitize_auto_speak_destination,
+    def _retire_pair_review(self) -> None:
+        if self._pair_review is not None:
+            self._pair_review.retire()
+            self._pair_review = None
+
+    async def _review_pairs(self, authority, draft, epoch) -> bool:
+        from ...Widgets.Persona_Widgets.portrait_composition_review import (
+            PortraitCompositionReview,
         )
 
-        screen, view = self._screen(), self._view()
-        if not roles or any(role not in FRAME_ROLES for role in roles):
-            raise ValueError("Choose a portrait pose.")
-        cfg = get_image_generation_config()
-        backend = cfg.default_backend
+        candidate = draft.composition
         if (
-            not backend
-            or backend not in cfg.enabled_backends
-            or not resolve_backend_reference_image_capability(
-                backend, config=cfg
-            ).supported
-        ):
-            view.status(
-                "Choose an enabled reference-image backend in Settings. Imports remain available."
-            )
-            return False
-        warning = screen._image_generation_backend_warning()
-        if warning:
-            view.status(warning + " Imports remain available.")
-            return False
-        registry = get_registry()
-        if registry.config is not cfg:
-            view.status(
-                "Image settings changed. Reload the configured image engine before generating."
-            )
-            return False
-        model = getattr(cfg, f"{backend}_image_default_model", None)
-        destination = sanitize_auto_speak_destination(
-            getattr(cfg, f"{backend}_image_base_url", None)
-        )
-        message = (
-            f"Send {len(roles)} image-edit requests to {backend} / {model or 'configured workflow/default'} ({destination}). "
-            f"Use saved character {authority.character_id}, expression {draft.source.expression_key}, as the reference. "
-            "Charges may apply. Successful draft slots will be replaced. Uncertain requests are never retried automatically; review before Apply."
-        )
-        confirmed = await screen.app.push_screen_wait(
-            ConfirmationDialog(
-                title="Generate portrait poses",
-                message=escape_markup(message),
-                confirm_label=f"Generate {len(roles)} frames",
-                cancel_label="Cancel",
-            )
-        )
-        if confirmed is not True or not await self._source_current(
-            authority, draft, epoch
+            candidate is None
+            or not draft.can_apply
+            or not await self._source_current(authority, draft, epoch)
         ):
             return False
-        outcome = await self._drain(
-            performance_reference,
-            draft.source_bytes,
-            draft.source.source_sha256,
-            task_name="portrait-performance-reference",
+        self._retire_pair_review()
+        review = self._pair_review = PortraitCompositionReview(
+            candidate.frames,
+            candidate.recipe,
+            lambda: (
+                epoch == self._epoch
+                and self.draft is draft
+                and draft.composition is candidate
+                and self._current(authority)
+            ),
         )
-        if outcome.error:
-            raise outcome.error
-        if outcome.cancellation is not None:
-            raise outcome.cancellation
-        if not outcome.completed or not await self._source_current(
-            authority, draft, epoch
-        ):
-            return False
-        reference = outcome.value
-        event = self._generation_event = threading.Event()
-        failed = []
         try:
-            for role in roles:
-                if event.is_set() or not await self._source_current(
-                    authority, draft, epoch
-                ):
-                    return False
-                if (
-                    get_image_generation_config() is not cfg
-                    or get_registry() is not registry
-                ):
-                    view.status(
-                        "Image settings changed. Remaining requests cancelled; review partial results."
-                    )
-                    return False
-                view.status(
-                    f"Generating {role.replace('_', ' ')} via {backend}; {len(roles)} explicit requests, no automatic retry."
-                )
-                request = build_request(
-                    backend=backend,
-                    model=model,
-                    prompt=compose_performance_prompt(
-                        role=role, expression_key=draft.source.expression_key
-                    ),
-                    width=reference.width,
-                    height=reference.height,
-                    image_format="png",
-                    reference_image=reference,
-                    cancel_event=event,
-                )
-                try:
-                    outcome = await self._drain(
-                        run_generation,
-                        request,
-                        task_name="portrait-performance-generate",
-                    )
-                    if outcome.cancellation is not None:
-                        event.set()
-                        raise outcome.cancellation
-                    if event.is_set() or not await self._source_current(
-                        authority, draft, epoch
-                    ):
-                        return False
-                    if outcome.error:
-                        raise outcome.error
-                    result = outcome.value
-                    if (
-                        not outcome.completed
-                        or type(result) is not ImageGenResult
-                        or type(result.content) is not bytes
-                        or result.bytes_len != len(result.content)
-                        or result.content_type
-                        not in {"image/png", "image/jpeg", "image/webp"}
-                    ):
-                        raise ValueError("Invalid generated still.")
-                    normalized = await self._drain(
-                        normalize_performance_frame,
-                        role,
-                        result.content,
-                        task_name="portrait-performance-normalize",
-                    )
-                    if normalized.error:
-                        raise normalized.error
-                    if normalized.cancellation is not None:
-                        event.set()
-                        raise normalized.cancellation
-                    if event.is_set() or not await self._source_current(
-                        authority, draft, epoch
-                    ):
-                        return False
-                    draft.stage(normalized.value)
-                except PerformanceConflict:
-                    raise
-                except Exception:  # noqa: BLE001 -- paid/uncertain outcomes require an explicit slot retry
-                    failed.append(role)
-            try:
-                await view.show_draft(
-                    draft,
-                    lambda: epoch == self._epoch and self._current(authority),
-                    motion=expression_motion_enabled(
-                        getattr(screen.app_instance, "app_config", {}) or {},
-                        react=True,
-                        manual=True,
-                    ),
-                )
-            except Exception:  # noqa: BLE001 -- a failed preview must not suggest another paid request
-                view.status(
-                    "Generated slots retained; preview unavailable. Review them before sending further requests."
-                )
-                return True
-            if failed:
-                view.status(
-                    f"Review partial results. Failed or uncertain: {', '.join(failed)}. Retry only a selected slot explicitly; charges may already apply."
-                )
-            else:
-                view.status(
-                    "Generated poses ready for review. Nothing activates until Apply."
-                )
+            await self._screen().app.push_screen_wait(review)
             return True
         finally:
-            event.set()
-            if self._generation_event is event:
-                self._generation_event = None
+            if self._pair_review is review:
+                self._pair_review = None
+            if review.is_mounted:
+                review.retire()
+
+    async def _generate(self, authority, draft, component, epoch) -> bool:
+        from .portrait_composition_generation import generate_components
+
+        return await generate_components(self, authority, draft, component, epoch)
 
     async def _sample(self, authority, draft, epoch) -> bool:
         from uuid import uuid4

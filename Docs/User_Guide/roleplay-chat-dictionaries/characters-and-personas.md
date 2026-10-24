@@ -191,8 +191,8 @@ preview, cycle all six poses, inspect individual poses, or run **Idle + blink**
 without generating images or playing speech. Review a 2×3 matrix: each mouth state
 (closed, small, open) needs both open and closed eyes. Check matching mouth shapes
 within each pair and consistent lighting, head position and background across all
-six. Using one generation reference does not guarantee those matches; replace any
-inconsistent slot before Apply.
+six. Externally generated files can differ despite sharing a reference; replace any
+inconsistent imported slot before Apply.
 
 **Apply performance** publishes all six poses together. **Cancel draft** keeps the
 applied artwork; **Remove applied** restores ordinary artwork. Changing the
@@ -221,16 +221,40 @@ character/Actor Pack/Chatbook exports and sync omit them.
 
 ### Editor — generate poses and hear a sample
 
-After preparing saved artwork, **Generate 6 frames…** offers six image-edit requests
-to your configured reference-image backend. The confirmation names the provider,
-model/workflow, destination and saved source. Charges may apply. Unsupported or
-unconfigured backends leave ready-made imports available; no other provider is tried.
+After preparing saved artwork and **Save regions**, **Generate components (3)…**
+offers three sequential image-edit requests to the configured reference-image backend:
+eyelids, small mouth and open mouth. The confirmation names the provider, model/workflow,
+destination, source and count. Charges may apply. No other provider or automatic paid
+retry is selected. Ready-made imports remain available without a configured backend.
 
-All requests use one still reference (frame zero for an animated portrait). Successful
-poses stay in the draft if another slot fails or its outcome is uncertain. Select a
-slot and **Regenerate selected (1)…** to submit exactly one explicit retry. An uncertain
-request may already have been charged. Nothing activates before **Apply performance**.
-Changing source/character/profile cancels remaining requests and discards late results.
+After confirmation, a fresh batch starts a rest-only draft and clears all prior draft
+components. Successful responses contribute pixels only through the saved regions;
+the source lighting and pixels outside those regions stay unchanged. The app assembles
+both eye variants of every mouth state from shared finished components. All three
+components are required before Apply or a speech sample. A failed/uncertain component
+retains only successes from that batch; old slots cannot complete it.
+
+Use the separate **Eyelids / Small mouth / Open mouth** selector and **Retry component
+(1)…** for one explicit retry. Eyelids replaces the three blink poses; a mouth retry
+replaces its open/closed-eye pair. Other frame bytes stay unchanged. A failed retry
+keeps its previous valid candidate. An uncertain request may already have been charged.
+Source/character/profile/regions or image-settings changes reject late results and
+cancel remaining requests. Nothing activates before **Apply performance**.
+
+**Review pairs…** opens a static 2×3 matrix: mouth columns closed/small/open and eye
+rows open/closed. Choose an eye or mouth detail for common crops copied from the
+original frame PNGs. Arrow keys or h/j/k/l pan while the image has focus; the labeled
+numeric X/Y offsets allow precise navigation. Large regions use bounded crops instead
+of a six-canvas montage. Terminal glyph colors are approximations; review data itself
+uses original RGBA pixels. Close returns to the same draft with no generation, audio,
+Save or Apply. Review has no mandatory acknowledgement checkbox.
+
+Exact pairing does not guarantee convincing eyelids, lips or registration within a
+patch. Inspect for seams and alignment; retry a component or adjust regions as needed.
+Reopen and Prepare reuses matching regions and validated applied component provenance
+without feathering it again. Successful manual Import/Clear drops component lineage;
+ordinary six-frame Apply remains available, and generating components again starts
+a fresh batch. Cancelled or invalid imports retain the prior candidate.
 
 With six poses ready, **Play speech sample…** confirms the selected character's current
 voice destination and says: “Hello. This is a portrait preview. Notice the pauses.”

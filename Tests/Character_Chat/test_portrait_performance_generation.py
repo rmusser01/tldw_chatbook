@@ -53,3 +53,23 @@ def test_animated_source_reference_is_frame_zero_and_original_is_unchanged():
     with Image.open(BytesIO(reference.content)) as still:
         assert still.n_frames == 1
         assert still.getpixel((2, 2)) == (255, 0, 0, 255)
+
+
+def test_three_component_prompts_limit_edits_and_keep_same_reference_geometry():
+    from tldw_chatbook.Character_Chat.expression_generation import (
+        compose_performance_component_prompt,
+    )
+    from tldw_chatbook.Character_Chat.portrait_compositing import COMPONENT_ROLES
+
+    for component in COMPONENT_ROLES:
+        prompt = compose_performance_component_prompt(
+            component=component, expression_key="neutral"
+        )
+        assert component in prompt
+        assert all(
+            word in prompt for word in ("identity", "camera", "background", "alignment")
+        )
+    with pytest.raises(ValueError):
+        compose_performance_component_prompt(
+            component="blink_small", expression_key="neutral"
+        )

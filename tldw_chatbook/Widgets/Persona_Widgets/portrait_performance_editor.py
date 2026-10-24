@@ -10,6 +10,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
+from ...Character_Chat.portrait_compositing import ComponentRole
 from ...Character_Chat.portrait_performance import (
     FRAME_ROLES,
     PortraitPerformanceRecord,
@@ -22,12 +23,18 @@ class CharacterPerformanceRequested(Message):
     """One explicit authoring action, without database or source authority."""
 
     def __init__(
-        self, action: str, *, source: str = "idle", role: str = "rest"
+        self,
+        action: str,
+        *,
+        source: str = "idle",
+        role: str = "rest",
+        component: ComponentRole | None = None,
     ) -> None:
         super().__init__()
         self.action = action
         self.source = source
         self.role = role
+        self.component = component
 
 
 class PortraitPerformanceEditor(Vertical):
@@ -111,6 +118,9 @@ class PortraitPerformanceEditor(Vertical):
                 allow_blank=False,
                 id="portrait-performance-preview-mode",
             )
+            yield Button(
+                "Review pairs…", id="portrait-performance-review", disabled=True
+            )
             with Horizontal(classes="portrait-review-row"):
                 yield Button(
                     "Apply performance", id="portrait-performance-apply", disabled=True
@@ -121,14 +131,24 @@ class PortraitPerformanceEditor(Vertical):
                 yield Button(
                     "Cancel draft", id="portrait-performance-cancel", disabled=True
                 )
+            yield Select(
+                [
+                    ("Eyelids", "eyelids"),
+                    ("Small mouth", "small"),
+                    ("Open mouth", "open"),
+                ],
+                value="eyelids",
+                allow_blank=False,
+                id="portrait-performance-component",
+            )
             with Horizontal(classes="portrait-review-row"):
                 yield Button(
-                    "Generate 6 frames…",
+                    "Generate components (3)…",
                     id="portrait-performance-generate",
                     disabled=True,
                 )
                 yield Button(
-                    "Regenerate selected (1)…",
+                    "Retry component (1)…",
                     id="portrait-performance-regenerate",
                     disabled=True,
                 )
@@ -138,7 +158,7 @@ class PortraitPerformanceEditor(Vertical):
                     disabled=True,
                 )
             yield Static(
-                "Generation sends the saved reference to your configured image-edit backend. Six requests per batch; one per selected retry. Review destination before sending.",
+                "Generation sends the saved reference to your configured image-edit backend. Three requests per batch; one per selected component retry. Review destination before sending.",
                 classes="portrait-review-copy",
                 markup=False,
             )
@@ -203,6 +223,12 @@ class PortraitPerformanceEditor(Vertical):
                 button.disabled = not self.sample_running and (
                     busy or draft is None or not draft.can_apply
                 )
+            if action == "regenerate":
+                button.disabled |= draft is None or draft.composition is None
+            if action == "review":
+                button.disabled |= (
+                    draft is None or not draft.can_apply or draft.composition is None
+                )
             if action == "remove":
                 button.disabled |= not self.applied
             if action == "cancel":
@@ -212,6 +238,7 @@ class PortraitPerformanceEditor(Vertical):
         )
         for selector in (
             "#portrait-performance-role",
+            "#portrait-performance-component",
             "#portrait-performance-preview-mode",
         ):
             self.query_one(selector, Select).disabled = busy
@@ -310,6 +337,11 @@ class PortraitPerformanceEditor(Vertical):
                     "#portrait-performance-source", Input
                 ).value.strip(),
                 role=str(self.query_one("#portrait-performance-role", Select).value),
+                component=str(
+                    self.query_one("#portrait-performance-component", Select).value
+                )
+                if event.button.id == "portrait-performance-regenerate"
+                else None,
             )
         )
 

@@ -439,9 +439,9 @@ async def test_retired_modal_drops_held_preview(
         assert await asyncio.to_thread(entered.wait, 3)
         modal = app.screen
         source = modal.query_one("#portrait-regions-source", Static)
-        before = source.renderable
         preview = modal._preview_task
         modal.action_cancel()
+        before = source.renderable
         assert not await task
         release.set()
         await preview

@@ -70,7 +70,7 @@ def _render(
     """Close all decoded pixels inside the shared reservation before returning text."""
     from PIL import ImageDraw
 
-    with _workspace(base, 24) as (stack, image):
+    with _workspace(base, 32) as (stack, image):
         transform = RegionTransform.contain(image.size, box)
         outlined = image.copy()
         stack.callback(outlined.close)
@@ -436,7 +436,7 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
                     )
                 )
                 if self._current() and saved:
-                    self.dismiss(True)
+                    self.dismiss_safe_once_when_on_top(True)
             finally:
                 self._saving = False
                 if self._current():
@@ -457,7 +457,11 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
         self._retired = True
         self._transform = None
         if self.is_mounted:
-            self.dismiss(False)
+            self.query_one("#portrait-regions-source", Static).update(
+                "Region editor retired."
+            )
+            self.query_one("#portrait-regions-detail", Static).update("")
+            self.dismiss_safe_once_when_on_top(False)
 
     def on_unmount(self) -> None:
         self._retired = True

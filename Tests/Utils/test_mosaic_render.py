@@ -192,7 +192,6 @@ def test_monochrome_mosaic_is_never_blank_for_a_dark_portrait():
 
     The ramp must have no blank bucket: the darkest ink still has to be ink.
     """
-    import re
 
     # Charcoal subject on near-black -- a dark character card.
     img = PILImage.new("RGB", (48, 48), (12, 12, 14))
@@ -254,3 +253,53 @@ def test_explicit_cell_size_none_for_non_text_renderable():
 
     assert explicit_cell_size(object()) is None
     assert explicit_cell_size(None) is None
+
+
+def test_native_grid_never_resamples_original_crop(monkeypatch):
+    """A review detail uses source pixels even when ordinary contain would resample."""
+    from tldw_chatbook.Utils.mosaic_render import explicit_cell_size
+
+    def refuse_resize(*args, **kwargs):
+        raise AssertionError("native detail must not resize")
+
+    with PILImage.new("RGBA", (4, 4), (30, 40, 50, 180)) as source:
+        monkeypatch.setattr(PILImage.Image, "resize", refuse_resize)
+        result = mosaic_from_image(source, 2, 2, fit="native")
+        assert explicit_cell_size(result) == (2, 2)
+        assert source.getpixel((0, 0)) == (30, 40, 50, 180)
+
+
+@pytest.mark.parametrize("failure", ["resize", "native_overflow"])
+def test_mosaic_failure_closes_owned_cores_and_preserves_caller(monkeypatch, failure):
+    """Rendering owns its conversion/sampling images, never the caller's portrait."""
+    source = PILImage.new("RGBA", (8, 8), (30, 40, 50, 180))
+    owned = []
+    original = PILImage.Image.convert
+
+    def capture(image, *args, **kwargs):
+        converted = original(image, *args, **kwargs)
+        owned.append(converted)
+        return converted
+
+    monkeypatch.setattr(PILImage.Image, "convert", capture)
+    if failure == "resize":
+
+        def failed(*args, **kwargs):
+            raise OSError("fixture resize")
+
+        monkeypatch.setattr(PILImage.Image, "resize", failed)
+    try:
+        with pytest.raises(OSError if failure == "resize" else ValueError):
+            mosaic_from_image(
+                source,
+                1,
+                1,
+                fit="native" if failure == "native_overflow" else "contain",
+            )
+        assert source.getpixel((0, 0)) == (30, 40, 50, 180)
+        assert owned
+        for image in owned:
+            with pytest.raises(ValueError):
+                image.getpixel((0, 0))
+    finally:
+        source.close()

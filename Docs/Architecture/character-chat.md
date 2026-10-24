@@ -81,8 +81,15 @@ compositor decode reservations, returns only Rich text and rejects retired rende
 The controller retires the exact modal/sample, reuses canonical settings, recovers
 only invariant-checked components and installs a rest-only candidate on changed Save.
 Apply preserves candidate provenance; manual imports still drop lineage on success.
-The three-request provider workflow remains Unit 4; existing generation still uses
-its original six-request path until integration.
+`portrait_composition_generation.py` now replaces the historical six-edit path with
+three shared-reference requests and one-component dependent retries. Every fresh batch
+resets to rest-only before dispatch; candidate identity, source, settings revision and
+config fence late work. Manual/composed readiness uses `draft.can_apply`. The actual
+`PortraitCompositionReview` consumes immutable original frame PNGs for a labeled 2×3
+matrix and common native eye/mouth crops, supports keyboard/numeric pan, and retires
+exact displayed owners even beneath another modal. Its output raster is capped at
+1 megapixel and native rendering introduces no fitted-thumbnail resampling. Ordinary
+Console animation and speech presentation ownership are unchanged.
 
 
 `Character_Chat/portrait_performance.py` normalizes six aligned still poses

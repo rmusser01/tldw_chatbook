@@ -4539,3 +4539,18 @@ Review a full-resolution labeled 2×3 matrix as well as the actual rail preview;
 role names and six distinct hashes prove neither state correctness nor consistency.
 Assert invariant pixels and paired expression regions when compositing is used.
 Evidence: `Docs/superpowers/qa/console-radio-portraits/2026-10-23/qualification.md`.
+
+### Exact crop data can still be resampled by the final renderer (TASK-36554)
+
+On 2026-10-24, pair-review tests proved the matrix PNG contained exact original RGBA
+crops and retained a one-pixel marker, yet the actual modal compressed them vertically.
+The new caller passed `fit="stretch"` to `mosaic_from_image`; that helper supported
+only contain/cover and silently treated the unknown value as contain. A production-CSS
+capture also exposed numeric pan fields squeezed to zero width by their sibling label.
+A real `native` grid mode, a test that makes any resize fail, visible labeled numeric
+fields and a second capture fixed the complete presentation path. Native rendering
+now explicitly closes only owned conversion/sampling cores; its caller's image survives.
+Check the final renderer and measured controls as well as intermediate image bytes;
+a correct exported raster alone does not prove an in-app detail viewer works.
+Evidence: `Docs/superpowers/qa/portrait-compositing/2026-10-24/`, including the retained
+raw rasters and actual modal screenshots; `Tests/Utils/test_mosaic_render.py`.

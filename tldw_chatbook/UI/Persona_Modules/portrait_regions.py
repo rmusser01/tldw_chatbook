@@ -186,6 +186,7 @@ async def save_regions(
         controller._regions = PortraitRegionSettings(draft.source, recipe, revision)
         controller._regions_revision = revision
         if changed:
+            controller._retire_pair_review()
             draft.replace_composition(
                 PortraitCompositionCandidate(recipe, revision, (), frames)
             )
