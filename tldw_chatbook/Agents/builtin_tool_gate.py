@@ -891,7 +891,8 @@ LOCAL_TOOLS_MASTER_TITLE = "Local workspace, web, and Watchlists tools (master s
 #: task-32284: where the Tool gates pane actually is. Shared by the
 #: Permissions legend's breadcrumb so the count never points at a place
 #: the user has to guess ("the built-in server detail" named no pane).
-TOOL_GATES_PANE_PATH = "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+#: TASK-36387: MCP is a Settings category (task-35150), not a screen.
+TOOL_GATES_PANE_PATH = "Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates"
 
 #: Hand-written description for the local group's master switch -- it has
 #: no corresponding Tool instance to read a description off of (it gates a

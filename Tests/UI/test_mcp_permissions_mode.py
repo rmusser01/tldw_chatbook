@@ -838,7 +838,8 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
         breadcrumb = (
             "3 tool gate(s) are off. Configure the workspace, web, and "
             "Watchlists master switch in Tools mode; other registration "
-            "gates are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+            "gates are under Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ "
+            "Tool gates."
         )
         await canvas.update_matrix(
             [_global_row()],
@@ -849,7 +850,7 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
         await pilot.pause()
 
         legend = app.query_one("#mcp-perm-legend", Static)
-        # At 100 columns each line (161 and 175 chars) needs its own wrap,
+        # At 100 columns each line (161 and 194 chars) needs its own wrap,
         # so a correctly-sized Static is at least 2 lines tall -- a
         # height-1 cap would silently truncate mid-sentence instead.
         assert legend.size.height >= 2, (
@@ -857,7 +858,10 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
             "-- text is being clipped, not wrapped"
         )
         rendered = str(legend.renderable)
-        assert rendered.endswith("are under MCP ▸ Servers ▸ built-in row ▸ Tool gates.")
+        # TASK-36387, rewritten on purpose: MCP is a Settings category.
+        assert rendered.endswith(
+            "are under Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+        )
 
 
 # -- UX batch item 11: adaptive Tags column ----------------------------------

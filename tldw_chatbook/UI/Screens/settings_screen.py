@@ -335,6 +335,7 @@ from .settings_provider_view_model import (
     provider_picker_summary,
 )
 from .settings_config_models import (
+    LISTED_SAVE_MODELS,
     SettingsCategoryId,
     SettingsCategorySummary,
     SettingsDomainCategoryContract,
@@ -833,7 +834,6 @@ class _VllmDefaultPresentationSnapshot:
     endpoint_suppress_queue: tuple[str, ...]
     credential_env_var_suppress_queue: tuple[str, ...]
     api_key_suppress_queue: tuple[str, ...]
-    context_window_suppress_queue: tuple[str, ...]
     card_disabled: bool
     inputs: tuple[tuple[str, str, str | None, bool], ...]
     selects: tuple[tuple[str, object, bool], ...]
@@ -2500,7 +2500,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "profiles contain policy only; MCP owns policy editing and importing never installs tools",
+            "profiles contain policy only; policy editing is in Settings ▸ Tools & MCP, and importing never installs tools",
         ),
     ),
     SettingsCategoryId.PRIVACY_SECURITY: (
@@ -4068,7 +4068,6 @@ class SettingsScreen(BaseAppScreen):
         # The draft and provider Clear staged a removal for: an emptied field
         # then keeps that removal instead of dropping the edit.
         self._provider_api_key_cleared: tuple[SettingsDraft | None, str] | None = None
-        self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
         # TASK-33007.5: Model defaults opens expanded; Sampling stays closed.
@@ -5630,13 +5629,13 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.WORKSPACES,
                 "Workspaces",
                 "Create, rename, archive, and bind folders for agent file tools.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.WORKSPACES],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.TOOL_PROFILES,
                 "Tool Profiles",
                 "Import, export, review, bind, and remove portable tool permission profiles.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.TOOL_PROFILES],
             ),
             TOOLS_HUB_CATEGORY_SUMMARY,
             SettingsCategorySummary(
@@ -5673,19 +5672,19 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.ARTIFACTS,
                 "Artifacts",
                 "Chatbooks, saved outputs, and artifact resume defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.ARTIFACTS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.PERSONAS,
                 "Roleplay",
                 "Character and user profile browsing, plus how they attach to Console chats.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.PERSONAS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.SKILLS,
                 "Skills",
                 "Skill import, validation, trust, and attach defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.SKILLS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.SCHEDULES,
@@ -5697,31 +5696,31 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.WATCHLISTS,
                 "Watchlists",
                 "Feed monitoring, polling, notification, and run defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.WATCHLISTS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.DREAMS,
                 "Dreams",
                 "Enable the daily discovery digest and edit your interest topics.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.DREAMS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.GUARDIAN,
                 "Guardian",
                 "Enable local self-monitoring awareness rules and trend notices.",
-                "Immediate actions",
+                LISTED_SAVE_MODELS[SettingsCategoryId.GUARDIAN],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.WORKFLOWS,
                 "Workflows",
                 "Procedure, dry-run, approval, and execution safety defaults.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.WORKFLOWS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.ACP_DEFAULTS,
                 "ACP Defaults",
                 "ACP runtime/session defaults without owning ACP launch operations.",
-                "Read-only",
+                LISTED_SAVE_MODELS[SettingsCategoryId.ACP_DEFAULTS],
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.IMAGE_GENERATION,
@@ -10002,8 +10001,8 @@ class SettingsScreen(BaseAppScreen):
             )
         if category == SettingsCategoryId.TOOL_PROFILES:
             return (
-                "Reviewed actions: imports stay unbound, exports publish an exact "
-                "snapshot, and policy editing opens MCP Permissions."
+                "Immediate actions: imports stay unbound, exports publish an exact "
+                "snapshot, and Edit opens the profile in Tools & MCP's Permissions."
             )
         if category == SettingsCategoryId.AGENTS:
             return (
@@ -10024,12 +10023,12 @@ class SettingsScreen(BaseAppScreen):
             )
         if category is SettingsCategoryId.DREAMS:
             return (
-                "Applies immediately: the toggle, provider, model, region, and "
+                "Immediate actions: the toggle, provider, model, region, and "
                 "topic edits below save as you make them."
             )
         if category is SettingsCategoryId.GUARDIAN:
             return (
-                "Applies immediately: the toggle and every rule edit below "
+                "Immediate actions: the toggle and every rule edit below "
                 "save as you make them."
             )
         if category == SettingsCategoryId.IMAGE_GENERATION:
@@ -10766,6 +10765,8 @@ class SettingsScreen(BaseAppScreen):
         """
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             return "Draft — save with s"
+        if category in LISTED_SAVE_MODELS:  # the category list's own words
+            return LISTED_SAVE_MODELS[category]
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             return "Applies immediately"
         if category is SettingsCategoryId.IMAGE_GENERATION:
@@ -10774,13 +10775,7 @@ class SettingsScreen(BaseAppScreen):
             return "Draft — save/revert below"
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Auto-saved"
-        if category is SettingsCategoryId.WORKSPACES:
-            return "Applies immediately"
-        if category is SettingsCategoryId.TOOL_PROFILES:
-            return "Reviewed actions"
-        if category is SettingsCategoryId.TOOLS:  # the category list's own words
-            return TOOLS_HUB_CATEGORY_SUMMARY.status
-        if category in (SettingsCategoryId.AGENTS, SettingsCategoryId.GUARDIAN):
+        if category is SettingsCategoryId.AGENTS:
             return "Applies immediately"
         if category is SettingsCategoryId.THEME:
             # Use/Try/Revert act at once; the banner stays hidden for Theme,
@@ -10792,11 +10787,11 @@ class SettingsScreen(BaseAppScreen):
             return "Pending — save with s"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
-        if category in (SettingsCategoryId.SCHEDULES, SettingsCategoryId.DREAMS):
+        if category is SettingsCategoryId.SCHEDULES:
             return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
-        return "Read-only here"
+        return "Read-only"
 
     def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
         """The category-scope half of the State banner (after the badge)."""
@@ -10844,7 +10839,7 @@ class SettingsScreen(BaseAppScreen):
             return "Gates and permissions save at once; a server form has its own Save."
         if category is SettingsCategoryId.TOOL_PROFILES:
             return (
-                "Imports stay unbound; MCP owns policy editing; removal permanently "
+                "Imports stay unbound; Tools & MCP edits policy; removal permanently "
                 "reserves the profile id."
             )
         if category is SettingsCategoryId.AGENTS:
@@ -14402,9 +14397,6 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_credential_env_var_suppress_queue
             ),
             api_key_suppress_queue=tuple(self._provider_api_key_suppress_queue),
-            context_window_suppress_queue=tuple(
-                self._provider_context_window_suppress_queue
-            ),
             card_disabled=card.disabled,
             inputs=inputs,
             selects=selects,
@@ -14492,9 +14484,6 @@ class SettingsScreen(BaseAppScreen):
             snapshot.credential_env_var_suppress_queue
         )
         self._provider_api_key_suppress_queue[:] = snapshot.api_key_suppress_queue
-        self._provider_context_window_suppress_queue[:] = (
-            snapshot.context_window_suppress_queue
-        )
 
         values = self._provider_setting_values_mapping()
         provider = str(values.get("provider") or "").strip()
@@ -15553,7 +15542,6 @@ class SettingsScreen(BaseAppScreen):
         self._provider_endpoint_suppress_queue.clear()
         self._provider_credential_env_var_suppress_queue.clear()
         self._provider_api_key_suppress_queue.clear()
-        self._provider_context_window_suppress_queue.clear()
 
     def _provider_catalog_model_default(self, provider: str) -> str:
         return next(iter(self._provider_saved_model_ids(provider)), "")
@@ -30620,10 +30608,6 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-model-context-window")
     def handle_model_context_window_changed(self, event: Input.Changed) -> None:
-        queue = self._provider_context_window_suppress_queue
-        if queue and event.value == queue[0]:
-            queue.pop(0)
-            return
         if self._syncing_provider_context_window:
             return
         if self._navigation_provider and self._provider_draft() is None:

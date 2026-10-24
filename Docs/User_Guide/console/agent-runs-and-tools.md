@@ -427,6 +427,8 @@ The five decisions, with the scope line each one shows:
 | **Always** | Remembered for this tool. Change it under MCP ▸ Permissions. |
 | **Deny** | This call only; the model is told not to retry. |
 
+On these lines MCP is the Settings ▸ Tools & MCP category (**Ctrl+9** opens it).
+
 - Not every row offers all five. MCP tool rows do, except a high-risk tool
   (tagged `mutates` or `process`), whose row does **not** offer **Always ·
   these args** — the risk floor would make a stored exact-argument rule
@@ -532,7 +534,7 @@ one generic word:
 Expanding a refused row is labelled **Sent to the model** rather than "Full
 output": what it holds is the refusal text the model was given ("Do not retry
 this call…"), never a result the tool produced. The same vocabulary shows up
-in the MCP screen's [History mode](../mcp.md#permission-continuity-for-built-in-tools),
+in Settings ▸ Tools & MCP's [History mode](../mcp.md#permission-continuity-for-built-in-tools),
 so what you read in the transcript and what you read in the log are the same
 words.
 
@@ -552,17 +554,17 @@ retroactively cancel a mutation that already started.
 are the exception, and only ever get a decision that lasts to the end of the
 session. A remembered allow is tied to the tool's current definition: if the
 server later changes the tool, the approval card comes back with a
-"(definition changed)" badge. Change a remembered allow under **MCP ▸
+"(definition changed)" badge. Change a remembered allow under **Settings ▸ Tools & MCP ▸
 Permissions**; **Always · these args** stores a narrower rule instead — the
 same tool with different arguments still asks — and is removed from the
-tool's row in [MCP ▸ Tools](../mcp.md#exact-input-allow-rules). A **This
+tool's row in [Settings ▸ Tools & MCP ▸ Tools](../mcp.md#exact-input-allow-rules). A **This
 session** grant is listed there too, with a **Revoke** beside it.
 install and run-script confirm cards follow the same rule).
 
 **Always allow** (MCP tools only) is remembered per tool, tied to the tool's
 current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered
-allow from the tool's row on the [MCP screen](../mcp.md) 🚧.
+allow from the tool's row in [Settings ▸ Tools & MCP](../mcp.md) 🚧.
 
 With sub-agents running in parallel (see below), more than one approval card
 can be pending at once — cards aren't merged across sub-agents: each is
@@ -1761,7 +1763,7 @@ host shell. Its fixed read-only commands are `ls`, `cat`, `grep`, `find`,
 The tool is discoverable only when local tools are enabled and the run admitted
 at least one valid Workspace folder, but discoverability is not authorization.
 Before each invocation, Chatbook resolves the selected command under the
-separate **Virtual CLI (read-only)** group in MCP ▸ Tools.
+separate **Virtual CLI (read-only)** group in Settings ▸ Tools & MCP ▸ Tools.
 Every command has its own Allow, Ask, or Off setting, defaults to Ask when no
 decision exists, and remains independent from the equivalent `fs_*` or Git
 tool permission. Allowing `cat` does not allow `grep`, and allowing `fs_read`
@@ -1800,7 +1802,7 @@ search, slice, and statistics tools.
 is available only while all four gates permit it: the saved unlock is On, raw
 host access is armed for this launch, local tools are enabled, and the global
 model-tool kill switch is Off. Chatbook rechecks those gates at invocation; a
-schema seen earlier is not authority to run later. MCP ▸ Tools keeps a stable
+schema seen earlier is not authority to run later. Settings ▸ Tools & MCP ▸ Tools keeps a stable
 policy row visible as Locked, Unlocked/not armed, or Armed so the feature can be
 found without implying that it is currently authorized.
 
@@ -2144,7 +2146,7 @@ save keeps asking even if you set it to Allow, and its card offers only
 save asks again. The two read tools use your
 normal permission level (Ask by default, so each read also shows a card); to
 stop that, set `character_search` and `character_get` to **Allow** in
-**MCP ▸ Permissions** (local tools group).
+**Settings ▸ Tools & MCP ▸ Permissions** (local tools group).
 
 **Avatars.** The assistant can generate an avatar with your configured Image
 Generation backend (the card notes that paid backends may cost money), use an
@@ -2163,7 +2165,7 @@ that version with your edits") so the Console's change is never overwritten
 silently.
 
 **Turning them off.** The tools are gated by `character_tools_enabled` under
-`[tools]` (default on). The switch is also in the MCP hub: Servers ▸ built-in
+`[tools]` (default on). The switch is also in Settings ▸ Tools & MCP: Servers ▸ built-in
 source ▸ Tool gates ▸ **Character cards (character_\*)**.
 
 ### Chat creation tools (fork_chat / new_chat)
@@ -2268,7 +2270,7 @@ before you allow, and every refusal uses the routing error vocabulary
 
 ### MCP tools
 
-Servers you configure on the [MCP screen](../mcp.md) surface in Console as
+Servers you configure in [Settings ▸ Tools & MCP](../mcp.md) surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
@@ -2288,9 +2290,9 @@ offered; checking each call it receives remains the server's job.
 Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
 agent tools, not tools supplied by an external MCP server. They are registered
-by default. Configure their registration control in **MCP → Tools → Local
-workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
-Permissions. Console file authority comes from the Chat's private scratch plus
+by default. Configure their registration control in **Settings → Tools & MCP →
+Tools → Local workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for
+each tool in its Permissions mode. Console file authority comes from the Chat's private scratch plus
 explicit Workspace bindings, not a global confinement-directory field.
 `[mcp] expose_local_tools` is only for external MCP clients and does not enable
 these tools in Console.
@@ -2322,9 +2324,9 @@ call's source label. Invalid choices fail before searching, and backend
 failures do not automatically switch providers. Web Search shows local setup
 requirements separately from its explicit network test. **Configure backend**
 lets you prepare another provider without changing the shared default.
-by default. Configure the master switch and confinement directory in **MCP →
-Tools → Local workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each
-tool in MCP Permissions. Master/root changes apply to the next Console agent
+by default. Configure the master switch and confinement directory in **Settings →
+Tools & MCP → Tools → Local workspace, web, and Watchlists tools**, then choose Allow, Ask, or
+Off for each tool in its Permissions mode. Master/root changes apply to the next Console agent
 run. `[mcp] expose_local_tools` is only for external MCP clients and does not
 enable these tools in Console.
 
@@ -2762,9 +2764,9 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   skips its off-thread recompute worker entirely. No Settings UI switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
-- [MCP](../mcp.md) — servers, tools, and permissions.
+- [Settings ▸ Tools & MCP](../mcp.md) — servers, tools, and permissions.
 - [Console runs continue during navigation](../index.md#console-runs-continue-during-navigation)
-- [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
+- [Settings ▸ Tools & MCP](../mcp.md) 🚧 — servers, tools, and permissions.
 - [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped)
   — what leaving Console does to runs and approvals.
 - [Console](../console.md) — the screen itself.
@@ -2789,10 +2791,10 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   model ran, so the reply fails the same way on every model. Choosing another
   model will not help. What the message suggests depends on the tool:
   - A name starting `mcp__` is a tool from an MCP server: turn that server
-    off on the [MCP screen](../mcp.md), then send again.
+    off in [Settings ▸ Tools & MCP](../mcp.md), then send again.
   - Any other name is one of Chatbook's own tools, so the rejection is a
-    Chatbook bug; please report it. If the tool's group has a switch on the
-    MCP screen (for built-in local tools, **Local workspace, web, and
+    Chatbook bug; please report it. If the tool's group has a switch in
+    Settings ▸ Tools & MCP (for built-in local tools, **Local workspace, web, and
     Watchlists tools**), turning it off lets you send meanwhile.
   - If the provider blames a tool without naming it, the message says "one
     of the tool definitions sent with this request" and that choosing

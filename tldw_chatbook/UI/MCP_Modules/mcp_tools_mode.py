@@ -663,7 +663,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                 "cache_refresh": "Root saved to file. Restart to refresh live settings.",
                 "invalid": "Root not saved: choose an existing directory. Your edits are kept.",
                 "failed": "Root save failed. Your edits are kept; choose Save root to retry.",
-                "changed": "Configuration changed. Root not saved; reopen MCP before retrying.",
+                "changed": "Configuration changed. Root not saved; reopen Tools & MCP before retrying.",
             }[result.phase]
             same_origin = state.request.draft_identity[0] is self._workspace_root_origin
             if result.phase in {"failed", "invalid"} and not same_origin:

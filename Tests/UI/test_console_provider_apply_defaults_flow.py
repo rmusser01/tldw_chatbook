@@ -2501,7 +2501,6 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             tuple(screen._provider_endpoint_suppress_queue),
             tuple(screen._provider_credential_env_var_suppress_queue),
             tuple(screen._provider_api_key_suppress_queue),
-            tuple(screen._provider_context_window_suppress_queue),
         )
 
         def presentation() -> dict[str, object]:
@@ -2644,7 +2643,6 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             tuple(screen._provider_endpoint_suppress_queue),
             tuple(screen._provider_credential_env_var_suppress_queue),
             tuple(screen._provider_api_key_suppress_queue),
-            tuple(screen._provider_context_window_suppress_queue),
         ) == suppression_before
         assert screen.query_one("#settings-providers-models-card").disabled is False
         assert target.api_url not in str(screen._provider_draft().values)

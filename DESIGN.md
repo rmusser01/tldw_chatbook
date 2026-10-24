@@ -297,7 +297,7 @@ fields (task-1586):
 - **Persistence badge:** the State bar leads with the category's save
   model in the same position everywhere ("Draft — save with s" /
   "Applies immediately" / "Auto-saved" / "Managed in editor" /
-  "Per-item Save/Reset" / "Validate, then Save" / "Read-only here") —
+  "Per-item Save/Reset" / "Validate, then Save" / "Read-only") —
   five save models coexist on the Settings screen, and the badge is what
   keeps their differing footer keys from reading as inconsistency
   (task-1717). Unsaved edits keep the badge and add the unsaved count
