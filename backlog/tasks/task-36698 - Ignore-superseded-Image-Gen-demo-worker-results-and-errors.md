@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 20:32
+updated_date: 2026-10-24 20:59
 ---
 
 ## Description
@@ -68,4 +68,5 @@ Image Gen demo success and error callbacks now carry the originating actual Work
 Verification:10 new real palette/Generate/worker/provider/decode controls plus2 unchanged decode/apply controls pass, with all10 private children clean. Six preimplementation failures establish stale provider completion, queued callback and explicit-cancel success/error defects. The parent13-case selection has12passes/1existing legacy profile-setup failure, not all13green. Its unchanged real-host body passes separately in an untracked private-profile diagnostic. Root verified actual XMLs and5final hashes; reviewer inspected all37 historical receipts. Ruff/format/whitespace pass. No full suite, optional skips or real provider API.
 
 Superpowers task review approved with no blocking findings. All10 new exact cases are registered in required UI gate (floor839). Overall hosted qualification remains pending. ADR required:no; existing ADR-176/033 preserve demo/media-core ownership. Updated Docs/Architecture/media-generation.md and implementation plan. Source/tests:UI/Screens/image_gen_demo_screen.py and Tests/UI/test_image_gen_demo_request_lifetime.py. Existing dependency warnings and direct legacy profile fixture limitation remain explicit.
+Final whole-branch review follow-up: native removal marks the screen pruning before attachment loss or Worker cancellation. The shared publication guard now rejects that interval. Two actual palette/Generate/provider/Worker/native-Unmount controls reproduce unwanted success/error status writes before the guard and pass afterward; no application crash is claimed. Final selected run has 6 parent passes and 6 clean private children, zero failures/errors/skips (72.279s), including both ordinary serial outcomes and two unrelated Chunking positive controls. This task now contributes 12 exact UI cases; overall census floor843 with 81 new UI and20 parser cases. The four final review regressions are registered without shard/timeout/allowance changes. One scoped final re-review and hosted qualification remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

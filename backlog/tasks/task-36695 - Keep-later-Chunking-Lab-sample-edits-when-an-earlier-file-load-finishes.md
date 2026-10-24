@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 19:41
+updated_date: 2026-10-24 20:59
 ---
 
 ## Description
@@ -68,4 +68,5 @@ Sample file and explicit-excerpt reads now carry screen/session/sample/editor ap
 Verification: all20 new mounted regressions passed with20 clean private children; six strengthened validation/SQLite reopen cases and three unchanged legacy UI bodies also passed with clean children. Root verified actual XMLs and final hashes. All20 exact selectors are registered in the required UI gate (floor810); eight split-census checks and census validation pass. Superpowers task review approved with no Critical/Important findings. Final hosted qualification remains pending. The original legacy batch is not green (profile-fixture setup drift and two Windows-overlong IDs); diagnostic67 parser/recovery checks passed, with eight original UI setup errors. Existing E721 exact-type check and dependency warnings remain attributed, without guard changes or broad suite claims.
 
 ADR required: no; existing ADR-118 and ADR-033 govern unchanged canonical ownership, file validation and recovery. Updated Docs/Architecture/rag.md, UI census/ratchet and the implementation plan. Source/tests: UI/Screens/chunking_lab_screen.py, UI/Chunking_Lab_Modules/sample_region.py and Tests/UI/test_chunking_lab_sample_import_drafts.py.
+Final whole-branch review follow-up: two additional file/excerpt controls hold the actual read while a valid Maximum size recipe edit is accepted canonically. The selected sample still loads with exact provenance and the complete recipe draft remains intact. No Chunking source change was needed. Together with two native Image Gen pruning regressions and two serial controls, the focused final-fix run has 6 parent passes and 6 clean private children, zero failures/errors/skips (72.279s). This task now contributes 22 exact UI cases to the overall floor843; original20-case evidence remains separately recorded. One scoped final re-review and hosted qualification remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
