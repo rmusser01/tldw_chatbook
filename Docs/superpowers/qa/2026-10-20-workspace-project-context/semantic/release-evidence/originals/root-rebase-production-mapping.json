@@ -1,0 +1,140 @@
+{
+  "kind": "controller-generated historical Git-blob comparison, not an original implementer report",
+  "generated_utc": "2026-10-24T03:28:16.185491+00:00",
+  "old_base": "2070d9453bcf4f2cacb0b007cff5a41861aee188",
+  "old_head": "85f6c715d1b879bf434ed463258bea920918777f",
+  "rebased_base": "5b5920b8e2ba223792ea84aee1366a7cd8fdd4f0",
+  "rebased_head": "a2b56b98773e7edfe9da82f2bb973d135860c7b2",
+  "current_head": "d0124ba2d1630fa8b04eb3369b4abb7da8d9e9aa",
+  "production_files": [
+    {
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "old_sha256": "5235b917f4270d01633007e806b559c8bb1b794e10d951eb7c94c357819d91a7",
+      "rebased_sha256": "5235b917f4270d01633007e806b559c8bb1b794e10d951eb7c94c357819d91a7",
+      "current_sha256": "24afb4e42562dd82269da797757b7f599205102095b2bf7d17125c9141bb3bdd",
+      "old_equals_rebased": true,
+      "rebased_equals_current": false
+    },
+    {
+      "path": "tldw_chatbook/DB/migrations/workspace_project_index_004.sql",
+      "old_sha256": "c4eabab31410fe4a554e200857f00ce002778345ce34b2be2eb90dd585ca0993",
+      "rebased_sha256": "c4eabab31410fe4a554e200857f00ce002778345ce34b2be2eb90dd585ca0993",
+      "current_sha256": "c4eabab31410fe4a554e200857f00ce002778345ce34b2be2eb90dd585ca0993",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/DB/private_sqlite.py",
+      "old_sha256": "f4efa79963dbdcd645dec20a55ad5bba71c5b13633e66ebadf961832a4388e53",
+      "rebased_sha256": "f4efa79963dbdcd645dec20a55ad5bba71c5b13633e66ebadf961832a4388e53",
+      "current_sha256": "f4efa79963dbdcd645dec20a55ad5bba71c5b13633e66ebadf961832a4388e53",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "old_sha256": "b0626abbabeb74a6207c67f593b3ca4f4c9c12e73591559a32fdc98d81d1db73",
+      "rebased_sha256": "b0626abbabeb74a6207c67f593b3ca4f4c9c12e73591559a32fdc98d81d1db73",
+      "current_sha256": "b0626abbabeb74a6207c67f593b3ca4f4c9c12e73591559a32fdc98d81d1db73",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/activation.py",
+      "old_sha256": "61f2c6037ec0dd63276d45cbb74fff353c3feb96c3ac4738590516b97ab3cc88",
+      "rebased_sha256": "61f2c6037ec0dd63276d45cbb74fff353c3feb96c3ac4738590516b97ab3cc88",
+      "current_sha256": "61f2c6037ec0dd63276d45cbb74fff353c3feb96c3ac4738590516b97ab3cc88",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/model_recovery.py",
+      "old_sha256": "8b9b543b3e6601cbadcf1659ff431f77de5919cd2a403e59847b35f53da3d383",
+      "rebased_sha256": "8b9b543b3e6601cbadcf1659ff431f77de5919cd2a403e59847b35f53da3d383",
+      "current_sha256": "8b9b543b3e6601cbadcf1659ff431f77de5919cd2a403e59847b35f53da3d383",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py",
+      "old_sha256": "b0051e29788563a00022e21a89f06fc23c75e1685489a854a666cad30d4a4194",
+      "rebased_sha256": "b0051e29788563a00022e21a89f06fc23c75e1685489a854a666cad30d4a4194",
+      "current_sha256": "b0051e29788563a00022e21a89f06fc23c75e1685489a854a666cad30d4a4194",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "old_sha256": "960d959be0982d1eaf7f97127873b9694596a505029451b3f91524ece940d4ec",
+      "rebased_sha256": "960d959be0982d1eaf7f97127873b9694596a505029451b3f91524ece940d4ec",
+      "current_sha256": "960d959be0982d1eaf7f97127873b9694596a505029451b3f91524ece940d4ec",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+      "old_sha256": "72ae6a9b827b74e161db9637033b1fa98eb4ce1229734e74e16c40f54e1a5f07",
+      "rebased_sha256": "72ae6a9b827b74e161db9637033b1fa98eb4ce1229734e74e16c40f54e1a5f07",
+      "current_sha256": "72ae6a9b827b74e161db9637033b1fa98eb4ce1229734e74e16c40f54e1a5f07",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/allocation.py",
+      "old_sha256": "a509dd4c11f452ac4b12a4c92da862e73dc7a22849651e520088ccf6b400af22",
+      "rebased_sha256": "a509dd4c11f452ac4b12a4c92da862e73dc7a22849651e520088ccf6b400af22",
+      "current_sha256": "a509dd4c11f452ac4b12a4c92da862e73dc7a22849651e520088ccf6b400af22",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "old_sha256": "ffc2064eab5026b477bb7277d64039e0f36fe7d6444115b15c296d3361ce056a",
+      "rebased_sha256": "ffc2064eab5026b477bb7277d64039e0f36fe7d6444115b15c296d3361ce056a",
+      "current_sha256": "ffc2064eab5026b477bb7277d64039e0f36fe7d6444115b15c296d3361ce056a",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/models.py",
+      "old_sha256": "8b324fb31f9748485619ad4d4b66f3f7a9386be47c61bc49c2153a7a93c5008d",
+      "rebased_sha256": "8b324fb31f9748485619ad4d4b66f3f7a9386be47c61bc49c2153a7a93c5008d",
+      "current_sha256": "8b324fb31f9748485619ad4d4b66f3f7a9386be47c61bc49c2153a7a93c5008d",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py",
+      "old_sha256": "9d36f80209cef9812bd2083dc85bd2158707f3ba65237d1eeaea2d850f6bdc82",
+      "rebased_sha256": "9d36f80209cef9812bd2083dc85bd2158707f3ba65237d1eeaea2d850f6bdc82",
+      "current_sha256": "9d36f80209cef9812bd2083dc85bd2158707f3ba65237d1eeaea2d850f6bdc82",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/semantic.py",
+      "old_sha256": "9d70f132606b183b62bd509c4035deea056abf021ec492157e77a2af2799ae16",
+      "rebased_sha256": "9d70f132606b183b62bd509c4035deea056abf021ec492157e77a2af2799ae16",
+      "current_sha256": "9d70f132606b183b62bd509c4035deea056abf021ec492157e77a2af2799ae16",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "old_sha256": "f47325873e55a3942705d964b31ceebc992fdde5c96cfefe9891263523c59707",
+      "rebased_sha256": "f47325873e55a3942705d964b31ceebc992fdde5c96cfefe9891263523c59707",
+      "current_sha256": "f47325873e55a3942705d964b31ceebc992fdde5c96cfefe9891263523c59707",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "old_sha256": "0e847f9b5319205f9e4c1f748e99aa2a17600ba1384ca79258a9242d3c2c29eb",
+      "rebased_sha256": "0e847f9b5319205f9e4c1f748e99aa2a17600ba1384ca79258a9242d3c2c29eb",
+      "current_sha256": "0e847f9b5319205f9e4c1f748e99aa2a17600ba1384ca79258a9242d3c2c29eb",
+      "old_equals_rebased": true,
+      "rebased_equals_current": true
+    }
+  ],
+  "current_difference_limit": "Only later d012 Ready coverage read projection differs from a2 production; its focused tests and independent review are separate."
+}

@@ -1,5 +1,7 @@
 # Task 4 semantic consent and qualification evidence
 
+Current local release evidence is in [release-evidence](release-evidence/README.md). It retains the final integrated local checks, round 3 fixes, original adverse scale/continuation attempts and positive continuation 02. The tables below describe earlier historical snapshots; the release record supersedes their pending local-qualification statements. Hosted AC6 is still queued/unqualified in the retained controller snapshot.
+
 The [receipt manifest](receipt-manifest.json) records SHA-256 and byte length for 271 copied Task 4 receipts in [receipts](receipts/). The large write-stage diagnostic retains its original stdout and stderr losslessly in one verified ZIP; its redundant combined text copy remains private. The [initial source snapshot](source-snapshot.json) and [fix source snapshot](fix-source-snapshot.json) identify the respective code/test/workflow states. The original private receipts remain in the isolated task worktree. This tracked set contains no model weights, temporary profile, or SQLite cache. Earlier authority, allocation, keyword scale, and actual producer evidence remains in the sibling [guidance](../guidance/) and [keyword](../keyword/) QA records and the Task 2/3 implementation reports.
 
 | Boundary | Retained receipt | Result and limit |

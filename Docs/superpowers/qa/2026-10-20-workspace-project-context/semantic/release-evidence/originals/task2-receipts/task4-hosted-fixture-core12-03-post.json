@@ -1,0 +1,57 @@
+{
+  "parent_xml": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task2-receipts\\task4-hosted-fixture-core12-03-parent.xml",
+  "hashes": [
+    {
+      "sha256": "28918A0B5BAE7EE5D98EC47D0DBBC1515A28D80A35F4041CD0EDF6AD4C27737D",
+      "path": ".github/workflows/derived-artifacts.yml"
+    },
+    {
+      "sha256": "1877D76C77D6E08A3F6EE8ED860A8AB6D72B602E1804802660CB15B1EEA80206",
+      "path": "Tests/Agents/test_project_index_tool.py"
+    },
+    {
+      "sha256": "7A5CEB4F12D479F0FBFCBEE30E8B52EB09F97E030D600EF32229D160B0F32B6C",
+      "path": "Tests/DB/test_project_semantic_schema.py"
+    },
+    {
+      "sha256": "93098339931F800071A00CAC974DBA66CEBD0E7371D894151FE7FF37B391A1BD",
+      "path": "Tests/RAG/test_project_projection_scope.py"
+    },
+    {
+      "sha256": "0F7D60FB903FB05A94DC61941CD9BAFE93D961AC21B1292D08F1AF694C30E51A",
+      "path": "Tests/UI/test_project_semantic_consent.py"
+    },
+    {
+      "sha256": "B71EBC253990E9DB4FE3F1F85A07BA81E41C9ABF03A96DED197079430AAA7893",
+      "path": "Tests/Workspaces/test_project_index_allocation.py"
+    },
+    {
+      "sha256": "05759553BB79E72FEEF748C8A0C7CAD5A8A694FEEAB6BE32FB660D3F822385CD",
+      "path": "Tests/Workspaces/test_project_index_service.py"
+    },
+    {
+      "sha256": "FB8F4FF48B5A658C0A1309FBD221BCEB13FEC5B838D43986D8730ADB69C055D2",
+      "path": "Tests/Workspaces/test_project_semantic_generations.py"
+    },
+    {
+      "sha256": "FE9121B5784963B96FAB7B8595E5C7277B1BDFA59D74783AEFA752313F82517E",
+      "path": "Tests/Workspaces/test_project_semantic_search.py"
+    },
+    {
+      "sha256": "15B2933F7847C146A59C669F02B1C5D1B9C3DCE2A6D81AB60A3CCD126C0C81F3",
+      "path": "Tests/Workspaces/test_project_semantic_settings.py"
+    },
+    {
+      "sha256": "A58BCA1CA010102415178CA5F8FF17BBCDD169283734CBCC4B1C8B0CE5710983",
+      "path": "tldw_chatbook/Utils/private_paths.py"
+    },
+    {
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C",
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py"
+    }
+  ],
+  "run": "task4-hosted-fixture-core12-03",
+  "parent_log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task2-receipts\\task4-hosted-fixture-core12-03-parent.log",
+  "exit_code": 0,
+  "source_unchanged": true
+}

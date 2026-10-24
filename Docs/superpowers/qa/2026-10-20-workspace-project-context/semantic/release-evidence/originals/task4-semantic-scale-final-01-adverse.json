@@ -1,0 +1,9 @@
+{
+  "outcome": "adverse_incomplete",
+  "error_class": "AssertionError",
+  "error_location": "task4_semantic_scale_final.py:486:qualify_shape",
+  "network_attempts": 0,
+  "shape_reports_present": [
+    "nested"
+  ]
+}

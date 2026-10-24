@@ -1,0 +1,747 @@
+{
+  "head": "a2b56b98773e7edfe9da82f2bb973d135860c7b2",
+  "selector": "Tests/Chat/test_console_workspace_folder_note_contract.py::test_enabled_index_preserves_saved_library_policy_and_scope",
+  "run": "task4-final-console4-01",
+  "hashes": [
+    {
+      "sha256": "28918A0B5BAE7EE5D98EC47D0DBBC1515A28D80A35F4041CD0EDF6AD4C27737D",
+      "path": ".github/workflows/derived-artifacts.yml"
+    },
+    {
+      "sha256": "29DBC66B434D6B02AB5524FEE91040E205C2704677037FEBBE755F873CDA1E44",
+      "path": ".github/workflows/perf-guard.yml"
+    },
+    {
+      "sha256": "0E41BE43BC55EEE244BA0E13D8290DDEEEC57CDD4D9A5FB6D75DFE7DE6041C36",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-qualified-targeted.ps1"
+    },
+    {
+      "sha256": "05C624A35DA25730BDF7E037C083E6A8C78BEE28C32DFE4F04B7C7A5365ADA2A",
+      "path": "scripts/check_ui_pr_gate_census.py"
+    },
+    {
+      "sha256": "1E8810238B32FDE7C0F9779C0851339E6CBB05A5D600F647643326B64608C0DF",
+      "path": "scripts/textual_wait_push_census.tsv"
+    },
+    {
+      "sha256": "1A5F851057DD88B40EE1722E155235A117377DEE15BBE5C195063E8F5290C5C9",
+      "path": "scripts/ui_pr_gate_census.txt"
+    },
+    {
+      "sha256": "1877D76C77D6E08A3F6EE8ED860A8AB6D72B602E1804802660CB15B1EEA80206",
+      "path": "Tests/Agents/test_project_index_tool.py"
+    },
+    {
+      "sha256": "B16898AEEFFA6A3A770B610DE4681A297DAFD89E8F40451D0A5293EEA725F3AD",
+      "path": "Tests/Architecture/test_library_media_wiring.py"
+    },
+    {
+      "sha256": "4DC57826A473692CE61721DAF5D8E756C671BFBFEC654B40C700338737FDFBB0",
+      "path": "Tests/Architecture/test_library_modules_size_ratchet.py"
+    },
+    {
+      "sha256": "5178224EA96B143D23A449F5640B67A9C904C26A5E02CAE4A962994644768E7B",
+      "path": "Tests/Architecture/test_library_notes_wiring.py"
+    },
+    {
+      "sha256": "3EEEBCB666589BD15DE52B2526C94E41B848E0D992821348CACC6778E95F2557",
+      "path": "Tests/Architecture/test_module_size_ratchet.py"
+    },
+    {
+      "sha256": "AA6AF1845248D6C2104B64EF8DE953B082F111AE566DF75B41CFD1576462D15E",
+      "path": "Tests/Architecture/test_screen_size_ratchet.py"
+    },
+    {
+      "sha256": "E1C268839718C0F975CBB37AE46CABF217056017DE9BEDCA4E8BFE72F994DFF1",
+      "path": "Tests/Backup_Recovery/test_activation_local_embedding.py"
+    },
+    {
+      "sha256": "DAD178D1F191DB3D5A2F171E33538DB149240D6311F797413459C08F7409B182",
+      "path": "Tests/Backup_Recovery/test_activation_rag.py"
+    },
+    {
+      "sha256": "A607A7E4C8AC7DCBCD7609F8850C9ED4D542203007212B669B75D15140252E16",
+      "path": "Tests/Backup_Recovery/test_character_completed_display_memo.py"
+    },
+    {
+      "sha256": "B6FB121740A81A8543B61B4DAB0F8EB1F8DD338776EE7F5B0B69A927E3E935D7",
+      "path": "Tests/Backup_Recovery/test_character_known_conversation_refresh.py"
+    },
+    {
+      "sha256": "2289031E76AA58F52EFC86FC41CD719ABC7A6E3822B8228F4F8C9DD738F34128",
+      "path": "Tests/Backup_Recovery/test_character_publication_receipt_native.py"
+    },
+    {
+      "sha256": "38E1A68D2E8F44A6F76FA2876D6387A7FE76972922BB094A31AD0A7789A81CEC",
+      "path": "Tests/Backup_Recovery/test_character_refresh_batch_entry_controls.py"
+    },
+    {
+      "sha256": "D4E589FA7A62E1121E4E629B80BACEB40948A58987486334EF7987DCB1497AC1",
+      "path": "Tests/Backup_Recovery/test_character_refresh_batch_source_controls.py"
+    },
+    {
+      "sha256": "F5AF97F9B1CE51D84E900D15B8686CC8F182C51C5575B4F6FF95889D24962183",
+      "path": "Tests/Backup_Recovery/test_character_refresh_finite_batch.py"
+    },
+    {
+      "sha256": "55A4EF13A922C64A82563FAAFAC6318A18024AFB554ADD3E390E638BA2535233",
+      "path": "Tests/Backup_Recovery/test_character_scope_check_one_helper.py"
+    },
+    {
+      "sha256": "47378B56ADDE46CE475B7A68C6E77156A9F7A8FAAE265C4620BC315B3CF3892C",
+      "path": "Tests/Backup_Recovery/test_console_config_sync_lifetime.py"
+    },
+    {
+      "sha256": "A4B11FBDBDAE5CC80675D83C15E10C7538B4C10DD81D59A0377CDE694DAD02C3",
+      "path": "Tests/Backup_Recovery/test_model_closure_native.py"
+    },
+    {
+      "sha256": "482F4407D71DBA9FC8B6F0BE856A29039CAD7909468654C5FCCD0EA2CED9284A",
+      "path": "Tests/Backup_Recovery/test_project_semantic_lifetime.py"
+    },
+    {
+      "sha256": "B00BB20C5C5269AB70F1BF2EF2BA52E7B2D434F74E8BB6EB7534FCF96B384E4A",
+      "path": "Tests/Chat/test_console_committed_send_recovery.py"
+    },
+    {
+      "sha256": "F8CB0BF66DF6D68C05584719FF31243964FD42D8870565BDAF27459B7D5B6DEA",
+      "path": "Tests/Chat/test_console_library_cold_start.py"
+    },
+    {
+      "sha256": "BF99ED64D93161C2FF9A63320E71A97C02A74C270D0F7F2C854E293FE55981D4",
+      "path": "Tests/Chat/test_console_session_workspace_roots.py"
+    },
+    {
+      "sha256": "79B823E9EA187F2F3D56E392F32CADD22BF7CFE1607CE4165F61B5644ED500C0",
+      "path": "Tests/Chat/test_console_unsent_turn.py"
+    },
+    {
+      "sha256": "62B4C490D74368C81328F8D13A528748307F5235E56DFBFE5A51D8901D6F8B8C",
+      "path": "Tests/Chat/test_console_workspace_folder_note_contract.py"
+    },
+    {
+      "sha256": "810CB0D1C5A4F7E0B52B70E74924E3DA794C4CEC2092EBBD0C207C9F0D556F77",
+      "path": "Tests/Chatbooks/test_chatbook_creator.py"
+    },
+    {
+      "sha256": "9446D072EB8AA9F30D21442F7C30AE586E956B2FA58EF0DFDEBD3BE267FA2EA6",
+      "path": "Tests/Chatbooks/test_chatbook_keywords_round_trip.py"
+    },
+    {
+      "sha256": "77CCA73C686EA33CD60440369578B2678E6759FAA249031982C15FF8D4FB3886",
+      "path": "Tests/CI/test_ci_queue_pressure_contract.py"
+    },
+    {
+      "sha256": "7641B0C5592C18125DDA71EC1CE45F3D4340F2D602EFFEC91F7AC5DE0B1241AA",
+      "path": "Tests/DB/test_private_sqlite_inventory.py"
+    },
+    {
+      "sha256": "7A5CEB4F12D479F0FBFCBEE30E8B52EB09F97E030D600EF32229D160B0F32B6C",
+      "path": "Tests/DB/test_project_semantic_schema.py"
+    },
+    {
+      "sha256": "4B94255BF2559DB2B1078199F56F09BADF216FBE65AC6D6D5EC0F67FE598B9E3",
+      "path": "Tests/DB/test_workspace_project_index_db.py"
+    },
+    {
+      "sha256": "749C745EA992F17082956BC101BD25FE4120C36A100FE11570A5EDC9BCDC4DBE",
+      "path": "Tests/Library/test_library_export_roundtrip.py"
+    },
+    {
+      "sha256": "CCB0CE3519AB2828FC9DED560BAFA840DEAECEEDBF12FFBA691DB73A2785C2C0",
+      "path": "Tests/Library/test_library_export_state.py"
+    },
+    {
+      "sha256": "C450C1BF55890C6B329B9E074AC106293CB10B4651432363FDA73C3A6FFC4183",
+      "path": "Tests/Library/test_library_media_reader_state.py"
+    },
+    {
+      "sha256": "ACF8A2AEC9C8AF380F1B53DDB1960FC1A53AD3AD27D4F2AF3BF73F6DC50E0401",
+      "path": "Tests/Library/test_library_media_state.py"
+    },
+    {
+      "sha256": "A9A26C66F5AE5BC39A16DBD20992D0A4AB1C723B00ACE61D9646F646B3159E0C",
+      "path": "Tests/Library/test_library_media_viewer_state.py"
+    },
+    {
+      "sha256": "DE81ECF51ECEE994870919E90C99D20F0A23FF89C0CF447485341338147DEE29",
+      "path": "Tests/Library/test_library_note_autosave_max_wait.py"
+    },
+    {
+      "sha256": "B258D10E7A230E07557A50787F9B1605EDFAA25637FA2F817E3D19B5753DDEC6",
+      "path": "Tests/Library/test_library_note_field_tidy_properties.py"
+    },
+    {
+      "sha256": "688CC96380217AE29D30635DEA63EC255B39E16DCCA0AC3B5A91F1ECA67D59EC",
+      "path": "Tests/Library/test_library_note_field_tidy.py"
+    },
+    {
+      "sha256": "0FBDF8BA5BF7A934AF306A1207012C12091990BB228FBFC026BA3250245760B8",
+      "path": "Tests/Performance/test_console_tab_sync_source_ownership.py"
+    },
+    {
+      "sha256": "6A55F358653AFD2ED4616EE5CA06FA85695627F3F08C094BC56998250FA98707",
+      "path": "Tests/Performance/test_gc_idle_refreeze.py"
+    },
+    {
+      "sha256": "0517CEE0B588B6994DE5F92B2FEEF545687295269AC5BF5A9D7FF2DADCD8C853",
+      "path": "Tests/Performance/test_textual_css_fastpath.py"
+    },
+    {
+      "sha256": "939FCA0D9ABBD57A397F33D38B0187B674EAF696123E919CD067D0941B999E2A",
+      "path": "Tests/ProductionApp/test_config_profile_isolation.py"
+    },
+    {
+      "sha256": "19B79EE06F36D17455DFDFA139E678EF9CBD90396246F54CD7B26E9377D7EB2D",
+      "path": "Tests/RAG/test_embeddings_lib_logging.py"
+    },
+    {
+      "sha256": "7548C5A31F1DB238C43D3DCE03C4EAE039EF9A4328E2B919C01E3E72EFE018AB",
+      "path": "Tests/RAG/test_hf_embedding_device_precision.py"
+    },
+    {
+      "sha256": "53E85E5273C4E01491FC57A6E690907333AD16BA72DB4C83D0E4626B9362E6F5",
+      "path": "Tests/RAG/test_project_offline_factory.py"
+    },
+    {
+      "sha256": "93098339931F800071A00CAC974DBA66CEBD0E7371D894151FE7FF37B391A1BD",
+      "path": "Tests/RAG/test_project_projection_scope.py"
+    },
+    {
+      "sha256": "C98E54CF3757C1052C963E74E6A436E50C4E1075E1606F76C89F4535E7122698",
+      "path": "Tests/test_config_persistence_owner.py"
+    },
+    {
+      "sha256": "05C413D64638A6A5909F2747BF93E55ABD62ED2CC66F71D0E30DBD54CF9E2B21",
+      "path": "Tests/UI/Library_Modules/test_library_pending_work_veto_notice.py"
+    },
+    {
+      "sha256": "528EC7BE13EF36EFBA74B8299382209EB2659AD69C50424020FA68880CB4859C",
+      "path": "Tests/UI/test_audiobook_import_source_integrity.py"
+    },
+    {
+      "sha256": "75585E042B4E77DCB5DD1C57A331ED351C43BB28F85B377EDF64D8A70F2E838C",
+      "path": "Tests/UI/test_automation_definition_pending_save_drafts.py"
+    },
+    {
+      "sha256": "1207FE606149494611A1CA7A43121B996BCD49EC182095AF8B03826164284E56",
+      "path": "Tests/UI/test_change_review_opener_roots.py"
+    },
+    {
+      "sha256": "CAD725EAA62079F2872EA10E6656D1B71014A2ED1FF23AE8829EE9FE3F266A4C",
+      "path": "Tests/UI/test_chatbooks_screen_server_actions.py"
+    },
+    {
+      "sha256": "B0449243716DB22D18FCB071D67F1EF263487AD45E35113937812468227DBEAE",
+      "path": "Tests/UI/test_console_config_sync_cadence_inputs.py"
+    },
+    {
+      "sha256": "D48E0C8FCEAF66D1EFB91EF5422226CE5A35B349F6E3E57630D15FBAB228A371",
+      "path": "Tests/UI/test_console_config_sync_cadence.py"
+    },
+    {
+      "sha256": "6253EC1CDAAE72C6CAC61AF4AA87B400AE146CF45E1EE96E7A45C6F60AABA13D",
+      "path": "Tests/UI/test_console_controller_wiring.py"
+    },
+    {
+      "sha256": "AEEE963AFB756E1886289B706265B678C1BA718FA8A9922F2E5662A76BC3E5CD",
+      "path": "Tests/UI/test_console_environment_controller.py"
+    },
+    {
+      "sha256": "2CA1D2DA535934BC5E4852237CD1BCA84FDAD04EB0212DBEE990BA1FD3489BAB",
+      "path": "Tests/UI/test_console_environment_refresh_off_loop.py"
+    },
+    {
+      "sha256": "CCFCE00F34FC99414EC41F002196AFEE8B20B31176D32FAF115171FCC432D6E6",
+      "path": "Tests/UI/test_console_idle_heap_refreeze.py"
+    },
+    {
+      "sha256": "1EFC5D8F0D548E20729BB64D7BC215629E9AFD6464082B4BAB2C7057C7D62474",
+      "path": "Tests/UI/test_console_library_auto_outcome.py"
+    },
+    {
+      "sha256": "B2E6F7EEE48E8AB2CFBF4B50246D52D9E6031FB71CDAE48485BC0BBFA8653029",
+      "path": "Tests/UI/test_console_library_pause_recovery.py"
+    },
+    {
+      "sha256": "E4F7400A46DAE8C6DB22D6458A0F530AFB452CED369E3A5B661F274D90FBF60D",
+      "path": "Tests/UI/test_console_library_stop_received_send.py"
+    },
+    {
+      "sha256": "92528CDCEF8E5D8E97C0D2CE36A063119FA16AC2088BD4FA5AAA08DD68536C23",
+      "path": "Tests/UI/test_console_recovery_live_bindings.py"
+    },
+    {
+      "sha256": "9432CCA4DFB81C4E0623E3D5B3F2F240C3EA589B8DD1EF0546E3FACA15AFB5F5",
+      "path": "Tests/UI/test_destination_shells.py"
+    },
+    {
+      "sha256": "61A47D14D68C2A54B822E33159291BC078FC93335646233BE59AEDBEABF2770D",
+      "path": "Tests/UI/test_library_crit10_export.py"
+    },
+    {
+      "sha256": "739F9C514EB46502E996DE92C42FE94F383AEC6A14D20EA9F60EE55028A89296",
+      "path": "Tests/UI/test_library_crit9_media_reader.py"
+    },
+    {
+      "sha256": "E9D353E59E5AE336C52332236E6248AA5EDF547FD31C70F46711ED377D79CEB1",
+      "path": "Tests/UI/test_library_media_actions_target_opened_item_extended.py"
+    },
+    {
+      "sha256": "DD4EA767D10FA426EB02A3BF176B8C7BA507F49D563C12FFFB94803B90930CA3",
+      "path": "Tests/UI/test_library_media_actions_target_opened_item.py"
+    },
+    {
+      "sha256": "EED93F5C211561A65BBFE3288A3D3C11464782905F17EBFBDDF7AC83B2D37F26",
+      "path": "Tests/UI/test_library_media_editor_dirty_escape_extended.py"
+    },
+    {
+      "sha256": "E533A188A962235E203176AB502C8FC3CFFB5D94AF611E44A3B11C85DA82D03B",
+      "path": "Tests/UI/test_library_media_editor_dirty_escape_openers.py"
+    },
+    {
+      "sha256": "3BD9E304D7042D1418B20C1729F50A5A2549D7E237A36608FF0F588E55FBCB83",
+      "path": "Tests/UI/test_library_media_editor_dirty_escape.py"
+    },
+    {
+      "sha256": "AAB43BCF485C6CDD37638CBFC0A0E70A994FFC6A9631E87871EB1B23446B8B6D",
+      "path": "Tests/UI/test_library_media_reader_controls_in_list_view.py"
+    },
+    {
+      "sha256": "AD2D7303177742790EE93E5EEF9781D3D65C96A384B906E2524A264DA246591C",
+      "path": "Tests/UI/test_library_media_reader_flow.py"
+    },
+    {
+      "sha256": "D954F60D999BD16EE977846C273DD957267E585273038B95533C7079CD788F7D",
+      "path": "Tests/UI/test_library_media_trash.py"
+    },
+    {
+      "sha256": "4A2953DD8CCA82FAFA80EC34EC6460591DFD0255221748361FF26917602C63C5",
+      "path": "Tests/UI/test_library_multiselect_media.py"
+    },
+    {
+      "sha256": "E86DD879176414902A14E5411C31800C466BABF5DD292D332F3D0E2C6A7DC3FC",
+      "path": "Tests/UI/test_library_note_autosave_after_dialog_extended.py"
+    },
+    {
+      "sha256": "507756F9C061EB018021D49917EF119931EF766FB074D9E2B1B8955F57F30DB8",
+      "path": "Tests/UI/test_library_note_autosave_after_dialog.py"
+    },
+    {
+      "sha256": "137F3C16488436A021EF98D81F282859B54195CF8382A73E89288EDEBD98219F",
+      "path": "Tests/UI/test_library_note_autosave_veto_in_place_extended.py"
+    },
+    {
+      "sha256": "B2537DED09FF8B149D994B07DE774BD141D2BC60384135931F13F22A65C8B061",
+      "path": "Tests/UI/test_library_note_autosave_veto_in_place.py"
+    },
+    {
+      "sha256": "C24FFB2230B48DB543F4EFC72088AF5582DEEC64B04A3436AFF3304A03F3CF49",
+      "path": "Tests/UI/test_library_open_in_library_items_t31797.py"
+    },
+    {
+      "sha256": "C5C781B8949FBA6A89E5EFECCDE7020D676A8A5FE8188DC91D3FA82956065E4D",
+      "path": "Tests/UI/test_library_quit_guard.py"
+    },
+    {
+      "sha256": "9E7B99BBB18D2EC70D0DEB8E1C3A1B30A9C8A7DF5C982C4134F0BBDBA6860E56",
+      "path": "Tests/UI/test_library_shell.py"
+    },
+    {
+      "sha256": "0F7D60FB903FB05A94DC61941CD9BAFE93D961AC21B1292D08F1AF694C30E51A",
+      "path": "Tests/UI/test_project_semantic_consent.py"
+    },
+    {
+      "sha256": "2DB394E1CA0E0C9B46EA8D20037E0C0B60E238059C4C0A4564FEF3837D4F09A9",
+      "path": "Tests/UI/test_review_set_walker.py"
+    },
+    {
+      "sha256": "264F43BEC23FD6D8CA3ED92F9C2EAF4198DF93B322A00C3E6C3374D014AC323C",
+      "path": "Tests/UI/test_screen_navigation.py"
+    },
+    {
+      "sha256": "07B7FAFCEA885764F2673D3A98E89A5DC84952D50AD4456F896D1DA77B0DE7FE",
+      "path": "Tests/UI/test_settings_configuration_hub.py"
+    },
+    {
+      "sha256": "D9E5D832A9A7004CAF32CEC4790DBBB222A94B98E709636E8A6AB455CDF5C911",
+      "path": "Tests/UI/test_settings_context_memory_controls.py"
+    },
+    {
+      "sha256": "A71D1E9DCDA6EEECB9167D34305AAAD5EEC1E3481D3ADA2C1BFA612A5A5C92B9",
+      "path": "Tests/UI/test_settings_default_model_picker.py"
+    },
+    {
+      "sha256": "24221450109EE29C5682FA5454F0DF86DAD9B1D58B715E86F38E8CDBCEEAF5F0",
+      "path": "Tests/UI/test_settings_pending_save_drafts.py"
+    },
+    {
+      "sha256": "3308A6CDF4D3DEE3EC3AC20DCEF7DC589C469305E7C50775197514B2F3D7F6D0",
+      "path": "Tests/UI/test_settings_tools_hub.py"
+    },
+    {
+      "sha256": "73D89701E47ABB37DAA84EB55E98F527404E62C5BAD8FC3D69330361C884B3F9",
+      "path": "Tests/UI/test_study_quiz_attempt_retry.py"
+    },
+    {
+      "sha256": "6505678AA02B4DE777E1434DC64BF7386F37BAE9ADB4A58176C56AD54FCE5CD4",
+      "path": "Tests/UI/test_widget_css_consolidation.py"
+    },
+    {
+      "sha256": "D4C6F47E7B7E62D25EAFBE102D3D6BD98B1E4739359BD1E7A7DE4055C87F8FF7",
+      "path": "Tests/Widgets/Library/test_library_notes_canvas.py"
+    },
+    {
+      "sha256": "D1596900616A29A547F758ED8EE348525D59D44B2616EDD86223EA38B626C17C",
+      "path": "Tests/Workspaces/project_index_support.py"
+    },
+    {
+      "sha256": "B71EBC253990E9DB4FE3F1F85A07BA81E41C9ABF03A96DED197079430AAA7893",
+      "path": "Tests/Workspaces/test_project_index_allocation.py"
+    },
+    {
+      "sha256": "EF914A4FBC0A85D25C4A71E090A678B34E2C3858BEFF83F82E3BB127CAEF536B",
+      "path": "Tests/Workspaces/test_project_index_service.py"
+    },
+    {
+      "sha256": "4CC94F4F80CE64767A58F321148F6B25F2B7EF582CB6A4A7AB01FFCBE887C115",
+      "path": "Tests/Workspaces/test_project_semantic_app_quality.py"
+    },
+    {
+      "sha256": "FB8F4FF48B5A658C0A1309FBD221BCEB13FEC5B838D43986D8730ADB69C055D2",
+      "path": "Tests/Workspaces/test_project_semantic_generations.py"
+    },
+    {
+      "sha256": "FE9121B5784963B96FAB7B8595E5C7277B1BDFA59D74783AEFA752313F82517E",
+      "path": "Tests/Workspaces/test_project_semantic_search.py"
+    },
+    {
+      "sha256": "15B2933F7847C146A59C669F02B1C5D1B9C3DCE2A6D81AB60A3CCD126C0C81F3",
+      "path": "Tests/Workspaces/test_project_semantic_settings.py"
+    },
+    {
+      "sha256": "B7A5A910D8FF6D8C7C0965BD105E5BCDF154502516E381F761EDD1B1A9F92C4F",
+      "path": "tldw_chatbook/Backup_Recovery/storage_admission.py"
+    },
+    {
+      "sha256": "86908246083E998C61DD92F8C79D51C9F51E62848A7E761F9119C3E17076C0E2",
+      "path": "tldw_chatbook/Chat/console_chat_controller.py"
+    },
+    {
+      "sha256": "F698A5EF8F3B725B7EC504DC0AB06BA0F1D78C43CA3DE2CDDC6B14B4AEBAF594",
+      "path": "tldw_chatbook/Chat/console_environment_state.py"
+    },
+    {
+      "sha256": "66F2FBBF03EE5D3605FA0B2E1D208DBDED74A54AEED5EAA2F896338AF51B042A",
+      "path": "tldw_chatbook/Chat/console_library_preparation.py"
+    },
+    {
+      "sha256": "FB7B237D40099CCDF3E7612BCCD0DE16729125FE1000FB044A4C2A1AB457C79B",
+      "path": "tldw_chatbook/Chat/console_library_search.py"
+    },
+    {
+      "sha256": "9B8CE3A54E98F7B575D08EEA9F821E8E9B5CCFDFA8F2974C4FBDF926C4FEDBE1",
+      "path": "tldw_chatbook/Chat/console_runtime.py"
+    },
+    {
+      "sha256": "1EC24E4C9B2FEA7F853B0270611098C0B2B8406252EC44753D73F07AEA292EB3",
+      "path": "tldw_chatbook/Chat/console_turn_context.py"
+    },
+    {
+      "sha256": "F4BB8E03249DACD155333BD3D20F9775801D571135240CFBEC51F8DD046EEEC5",
+      "path": "tldw_chatbook/Chat/console_turn_preparation.py"
+    },
+    {
+      "sha256": "9237FEBBB36596F8C1E1BD9D8987FA3BFBEBF4957BF5BEB3086D930AF17236D8",
+      "path": "tldw_chatbook/Chat/console_unsent_turn.py"
+    },
+    {
+      "sha256": "8E6D4A326A12FF809C14404FE18B5505866BBED3780EA3ED1D15E7004678E100",
+      "path": "tldw_chatbook/Chat/provider_setup_persistence.py"
+    },
+    {
+      "sha256": "192C9FA9F61785A15680142005798FAD885C2DAB5619C164050E739240FED034",
+      "path": "tldw_chatbook/Chatbooks/chatbook_creator.py"
+    },
+    {
+      "sha256": "F14BDA5D62425CE7074CED1DF4DFA5F8A1928F9002B6EE33565F01C20E6A9688",
+      "path": "tldw_chatbook/Chatbooks/chatbook_importer.py"
+    },
+    {
+      "sha256": "96BE103A7A08CFF40F06BCC1D93DD7D2780E0D1EC8A1BD0CA9BFEE5936645954",
+      "path": "tldw_chatbook/Chatbooks/chatbook_models.py"
+    },
+    {
+      "sha256": "609BC2164385EC9D4B72647547F75709388096153FF7155B34864437D146B68F",
+      "path": "tldw_chatbook/config.py"
+    },
+    {
+      "sha256": "7E2C09E37D153FBBBF416480D5F817160C58CEA301CF9C5EBDC8773676E3A5B6",
+      "path": "tldw_chatbook/css/features/_library_notes_panels.tcss"
+    },
+    {
+      "sha256": "B2A6D386B97EBDDA53BD8442D995C871162379FA752A6DE9136C370C74CC2FAA",
+      "path": "tldw_chatbook/css/screen_agentic_library.tcss"
+    },
+    {
+      "sha256": "7FC3C88D9BB3DB1BC045E2700381DB340572FFDEBD66830CD7567C92B70116F2",
+      "path": "tldw_chatbook/css/widget_defaults_scoped.tcss"
+    },
+    {
+      "sha256": "CB76F8469EDAA02D8B2CEDF526DEF7D386A38AD36F19C1D2D8BF56553FFC69A5",
+      "path": "tldw_chatbook/css/widget_defaults_self.tcss"
+    },
+    {
+      "sha256": "A5396BBBDDC15A017E1AF3CE785107317E962C714BF497436ACA2F594843E67E",
+      "path": "tldw_chatbook/DB/migrations/workspace_project_index_004.sql"
+    },
+    {
+      "sha256": "F50322B7D679156935EE57F5ECEDFBF976057A6C7ADAD29805360AD3DDC61049",
+      "path": "tldw_chatbook/DB/private_sqlite.py"
+    },
+    {
+      "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B",
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py"
+    },
+    {
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23",
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
+    },
+    {
+      "sha256": "69F1AEC1DA82137E580704F950D4EFD18912ECDA07DE0AA3CA123E1EFEF7919B",
+      "path": "tldw_chatbook/Library/library_export_state.py"
+    },
+    {
+      "sha256": "F46C4E4B0B18DA71386E5B163BE8924AC4FB2E10E608A5EC43DA4C94C0695086",
+      "path": "tldw_chatbook/Library/library_local_rag_search_service.py"
+    },
+    {
+      "sha256": "941239F19ACE763051FBE6DCC0C14A0297F33EC1B26E3AD56C03FA1E31D52FE1",
+      "path": "tldw_chatbook/Library/library_media_reader_state.py"
+    },
+    {
+      "sha256": "BB5524FC2F08FD7D216920B3A28DF8CF575060243EDE3832CD4A115970B703B9",
+      "path": "tldw_chatbook/Library/library_media_state.py"
+    },
+    {
+      "sha256": "6E1879DAA0A21DDE1CB84C479E5CDC69244D00F4EBCE11BE661E515F9AADA5A1",
+      "path": "tldw_chatbook/Library/library_media_viewer_state.py"
+    },
+    {
+      "sha256": "BEDC79ED0C79F98834418DAAFE69BC66564E1203A5D7C0EA1C85A7F5D8C371AA",
+      "path": "tldw_chatbook/Library/library_note_field_tidy.py"
+    },
+    {
+      "sha256": "BF185EFAE2548444790A6013A4527A05F10C0E0AA11736F43BC7C7A9CCCA639E",
+      "path": "tldw_chatbook/RAG_Search/activation.py"
+    },
+    {
+      "sha256": "2666334F8C9414CDBB57F59BE61B24FAA9A24CAAC4682BAB982A44C635EA9430",
+      "path": "tldw_chatbook/RAG_Search/model_recovery.py"
+    },
+    {
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E",
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py"
+    },
+    {
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D",
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py"
+    },
+    {
+      "sha256": "EE46450AD172DAB72ACC3D6A4CE0AAA0FE8A1662C7F3FDABAC002AC9DF707817",
+      "path": "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
+    },
+    {
+      "sha256": "AAB2E990A90BC89716A32F1284802FFAB07949743587A2E8789FC3D212D1E00E",
+      "path": "tldw_chatbook/UI/Console_Modules/agent.py"
+    },
+    {
+      "sha256": "F9F796F1858DB3765B28BD29AF481E83EEF26C2F965744DA89A9AD8F3D6BEC2B",
+      "path": "tldw_chatbook/UI/Console_Modules/character_context.py"
+    },
+    {
+      "sha256": "2AD2E872974C4445E3006A69920A15952DE4D68E175669897DAD81D4FEBC5A0B",
+      "path": "tldw_chatbook/UI/Console_Modules/config_sync.py"
+    },
+    {
+      "sha256": "BC9D0C1EE7FCC0193E1DF5AEE461A0F2E7C0FE7C4DCA26978FD9AE7CD4389ADB",
+      "path": "tldw_chatbook/UI/Console_Modules/environment.py"
+    },
+    {
+      "sha256": "910A1267CED752B7AC947D8ABFA57F0978460F81315CAF955A028240406278B5",
+      "path": "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py"
+    },
+    {
+      "sha256": "937180A61A9E3E3420D402C926F39DCC70CCD02A92226C57632B9618651E3523",
+      "path": "tldw_chatbook/UI/Console_Modules/session.py"
+    },
+    {
+      "sha256": "37AD744EBA0F0EFED96EB9B29F01AD3B87E1D81D32AA3CEBB0280C8833E41214",
+      "path": "tldw_chatbook/UI/Console_Modules/transcript.py"
+    },
+    {
+      "sha256": "A6C14BDD4182E34CD3C9208F24928F65B63237DE3D00F92677D7D65EA9332E28",
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py"
+    },
+    {
+      "sha256": "43FC488712E2E98B181D496EE69112B28370FA7E2D0C319E1CD92A0FCFB8F60C",
+      "path": "tldw_chatbook/UI/Evals/skill_eval_detail.py"
+    },
+    {
+      "sha256": "D7D414DC02C72681D6EFC9ED99E733BF8EE05A342D309DE3703010DC820AE196",
+      "path": "tldw_chatbook/UI/Evals/skill_eval_panel.py"
+    },
+    {
+      "sha256": "68FC1A45FB796572650755CF50ACEAAE6E8AE0DCC2FF2119B89C54EA965F8504",
+      "path": "tldw_chatbook/UI/Library_Modules/canvas_sync.py"
+    },
+    {
+      "sha256": "6E6EAE7EF7402E559C0B0647BE035940F0E3B9A98D62FDBDFCA7EF31223537F0",
+      "path": "tldw_chatbook/UI/Library_Modules/library_export_controller.py"
+    },
+    {
+      "sha256": "1CEFE765DD5FF80B5F77ADE79991540BDFFB6B9B7106524F2B87C8EF1F2D21C2",
+      "path": "tldw_chatbook/UI/Library_Modules/library_inspection_admission.py"
+    },
+    {
+      "sha256": "8C969A66D373F3D24A6F8F4FB0A1CD60553EDDDEE72D6665CF1DD92F81DB19A2",
+      "path": "tldw_chatbook/UI/Library_Modules/library_media_controller.py"
+    },
+    {
+      "sha256": "420C1913DE46D2CB2129B5FF7423073C0C7B863A3029CE0B44883F454D2A4F27",
+      "path": "tldw_chatbook/UI/Library_Modules/library_media_state.py"
+    },
+    {
+      "sha256": "57FE51D4A0ECA675BB41B84270511B57E43EC24BD97CEAC0848B7B03A9F0F9FB",
+      "path": "tldw_chatbook/UI/Library_Modules/library_note_autosave.py"
+    },
+    {
+      "sha256": "37A0DBD4C097CCF2681290D77EE496F5774D7F3FE5F3503FD351EB7889F28339",
+      "path": "tldw_chatbook/UI/Library_Modules/library_notes_controller.py"
+    },
+    {
+      "sha256": "0303C46D11C2BBAC8279BD73AFAC7C88081E63BC467D0010E1DBD055830D3817",
+      "path": "tldw_chatbook/UI/Library_Modules/library_notes_state.py"
+    },
+    {
+      "sha256": "978468590026B8B231ED49475D1C269FC8BA13BE2762A9571DA6AEACE10A674E",
+      "path": "tldw_chatbook/UI/Library_Modules/library_pending_work.py"
+    },
+    {
+      "sha256": "1EA3CBB936492D38D777B328CCAAD066F1BCBE96713F27C43B887A386D77A749",
+      "path": "tldw_chatbook/UI/Library_Modules/screen_constants.py"
+    },
+    {
+      "sha256": "27628434E5B051980C91D897F42ACA30A76D76FBB2914923B9D11C93F257BA43",
+      "path": "tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py"
+    },
+    {
+      "sha256": "CBEB7D72660E6E0D22A7C378E771CFCB9A9F5BB80FBDD626E28936276005FFD3",
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py"
+    },
+    {
+      "sha256": "9C51A8BD10DEE9D1965B9701B98614CE57C3B8C2C60D2F1E63FDBD90E59F245B",
+      "path": "tldw_chatbook/UI/Screens/library_screen.py"
+    },
+    {
+      "sha256": "957A8BB74A11C9A5B940D46484799B42482FBB18EFB3B3F8A6D6930B24A2AF93",
+      "path": "tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py"
+    },
+    {
+      "sha256": "792C83F317074524B08BCB6461CAB3EDD9306B0D258508F71846ECC2629FE8FA",
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py"
+    },
+    {
+      "sha256": "3357F52B3DF9853755E849F4C4487B580A0134EA022623A9C8B0D836ED86CFBA",
+      "path": "tldw_chatbook/UI/Settings_Modules/saved_model_list.py"
+    },
+    {
+      "sha256": "769A0029D2FD766DD4464E2DB0D8BEBFB30952D4041F60D31D52B3E392890D82",
+      "path": "tldw_chatbook/UI/Settings_Modules/staged_save_ack.py"
+    },
+    {
+      "sha256": "11D29CE7D497BFBFC4C515ABF8BDE66E537A22D045A5C7F81671E8E9E85E38FA",
+      "path": "tldw_chatbook/UI/STTS_Window.py"
+    },
+    {
+      "sha256": "2D06ADFA2FCC37A0C003F6EF7C1F249E74D72C389F756AE8B91D2EEE5ADD5F49",
+      "path": "tldw_chatbook/UI/Study_Modules/quizzes_handler.py"
+    },
+    {
+      "sha256": "A9C5C27223B18135FCDD23826ADA99D821EB2FB116B4616616913733BA6D4A6D",
+      "path": "tldw_chatbook/UI/Wizards/ChatbookImportWizard.py"
+    },
+    {
+      "sha256": "CE1DEEB02A17425C3FFEB6247998EBE186BECAE8C201CB545DFA26B1B2F687F2",
+      "path": "tldw_chatbook/UI/Wizards/first_run_setup_state.py"
+    },
+    {
+      "sha256": "8CF6B803AF9F5AB8176410F7225426249213E687786D9C62E0E0431FAE43CEEF",
+      "path": "tldw_chatbook/UI/Wizards/first_run_voice_pickers.py"
+    },
+    {
+      "sha256": "49FF5E93877859EF42405C2A1264EC14B2BEFA672C9533E3EB86A79AD71F2EEF",
+      "path": "tldw_chatbook/Utils/config_encryption.py"
+    },
+    {
+      "sha256": "620A1F227ECAB049891E3BCCD5DA25A009CD6C285276535FACA4D07BCE2AEB11",
+      "path": "tldw_chatbook/Utils/text_selection_crash_guard.py"
+    },
+    {
+      "sha256": "33828E9F1366575439014696383A5F6A9E1135219903FB0122D86162A349BD19",
+      "path": "tldw_chatbook/Utils/ui_responsiveness.py"
+    },
+    {
+      "sha256": "2A92671C5711451CFF87DCC8F75F8E105A3B6A91F3A19A2B6054105D083021D1",
+      "path": "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
+    },
+    {
+      "sha256": "2D1B52A0D7EF65C2E3E6346958F18CD8C346BF25CF17DB8337FBA644966654F9",
+      "path": "tldw_chatbook/Widgets/Library/library_media_viewer.py"
+    },
+    {
+      "sha256": "458633F7F8DDDDC46D9E567A5DF162036C62D2B52645BD1BCA191E3AC389EB7B",
+      "path": "tldw_chatbook/Widgets/Library/library_notes_canvas.py"
+    },
+    {
+      "sha256": "A080FD6E1BC7D7F86D696657F5983192047E8A0DC33250CD0B09F73EAA8F3C4B",
+      "path": "tldw_chatbook/Widgets/model_search_picker.py"
+    },
+    {
+      "sha256": "A4167C0FAED46183B9C5658F30157A6F080956E222E3C6F26913AB38AD32461B",
+      "path": "tldw_chatbook/Widgets/session_summary_dialog.py"
+    },
+    {
+      "sha256": "4B573D07B475A9CCD64E6F7FA5CFFFDFFCC691F367C9A41396DCB1AD0B2B06C8",
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py"
+    },
+    {
+      "sha256": "B7E5382376A086F056CA85F5BE36B11048A87EE647A3AC129067CC88C57AF30A",
+      "path": "tldw_chatbook/Workspaces/project_index/allocation.py"
+    },
+    {
+      "sha256": "A1A86A8C91C7707CB906E9BF4337141198A0D3DB0A56D49EA9D16394AD01E965",
+      "path": "tldw_chatbook/Workspaces/project_index/lifetime.py"
+    },
+    {
+      "sha256": "191D6DE9468EE7A0885B1403598B5602DBC0EE5B54349A36B443230F4D89F49F",
+      "path": "tldw_chatbook/Workspaces/project_index/models.py"
+    },
+    {
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C",
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py"
+    },
+    {
+      "sha256": "A4CD45E0643DB2E0E2EE8690B060DEA8F6796B6CAF99CE12108BA89616C1346F",
+      "path": "tldw_chatbook/Workspaces/project_index/semantic_vectors.py"
+    },
+    {
+      "sha256": "D0351BB50D2753859330A871C058B4006C5944082F0388D197920A5912AFB715",
+      "path": "tldw_chatbook/Workspaces/project_index/semantic.py"
+    },
+    {
+      "sha256": "9DB38B32B627F8CF10CE8CDE6D0974F67670CBFDAE1AB1E77272D7AFA0F51171",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    }
+  ]
+}

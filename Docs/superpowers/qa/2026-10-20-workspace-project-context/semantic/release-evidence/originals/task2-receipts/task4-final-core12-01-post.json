@@ -1,0 +1,373 @@
+{
+  "head_after": "a2b56b98773e7edfe9da82f2bb973d135860c7b2",
+  "run": "task4-final-core12-01",
+  "hashes": [
+    {
+      "path": ".github/workflows/derived-artifacts.yml",
+      "sha256": "28918A0B5BAE7EE5D98EC47D0DBBC1515A28D80A35F4041CD0EDF6AD4C27737D"
+    },
+    {
+      "path": "Tests/Agents/test_project_index_tool.py",
+      "sha256": "1877D76C77D6E08A3F6EE8ED860A8AB6D72B602E1804802660CB15B1EEA80206"
+    },
+    {
+      "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+      "sha256": "77CCA73C686EA33CD60440369578B2678E6759FAA249031982C15FF8D4FB3886"
+    },
+    {
+      "path": "Tests/DB/test_project_semantic_schema.py",
+      "sha256": "7A5CEB4F12D479F0FBFCBEE30E8B52EB09F97E030D600EF32229D160B0F32B6C"
+    },
+    {
+      "path": "Tests/RAG/test_project_projection_scope.py",
+      "sha256": "93098339931F800071A00CAC974DBA66CEBD0E7371D894151FE7FF37B391A1BD"
+    },
+    {
+      "path": "Tests/UI/test_project_semantic_consent.py",
+      "sha256": "0F7D60FB903FB05A94DC61941CD9BAFE93D961AC21B1292D08F1AF694C30E51A"
+    },
+    {
+      "path": "Tests/Workspaces/test_project_index_allocation.py",
+      "sha256": "B71EBC253990E9DB4FE3F1F85A07BA81E41C9ABF03A96DED197079430AAA7893"
+    },
+    {
+      "path": "Tests/Workspaces/test_project_semantic_generations.py",
+      "sha256": "FB8F4FF48B5A658C0A1309FBD221BCEB13FEC5B838D43986D8730ADB69C055D2"
+    },
+    {
+      "path": "Tests/Workspaces/test_project_semantic_search.py",
+      "sha256": "FE9121B5784963B96FAB7B8595E5C7277B1BDFA59D74783AEFA752313F82517E"
+    },
+    {
+      "path": "Tests/Workspaces/test_project_semantic_settings.py",
+      "sha256": "15B2933F7847C146A59C669F02B1C5D1B9C3DCE2A6D81AB60A3CCD126C0C81F3"
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/storage_admission.py",
+      "sha256": "B7A5A910D8FF6D8C7C0965BD105E5BCDF154502516E381F761EDD1B1A9F92C4F"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "sha256": "86908246083E998C61DD92F8C79D51C9F51E62848A7E761F9119C3E17076C0E2"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_environment_state.py",
+      "sha256": "F698A5EF8F3B725B7EC504DC0AB06BA0F1D78C43CA3DE2CDDC6B14B4AEBAF594"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_library_preparation.py",
+      "sha256": "66F2FBBF03EE5D3605FA0B2E1D208DBDED74A54AEED5EAA2F896338AF51B042A"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_library_search.py",
+      "sha256": "FB7B237D40099CCDF3E7612BCCD0DE16729125FE1000FB044A4C2A1AB457C79B"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "sha256": "9B8CE3A54E98F7B575D08EEA9F821E8E9B5CCFDFA8F2974C4FBDF926C4FEDBE1"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_turn_context.py",
+      "sha256": "1EC24E4C9B2FEA7F853B0270611098C0B2B8406252EC44753D73F07AEA292EB3"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_turn_preparation.py",
+      "sha256": "F4BB8E03249DACD155333BD3D20F9775801D571135240CFBEC51F8DD046EEEC5"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_unsent_turn.py",
+      "sha256": "9237FEBBB36596F8C1E1BD9D8987FA3BFBEBF4957BF5BEB3086D930AF17236D8"
+    },
+    {
+      "path": "tldw_chatbook/Chat/provider_setup_persistence.py",
+      "sha256": "8E6D4A326A12FF809C14404FE18B5505866BBED3780EA3ED1D15E7004678E100"
+    },
+    {
+      "path": "tldw_chatbook/Chatbooks/chatbook_creator.py",
+      "sha256": "192C9FA9F61785A15680142005798FAD885C2DAB5619C164050E739240FED034"
+    },
+    {
+      "path": "tldw_chatbook/Chatbooks/chatbook_importer.py",
+      "sha256": "F14BDA5D62425CE7074CED1DF4DFA5F8A1928F9002B6EE33565F01C20E6A9688"
+    },
+    {
+      "path": "tldw_chatbook/Chatbooks/chatbook_models.py",
+      "sha256": "96BE103A7A08CFF40F06BCC1D93DD7D2780E0D1EC8A1BD0CA9BFEE5936645954"
+    },
+    {
+      "path": "tldw_chatbook/config.py",
+      "sha256": "609BC2164385EC9D4B72647547F75709388096153FF7155B34864437D146B68F"
+    },
+    {
+      "path": "tldw_chatbook/css/features/_library_notes_panels.tcss",
+      "sha256": "7E2C09E37D153FBBBF416480D5F817160C58CEA301CF9C5EBDC8773676E3A5B6"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_agentic_library.tcss",
+      "sha256": "B2A6D386B97EBDDA53BD8442D995C871162379FA752A6DE9136C370C74CC2FAA"
+    },
+    {
+      "path": "tldw_chatbook/css/widget_defaults_scoped.tcss",
+      "sha256": "7FC3C88D9BB3DB1BC045E2700381DB340572FFDEBD66830CD7567C92B70116F2"
+    },
+    {
+      "path": "tldw_chatbook/css/widget_defaults_self.tcss",
+      "sha256": "CB76F8469EDAA02D8B2CEDF526DEF7D386A38AD36F19C1D2D8BF56553FFC69A5"
+    },
+    {
+      "path": "tldw_chatbook/DB/migrations/workspace_project_index_004.sql",
+      "sha256": "A5396BBBDDC15A017E1AF3CE785107317E962C714BF497436ACA2F594843E67E"
+    },
+    {
+      "path": "tldw_chatbook/DB/private_sqlite.py",
+      "sha256": "F50322B7D679156935EE57F5ECEDFBF976057A6C7ADAD29805360AD3DDC61049"
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B"
+    },
+    {
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23"
+    },
+    {
+      "path": "tldw_chatbook/Library/library_export_state.py",
+      "sha256": "69F1AEC1DA82137E580704F950D4EFD18912ECDA07DE0AA3CA123E1EFEF7919B"
+    },
+    {
+      "path": "tldw_chatbook/Library/library_local_rag_search_service.py",
+      "sha256": "F46C4E4B0B18DA71386E5B163BE8924AC4FB2E10E608A5EC43DA4C94C0695086"
+    },
+    {
+      "path": "tldw_chatbook/Library/library_media_reader_state.py",
+      "sha256": "941239F19ACE763051FBE6DCC0C14A0297F33EC1B26E3AD56C03FA1E31D52FE1"
+    },
+    {
+      "path": "tldw_chatbook/Library/library_media_state.py",
+      "sha256": "BB5524FC2F08FD7D216920B3A28DF8CF575060243EDE3832CD4A115970B703B9"
+    },
+    {
+      "path": "tldw_chatbook/Library/library_media_viewer_state.py",
+      "sha256": "6E1879DAA0A21DDE1CB84C479E5CDC69244D00F4EBCE11BE661E515F9AADA5A1"
+    },
+    {
+      "path": "tldw_chatbook/Library/library_note_field_tidy.py",
+      "sha256": "BEDC79ED0C79F98834418DAAFE69BC66564E1203A5D7C0EA1C85A7F5D8C371AA"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/activation.py",
+      "sha256": "BF185EFAE2548444790A6013A4527A05F10C0E0AA11736F43BC7C7A9CCCA639E"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/model_recovery.py",
+      "sha256": "2666334F8C9414CDBB57F59BE61B24FAA9A24CAAC4682BAB982A44C635EA9430"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py",
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D"
+    },
+    {
+      "path": "tldw_chatbook/UI/Chatbooks_Window_Improved.py",
+      "sha256": "EE46450AD172DAB72ACC3D6A4CE0AAA0FE8A1662C7F3FDABAC002AC9DF707817"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/agent.py",
+      "sha256": "AAB2E990A90BC89716A32F1284802FFAB07949743587A2E8789FC3D212D1E00E"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/character_context.py",
+      "sha256": "F9F796F1858DB3765B28BD29AF481E83EEF26C2F965744DA89A9AD8F3D6BEC2B"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/config_sync.py",
+      "sha256": "2AD2E872974C4445E3006A69920A15952DE4D68E175669897DAD81D4FEBC5A0B"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/environment.py",
+      "sha256": "BC9D0C1EE7FCC0193E1DF5AEE461A0F2E7C0FE7C4DCA26978FD9AE7CD4389ADB"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py",
+      "sha256": "910A1267CED752B7AC947D8ABFA57F0978460F81315CAF955A028240406278B5"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "sha256": "937180A61A9E3E3420D402C926F39DCC70CCD02A92226C57632B9618651E3523"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/transcript.py",
+      "sha256": "37AD744EBA0F0EFED96EB9B29F01AD3B87E1D81D32AA3CEBB0280C8833E41214"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "sha256": "A6C14BDD4182E34CD3C9208F24928F65B63237DE3D00F92677D7D65EA9332E28"
+    },
+    {
+      "path": "tldw_chatbook/UI/Evals/skill_eval_detail.py",
+      "sha256": "43FC488712E2E98B181D496EE69112B28370FA7E2D0C319E1CD92A0FCFB8F60C"
+    },
+    {
+      "path": "tldw_chatbook/UI/Evals/skill_eval_panel.py",
+      "sha256": "D7D414DC02C72681D6EFC9ED99E733BF8EE05A342D309DE3703010DC820AE196"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/canvas_sync.py",
+      "sha256": "68FC1A45FB796572650755CF50ACEAAE6E8AE0DCC2FF2119B89C54EA965F8504"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_export_controller.py",
+      "sha256": "6E6EAE7EF7402E559C0B0647BE035940F0E3B9A98D62FDBDFCA7EF31223537F0"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_inspection_admission.py",
+      "sha256": "1CEFE765DD5FF80B5F77ADE79991540BDFFB6B9B7106524F2B87C8EF1F2D21C2"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_media_controller.py",
+      "sha256": "8C969A66D373F3D24A6F8F4FB0A1CD60553EDDDEE72D6665CF1DD92F81DB19A2"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_media_state.py",
+      "sha256": "420C1913DE46D2CB2129B5FF7423073C0C7B863A3029CE0B44883F454D2A4F27"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_note_autosave.py",
+      "sha256": "57FE51D4A0ECA675BB41B84270511B57E43EC24BD97CEAC0848B7B03A9F0F9FB"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_notes_controller.py",
+      "sha256": "37A0DBD4C097CCF2681290D77EE496F5774D7F3FE5F3503FD351EB7889F28339"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_notes_state.py",
+      "sha256": "0303C46D11C2BBAC8279BD73AFAC7C88081E63BC467D0010E1DBD055830D3817"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_pending_work.py",
+      "sha256": "978468590026B8B231ED49475D1C269FC8BA13BE2762A9571DA6AEACE10A674E"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/screen_constants.py",
+      "sha256": "1EA3CBB936492D38D777B328CCAAD066F1BCBE96713F27C43B887A386D77A749"
+    },
+    {
+      "path": "tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py",
+      "sha256": "27628434E5B051980C91D897F42ACA30A76D76FBB2914923B9D11C93F257BA43"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "sha256": "CBEB7D72660E6E0D22A7C378E771CFCB9A9F5BB80FBDD626E28936276005FFD3"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "sha256": "9C51A8BD10DEE9D1965B9701B98614CE57C3B8C2C60D2F1E63FDBD90E59F245B"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py",
+      "sha256": "957A8BB74A11C9A5B940D46484799B42482FBB18EFB3B3F8A6D6930B24A2AF93"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "sha256": "792C83F317074524B08BCB6461CAB3EDD9306B0D258508F71846ECC2629FE8FA"
+    },
+    {
+      "path": "tldw_chatbook/UI/Settings_Modules/saved_model_list.py",
+      "sha256": "3357F52B3DF9853755E849F4C4487B580A0134EA022623A9C8B0D836ED86CFBA"
+    },
+    {
+      "path": "tldw_chatbook/UI/Settings_Modules/staged_save_ack.py",
+      "sha256": "769A0029D2FD766DD4464E2DB0D8BEBFB30952D4041F60D31D52B3E392890D82"
+    },
+    {
+      "path": "tldw_chatbook/UI/STTS_Window.py",
+      "sha256": "11D29CE7D497BFBFC4C515ABF8BDE66E537A22D045A5C7F81671E8E9E85E38FA"
+    },
+    {
+      "path": "tldw_chatbook/UI/Study_Modules/quizzes_handler.py",
+      "sha256": "2D06ADFA2FCC37A0C003F6EF7C1F249E74D72C389F756AE8B91D2EEE5ADD5F49"
+    },
+    {
+      "path": "tldw_chatbook/UI/Wizards/ChatbookImportWizard.py",
+      "sha256": "A9C5C27223B18135FCDD23826ADA99D821EB2FB116B4616616913733BA6D4A6D"
+    },
+    {
+      "path": "tldw_chatbook/UI/Wizards/first_run_setup_state.py",
+      "sha256": "CE1DEEB02A17425C3FFEB6247998EBE186BECAE8C201CB545DFA26B1B2F687F2"
+    },
+    {
+      "path": "tldw_chatbook/UI/Wizards/first_run_voice_pickers.py",
+      "sha256": "8CF6B803AF9F5AB8176410F7225426249213E687786D9C62E0E0431FAE43CEEF"
+    },
+    {
+      "path": "tldw_chatbook/Utils/config_encryption.py",
+      "sha256": "49FF5E93877859EF42405C2A1264EC14B2BEFA672C9533E3EB86A79AD71F2EEF"
+    },
+    {
+      "path": "tldw_chatbook/Utils/text_selection_crash_guard.py",
+      "sha256": "620A1F227ECAB049891E3BCCD5DA25A009CD6C285276535FACA4D07BCE2AEB11"
+    },
+    {
+      "path": "tldw_chatbook/Utils/ui_responsiveness.py",
+      "sha256": "33828E9F1366575439014696383A5F6A9E1135219903FB0122D86162A349BD19"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
+      "sha256": "2A92671C5711451CFF87DCC8F75F8E105A3B6A91F3A19A2B6054105D083021D1"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_media_viewer.py",
+      "sha256": "2D1B52A0D7EF65C2E3E6346958F18CD8C346BF25CF17DB8337FBA644966654F9"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_notes_canvas.py",
+      "sha256": "458633F7F8DDDDC46D9E567A5DF162036C62D2B52645BD1BCA191E3AC389EB7B"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/model_search_picker.py",
+      "sha256": "A080FD6E1BC7D7F86D696657F5983192047E8A0DC33250CD0B09F73EAA8F3C4B"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/session_summary_dialog.py",
+      "sha256": "A4167C0FAED46183B9C5658F30157A6F080956E222E3C6F26913AB38AD32461B"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+      "sha256": "4B573D07B475A9CCD64E6F7FA5CFFFDFFCC691F367C9A41396DCB1AD0B2B06C8"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/allocation.py",
+      "sha256": "B7E5382376A086F056CA85F5BE36B11048A87EE647A3AC129067CC88C57AF30A"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "sha256": "A1A86A8C91C7707CB906E9BF4337141198A0D3DB0A56D49EA9D16394AD01E965"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/models.py",
+      "sha256": "191D6DE9468EE7A0885B1403598B5602DBC0EE5B54349A36B443230F4D89F49F"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py",
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "sha256": "A4CD45E0643DB2E0E2EE8690B060DEA8F6796B6CAF99CE12108BA89616C1346F"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/semantic.py",
+      "sha256": "D0351BB50D2753859330A871C058B4006C5944082F0388D197920A5912AFB715"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "sha256": "9DB38B32B627F8CF10CE8CDE6D0974F67670CBFDAE1AB1E77272D7AFA0F51171"
+    }
+  ],
+  "exit": 0,
+  "same_source": true,
+  "parent_xml": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task2-receipts\\task4-final-core12-01-parent.xml"
+}

@@ -1,0 +1,15 @@
+{
+  "run": "task4-nested-ready-read-01",
+  "pid": 79024,
+  "process_started_utc": "2026-10-24T01:58:03.8648821Z",
+  "exit_code": 0,
+  "forced": false,
+  "cache_group_unchanged": true,
+  "source_unchanged": true,
+  "child_result_present": true,
+  "before": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-nested-ready-read-01-pre.json",
+  "after": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-nested-ready-read-01-post.json",
+  "stdout": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-nested-ready-read-01-stdout.log",
+  "stderr": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-nested-ready-read-01-stderr.log",
+  "child_result": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-nested-ready-read-01-child.json"
+}

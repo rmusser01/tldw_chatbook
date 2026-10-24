@@ -1,0 +1,111 @@
+{
+  "origins": {
+    "tldw_chatbook": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\__init__.py",
+    "Tests": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\Tests\\__init__.py"
+  },
+  "cache_group": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\k5-scale\\stable-profile\\home\\.local\\share\\tldw_cli\\default_user\\project_index\\74a6d85479e57c9ded157f90664a282cc6d124ee0b59995baa584e57b9e6f715",
+  "cache_db": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\k5-scale\\stable-profile\\home\\.local\\share\\tldw_cli\\default_user\\project_index\\74a6d85479e57c9ded157f90664a282cc6d124ee0b59995baa584e57b9e6f715\\62d3d4704898ec8bc01168af66f8d2ff03da8a587d082182fc0a6b63b1aaa59f\\workspace_project_index.db",
+  "status_all_fields": {
+    "scope": {
+      "key": {
+        "data_authority_id": "5165c8b497644cfa3814c0f1f48275a9288826435642e0fff8cc36a6d945919c",
+        "workspace_id": "qualification-nested",
+        "binding_id": "folder-dc38822c17af",
+        "locator_fingerprint": "0193d2df835e4f322f6227efbd3f96c79b0933f668d47636b86e853413b23899",
+        "root_identity_fingerprint": "63c9088b691cb9bd1314ff6a691e7cc6a3dc49b347569438eebaecd2323653fc"
+      },
+      "epoch": 1,
+      "processing_revision": 1
+    },
+    "state": "Ready",
+    "discovered": 40200,
+    "indexed": 20000,
+    "cache_bytes": 74072173,
+    "last_scan_at": "2026-10-22T00:00:09.944474+00:00",
+    "job_id": null,
+    "job_revision": 3,
+    "manifest_revision": 329
+  },
+  "keyword_policy": {
+    "include_prefixes": [
+      ""
+    ],
+    "text_suffixes": [
+      ".txt"
+    ]
+  },
+  "semantic_state_all_fields": {
+    "scope": {
+      "key": {
+        "data_authority_id": "5165c8b497644cfa3814c0f1f48275a9288826435642e0fff8cc36a6d945919c",
+        "workspace_id": "qualification-nested",
+        "binding_id": "folder-dc38822c17af",
+        "locator_fingerprint": "0193d2df835e4f322f6227efbd3f96c79b0933f668d47636b86e853413b23899",
+        "root_identity_fingerprint": "63c9088b691cb9bd1314ff6a691e7cc6a3dc49b347569438eebaecd2323653fc"
+      },
+      "epoch": 1,
+      "processing_revision": 1
+    },
+    "semantic_revision": 3,
+    "enabled": true,
+    "settings": {
+      "provider_id": "huggingface",
+      "model_id": "minilm-local",
+      "destination_fingerprint": "sha256:v1:b8ca2c415e71071f5342c8f637dfa2f9912c646e25c4f307aa2addb494bd5bc3",
+      "config_fingerprint": "sha256:v1:1406b5ebada2a7ef8b8c2d0b3db928695a62619cb43ecb441328f3cd49a7e97a",
+      "approved_destination_fingerprint": "sha256:v1:b8ca2c415e71071f5342c8f637dfa2f9912c646e25c4f307aa2addb494bd5bc3",
+      "provider_ref": "provider:v1:huggingface",
+      "config_ref": "model:v1:minilm-local"
+    },
+    "state": "Ready",
+    "reason": null,
+    "ready_generation_id": "b5bc9b0b2ceb4e0c92d41b631662f5aa",
+    "coverage": null,
+    "close_pending": false
+  },
+  "keyword_control": {
+    "namespace": "62d3d4704898ec8bc01168af66f8d2ff03da8a587d082182fc0a6b63b1aaa59f",
+    "epoch": 1,
+    "processing_revision": 1,
+    "enabled": 1,
+    "state": "Ready",
+    "job_revision": 3,
+    "manifest_revision": 329
+  },
+  "semantic_control": {
+    "namespace": "62d3d4704898ec8bc01168af66f8d2ff03da8a587d082182fc0a6b63b1aaa59f",
+    "epoch": 1,
+    "semantic_revision": 3,
+    "enabled": 1,
+    "state": "Ready",
+    "reason": null,
+    "ready_generation_id": "b5bc9b0b2ceb4e0c92d41b631662f5aa"
+  },
+  "ready_generation": {
+    "generation_id": "b5bc9b0b2ceb4e0c92d41b631662f5aa",
+    "namespace": "62d3d4704898ec8bc01168af66f8d2ff03da8a587d082182fc0a6b63b1aaa59f",
+    "epoch": 1,
+    "processing_revision": 1,
+    "semantic_revision": 3,
+    "provider_id": "huggingface",
+    "model_id": "minilm-local",
+    "destination_fingerprint": "sha256:v1:b8ca2c415e71071f5342c8f637dfa2f9912c646e25c4f307aa2addb494bd5bc3",
+    "config_fingerprint": "sha256:v1:1406b5ebada2a7ef8b8c2d0b3db928695a62619cb43ecb441328f3cd49a7e97a",
+    "artifact_fingerprint": "sha256:v1:32015226dbbe9ec76875a585f70c800c792d8854a0b22791881657f81325ff74",
+    "format_id": "float32-le-v1",
+    "dimension": 384,
+    "manifest_revision": 329,
+    "claim_token": null,
+    "checkpoint_chunk_id": 20000,
+    "state": "Ready",
+    "chunk_count": 20000
+  },
+  "ready_members": {
+    "count": 20000,
+    "min_ordinal": 1,
+    "max_ordinal": 20000,
+    "min_vector_bytes": 1536,
+    "max_vector_bytes": 1536
+  },
+  "app_service_and_fixture_retired": true
+}
