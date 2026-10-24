@@ -376,11 +376,14 @@ class LastingSyncReview:
     source: LastingSyncReviewSource | None = None
     activation_blockers: tuple[str, ...] = ()
     """TASK-34000.16 fix round 1 (I-2): one line per migrated candidate whose
-    file the walk could not read (``<file> · <what is wrong — what to do>``).
-    A migration cannot activate while one exists -- the runtime would refuse
-    it after creating the folder -- so Activate is held and the status line
-    names them. Always empty for a setup review: a refused file in a NEW
-    folder is not a candidate."""
+    OWN file the walk could not read (``<file> · <what is wrong — what to
+    do>``; the skip's ``bound`` marker, fix round 2). A migration cannot
+    activate while one exists -- the runtime would refuse it after creating
+    the folder -- so Activate is held and the status line names them. Always
+    empty for a setup review, and for a refused file no candidate is tied to.
+    The lines carry the user's file name RAW: a Rich-markup surface (a
+    tooltip) must ``escape_markup`` them; the ``markup=False`` status line
+    takes them as they are."""
 
     @property
     def can_activate(self) -> bool:
@@ -1019,7 +1022,9 @@ def build_reconciliation_review(
             tuple(
                 f"{skip.relative_path} · {_FILE_GATE_SKIP_EFFECTS[skip.reason_code]}"
                 for skip in plan.item_skips
-                if skip.reason_code in _FILE_GATE_SKIP_EFFECTS
+                # Fix round 2 (R2-2): only a migrated note's OWN file holds
+                # Activate; an unrelated refused file is a plain skip row.
+                if skip.bound and skip.reason_code in _FILE_GATE_SKIP_EFFECTS
             )
             if activation and source == "migration"
             else ()

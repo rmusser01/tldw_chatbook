@@ -927,7 +927,10 @@ def _plan_with_gate_skips(*skips: tuple[str, str]) -> ReconciliationPlan:
 
 def test_a_migration_review_with_a_refused_candidate_blocks_activation_by_name() -> None:
     """TASK-34000.16 fix round 1, I-2: Activate is blocked and the copy names the file."""
-    plan = _plan_with_gate_skips(("b.md", "mixed_newlines"))
+    plan = replace(
+        _plan_with_gate_skips(("b.md", "mixed_newlines")),
+        item_skips=(ReconciliationItemSkip("b.md", "mixed_newlines", bound=True),),
+    )
     review = build_reconciliation_review(plan, activation=True, source="migration")
     assert review.source == "migration"
     assert review.activation_blockers == (
@@ -963,3 +966,14 @@ def test_the_migration_blocked_line_names_the_files_and_the_fix_and_stays_bounde
     assert many.startswith("Activate is unavailable while 5 files there can't be read — fix or remove them, then Check again: ")
     assert many.endswith(" and 2 more.")
     assert "f2.md" in many and "f3.md" not in many
+
+
+def test_a_refused_file_that_is_not_a_candidate_is_a_skip_not_an_activation_blocker() -> None:
+    """TASK-34000.16 fix round 2 (R2-2): only a BOUND refused file (a migrated
+    note's own file) holds Activate; an unrelated refused file is a plain row."""
+    plan = _plan_with_gate_skips(("c.md", "unsupported_encoding"))
+    assert plan.item_skips[0].bound is False
+    review = build_reconciliation_review(plan, activation=True, source="migration")
+    assert review.activation_blockers == ()
+    assert review.can_activate is True
+    assert review.skip_count == 1

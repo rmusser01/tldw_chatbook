@@ -1152,6 +1152,10 @@ class _ProductionRuntimeAdapter:
         # own stat, so a bound binding whose file was RENAMED onto a refused
         # path is recognised as that file (a skip), never as a deleted one.
         refused_identities: dict[str, str] = {}
+        # Fix round 2 (R2-2): the refused files that are a BOUND binding's own
+        # file (by path, or by identity after a rename). Only these hold a
+        # migration's activation; the rest are plain per-file rows.
+        refused_bound: set[str] = set()
         syncable_files = 0
         for candidate in discovery.candidates:
             relative_path = candidate.source.source_path.relative_to(
@@ -1297,10 +1301,13 @@ class _ProductionRuntimeAdapter:
                 # guard did.
                 identity_resolved = len(matches) == 1
                 file = matches[0] if identity_resolved else None
-                if file is None and (
-                    binding.normalized_relative_path in refused
-                    or binding.stable_identity_digest in refused_identities
-                ):
+                refused_file_path = (
+                    binding.normalized_relative_path
+                    if binding.normalized_relative_path in refused
+                    else refused_identities.get(binding.stable_identity_digest)
+                )
+                if file is None and refused_file_path is not None:
+                    refused_bound.add(refused_file_path)
                     # TASK-34000.16: the bound file EXISTS -- at its own path
                     # or renamed onto a refused one -- but could not be read
                     # as sync text. Its binding is left alone this pass (the
@@ -1445,7 +1452,7 @@ class _ProductionRuntimeAdapter:
             ),
             obsidian_mode=self.obsidian_mode(root.root_id),
             refused_files=tuple(
-                ReconciliationItemSkip(path, code)
+                ReconciliationItemSkip(path, code, bound=path in refused_bound)
                 for path, code in sorted(refused.items())
             ),
         )
@@ -4612,13 +4619,16 @@ class NotesSyncRuntimeOwner:
         if self._blocked_plan_status(fresh) is not None:
             return NotesSyncControlResult(False, "needs_attention", "review_changes")
         if setup is None and any(
-            skip.reason_code in FILE_GATE_REASON_CODES for skip in fresh.item_skips
+            skip.bound and skip.reason_code in FILE_GATE_REASON_CODES
+            for skip in fresh.item_skips
         ):
             # TASK-34000.16 fix round 1 (I-2): a migrated candidate whose file
             # the walk could not read has no action, so the candidate-coverage
             # check below would refuse the activation AFTER the folder was
             # created and recovery recorded. Refuse here, before any mutation;
             # the root stays where it is, and the review names the file.
+            # Fix round 2 (R2-2): only a CANDIDATE's own file (``bound``)
+            # holds it -- an unrelated refused file is a plain skip row.
             return NotesSyncControlResult(False, "paused", "review_migration")
         display_name = (
             setup.display_name

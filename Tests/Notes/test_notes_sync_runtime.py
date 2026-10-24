@@ -3670,8 +3670,14 @@ async def test_a_renamed_and_corrupted_bound_file_is_a_skip_not_a_deletion_revie
     assert len(local_notes.notes) == 2
 
 
-def _migration_root_with_one_refused_candidate(tmp_path: Path):
-    """A paused ``migration_review_required`` root: a.md fine, b.md mixed newlines."""
+def _migration_root_with_one_refused_candidate(
+    tmp_path: Path, *, non_candidate_refused: bool = False
+):
+    """A paused ``migration_review_required`` root: a.md fine, b.md mixed newlines.
+
+    ``non_candidate_refused`` adds ``c.md`` (latin-1) with NO binding: a file
+    the folder holds that is not one of the migrated notes' files.
+    """
 
     import os
 
@@ -3684,6 +3690,8 @@ def _migration_root_with_one_refused_candidate(tmp_path: Path):
     root_path.mkdir()
     (root_path / "a.md").write_text("alpha", encoding="utf-8")
     (root_path / "b.md").write_bytes(b"a\r\nb\nc\n")
+    if non_candidate_refused:
+        (root_path / "c.md").write_bytes(b"caf\xe9\n")
     with PosixNotesSyncFilesystem(root_path) as filesystem:
         a_file = filesystem.observe("a.md")
     b_stat = os.stat(root_path / "b.md")
@@ -3792,6 +3800,39 @@ async def test_a_migrated_root_with_a_refused_candidate_refuses_activation_befor
     assert activated.accepted is True
     assert store.get_root(root_id).state is NotesSyncRootState.ACTIVE
     assert len(folders.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_refused_file_that_is_not_a_candidate_does_not_hold_a_migration_activation(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.16 fix round 2 (R2-2 ruling): the block is for the root's OWN
+    notes' files. A refused file with no candidate binding is an ordinary
+    per-file skip -- before and after activation."""
+
+    store, root_path, root_id, folders, owner = _migration_root_with_one_refused_candidate(
+        tmp_path, non_candidate_refused=True
+    )
+    # Fix the candidate's file so only the non-candidate c.md is refused.
+    (root_path / "b.md").write_bytes(b"a\nb\nc\n")
+    await owner.start()
+    try:
+        review = await owner.check_root(root_id)
+        assert [(s.relative_path, s.reason_code) for s in review.item_skips] == [
+            ("c.md", "unsupported_encoding")
+        ]
+        result = await owner.activate_root(root_id, review.observation_token)
+        assert result.accepted is True, result
+        first = await owner.check_root(root_id)
+    finally:
+        await owner.shutdown()
+
+    assert store.get_root(root_id).state is NotesSyncRootState.ACTIVE
+    assert len(folders.created) == 1
+    assert [(s.relative_path, s.reason_code) for s in first.item_skips] == [
+        ("c.md", "unsupported_encoding")
+    ]
+    assert (root_path / "c.md").read_bytes() == b"caf\xe9\n"
 
 
 @pytest.mark.asyncio

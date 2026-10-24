@@ -691,3 +691,25 @@ def test_refused_files_must_be_a_tuple_of_item_skips() -> None:
             expected_generation=7,
             refused_files=[ReconciliationItemSkip("a.md", "mixed_newlines")],  # type: ignore[arg-type]
         )
+
+
+def test_a_refused_file_can_be_marked_as_a_bound_note_file_and_the_token_sees_it() -> None:
+    """TASK-34000.16 fix round 2 (R2-2): ``bound`` says a binding's own file is
+    the refused one; it defaults to False, is type-checked, and is in the token."""
+    plain = ReconciliationItemSkip("legacy/latin1.md", "unsupported_encoding")
+    bound = ReconciliationItemSkip("legacy/latin1.md", "unsupported_encoding", bound=True)
+    assert plain.bound is False and bound.bound is True
+    with pytest.raises(TypeError, match="bound"):
+        ReconciliationItemSkip("a.md", "mixed_newlines", bound="yes")  # type: ignore[arg-type]
+    base = ReconciliationInput(
+        root_id="root-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        bindings=(_binding(),),
+        observation_generation=7,
+        expected_generation=7,
+    )
+    assert (
+        plan_reconciliation(replace(base, refused_files=(plain,))).observation_token
+        != plan_reconciliation(replace(base, refused_files=(bound,))).observation_token
+    )
+    assert plan_reconciliation(replace(base, refused_files=(bound,))).item_skips == (bound,)

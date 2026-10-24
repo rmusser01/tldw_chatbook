@@ -253,6 +253,13 @@ class ReconciliationItemSkip:
 
     relative_path: str
     reason_code: str
+    bound: bool = False
+    """Whether this refused file is a BOUND binding's own file (TASK-34000.16
+    fix round 2). The walk sets it when the binding at this path -- or the
+    binding whose identity this file now carries -- was left alone because
+    the file could not be read. A migration cannot activate while one of its
+    candidates' files is such a skip; an unrelated refused file is a plain
+    row before and after activation."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -263,6 +270,8 @@ class ReconciliationItemSkip:
         if self.reason_code is None:
             raise ValueError("reason_code is required.")
         validate_notes_sync_reason_code(self.reason_code)
+        if type(self.bound) is not bool:
+            raise TypeError("bound must be a boolean.")
 
     def __repr__(self) -> str:
         return "ReconciliationItemSkip(<private>)"
@@ -362,7 +371,8 @@ def _observation_token(request: ReconciliationInput) -> str:
         # TASK-34000.16: the refused set is part of what the review depends
         # on -- converting or removing a bad file must change the token.
         "refused_files": [
-            [skip.relative_path, skip.reason_code] for skip in request.refused_files
+            [skip.relative_path, skip.reason_code, skip.bound]
+            for skip in request.refused_files
         ],
         "bindings": [
             {

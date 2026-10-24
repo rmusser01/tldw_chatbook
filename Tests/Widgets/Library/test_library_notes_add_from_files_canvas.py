@@ -1786,3 +1786,49 @@ async def test_activate_is_held_with_the_blocked_line_while_a_candidate_file_is_
         activate = app.query_one("#notes-sync-activate", Button)
         assert activate.disabled is True
         assert activate.tooltip == migration_activation_blocked_line((blocker,))
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    [
+        pytest.param("x[/]y.md", id="closing-tag"),
+        pytest.param("[/draft] end.md", id="closing-named-tag"),
+        pytest.param("[draft] plan.md", id="opening-tag-swallowed"),
+    ],
+)
+async def test_the_held_activate_tooltip_paints_a_bracketed_file_name_literally(
+    file_name: str,
+) -> None:
+    """TASK-34000.16 fix round 2 (R2-1): the tooltip is Rich markup; the file
+    name is the user's. ``x[/]y.md`` raised ``MarkupError`` from the tooltip
+    timer and crashed the app; ``[draft] plan.md`` painted " plan.md"."""
+
+    from textual.widgets import Tooltip
+
+    blocker = f"{file_name} · Mixed line endings — save it with one style"
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="d" * 64,
+        activation=True,
+        source="migration",
+        activation_blockers=(blocker,),
+    )
+    app = _Host(
+        replace(
+            initial_lasting_sync_snapshot(lasting_available=True),
+            phase="review",
+            review=review,
+        )
+    )
+    app.TOOLTIP_DELAY = 0.01
+    async with app.run_test(size=(120, 30), tooltips=True) as pilot:
+        await pilot.pause()
+        activate = app.query_one("#notes-sync-activate", Button)
+        assert activate.disabled is True
+        assert await pilot.hover("#notes-sync-activate")
+        await pilot.pause(0.1)
+        tooltip = app.screen.get_child_by_type(Tooltip)
+        assert tooltip.display is True
+        painted = str(tooltip.render())
+        assert file_name in painted, painted
+        assert "Activate is unavailable while 1 file there can't be read" in painted

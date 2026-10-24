@@ -3849,7 +3849,9 @@ async def test_a_migration_review_with_a_refused_candidate_holds_activate_and_na
         skips=(),
         managed_placement_effects=(),
         deletion_groups=(),
-        item_skips=(ReconciliationItemSkip("b.md", "mixed_newlines"),),
+        # Fix round 2 (R2-2): only a CANDIDATE's own file (``bound``) holds
+        # Activate; the runtime marks it so.
+        item_skips=(ReconciliationItemSkip("b.md", "mixed_newlines", bound=True),),
     )
     controller = LibraryNotesSyncController(
         runtime=runtime,
