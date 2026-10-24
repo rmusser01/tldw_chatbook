@@ -24,8 +24,9 @@ from tldw_chatbook.Chat.local_server_discovery import (
     read_bounded_model_response,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import (
+    ConnectionProbeAvailability,
     ProviderEndpointResolution,
-    is_native_generate_route,
+    connection_probe_availability,
     resolve_provider_endpoint,
 )
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
@@ -49,6 +50,15 @@ _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "local_ollama": frozenset({"/api/tags"}),
 }
 _QWENCLOUD_PROVIDER_KEY = "qwencloud"
+_KOBOLDCPP_PROVIDER_KEY = "koboldcpp"
+#: The fix Settings offers with the contract's reason (TASK-36380). Only the
+#: native route keeps sending: chat_with_kobold posts KoboldAI's native
+#: payload to the saved endpoint, and Settings saves a root or a "/v1"
+#: endpoint as <root>/v1/chat/completions.
+KOBOLDCPP_ENDPOINT_HINT = (
+    "Use the server's /api/v1/generate route, such as "
+    "http://localhost:5001/api/v1/generate."
+)
 _MAX_ENDPOINT_LENGTH = 2000
 _MAX_GENERIC_PATH_DECODE_PASSES = 2
 _GENERIC_ENDPOINT_TAILS = (("models",), ("responses",), ("chat", "completions"))
@@ -414,17 +424,40 @@ def _is_explicit_openai_compatible_path(path: str) -> bool:
     )
 
 
-def _contract_native_resolution(
-    provider_key: str, endpoint: str | None
+def _kobold_contract(
+    provider_identity: str | None, endpoint: str | None
 ) -> ProviderEndpointResolution | None:
-    """The endpoint contract's resolution of a native route it lists, else None.
+    """koboldcpp's endpoint-contract resolution; None for any other provider.
 
-    koboldcpp's template endpoint, KoboldAI's /api/v1/generate, lists at the
-    URL Switch model probes, its root's /v1/models (TASK-35832). The contract
-    alone decides which endpoints that is.
+    koboldcpp's discovery follows the contract alone, so it lists where
+    Switch model probes: the root's /v1/models for a bare root, a prefix root
+    such as /kobold, or the native /api/v1/generate (TASK-35832, TASK-36380).
     """
-    resolution = resolve_provider_endpoint(provider_key, str(endpoint or ""))
-    return resolution if is_native_generate_route(resolution) else None
+    if _normalized_provider_identity(provider_identity) != _KOBOLDCPP_PROVIDER_KEY:
+        return None
+    return resolve_provider_endpoint(_KOBOLDCPP_PROVIDER_KEY, endpoint)
+
+
+def contract_refusal_reason(
+    provider_identity: str | None, endpoint: str | None
+) -> str | None:
+    """Return why the endpoint contract refuses a koboldcpp endpoint, else None.
+
+    Settings shows it, with ``KOBOLDCPP_ENDPOINT_HINT``, in place of its
+    generic unsupported-endpoint copy (TASK-36380). Other providers'
+    discovery has its own rules, so they get no contract reason.
+
+    Args:
+        provider_identity: Provider name/identity.
+        endpoint: The configured or staged endpoint.
+
+    Returns:
+        The contract's first error for a koboldcpp endpoint it refuses.
+    """
+    resolution = _kobold_contract(provider_identity, endpoint)
+    if resolution is None or not resolution.errors:
+        return None
+    return resolution.errors[0]
 
 
 def supports_openai_compatible_model_discovery(
@@ -436,11 +469,10 @@ def supports_openai_compatible_model_discovery(
     Eligibility is based on explicit OpenAI-compatible URL paths. Native
     provider discovery URLs are rejected even when the provider can also expose
     an OpenAI-compatible API at another configured endpoint. The exception is
-    a native route the endpoint contract lists (koboldcpp's /api/v1/generate,
-    TASK-35832): it is eligible when the contract resolves it as that route,
-    and lists at the contract's models URL. A form the contract refuses (an
-    API suffix before the route) meets the rules below, which list no path
-    ending in it.
+    koboldcpp: once its URL parses, it is eligible exactly when Switch
+    model's probe is (the endpoint contract's
+    ``connection_probe_availability``), and lists at the contract's models URL
+    (TASK-35832, TASK-36380).
     """
     provider_key = _normalized_provider_identity(provider_identity)
     record = RECORDS_BY_KEY.get(provider_key)
@@ -459,9 +491,11 @@ def supports_openai_compatible_model_discovery(
     if parsed is None:
         return False
 
+    if provider_key == _KOBOLDCPP_PROVIDER_KEY:
+        return connection_probe_availability(provider_key, normalized_endpoint) is (
+            ConnectionProbeAvailability.MODELS_ROUTE
+        )
     path = _normalized_path(parsed)
-    if _contract_native_resolution(provider_key, normalized_endpoint) is not None:
-        return True
     native_paths = _NATIVE_ENDPOINT_PATHS_BY_PROVIDER.get(provider_key, frozenset())
     if path in native_paths:
         return False
@@ -487,11 +521,9 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
     if parsed is None:
         return str(endpoint or "").strip()
 
-    native = _contract_native_resolution(
-        _normalized_provider_identity(provider_identity), endpoint
-    )
-    if native is not None and native.models_url is not None:
-        return native.models_url
+    kobold = _kobold_contract(provider_identity, endpoint)
+    if kobold is not None and kobold.models_url is not None:
+        return kobold.models_url
     path = _normalized_path(parsed)
     if path in {"/completion", "/completions"}:
         base_url = normalize_llamacpp_base_url(endpoint)
