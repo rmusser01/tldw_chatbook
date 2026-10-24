@@ -148,6 +148,7 @@ jobs:
             Tests/Chatbooks/test_chatbook_keywords_round_trip.py \
             Tests/Library/test_library_media_source_link.py \
             Tests/Library/test_library_notes_canvas_pending_lookup.py \
+            Tests/App/test_detached_focus_guard.py \
             Tests/Architecture/test_notes_sync_binding_profile_commits.py \
             Tests/Architecture/test_notes_sync_version_proxy_sites.py \
             Tests/Notes/test_sync_containment.py \

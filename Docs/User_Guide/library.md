@@ -163,7 +163,10 @@ At compact widths the landing canvas **stays** beside the rail — both panes
 are kept, the rail narrows, and whatever you had focused (Continue, a recovery
 action, a cached summary, a quick action) keeps focus straight through the
 resize. Only Notes' own workflow routes fold to a single pane at those widths;
-the landing does not.
+the landing does not. Switching rail rows or resizing never leaves the keyboard
+dead: focus is moved only onto controls that are on screen, and if a control
+under focus disappears, the next key you press goes to the Library screen (Tab
+moves on, F1 opens help).
 
 ## Layout tour
 

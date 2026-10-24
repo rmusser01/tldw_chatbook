@@ -92,6 +92,9 @@ FAST_LANE_TARGETS = (
     # ``_pending_children``; a Textual change fails here by name (one bare
     # ``run_test``, about a second).
     "Tests/Library/test_library_notes_canvas_pending_lookup.py",
+    # TASK-34000.26: a bare Textual app proves the dead-focus heal (about two
+    # seconds).
+    "Tests/App/test_detached_focus_guard.py",
     # TASK-34000.48: every file-profile comparison and binding commit goes
     # through the newline rule (AST scan of the three sync modules, seconds).
     "Tests/Architecture/test_notes_sync_binding_profile_commits.py",

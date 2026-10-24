@@ -1054,3 +1054,4 @@ Tests/UI/test_automation_definition_pending_save_drafts.py::test_retained_create
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[ordinary-multi-question]
 Tests/UI/test_library_ingest_tilde_path_and_enter_waits.py
 Tests/UI/test_library_notes_sync_skips_bad_files_by_name.py
+Tests/UI/test_library_focus_never_lands_on_a_removed_widget.py

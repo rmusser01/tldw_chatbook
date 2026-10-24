@@ -10866,6 +10866,10 @@ class LibraryScreen(BaseAppScreen):
 
         def _tick() -> None:
             self._library_list_entry_focus_retry_timer = None
+            if not self.is_attached:
+                # TASK-34000.26: a screen timer firing after the screen left
+                # the stack has no live tree to focus into.
+                return
             self._focus_library_list_entry_if_current(generation)
 
         self._library_list_entry_focus_retry_timer = self.set_timer(
@@ -11146,6 +11150,11 @@ class LibraryScreen(BaseAppScreen):
                 control = self.query_one(selector, Widget)
             except (NoMatches, QueryError):
                 continue
+            if getattr(control, "_pruning", False):
+                # TASK-34000.26: a canvas recompose has already marked this
+                # control for removal; it still answers the query but a
+                # focus write onto it would die with it (review S-10).
+                continue
             if not getattr(control, "disabled", False):
                 return control
         return None
@@ -11172,7 +11181,16 @@ class LibraryScreen(BaseAppScreen):
             # Loading and ready results can both precede replacement of old rows.
             self._retry_library_list_entry_focus_while_armed()
             return
-        rows = list(self.query(f".{row_class}"))
+        # TASK-34000.26: a row a canvas recompose is already removing still
+        # answers the query; a focus write onto it is accepted by Textual
+        # 8.2.8 and leaves the keyboard dead after the detach (review S-10).
+        # Skipping it here makes the "only a landing counts" checks below
+        # true, and the retry re-attempts against the replacement rows.
+        rows = [
+            row
+            for row in self.query(f".{row_class}")
+            if not getattr(row, "_pruning", False)
+        ]
         if not rows:
             if (
                 row_class == "library-skill-row"
@@ -11199,6 +11217,11 @@ class LibraryScreen(BaseAppScreen):
                 except (NoMatches, QueryError):
                     pass
                 else:
+                    if getattr(control, "_pruning", False):
+                        # TASK-34000.26: the filter the recompose is
+                        # replacing; wait for its replacement instead.
+                        self._retry_library_list_entry_focus_while_armed()
+                        return
                     self.set_focus(control)
                     # task-32228: only a landing counts as done. A control
                     # that is mounted but not yet focusable (a canvas still
