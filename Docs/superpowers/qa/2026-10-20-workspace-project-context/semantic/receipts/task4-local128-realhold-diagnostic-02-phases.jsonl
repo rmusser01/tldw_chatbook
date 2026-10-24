@@ -1,0 +1,21 @@
+{"monotonic": 184271.937, "phase": "test_enter"}
+{"monotonic": 184288.0, "phase": "start_await_enter"}
+{"monotonic": 184288.0, "phase": "keyword_setup_enter"}
+{"monotonic": 184304.375, "phase": "keyword_ready"}
+{"monotonic": 184308.953, "phase": "semantic_worker_enter"}
+{"monotonic": 184308.953, "phase": "semantic_job_started"}
+{"monotonic": 184308.953, "phase": "semantic_build_enter"}
+{"monotonic": 184308.953, "phase": "start_await_return"}
+{"monotonic": 184308.953, "phase": "producer_wait_enter"}
+{"monotonic": 184335.39, "phase": "hf_constructor_enter"}
+{"device": "cpu", "dtype": "torch.float32", "monotonic": 184336.984, "phase": "hf_constructor_return"}
+{"monotonic": 184336.984, "phase": "hf_embed_enter", "text_count": 128}
+{"monotonic": 184345.125, "phase": "hf_encode_completed", "text_count": 128, "vector_count": 128}
+{"monotonic": 184345.14, "phase": "producer_wait_return"}
+{"monotonic": 184345.14, "phase": "state_read_enter"}
+{"monotonic": 184347.078, "phase": "state_read_return", "state": "Building"}
+{"monotonic": 184347.078, "phase": "disable_submitted"}
+{"monotonic": 184435.14, "phase": "hf_hold_expired"}
+{"error_class": "RuntimeError", "error_site": "embeddings_wrapper.py:966:create_embeddings_async", "monotonic": 184435.187, "phase": "semantic_build_error"}
+{"monotonic": 184435.187, "phase": "semantic_build_exit"}
+{"monotonic": 184437.953, "native_retired": true, "phase": "semantic_worker_exit", "worker_error": null}

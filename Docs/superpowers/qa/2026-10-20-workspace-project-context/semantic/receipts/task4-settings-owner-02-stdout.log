@@ -1,0 +1,12 @@
+.                                                                        [100%]
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+55.09s call     Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+1 passed, 1 warning in 56.76s

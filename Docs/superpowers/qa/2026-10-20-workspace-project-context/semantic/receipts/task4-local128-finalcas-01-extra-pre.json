@@ -1,0 +1,14 @@
+[
+  {
+    "path": "Tests/Workspaces/test_project_semantic_generations.py",
+    "sha256": "E0171704AF15133AFDB773462372758DAB0D549115BC9DEA87219D4E63B47DF5"
+  },
+  {
+    "path": "tldw_chatbook/Workspaces/project_index/service.py",
+    "sha256": "F20128E8BABF9BC705172FA27CA759B6170F8870E6F423F716B42FEBDF0E507A"
+  },
+  {
+    "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+    "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B"
+  }
+]

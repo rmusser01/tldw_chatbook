@@ -957,11 +957,14 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             return generation_id
 
     def semantic_source_page(
-        self, scope: ProjectIndexScope, generation_id: str, claim_token: str, *, after: int
+        self, scope: ProjectIndexScope, generation_id: str, claim_token: str, *,
+        after: int, limit: int = 32,
     ) -> tuple[SemanticSourceChunk, ...]:
-        """Materialize at most 32 chunks and 1 MiB encoded source per page."""
+        """Materialize a validated bounded keyset page under 1 MiB source."""
         if type(after) is not int or after < 0:  # noqa: E721
             raise ValueError("invalid_semantic_cursor")
+        if type(limit) is not int or not 1 <= limit <= 128:  # noqa: E721
+            raise ValueError("invalid_semantic_source_limit")
         with self.connection() as conn:
             generation = self._semantic_live(conn, scope, generation_id, claim_token)
             if generation is None or after != (generation["checkpoint_chunk_id"] or 0):
@@ -970,8 +973,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "SELECT c.id,f.path,f.identity,f.content_sha256,c.line_start,c.line_end,"
                 "length(CAST(c.text AS BLOB)) AS byte_count "
                 "FROM chunks c JOIN files f ON f.path=c.path "
-                "WHERE c.id>? ORDER BY c.id LIMIT 32",
-                (after,),
+                "WHERE c.id>? ORDER BY c.id LIMIT ?",
+                (after, limit),
             ).fetchall()
             selected = []
             total = 0

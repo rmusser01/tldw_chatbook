@@ -1,0 +1,71 @@
+2026-10-23 17:12:03.655 | DEBUG    | tldw_chatbook.config:<module>:150 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+========================================================================
+ Chatbook cannot start: its private storage location is not
+ secure on this machine
+========================================================================
+
+Chatbook stores API keys and other secrets in its config and data
+directories, so it refuses to run from any location that other
+users on this machine could modify. Nothing outside Chatbook's own
+config/data directories was created or changed.
+
+Location it was trying to use: C:\Users\GDesktop-1\AppData\Local\Temp\tldw_test_config_rn0toau9\config\.raw-pin
+Blocked by: \Users\GDesktop-1\AppData\Local\Temp (mode drwxrw-rw- (0o766), owner uid=1000, group gid=1000)
+Reason: shared_writable_parent
+
+HOW TO FIX
+Remove group/world write permission from the blocked directory
+shown above, then start Chatbook again:
+
+    chmod g-w,o-w -- '\Users\GDesktop-1\AppData\Local\Temp'
+
+This commonly happens when an earlier tool created the directory
+under a permissive umask (mode 0775 means group-writable).
+
+ALTERNATIVE
+Keep the directory as it is and point the config elsewhere instead
+(a file inside a directory only you can write):
+
+    TLDW_CONFIG_PATH="$HOME/tldw-config.toml" tldw-cli
+
+If the blocked path above belongs to Chatbook's data storage
+rather than its config, set [paths] data_dir in the config file to
+a private directory instead.
+
+Technical detail for bug reports:
+    unsafe_parent: shared_writable_parent [\Users\GDesktop-1\AppData\Local\Temp (mode drwxrw-rw- (0o766), owner uid=1000, group gid=1000)]
+2026-10-23 17:12:03.752 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1546 - Could not check config for eager_dependency_check: unsafe_parent: shared_writable_parent [\Users\GDesktop-1\AppData\Local\Temp (mode drwxrw-rw- (0o766), owner uid=1000, group gid=1000)]
+2026-10-23 17:12:03.752 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-10-23 17:12:03.773 | DEBUG    | tldw_chatbook.config:<module>:150 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+ImportError while loading conftest 'C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\Tests\conftest.py'.
+Tests\conftest.py:181: in <module>
+    importlib.import_module("tldw_chatbook.Chunking")
+tldw_chatbook\Chunking\__init__.py:15: in <module>
+    from .Chunk_Lib import (
+tldw_chatbook\Chunking\Chunk_Lib.py:301: in <module>
+    "summarize_system_prompt": get_internal_prompt(
+tldw_chatbook\Internal_Prompts\resolver.py:63: in get_internal_prompt
+    raw_override = _config_value("internal_prompts." + prompt_id)
+tldw_chatbook\Internal_Prompts\resolver.py:142: in _config_value
+    from tldw_chatbook.config import get_cli_setting  # lazy on purpose
+tldw_chatbook\config.py:11939: in <module>
+    load_cli_config_and_ensure_existence()
+tldw_chatbook\config.py:7287: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:1094: in _scope
+    fd = _pin_parent(state, anchor)
+tldw_chatbook\Backup_Recovery\raw_participants.py:690: in _pin_parent
+    fd, _ = _open_verified_parent(
+tldw_chatbook\Utils\private_paths.py:909: in _open_verified_parent
+    parent, leaf = _walk_verified_parent(
+tldw_chatbook\Utils\private_paths.py:476: in _walk_verified_parent
+    raise PrivatePathError(
+E   tldw_chatbook.Utils.private_paths.PrivatePathError: unsafe_parent: shared_writable_parent [\Users\GDesktop-1\AppData\Local\Temp (mode drwxrw-rw- (0o766), owner uid=1000, group gid=1000)]

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="11.770" timestamp="2026-10-23T16:34:05.164592-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_semantic_read_error_preserves_last_known_state_and_retry_guidance" time="10.742"><failure message="AssertionError: assert None == ProjectSemanticState(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', b..., enabled=False, settings=None, state='Off', reason=None, ready_generation_id=None, coverage=None, close_pending=False)&#10; +  where None = ProjectIndexBindingCard(classes='h-auto').semantic_status">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_semantic_read_error_prese0/private-profile-process/pytest/test_semantic_read_error_prese0')
+request = &lt;FixtureRequest for &lt;Coroutine test_semantic_read_error_preserves_last_known_state_and_retry_guidance&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x00000174184ED580&gt;
+
+    @private_profile_test
+    async def test_semantic_read_error_preserves_last_known_state_and_retry_guidance(
+        tmp_path, request, monkeypatch
+    ):
+        mod = card_module()
+        rig = Rig(tmp_path)
+        rig.enable()
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        try:
+            async with CardApp(card).run_test(size=(100, 35)) as pilot:
+                await wait_for_card(card, pilot)
+                known = card.semantic_status
+                keyword = card.status
+                card.query_one(".project-index-prefixes", Input).value = "dirty-folder"
+                actual_state = rig.service.semantic_state
+    
+                def failed_read(key):
+                    raise RuntimeError("semantic_read_failed")
+    
+                monkeypatch.setattr(rig.service, "semantic_state", failed_read)
+                card.reload_status()
+                await pilot.pause()
+                while card._pending:
+                    await pilot.pause(0.02)
+&gt;               assert card.semantic_status == known
+E               AssertionError: assert None == ProjectSemanticState(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', b..., enabled=False, settings=None, state='Off', reason=None, ready_generation_id=None, coverage=None, close_pending=False)
+E                +  where None = ProjectIndexBindingCard(classes='h-auto').semantic_status
+
+Tests\UI\test_project_semantic_consent.py:458: AssertionError</failure></testcase></testsuite></testsuites>

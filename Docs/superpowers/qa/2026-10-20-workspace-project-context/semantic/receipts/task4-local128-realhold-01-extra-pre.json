@@ -1,0 +1,26 @@
+{
+  "run": "task4-local128-realhold-01",
+  "hashes": [
+    {
+      "sha256": "0D04A461A2CD5A2483FACC1EBA0876E5A7CFA935B621BC6BD2BF2B945A9C487F",
+      "path": "Tests/Workspaces/test_project_semantic_app_quality.py"
+    },
+    {
+      "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B",
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py"
+    },
+    {
+      "sha256": "F20128E8BABF9BC705172FA27CA759B6170F8870E6F423F716B42FEBDF0E507A",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    },
+    {
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23",
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
+    },
+    {
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D",
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py"
+    }
+  ],
+  "utc": "2026-10-24T00:02:02.4239862Z"
+}

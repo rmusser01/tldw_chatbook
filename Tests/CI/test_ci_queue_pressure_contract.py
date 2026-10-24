@@ -655,6 +655,7 @@ PROJECT_INDEX_TARGETS = (
     "Tests/Workspaces/test_project_index_allocation.py::test_retained_generation_after_revoke_qualifies_peer_and_closes_probes",
     "Tests/Workspaces/test_project_index_allocation.py::test_pure_keyword_group_uses_keyword_allowance",
     "Tests/Workspaces/test_project_semantic_generations.py::test_unknown_registry_retirement_roots_model_and_native_owners",
+    "Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[normal]",
     "Tests/RAG/test_project_projection_scope.py::test_project_missing_local_package_is_setup_required",
     "Tests/RAG/test_project_projection_scope.py::test_selected_keyless_compatible_endpoint_and_default_key_requirement",
     "Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model",

@@ -1,0 +1,19 @@
+{
+  "hold_point": "after_actual_encode_before_vectors_return_to_service",
+  "provider_batch_sizes": [
+    128
+  ],
+  "sampled_absolute_rss_bytes": {
+    "before_model": 194068480,
+    "held_after_actual_encode": 1132642304,
+    "after_retirement": 836837376
+  },
+  "actual_encode_completed": 184752.25,
+  "durable_revocation": 184764.0,
+  "actual_embed_returned": 184764.0,
+  "physical_retirement": 184766.437,
+  "native_retired": true,
+  "semantic_state": "Off",
+  "keyword_state": "Ready",
+  "network_attempts": 0
+}

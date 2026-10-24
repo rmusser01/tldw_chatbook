@@ -1,0 +1,80 @@
+{
+  "source_hashes": [
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_real_carrier_stage_diagnostic.py",
+      "sha256": "12A95461C1C4CC04A5212ACD22738EE021D7F41A098E37C6A16DD7B3B5D775EA"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-real-carrier-stage-diagnostic.ps1",
+      "sha256": "447EBF2A51F81970410C689007794B3CDE83D59C88657EDF26E61C37A88AC4F0"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_write_stage_diagnostic.py",
+      "sha256": "43F78402ED16DF62D846A13EA154AED644314B8369857E6F06C21C90D483C8E4"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-write-stage-diagnostic.ps1",
+      "sha256": "F31503EC16BD7E902EDDDB6CBB0885EC7E428190BA7A0ADCEDD05866A8DE7480"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-write-stage-01-result.json",
+      "sha256": "3414184A1C92F06C41F459AFEE410D0AB1E36B7FC360CC432B54D39ECF2E05AB"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-write-stage-01-stdout.log",
+      "sha256": "DEBF7AD109B36FB25C66F2E8B365614118E1EFCF2A7EAEC75F0E628DF2AF6466"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-write-stage-01-stderr.log",
+      "sha256": "95FAF276503A4270FB9ED07D49D35B85D45219251686CBD3DB1C6EF744A21C84"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-write-stage-01-raw.log",
+      "sha256": "501A4AE560CE5CF612A95BB35C1D51742E0CC6402D4A20E769125613C2DAEEE6"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "sha256": "5333B8EE4EA78E9FBD0648B14713B1EFBE39A315AB058694575B8C0E3030220C"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/allocation.py",
+      "sha256": "B7E5382376A086F056CA85F5BE36B11048A87EE647A3AC129067CC88C57AF30A"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py",
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/registry_service.py",
+      "sha256": "4BD5B8D3065FFD4CAEB8E8EC69B0CECE6EEA5FF8DEFBA3A94BA816303019EC04"
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "sha256": "EC5C6796D920881F3AD6FC78E87DE1399D7E85922DDF66823C09FCAFDC036482"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py",
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D"
+    },
+    {
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23"
+    }
+  ],
+  "argv": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4_real_carrier_stage_diagnostic.py"
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-write-stage-01\\profile",
+  "head": "6bda3c739af2a0c814e00e5f1c9594b3b1ec7ecc",
+  "max_pages": 4,
+  "max_semantic_seconds": 180,
+  "max_total_seconds": 300,
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "temp": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\native-temp\\task4-real-carrier-stage-01"
+}

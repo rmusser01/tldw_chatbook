@@ -131,6 +131,7 @@ class ProjectIndexBindingCard(Vertical):
         self.root = root
         self.status = status
         self.semantic_status: ProjectSemanticState | None = None
+        self._semantic_read_failed: str | None = None
         self._semantic_cleanup_owner: tuple[object, object] | None = None
         self._semantic_destination = ""
         self._painted_semantic_model = DEFAULT_SEMANTIC_MODEL
@@ -219,7 +220,7 @@ class ProjectIndexBindingCard(Vertical):
     def _poll(self) -> None:
         if (
             self.status
-            and (self.status.state == "Building" or (
+            and (self._semantic_read_failed or self.status.state == "Building" or (
                 self.semantic_status is not None and self.semantic_status.state == "Building"
             ))
             and not self.requires_upgrade
@@ -267,6 +268,14 @@ class ProjectIndexBindingCard(Vertical):
         semantic = self.semantic_status
         if not self.supported or not self.available:
             semantic_text = "Semantic index unavailable. Restore folder access."
+        elif self._semantic_read_failed:
+            last_known = f" (last known {semantic.state})" if semantic else ""
+            if self._semantic_read_failed == "busy":
+                semantic_text = f"Semantic index temporarily unavailable{last_known}. Check status to retry."
+            else:
+                semantic_text = f"Semantic status unavailable after a read failure{last_known}. Check status to retry."
+            if self._semantic_cleanup_owner:
+                semantic_text += " · cleanup pending; retry semantic cleanup."
         elif semantic is None:
             semantic_text = "Semantic index: checking…"
         else:
@@ -289,7 +298,7 @@ class ProjectIndexBindingCard(Vertical):
             )
         )
         semantic_actions = set()
-        if self.available and self.supported and status and semantic:
+        if self.available and self.supported and status and semantic and not self._semantic_read_failed:
             semantic_actions.add("semantic-stage")
             if semantic.enabled:
                 semantic_actions.add("semantic-disable")
@@ -299,10 +308,12 @@ class ProjectIndexBindingCard(Vertical):
                     semantic_actions.add("semantic-refresh")
             if semantic.close_pending or self._semantic_cleanup_owner:
                 semantic_actions.add("semantic-retry-cleanup")
+        elif self.available and self.supported and self._semantic_cleanup_owner:
+            semantic_actions.add("semantic-retry-cleanup")
         for button in self.query(".project-semantic-action"):
             button.display = button.name in semantic_actions
         self.query_one(".project-semantic-model", Input).disabled = (
-            not self.available or not self.supported or semantic is None
+            not self.available or not self.supported or semantic is None or self._semantic_read_failed
         )
 
     def _keyword_inputs(self) -> tuple[Input, Input]:
@@ -369,6 +380,9 @@ class ProjectIndexBindingCard(Vertical):
     @on(Button.Pressed, ".project-semantic-action")
     def _semantic_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if self.status is None or self.semantic_status is None or self._semantic_read_failed:
+            if event.button.name != "semantic-retry-cleanup" or not self._semantic_cleanup_owner:
+                return
         if self.status is None or self.semantic_status is None:
             return
         model_id = self.query_one(".project-semantic-model", Input).value.strip()
@@ -506,13 +520,27 @@ class ProjectIndexBindingCard(Vertical):
                     pending = await asyncio.to_thread(service_ref.semantic_close_pending, key)
                     if not pending and getattr(service_ref, "_closed", False):
                         await service_ref.aclose()
+                    semantic = None
+                    semantic_read_failed = "pending" if pending else "closed"
+                    if not pending and not getattr(service_ref, "_closed", False):
+                        def read_retired_owner():
+                            with service_ref.registry_connection_scope():
+                                return service_ref.semantic_state(key)
+
+                        try:
+                            semantic = await asyncio.to_thread(read_retired_owner)
+                            semantic_read_failed = None
+                        except LifetimeBusy:
+                            semantic_read_failed = "busy"
+                        except Exception:
+                            semantic_read_failed = "failed"
                     if not pending:
                         self._semantic_cleanup_owner = None
-                    snapshot = self.semantic_status
                     result = (
                         (self.status, self.policy, self.requires_upgrade),
-                        replace(snapshot, close_pending=pending) if snapshot else None,
+                        semantic,
                         "",
+                        semantic_read_failed,
                     )
                     error = None
                 else:
@@ -527,9 +555,14 @@ class ProjectIndexBindingCard(Vertical):
                             keyword = self._execute(app, action) if action else self._load(app)
                             try:
                                 semantic = service_ref.semantic_state(keyword[0].scope.key)
+                                semantic_read_failed = None
+                            except LifetimeBusy:
+                                semantic = None
+                                semantic_read_failed = "busy"
                             except Exception:
                                 semantic = None
-                            return keyword, semantic, destination
+                                semantic_read_failed = "failed"
+                            return keyword, semantic, destination, semantic_read_failed
 
                     result = await asyncio.to_thread(owned_call)
                     error = None
@@ -544,6 +577,7 @@ class ProjectIndexBindingCard(Vertical):
                     and await asyncio.to_thread(service_ref.semantic_close_pending, selected_key)
                 ):
                     self._semantic_cleanup_owner = (service_ref, selected_key)
+                    self._semantic_read_failed = "pending"
                     if self.semantic_status is not None:
                         self.semantic_status = replace(self.semantic_status, close_pending=True)
             finally:
@@ -556,7 +590,10 @@ class ProjectIndexBindingCard(Vertical):
             ):
                 return
             if result:
-                keyword, self.semantic_status, destination = result
+                keyword, semantic, destination, semantic_read_failed = result
+                self._semantic_read_failed = semantic_read_failed
+                if semantic is not None:
+                    self.semantic_status = semantic
                 self.status, self.policy, self.requires_upgrade = keyword
                 if destination:
                     self._semantic_destination = destination
@@ -589,7 +626,11 @@ class ProjectIndexBindingCard(Vertical):
                     "Building": "Building. Counts describe discovered entries; total size is not yet known.",
                 }
                 self._feedback(
-                    "Cache upgrade required. Refresh explicitly to upgrade and scan, or Clear cached content. Free storage if the upgrade cannot fit."
+                    "Semantic index temporarily unavailable. Check status to retry; keyword search remains available."
+                    if self._semantic_read_failed == "busy"
+                    else "Semantic status read failed. Check status to retry; keyword search remains available."
+                    if self._semantic_read_failed
+                    else "Cache upgrade required. Refresh explicitly to upgrade and scan, or Clear cached content. Free storage if the upgrade cannot fit."
                     if self.requires_upgrade
                     else guidance[self.status.state]
                 )

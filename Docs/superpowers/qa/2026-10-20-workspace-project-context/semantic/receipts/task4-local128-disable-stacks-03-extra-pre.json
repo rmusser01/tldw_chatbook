@@ -1,0 +1,33 @@
+{
+  "run": "task4-local128-disable-stacks-03",
+  "hashes": [
+    {
+      "sha256": "9EB93D62A7539B4AA94EE046BF26C8815AB0B3D0E06F975EEE4EF7239FCE3DF5",
+      "path": "Tests/Workspaces/test_project_semantic_app_quality.py"
+    },
+    {
+      "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B",
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py"
+    },
+    {
+      "sha256": "9DB38B32B627F8CF10CE8CDE6D0974F67670CBFDAE1AB1E77272D7AFA0F51171",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    },
+    {
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23",
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
+    },
+    {
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D",
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py"
+    },
+    {
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E",
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py"
+    }
+  ],
+  "hold_seconds": 90,
+  "limit_seconds": 300,
+  "utc": "2026-10-24T00:20:21.6673383Z",
+  "stack_snapshot_after_disable_seconds": 10
+}
