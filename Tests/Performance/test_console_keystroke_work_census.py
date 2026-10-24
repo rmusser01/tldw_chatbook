@@ -104,6 +104,48 @@ async def _settle(pilot: Any, passes: int = 30) -> None:
         await pilot.pause()
 
 
+#: Worker groups through which a cold projection read publishes. Each ends in a
+#: full Console sync, and a full sync snapshots the transcript.
+_PUBLICATION_GROUPS = frozenset(
+    {
+        "console-sync",
+        "console-readiness-config",
+        "console-readiness-publication",
+        "console-context-presentation",
+        "console-context-publication",
+    }
+)
+
+
+async def _settle_publications(pilot: Any, screen: Any, timeout: float = 60.0) -> None:
+    """Wait until no cold projection read or the full sync it publishes is running.
+
+    TASK-36390: the fixture's own cold reads finish on workers. On a loaded
+    machine a fixed settle window could end before one of them published a
+    full sync. That sync then ran inside the typing burst and took three
+    transcript snapshots in the 400-message run. It is setup work, not
+    keystroke work.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    quiet = 0
+    while quiet < 3:
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+        busy = sorted(
+            worker.group
+            for worker in pilot.app.workers
+            if worker.group in _PUBLICATION_GROUPS and not worker.is_finished
+        )
+        if screen._console_sync_in_progress:
+            busy.append("sync_in_progress")
+        if getattr(screen, "_console_control_bar_sync_scheduled", False):
+            busy.append("control_bar_sync_scheduled")
+        quiet = 0 if busy else quiet + 1
+        assert quiet or asyncio.get_running_loop().time() < deadline, (
+            f"Console publications never settled before typing: {busy}"
+        )
+
+
 #: The storage units TASK-33260 (PERF-01) added: what the two keystone
 #: regressions of September 2026 actually cost, and what the derivation
 #: counters above could not see (the census read 0 per key while every key
@@ -678,6 +720,13 @@ async def _census(
         screen = pilot.app.screen
         context_spend_for_test(screen)._active_console_settings_context_estimate()
         context_spend_for_test(screen)._build_console_cost_state()
+        # TASK-36390: and what the composer's 0.2 s trailing refresh reads. A
+        # >0.2 s gap between presses fires it mid-burst. Its first
+        # context-presentation read after the fixture's back-door ingest is
+        # cold, and that read's publication is a full sync: 3 transcript
+        # snapshots. Paying it here leaves the burst only the warm read.
+        screen._sync_console_settings_summary()
+        screen._sync_console_cost_chip()
         if known_evidence:
             _settle_known_connection_evidence(pilot.app, screen)
             await _settle(pilot, passes=10)  # Its one refresh is not typing.
@@ -704,6 +753,7 @@ async def _census(
             # fires it exactly once.
             screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
+        await _settle_publications(pilot, screen)
         _TYPING_BURST_CALLERS.clear()
         counting["burst"] = True
         counting["on"] = True
