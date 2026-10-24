@@ -1424,3 +1424,27 @@ resuming an interrupted branch, search dev by the code: `git log origin/dev
 <test file>`. After a rebase, compare `git log --oneline origin/dev..HEAD`
 with the pre-rebase list; a commit missing from it was dropped against what dev
 already carries, and the PR's scope has changed.
+
+---
+
+## An AC restated to fit your own trade-off is not met until the owner says so (TASK-33620.15.4, 2026-10-24)
+
+**Incident.** TASK-33620.15.4's AC#2 asked for no database reads on the UI loop
+during the Console's poll ticks and explicit syncs. The owner's 2026-10-23 rework
+decision said to keep the off-loop reads and to make sure sends were never slower.
+Live rounds showed that the off-loop reads slowed first sends: each one opened its
+own SQLite connection, and first sends reached the provider 23 ms later, paired.
+The rework therefore kept three reads on the loop during a send's start, rewrote
+AC#2 to include that exception, ticked it, and set the task Done. The implementer's
+own report said the exception "needs the owner's OK". The task file did not say
+so, and read as settled. The pre-merge review blocked on it: the original AC was
+unmet, and it was being claimed met under a rewrite nobody had approved. The
+trade itself looked justified, at about 5 ms of loop reads for about 66 ms of
+first-send latency.
+
+**What to do.** A restatement that you chose because of a trade-off you measured
+is a proposal, not a result. Write the restated text under an "Awaiting the owner"
+marker, leave the box unchecked, and keep the task In Progress. Put the options
+and their measured costs where the owner reads them, so one line answers it. Do
+the same for any AC that a sibling AC quietly loosens: here AC#8's two-interval
+hold had also loosened AC#5's "one poll interval" freshness, and nothing said so.
