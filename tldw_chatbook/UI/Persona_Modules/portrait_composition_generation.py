@@ -73,7 +73,12 @@ async def generate_components(
     """Admit three new requests or one explicit retry against one immutable recipe."""
     screen, view = controller._screen(), controller._view()
     settings, reference = controller._regions, controller._reference
-    if settings is None or reference is None:
+    if reference is None:
+        view.status(
+            "Generation reference unavailable within image limits. Import ready-made frames instead."
+        )
+        return False
+    if settings is None:
         view.status(
             "Edit and Save regions on an open-eyes, closed-mouth base before generating. Ready-made imports remain available."
         )

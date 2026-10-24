@@ -225,7 +225,9 @@ After preparing saved artwork and **Save regions**, **Generate components (3)…
 offers three sequential image-edit requests to the configured reference-image backend:
 eyelids, small mouth and open mouth. The confirmation names the provider, model/workflow,
 destination, source and count. Charges may apply. No other provider or automatic paid
-retry is selected. Ready-made imports remain available without a configured backend.
+retry is selected. Ready-made imports remain available without a configured backend. If the saved source
+cannot produce a reference within image limits, component generation and region
+selection are unavailable; manual imports, Apply and Remove still work.
 
 After confirmation, a fresh batch starts a rest-only draft and clears all prior draft
 components. Successful responses contribute pixels only through the saved regions;

@@ -81,6 +81,9 @@ compositor decode reservations, returns only Rich text and rejects retired rende
 The controller retires the exact modal/sample, reuses canonical settings, recovers
 only invariant-checked components and installs a rest-only candidate on changed Save.
 Apply preserves candidate provenance; manual imports still drop lineage on success.
+Reference preparation is optional: a saved source that exceeds its decode/PNG budget
+still opens ordinary manual frames and permits import/Apply/Remove. Only region
+selection and component generation are disabled; original limits are unchanged.
 `portrait_composition_generation.py` now replaces the historical six-edit path with
 three shared-reference requests and one-component dependent retries. Every fresh batch
 resets to rest-only before dispatch; candidate identity, source, settings revision and

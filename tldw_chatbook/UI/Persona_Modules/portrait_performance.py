@@ -265,11 +265,14 @@ class PortraitPerformanceController:
                     if candidate is not None:
                         self.draft.replace_composition(candidate)
                 self._source_request = requested
+                view.compositing_available = self._reference is not None
                 view.applied = bool(
                     record and record.active and record.source == source
                 )
                 view.status(
                     "Saved source captured. Import six matching stills, then review and Apply."
+                    if view.compositing_available
+                    else "Saved source captured for manual frames. Generation reference unavailable within image limits; import, Apply and Remove remain available."
                 )
             else:
                 draft = self.draft

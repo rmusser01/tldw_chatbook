@@ -40,15 +40,19 @@ def prepare_regions(
     data: bytes,
     record: PortraitPerformanceRecord | None,
 ) -> tuple[
-    ResolvedReferenceImage,
+    ResolvedReferenceImage | None,
     str,
     PortraitRegionSettings | None,
     int,
     PortraitCompositionCandidate | None,
 ]:
     """Prepare once and recover provenance only after complete pixel validation."""
-    reference = performance_reference(data, source.source_sha256)
-    digest = prepared_base_pixel_sha256(reference.content)
+    try:
+        reference = performance_reference(data, source.source_sha256)
+        digest = prepared_base_pixel_sha256(reference.content)
+    except (ValueError, OSError, ImportError, MemoryError):
+        # Optional compositing must not block existing manual frames or removal.
+        return None, "", None, 0, None
     try:
         saved = db.get_character_portrait_regions(
             character_id=source.character_id, expression_key=source.expression_key
@@ -101,6 +105,9 @@ async def edit_regions(
     screen = controller._screen()
     reference = controller._reference
     if reference is None:
+        controller._view().status(
+            "Generation reference unavailable within image limits. Import ready-made frames instead."
+        )
         return False
     modal = controller._region_modal = PortraitRegionEditor(
         reference.content,

@@ -347,3 +347,50 @@ async def test_narrow_review_stacks_images_and_keeps_keyboard_prepare(
     await pilot.press("enter")
     await app.workers.wait_for_complete()
     assert screen._portrait_performance().draft is not None
+
+
+@pytest.mark.asyncio
+async def test_large_source_keeps_manual_authoring_and_removal_available(
+    personas_editor_with_saved_character, tmp_path
+):
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        capture_performance_source,
+        normalize_performance_frames,
+    )
+
+    _, screen, db, cid, editor = saved_source(personas_editor_with_saved_character)
+    original = png(size=(4096, 4096))
+    card = db.get_character_card_by_id(cid)
+    assert db.update_character_card(cid, {"image": original}, card["version"])
+    editor.load_character(db.get_character_card_by_id(cid))
+    source, _ = capture_performance_source(db, character_id=cid, requested_state="idle")
+    frames = normalize_performance_frames({role: png() for role in FRAME_ROLES})
+    db.apply_character_portrait_performance(source, frames, expected_revision=0)
+    controller = screen._portrait_performance()
+    view = editor.query_one(PortraitPerformanceEditor)
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    assert controller.draft.frames() == frames
+    assert not view.query_one("#portrait-performance-import", Button).disabled
+    assert not view.query_one("#portrait-performance-remove", Button).disabled
+    assert view.query_one("#portrait-performance-regions", Button).disabled
+    assert view.query_one("#portrait-performance-generate", Button).disabled
+    assert controller._reference is None
+    assert not await controller.handle(CharacterPerformanceRequested("generate"))
+    path = tmp_path / "manual.png"
+    path.write_bytes(png("blue"))
+    assert await controller.handle(
+        CharacterPerformanceRequested("import", role="small"), path=str(path)
+    )
+    assert await controller.handle(CharacterPerformanceRequested("apply"))
+    current = db.get_character_portrait_performance(
+        character_id=cid, expression_key="neutral"
+    )
+    assert current.revision == 2 and current.frames[1].png != frames[1].png
+    controller.discard()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    assert controller.draft.frames() == current.frames
+    assert await controller.handle(CharacterPerformanceRequested("remove"))
+    assert not db.get_character_portrait_performance(
+        character_id=cid, expression_key="neutral"
+    ).active
+    assert db.get_character_card_by_id(cid)["image"] == original

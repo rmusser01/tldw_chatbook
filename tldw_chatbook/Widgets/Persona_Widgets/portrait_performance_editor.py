@@ -59,6 +59,7 @@ class PortraitPerformanceEditor(Vertical):
         self._allowed = False
         self.applied = False
         self.sample_running = False
+        self.compositing_available = False
 
     def compose(self) -> ComposeResult:
         with Collapsible(title="Living portrait", collapsed=True):
@@ -189,6 +190,7 @@ class PortraitPerformanceEditor(Vertical):
             self._draft.cancel()
         self._draft = None
         self.applied = False
+        self.compositing_available = False
         if self.is_mounted:
             for selector in (
                 "#portrait-performance-source-image",
@@ -223,6 +225,8 @@ class PortraitPerformanceEditor(Vertical):
                 button.disabled = not self.sample_running and (
                     busy or draft is None or not draft.can_apply
                 )
+            if action in {"regions", "generate"}:
+                button.disabled |= not self.compositing_available
             if action == "regenerate":
                 button.disabled |= draft is None or draft.composition is None
             if action == "review":
