@@ -1,7 +1,7 @@
 ---
 id: TASK-36455
 title: Keep newer Dictionary Settings drafts when an earlier Save completes
-status: In Progress
+status: Done
 created_date: 2026-10-23 16:39
 labels:
 - textual
@@ -26,7 +26,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 06:55
+updated_date: 2026-10-24 07:04
 ---
 
 ## Description
@@ -85,4 +85,5 @@ Twelve mounted real-service/SQLite regression cases pass, with next-Save/version
 
 Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
 Required-aggregate follow-up: the extracted completion now treats a missing Library pane after row rendering as an ended presentation context. Real SQLite Save identity/version and raw-draft acknowledgement remain unchanged. A mounted actual-Save control witnesses committed version2 and pane removal before releasing completion, then proves later typing stays usable; matched RED raises NoMatches and GREEN passes. The obsolete old-wrapper two-site W002 pin is removed; no new unsafe row is allowed. The complete targeted selection passes213 cases, and the exact native worker guard passes. Existing ADR-033/011/097 and the linked QA report cover this bounded lifetime repair; fresh scoped Superpowers review and final-head hosted CI remain the delivery gate.
+Scoped fresh-context Superpowers review of e9692090 found no Critical, Important or Minor findings and approved publication for fresh CI. Matched runtime RED/GREEN and the 213-case targeted selection qualify the two aggregate repairs; post-rebase CI/workflow contracts pass 224 cases (37.453s JUnit). Production and scripts are unchanged across rebase onto dev 1381e70735. Eleven exact aggregate commands pass natively; unchanged Canvas reproduction requires hosted Python 3.12.11. Final-head hosted CI and paginated feedback remain the delivery gate in PR #3228. Existing ADRs apply; no new ADR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

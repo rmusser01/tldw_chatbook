@@ -1,7 +1,7 @@
 ---
 id: TASK-36458
 title: Keep later Import transcription choices when Parakeet installation finishes
-status: In Progress
+status: Done
 created_date: 2026-10-23 16:40
 labels:
 - textual
@@ -31,7 +31,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-23-textual-book-after-pr3219.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 06:55
+updated_date: 2026-10-24 07:04
 ---
 
 ## Description
@@ -91,4 +91,5 @@ All nine new selection cases and 25 existing contracts pass across the recorded 
 Implementation acceptance and independent review are complete in [PR #3228](https://github.com/rmusser01/tldw_chatbook/pull/3228). All changed production files are identical to the reviewed rebased head whose hosted [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40020015425) passed; the subsequent Dictionary fixture repair passed four native controls and scoped review. Final task/documentation metadata is bundled before the final CI run. Hosted checks remain a delivery gate and their final exact-head results are recorded in the PR check rollup and description. Targeted local verification only; no full local suite.
 Current-dev integration: after rebasing onto dev d0d926e11b (related PR #3221), the combined LibraryScreen exceeded the existing 37,525 ceiling at 37,551 lines. The complete existing pure ingest-options projection now lives beside LibraryIngestFormState in its already imported state module; the screen retains its delegate. Auto displayed-model/submission, preference and Parakeet consent/activation/selection bodies are unchanged. LibraryScreen is now 37,493 lines/1,354 methods with its line ceiling lowered to 37,493; prior 37,525 statements describe the earlier checkpoint. Final native combined-source selection passes 80 cases (101.251s JUnit), including Auto/readiness, snapshot/submission, mounted ordinary/provider-change Parakeet and boot/size guards. Preimport 558/558, warmup 93/94; no new lint diagnostics or raised budget. ADR-025/033/097 and the linked QA report govern this mechanical extraction; no new ADR. Fresh scoped review and current-head hosted results are recorded in PR #3228.
 Required-aggregate follow-up: install-error notifications render literal text with markup disabled, preserving the original message/severity and consented artifact/preference/selection flow. A real App.notify/Toast control reproduces MarkupError for markup-shaped text before the repair and renders it literally afterward. The obsolete old-wrapper markup pin is removed; no unsafe replacement pin is added. The complete targeted selection passes213 cases, including ordinary/provider-change mounted install controls, boot and size guards; the exact native markup guard passes. Existing ADR-025/033/011/097 and the linked QA report apply. Fresh scoped Superpowers review and final-head hosted CI remain the delivery gate.
+Scoped fresh-context Superpowers review of e9692090 found no Critical, Important or Minor findings and approved publication for fresh CI. Matched runtime RED/GREEN and the 213-case targeted selection qualify the two aggregate repairs; post-rebase CI/workflow contracts pass 224 cases (37.453s JUnit). Production and scripts are unchanged across rebase onto dev 1381e70735. Eleven exact aggregate commands pass natively; unchanged Canvas reproduction requires hosted Python 3.12.11. Final-head hosted CI and paginated feedback remain the delivery gate in PR #3228. Existing ADRs apply; no new ADR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
