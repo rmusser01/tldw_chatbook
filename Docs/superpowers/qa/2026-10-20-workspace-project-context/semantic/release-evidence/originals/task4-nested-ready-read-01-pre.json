@@ -1,0 +1,53 @@
+{
+  "run": "task4-nested-ready-read-01",
+  "group": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\k5-scale\\stable-profile\\home\\.local\\share\\tldw_cli\\default_user\\project_index\\74a6d85479e57c9ded157f90664a282cc6d124ee0b59995baa584e57b9e6f715",
+  "inventory": [
+    {
+      "relative": "4108de6c8bbf08295b9cadc5f0848762b87f84db380e615a36d2c561c2991dd5.lifetime.lock",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "relative": "62d3d4704898ec8bc01168af66f8d2ff03da8a587d082182fc0a6b63b1aaa59f\\workspace_project_index.db",
+      "bytes": 74072064,
+      "sha256": "E6E8DCBF04409CE82A00F842FDA26F8103C533F402C94FB909EAB39CAEED31AE"
+    },
+    {
+      "relative": "allocation-v1.lock",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "relative": "cleanup-owner-v1.lock",
+      "bytes": 109,
+      "sha256": "99908B2A5B33B42E2949C81B40B5DD3A5B9D4B8E5AEBD3748CF737258B7E8E9E"
+    }
+  ],
+  "source_hashes": [
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "sha256": "9DB38B32B627F8CF10CE8CDE6D0974F67670CBFDAE1AB1E77272D7AFA0F51171"
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py",
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/models.py",
+      "sha256": "191D6DE9468EE7A0885B1403598B5602DBC0EE5B54349A36B443230F4D89F49F"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_nested_ready_read_01.py",
+      "sha256": "1D5C06FEA737624B5ED8EB9322E87ED50F439542ABC224B3BA46EAE04BE4D87E"
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-nested-ready-read-01.ps1",
+      "sha256": "D7BCE84BF94F96D3F38719F3E2F8C09247FA7817E1E031A527652860D8E10786"
+    }
+  ],
+  "started_utc": "2026-10-24T01:58:03.8189075Z"
+}

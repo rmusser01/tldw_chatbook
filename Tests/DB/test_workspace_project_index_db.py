@@ -673,6 +673,9 @@ def _legacy_v2_cache(tmp_path):
         authority_revision=1,
     )
     with store.transaction() as conn:
+        conn.execute("DROP TABLE semantic_members")
+        conn.execute("DROP TABLE semantic_generations")
+        conn.execute("DROP TABLE semantic_control")
         conn.execute("DROP TABLE chunk_fts")
         conn.execute("DELETE FROM chunks")
         conn.execute("CREATE VIRTUAL TABLE chunk_fts USING fts5(text)")
@@ -716,7 +719,7 @@ def test_v3_migration_preserves_state_backfills_paths_and_cleanup_skips_allocati
             search_authority(tmp_path, scope), "legacyfilename", limit=10
         )
         with migrated.connection() as conn:
-            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
     finally:
         migrated.close_native()
 

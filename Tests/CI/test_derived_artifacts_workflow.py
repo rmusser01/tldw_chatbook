@@ -64,6 +64,7 @@ VERDICTS = {
     "console-p0-gate": "Require successful Console P0 regression gate",
     "dreams-boundary": "Require successful Dreams and Guardian boundary contracts",
     "dreams-tracking": "Require successful Dreams tracking tests",
+    "project-index-contract": "Require successful project index contracts",
 }
 
 
@@ -108,6 +109,7 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         "dreams-boundary",
         # TASK-34929: Tests/Dreams/test_track_service.py, in no PR lane before.
         "dreams-tracking",
+        "project-index-contract",
         "derived-artifacts",
         "queue-tick",
     ]

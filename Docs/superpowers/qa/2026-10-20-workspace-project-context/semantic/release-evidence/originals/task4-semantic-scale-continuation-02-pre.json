@@ -1,0 +1,74 @@
+{
+  "whole_process_bound_seconds": 9600,
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\k5-scale\\stable-profile",
+  "hashes": [
+    {
+      "sha256": "5A47F12E4664C6C617A56318F90DD438AA1E83126E74E5F2C49AF299F04DFFF4",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_semantic_scale_continuation_v2.py"
+    },
+    {
+      "sha256": "A7628E6809D144CCC4110DED12BE069AE192A7131C800B4969CAF0EF60B8CF9C",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-semantic-scale-continuation-v2.ps1"
+    },
+    {
+      "sha256": "37838D7645A23205C2240FC91E66F92A3DF7D1FE1577961E89E8BA010ACDB8DC",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-semantic-scale-final-01-nested-report.json"
+    },
+    {
+      "sha256": "63B935250C21F66C7BAAD1E53C922B3A2934C0E91E6F5E76693EF857722179F9",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-nested-ready-read-01-child.json"
+    },
+    {
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23",
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
+    },
+    {
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E",
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py"
+    },
+    {
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D",
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py"
+    },
+    {
+      "sha256": "D0351BB50D2753859330A871C058B4006C5944082F0388D197920A5912AFB715",
+      "path": "tldw_chatbook/Workspaces/project_index/semantic.py"
+    },
+    {
+      "sha256": "9DB38B32B627F8CF10CE8CDE6D0974F67670CBFDAE1AB1E77272D7AFA0F51171",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    },
+    {
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C",
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py"
+    },
+    {
+      "sha256": "950E55D3807BE0C9F8CF71767ECBA402C2CE19B24825AF29265A4AE6AD602E2D",
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py"
+    },
+    {
+      "sha256": "4B573D07B475A9CCD64E6F7FA5CFFFDFFCC691F367C9A41396DCB1AD0B2B06C8",
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py"
+    },
+    {
+      "sha256": "1877D76C77D6E08A3F6EE8ED860A8AB6D72B602E1804802660CB15B1EEA80206",
+      "path": "Tests/Agents/test_project_index_tool.py"
+    },
+    {
+      "sha256": "05759553BB79E72FEEF748C8A0C7CAD5A8A694FEEAB6BE32FB660D3F822385CD",
+      "path": "Tests/Workspaces/test_project_index_service.py"
+    },
+    {
+      "sha256": "4CC94F4F80CE64767A58F321148F6B25F2B7EF582CB6A4A7AB01FFCBE887C115",
+      "path": "Tests/Workspaces/test_project_semantic_app_quality.py"
+    }
+  ],
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "temp": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\native-temp\\task4-semantic-scale-continuation-02",
+  "argv": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4_semantic_scale_continuation_v2.py"
+  ],
+  "per_shape_build_bound_seconds": 3600
+}

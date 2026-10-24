@@ -2080,3 +2080,24 @@ def reset_visual_identity_decode_memos():
     yield
     for reset in resets:
         reset()
+
+
+@pytest.fixture
+def qualified_project_semantic_sqlite():
+    """Run native-positive semantic allocations only on their source envelope."""
+    from contextlib import closing
+    import sqlite3
+
+    from tldw_chatbook.Workspaces.project_index.allocation import _SOURCE_ID
+
+    with closing(sqlite3.connect(":memory:")) as conn:
+        source = conn.execute("SELECT sqlite_source_id()").fetchone()[0]
+        options = {row[0] for row in conn.execute("PRAGMA compile_options")}
+    if (
+        sqlite3.sqlite_version != "3.49.1"
+        or source != _SOURCE_ID
+        or not {"TEMP_STORE=1", "MAX_PAGE_SIZE=65536", "THREADSAFE=1"} <= options
+    ):
+        pytest.skip(
+            "native-positive project semantics require SQLite 3.49.1 with the exact qualified source ID and TEMP_STORE=1/MAX_PAGE_SIZE=65536/THREADSAFE=1"
+        )

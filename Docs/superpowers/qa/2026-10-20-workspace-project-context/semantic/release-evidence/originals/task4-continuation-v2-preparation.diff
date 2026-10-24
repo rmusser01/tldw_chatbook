@@ -1,0 +1,246 @@
+--- task4_semantic_scale_continuation.py
++++ task4_semantic_scale_continuation_v2.py
+@@ -62,7 +62,8 @@
+     _settings_for_project_model,
+     _target,
+ )
+-from tldw_chatbook.Workspaces.project_index.service import binding_bytes
++from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService, binding_bytes
++from tldw_chatbook.Workspaces.project_index import semantic as project_semantic
+ 
+ 
+ BASE = SDD.parents[1] / "k5-scale"
+@@ -92,12 +93,15 @@
+ _original_wrapper_init = EmbeddingsServiceWrapper.__init__
+ _original_wrapper_close = EmbeddingsServiceWrapper.close
+ _original_carrier_close = ProjectionExecutionScope.close
++_original_projection_issue = project_semantic._issue_project_projection_scope
++_original_registry_retire = ProjectIndexService._retire_registry_for_model
+ 
+ 
+ def event(name, **fields):
+     with _lock:
+         record = {
+             "time_monotonic": time.monotonic(),
++            "thread_id": threading.get_ident(),
+             "shape": _context["shape"],
+             "phase": _context["phase"],
+             "event": name,
+@@ -213,6 +217,48 @@
+     event("carrier_close_return")
+ 
+ 
++def observed_projection_issue(*args, **kwargs):
++    event("projection_issue_enter")
++    try:
++        result = _original_projection_issue(*args, **kwargs)
++    except BaseException as error:
++        event("projection_issue_error", **safe_exception_facts(error))
++        raise
++    event("projection_issue_return")
++    return result
++
++
++def observed_registry_retire(self):
++    event("registry_retire_for_model_enter")
++    try:
++        result = _original_registry_retire(self)
++    except BaseException as error:
++        event("registry_retire_for_model_error", **safe_exception_facts(error))
++        raise
++    event("registry_retire_for_model_return")
++    return result
++
++
++def safe_exception_facts(error):
++    known_reasons = {
++        "project_embedding_borrowed_registry_connection",
++        "project_embedding_configuration_changed",
++        "project_embedding_provider_setup_required",
++        "project_local_model_setup_required",
++        "project_projection_required",
++        "project_index_closed",
++        "index_operation_owner_missing",
++        "index_registry_retirement_unproven",
++        "index_projection_retirement_unproven",
++    }
++    reason = error.args[0] if error.args and isinstance(error.args[0], str) else None
++    return {
++        "error_class": type(error).__name__,
++        "reason": reason if reason in known_reasons else "unclassified",
++        "error_location": error_location(error),
++    }
++
++
+ def blocked_http(*_args, **_kwargs):
+     _network_attempts.append(time.monotonic())
+     raise AssertionError("offline_embedding_http_attempted")
+@@ -252,34 +298,38 @@
+     if str(config.get_user_data_dir()) != str(PROFILE / "home/.local/share/tldw_cli/default_user"):
+         raise ValueError("unexpected_retained_profile")
+     registry = app.workspace_registry_service
+-    binding = registry.get_runtime_binding(launch["key"]["binding_id"])
+-    if binding is None or binding.locator != str(root):
+-        raise ValueError("retained_registry_binding_changed")
+     service = get_project_index_service(app)
+-    key = project_index_key(app, launch["key"]["workspace_id"], binding.binding_id, root)
+-    if asdict(key) != launch["key"]:
+-        raise ValueError("retained_key_changed")
+-    keyword = service.status(key)
+-    if keyword.state != "Ready" or keyword.indexed != 20000:
+-        raise ValueError("retained_keyword_not_ready")
+-    if service._factory.data_root != config.get_user_data_dir():
+-        raise ValueError("retained_service_data_root_changed")
+-    semantic = service.semantic_state(key)
+-    policy = service.policy(keyword.scope)
+-    if shape == "wide" and (
+-        semantic.state != "Off" or semantic.enabled or semantic.semantic_revision != 0
+-    ):
+-        raise ValueError("wide_first_semantic_build_preflight_changed")
+-    event(
+-        "retained_key_preflight",
+-        shape=shape,
+-        keyword_state=keyword.state,
+-        keyword_indexed=keyword.indexed,
+-        keyword_epoch=keyword.scope.epoch,
+-        semantic_state=semantic.state,
+-        semantic_revision=semantic.semantic_revision,
+-    )
+-    return service, key, root, keyword, semantic, policy
++    event("preflight_registry_owner_enter", shape=shape)
++    with service.registry_connection_scope():
++        binding = registry.get_runtime_binding(launch["key"]["binding_id"])
++        if binding is None or binding.locator != str(root):
++            raise ValueError("retained_registry_binding_changed")
++        key = project_index_key(app, launch["key"]["workspace_id"], binding.binding_id, root)
++        if asdict(key) != launch["key"]:
++            raise ValueError("retained_key_changed")
++        keyword = service.status(key)
++        if keyword.state != "Ready" or keyword.indexed != 20000:
++            raise ValueError("retained_keyword_not_ready")
++        if service._factory.data_root != config.get_user_data_dir():
++            raise ValueError("retained_service_data_root_changed")
++        semantic = service.semantic_state(key)
++        policy = service.policy(keyword.scope)
++        if shape == "wide" and (
++            semantic.state != "Off" or semantic.enabled or semantic.semantic_revision != 0
++        ):
++            raise ValueError("wide_first_semantic_build_preflight_changed")
++        event(
++            "retained_key_preflight",
++            shape=shape,
++            keyword_state=keyword.state,
++            keyword_indexed=keyword.indexed,
++            keyword_epoch=keyword.scope.epoch,
++            semantic_state=semantic.state,
++            semantic_revision=semantic.semantic_revision,
++        )
++        snapshot = service, key, root, keyword, semantic, policy
++    event("preflight_registry_owner_retired", shape=shape)
++    return snapshot
+ 
+ 
+ def retained_ready_generation(service, key, semantic, artifact_fingerprint):
+@@ -631,8 +681,7 @@
+         current_phase[0] = "query"
+         rig = SimpleNamespace(service=service, root=root, key=key)
+         query = "qualificationdeepmarker"
+-        before_embed = len(measured(shape)["hf_embed"])
+-        before_ctor = len(measured(shape)["wrapper_constructor"])
++        before_metrics = {name: len(values) for name, values in measured(shape).items()}
+         query_started = time.monotonic()
+         result = await bounded_thread(
+             lambda: invoke(provider(rig), {"query": query}),
+@@ -641,17 +690,33 @@
+             owners,
+         )
+         query_seconds = time.monotonic() - query_started
+-        query_embeds = measured(shape)["hf_embed"][before_embed:]
+-        query_ctors = measured(shape)["wrapper_constructor"][before_ctor:]
++        query_metrics = {
++            name: list(values[before_metrics[name]:])
++            for name, values in measured(shape).items()
++        }
++        query_embeds = query_metrics["hf_embed"]
++        query_ctors = query_metrics["wrapper_constructor"]
++        report["query_attempt"] = {
++            "selected_marker": query,
++            "whole_tool_seconds": query_seconds,
++            "tool_result": {"ok": result.ok, "error": result.error, "content": result.content},
++            "fresh_metrics": query_metrics,
++        }
++        save_report("query_returned_before_parse")
+         payload = json.loads(result.content) if result.ok else {}
+-        if (
+-            not result.ok
+-            or payload.get("semantic_status") != "ready"
+-            or "f19999.txt" not in result.content
+-            or not query_embeds
+-            or any(x["phase"] != "query" or x["dimension"] != 384 for x in query_embeds)
+-            or not query_ctors
+-        ):
++        proof_checks = {
++            "tool_ok": result.ok,
++            "semantic_ready": payload.get("semantic_status") == "ready",
++            "selected_path_found": "f19999.txt" in result.content,
++            "actual_hf_query_encode_observed": bool(query_embeds),
++            "all_query_encodes_phase_dimension_valid": all(
++                x["phase"] == "query" and x["dimension"] == 384 for x in query_embeds
++            ),
++            "wrapper_constructor_observed": bool(query_ctors),
++        }
++        report["query_attempt"]["proof_checks"] = proof_checks
++        save_report("query_proof_recorded_before_assert")
++        if not all(proof_checks.values()):
+             raise AssertionError("selected_query_semantic_proof_failed")
+         report["queries"] = [{
+             "selected_marker": query,
+@@ -924,6 +989,8 @@
+         patch.object(EmbeddingsServiceWrapper, "__init__", observed_wrapper_init),
+         patch.object(EmbeddingsServiceWrapper, "close", observed_wrapper_close),
+         patch.object(ProjectionExecutionScope, "close", observed_carrier_close),
++        patch.object(project_semantic, "_issue_project_projection_scope", observed_projection_issue),
++        patch.object(ProjectIndexService, "_retire_registry_for_model", observed_registry_retire),
+         patch.object(requests.sessions.Session, "request", blocked_http),
+         patch.object(httpx.Client, "send", blocked_http),
+         patch.object(httpx.AsyncClient, "send", blocked_http),
+--- run-task4-semantic-scale-continuation.ps1
++++ run-task4-semantic-scale-continuation-v2.ps1
+@@ -7,7 +7,7 @@
+ $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
+ $stable = (Resolve-Path -LiteralPath (Join-Path $repo '.superpowers/k5-scale/stable-profile')).Path
+ $python = Join-Path $PSScriptRoot 'qualification-venv/Scripts/python.exe'
+-$script = Join-Path $PSScriptRoot 'task4_semantic_scale_continuation.py'
++$script = Join-Path $PSScriptRoot 'task4_semantic_scale_continuation_v2.py'
+ $shared = 'C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Lib/site-packages'
+ $tempRoot = Join-Path $PSScriptRoot "native-temp/$RunName"
+ $pre = Join-Path $PSScriptRoot "$RunName-pre.json"
+@@ -27,8 +27,8 @@
+     if (-not (Test-Path -LiteralPath $path)) { throw "scale_setup_missing: $path" }
+ }
+ $paths = @(
+-    '.superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_semantic_scale_continuation.py',
+-    '.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-semantic-scale-continuation.ps1',
++    '.superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_semantic_scale_continuation_v2.py',
++    '.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-semantic-scale-continuation-v2.ps1',
+     '.superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-semantic-scale-final-01-nested-report.json',
+     '.superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-nested-ready-read-01-child.json',
+     'tldw_chatbook/Embeddings/Embeddings_Lib.py',
+@@ -148,7 +148,7 @@
+     $launchIdentity = Get-CimInstance Win32_Process -Filter "ProcessId = $pidValue"
+     if ($null -ne $launchIdentity) {
+         if ($launchIdentity.ExecutablePath -ine $python -or
+-            $launchIdentity.CommandLine -notlike '*task4_semantic_scale_continuation.py*' -or
++            $launchIdentity.CommandLine -notlike '*task4_semantic_scale_continuation_v2.py*' -or
+             [math]::Abs(($launchIdentity.CreationDate.ToUniversalTime() - $child.StartTime.ToUniversalTime()).TotalSeconds) -gt 1) {
+             throw 'scale_launch_identity_unverified'
+         }
+@@ -168,7 +168,7 @@
+         $actual = Get-CimInstance Win32_Process -Filter "ProcessId = $pidValue"
+         if ($null -eq $launchIdentity -or $null -eq $actual -or
+             $actual.ExecutablePath -ine $python -or
+-            $actual.CommandLine -notlike '*task4_semantic_scale_continuation.py*' -or
++            $actual.CommandLine -notlike '*task4_semantic_scale_continuation_v2.py*' -or
+             $actual.CreationDate.ToUniversalTime().ToString('o') -cne $startedAt -or
+             (Get-CommandHash ([string]$actual.CommandLine)) -cne
+                 (Get-CommandHash ([string]$launchIdentity.CommandLine))) {

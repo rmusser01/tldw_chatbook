@@ -346,6 +346,7 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
     tmp_path, request, monkeypatch
 ):
     import threading
+    import time
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Workspaces.project_index import runtime
     from tldw_chatbook.Workspaces.project_index.models import (
@@ -409,7 +410,6 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
     assert seen and all(thread is not main for thread in seen)
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
-    import time
 
     pause = storage._begin_local_pause()
     try:
@@ -438,9 +438,10 @@ async def test_enabled_index_preserves_saved_library_policy_and_scope(
     tmp_path, request, monkeypatch, automatic, access
 ):
     import asyncio
-    import time
     from Tests.Chat.test_console_workspace_guidance import _project_case, _policy_rows
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+    from tldw_chatbook.Workspaces.project_index.semantic import _settings_for_project_model
     from tldw_chatbook.Workspaces.project_index.runtime import (
         get_project_index_service,
         project_index_key,
@@ -462,21 +463,47 @@ async def test_enabled_index_preserves_saved_library_policy_and_scope(
             status = service.enable(
                 key, ProjectIndexPolicy(("",), (".md",)), expected_scope=status.scope
             )
-            service.refresh(
+            job_id = service.refresh(
                 key,
                 expected_scope=status.scope,
                 expected_job_revision=status.job_revision,
             )
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                if service.status(key).state == "Ready":
-                    return
-                time.sleep(0.02)
-            pytest.fail("index did not become Ready")
+            run = service._runs[job_id]
+            run.supervisor.join(30)
+            assert not run.supervisor.is_alive() and run.native_retired
+            assert service.status(key).state == "Ready"
 
         await asyncio.to_thread(build)
         before = _policy_rows(case)
         scope = case.session.rag_scope_holder.scope
+        keyword = service.status(key)
+
+        def toggle_semantic():
+            candidate = _settings_for_project_model("openai-3-small")
+            staged = service.enable_semantic(
+                key, candidate, expected_epoch=keyword.scope.epoch,
+                expected_semantic_revision=0,
+            )
+            assert staged.state == "Paused"
+            assert service.status(key) == keyword
+            disabled = service.disable_semantic(
+                key, expected_epoch=keyword.scope.epoch,
+                expected_semantic_revision=staged.semantic_revision,
+            )
+            assert disabled.state == "Off"
+            assert service.status(key) == keyword
+
+        await asyncio.to_thread(toggle_semantic)
+        case.store.replace_session_settings(
+            case.session.id,
+            ConsoleSessionSettings(
+                provider="anthropic",
+                model="test-model",
+                base_url="http://127.0.0.1:9099/v1",
+            ),
+        )
+        assert _policy_rows(case) == before
+        assert case.session.rag_scope_holder.scope == scope
         case.registry.set_active_workspace("visible")
         case.gateway.release.set()
         result = await case.controller.submit_draft(
@@ -491,6 +518,11 @@ async def test_enabled_index_preserves_saved_library_policy_and_scope(
         assert _policy_rows(case) == before
         assert case.session.rag_scope_holder.scope == scope
         assert len(case.service.calls) == automatic
+        if automatic:
+            assert case.service.calls[0]["scope"].allowlist == {
+                "notes": frozenset({"owned-note"}),
+                "media": frozenset({"owned-media"}),
+            }
     finally:
         await close_project_index_service(case.controller.app)
         await case.controller.shutdown()

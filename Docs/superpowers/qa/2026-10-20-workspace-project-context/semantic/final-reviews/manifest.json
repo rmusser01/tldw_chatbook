@@ -1,0 +1,90 @@
+{
+  "reviewed_head": "660a43816d9c0dab3d20990616af4bbea433d7af",
+  "archive_original_count": 85,
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 262,
+      "sha256": "59c152850dd8652f89ba6f1314bc22fcc224734f0738c28fa5620ece098f14dc",
+      "origin": "controller-generated metadata or verification transcription"
+    },
+    {
+      "path": "app-and-hosted-originals.zip",
+      "bytes": 642299,
+      "sha256": "726bbe78f221d33fa2da716b3e2221edc3045f0ac69c694124720c465f1818cb",
+      "origin": "lossless original archive enumerated by originals-manifest.json"
+    },
+    {
+      "path": "cache-double-review.diff",
+      "bytes": 641,
+      "sha256": "8eb5a4c39707bc7b2ca3825469d3c7d14e4417312e8de98230b6fb6d34949f7f",
+      "origin": "exact private report/diff copy",
+      "original": "cache-double-commit-delta.diff"
+    },
+    {
+      "path": "controller-fix-blob-verification.txt",
+      "bytes": 671,
+      "sha256": "a95cde43a68847b939f8b3a2d1568d6e7134e329ac1e68a1aabc53d827c609f2",
+      "origin": "controller-generated metadata or verification transcription"
+    },
+    {
+      "path": "controller-release-blob-verification.txt",
+      "bytes": 125,
+      "sha256": "8af67f3a40daa222c323658418806f6e6b4bfaeac2a4c5cbd399d23d5f2cb054",
+      "origin": "controller-generated metadata or verification transcription"
+    },
+    {
+      "path": "final-fix-live-report.md",
+      "bytes": 27074,
+      "sha256": "28f8b1306b2123c7f5e75624173c5bdd31df5f3e617eb9d525ad727a8f44023d",
+      "origin": "exact captured live-report snapshot after441bb9 app qualification, before later live amendments; later changes remain in sibling evidence reports"
+    },
+    {
+      "path": "integration-fix-review.diff",
+      "bytes": 31138,
+      "sha256": "892fbf3d2f9c95e587df421bae4c35c324a184966d3835b5dc300c074f74414b",
+      "origin": "exact private report/diff copy",
+      "original": "integration-fix-commit-delta.diff"
+    },
+    {
+      "path": "originals-manifest.json",
+      "bytes": 27348,
+      "sha256": "eb5f9a1d44b67b70b8be98c26f31a1a824ee19ab81c52d95d1fa5e225cdb2c20",
+      "origin": "controller-generated metadata or verification transcription"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3375,
+      "sha256": "16556c856121f03d6dc8fb3b75754b438cf195d03f34b88d169d206e349e3ac4",
+      "origin": "controller-generated metadata or verification transcription"
+    },
+    {
+      "path": "scoped-final-review.md",
+      "bytes": 4827,
+      "sha256": "71c986f98cde68ff19de07a1e6fa75c67f61d807279e55a7174eace97b6e6da2",
+      "origin": "exact private report/diff copy",
+      "original": "semantic-final-scoped-review.md"
+    },
+    {
+      "path": "scoped-fix-review.diff",
+      "bytes": 154065,
+      "sha256": "8d1397ac2e5fe0cdf378888b51f0d96c7885d8886e8bd7cbaa8bdb144db8ad42",
+      "origin": "exact private report/diff copy",
+      "original": "semantic-final-scoped-0d618403-441bb9aa.diff"
+    },
+    {
+      "path": "task4-round4-review.md",
+      "bytes": 2515,
+      "sha256": "776de68aad05e686da28f9d42966956362e1c541cf7540f04bec3be90029de78",
+      "origin": "exact private report/diff copy",
+      "original": "task-4-fix-round-4-review-report.md"
+    },
+    {
+      "path": "whole-branch-review.md",
+      "bytes": 8001,
+      "sha256": "6c9549375be8a373f8c3e11c167087e1941a9176ec7657b11f575cb6d5ce409a",
+      "origin": "exact private report/diff copy",
+      "original": "semantic-final-branch-review.md"
+    }
+  ]
+}

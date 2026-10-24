@@ -1,0 +1,18 @@
+{
+  "utc": "2026-10-24T00:10:46.5045046Z",
+  "hashes": [
+    {
+      "sha256": "FB8F4FF48B5A658C0A1309FBD221BCEB13FEC5B838D43986D8730ADB69C055D2",
+      "path": "Tests/Workspaces/test_project_semantic_generations.py"
+    },
+    {
+      "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B",
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py"
+    },
+    {
+      "sha256": "9DB38B32B627F8CF10CE8CDE6D0974F67670CBFDAE1AB1E77272D7AFA0F51171",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    }
+  ],
+  "run": "task4-local128-dimension-green-01"
+}

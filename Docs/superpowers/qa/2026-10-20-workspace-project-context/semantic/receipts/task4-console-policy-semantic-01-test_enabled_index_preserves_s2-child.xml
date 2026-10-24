@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="30.463" timestamp="2026-10-23T14:50:03.538745-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.Chat.test_console_workspace_folder_note_contract" name="test_enabled_index_preserves_saved_library_policy_and_scope[allowed-never]" time="29.513"><failure message="RuntimeError: index_retirement_unproven">self = &lt;tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001D982243980&gt;
+run = _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='8450eb9983cdb54a51947d7...time.BindingLifetime object at 0x000001D982242CF0&gt;, read_admission=&lt;contextlib.ExitStack object at 0x000001D9821BBCE0&gt;)
+store = &lt;tldw_chatbook.DB.Workspace_Project_Index_DB.WorkspaceProjectIndexDB object at 0x000001D9810D98E0&gt;
+lease = &lt;tldw_chatbook.Workspaces.project_index.lifetime.BindingLifetime object at 0x000001D982242CF0&gt;
+pin = &lt;tldw_chatbook.Workspaces.project_index.runtime._DataAuthorityPin object at 0x000001D982208D10&gt;
+
+    def _retire_bound(self, run, store, lease, pin):
+        run.writer.join()  # actual thread exit, separately from coroutine return
+        try:
+            if (
+                not run.db_closed
+                or not run.registry_closed
+                or not self._scanner.retired
+            ):
+&gt;               raise RuntimeError("index_retirement_unproven") from run.error
+E               RuntimeError: index_retirement_unproven
+
+tldw_chatbook\Workspaces\project_index\service.py:2055: RuntimeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_enabled_index_preserves_s2/private-profile-process/pytest/test_enabled_index_preserves_s0')
+request = &lt;FixtureRequest for &lt;Coroutine test_enabled_index_preserves_saved_library_policy_and_scope[allowed-never]&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001D9FEA538F0&gt;
+automatic = 0, access = 1
+
+    @pytest.mark.parametrize("automatic", [0, 1], ids=["never", "automatic"])
+    @pytest.mark.parametrize("access", [0, 1], ids=["blocked", "allowed"])
+    @private_profile_test
+    async def test_enabled_index_preserves_saved_library_policy_and_scope(
+        tmp_path, request, monkeypatch, automatic, access
+    ):
+        import asyncio
+        import time
+        from Tests.Chat.test_console_workspace_guidance import _project_case, _policy_rows
+        from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+        from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
+        from tldw_chatbook.Workspaces.project_index.semantic import _settings_for_project_model
+        from tldw_chatbook.Workspaces.project_index.runtime import (
+            get_project_index_service,
+            project_index_key,
+            close_project_index_service,
+        )
+    
+        case = await _project_case(
+            tmp_path, monkeypatch, native=True, automatic=automatic, access=access
+        )
+        try:
+            app = case.controller.app
+            service = await asyncio.to_thread(get_project_index_service, app)
+            key = await asyncio.to_thread(
+                project_index_key, app, "owned", case.aliases["owned"], tmp_path / "owned"
+            )
+    
+            def build():
+                status = service.status(key)
+                status = service.enable(
+                    key, ProjectIndexPolicy(("",), (".md",)), expected_scope=status.scope
+                )
+                service.refresh(
+                    key,
+                    expected_scope=status.scope,
+                    expected_job_revision=status.job_revision,
+                )
+                deadline = time.monotonic() + 30
+                while time.monotonic() &lt; deadline:
+                    if service.status(key).state == "Ready":
+                        return
+                    time.sleep(0.02)
+                pytest.fail("index did not become Ready")
+    
+            await asyncio.to_thread(build)
+            before = _policy_rows(case)
+            scope = case.session.rag_scope_holder.scope
+            keyword = service.status(key)
+    
+            def toggle_semantic():
+                candidate = _settings_for_project_model("openai-3-small")
+                staged = service.enable_semantic(
+                    key, candidate, expected_epoch=keyword.scope.epoch,
+                    expected_semantic_revision=0,
+                )
+                assert staged.state == "Paused"
+                assert service.status(key) == keyword
+                disabled = service.disable_semantic(
+                    key, expected_epoch=keyword.scope.epoch,
+                    expected_semantic_revision=staged.semantic_revision,
+                )
+                assert disabled.state == "Off"
+                assert service.status(key) == keyword
+    
+            await asyncio.to_thread(toggle_semantic)
+            case.store.replace_session_settings(
+                case.session.id,
+                ConsoleSessionSettings(
+                    provider="anthropic",
+                    model="test-model",
+                    base_url="http://127.0.0.1:9099/v1",
+                ),
+            )
+            assert _policy_rows(case) == before
+            assert case.session.rag_scope_holder.scope == scope
+            case.registry.set_active_workspace("visible")
+            case.gateway.release.set()
+            result = await case.controller.submit_draft(
+                "Summarize this project", session_id=case.session.id
+            )
+            assert result.accepted, result.visible_copy
+            payload = "\n".join(
+                str(row.get("content", "")) for row in case.gateway.messages_seen[0]
+            )
+            assert "fs_search_index" in payload
+            assert case.aliases["owned"] in payload
+            assert _policy_rows(case) == before
+            assert case.session.rag_scope_holder.scope == scope
+            assert len(case.service.calls) == automatic
+            if automatic:
+                assert case.service.calls[0]["scope"].allowlist == {
+                    "notes": frozenset({"owned-note"}),
+                    "media": frozenset({"owned-media"}),
+                }
+        finally:
+&gt;           await close_project_index_service(case.controller.app)
+
+Tests\Chat\test_console_workspace_folder_note_contract.py:530: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook\Workspaces\project_index\runtime.py:341: in close_project_index_service
+    await asyncio.shield(task)
+tldw_chatbook\Workspaces\project_index\runtime.py:334: in drain
+    await service.aclose()
+tldw_chatbook\Workspaces\project_index\service.py:2175: in aclose
+    await asyncio.shield(task)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def drain():
+        _, semantic_runs, _, operations = await asyncio.to_thread(stop_and_snapshot)
+        if (
+            self._semantic_query is not None and self._semantic_query.close_pending
+        ) or any(run.close_pending for run in semantic_runs) or any(
+            self._projection_close_pending(operation) for operation in operations
+        ):
+            raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
+        if self._cleanup_thread is not None:
+            await asyncio.to_thread(self._cleanup_thread.join)
+        for operation in operations:
+            while not operation.done.is_set():
+                if (
+                    self._semantic_query is not None
+                    and self._semantic_query.close_pending
+                ) or any(run.close_pending for run in semantic_runs) or self._projection_close_pending(operation):
+                    raise ProjectIndexRetirementUnproven(
+                        "project_embedding_close_pending"
+                    )
+                await asyncio.to_thread(operation.done.wait, 0.1)
+            if self._projection_close_pending(operation):
+                raise ProjectIndexRetirementUnproven(
+                    "project_embedding_close_pending"
+                )
+        # An already-admitted start may have dispatched while close waited.
+        # Its operation retires before this final writer/search snapshot.
+        runs, semantic_runs, searches, _ = await asyncio.to_thread(stop_and_snapshot)
+        for search in searches:
+            await asyncio.to_thread(search.done.wait)
+        for run in runs:
+            if run.supervisor is not None:
+                await asyncio.to_thread(run.supervisor.join)
+            if not run.native_retired:
+&gt;               raise RuntimeError("index_retirement_unproven") from run.error
+E               RuntimeError: index_retirement_unproven
+
+tldw_chatbook\Workspaces\project_index\service.py:2158: RuntimeError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="5.847" timestamp="2026-10-23T13:51:54.122680-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_mounted_semantic_controls_and_status_do_not_load_model" time="5.070" /></testsuite></testsuites>

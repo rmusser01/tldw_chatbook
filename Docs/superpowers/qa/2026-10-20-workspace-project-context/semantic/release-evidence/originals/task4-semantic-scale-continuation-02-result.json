@@ -1,0 +1,25 @@
+{
+  "child_exit_code": 0,
+  "stdout": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-02-stdout.log",
+  "launcher_failure_class": null,
+  "events": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-02-events.jsonl",
+  "child_pid": 77376,
+  "wide": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-02-wide-report.json",
+  "timeout_tree_survivors": [],
+  "nested": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-02-nested-report.json",
+  "child_started_utc": "2026-10-24T02:52:10.8868890Z",
+  "whole_process_timed_out": false,
+  "timeout_tree_rechecked": [],
+  "run": "task4-semantic-scale-continuation-02",
+  "timeout_tree_before": [],
+  "origins": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-02-origins.json",
+  "child_launch_identity": {
+    "executable_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "pid": 77376,
+    "command_sha256": "23128B68CCFD26C5FA80FAE1B7CC52B116E5973791AD84FE72E34C6C6065D808",
+    "created_utc": "2026-10-24T02:52:10.8868890Z"
+  },
+  "stderr": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-02-stderr.log",
+  "source_and_harness_unchanged": true,
+  "forced_exit": false
+}

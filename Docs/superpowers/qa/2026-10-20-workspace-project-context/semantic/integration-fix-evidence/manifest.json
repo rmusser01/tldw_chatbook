@@ -1,0 +1,1066 @@
+{
+  "base_head": "441bb9aa898e946d1d57d095ce2e64e3d95d53ab",
+  "run_families": [
+    "integration-fix-red-01",
+    "integration-fix-green-01"
+  ],
+  "source_paths_per_snapshot": 34,
+  "originals": [
+    {
+      "member": "task2-receipts/integration-fix-green-01-parent.log",
+      "original": "task2-receipts/integration-fix-green-01-parent.log",
+      "bytes": 3790,
+      "sha256": "31b0d41bb439f19b59c23dea18afeb87b1079a64b89777d4536fea162b352a91"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-parent.xml",
+      "original": "task2-receipts/integration-fix-green-01-parent.xml",
+      "bytes": 3927,
+      "sha256": "b7f8c5a6ea2fe84e713130d789ef74294716bee31360b8710389f3a4de592de7"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-post.json",
+      "original": "task2-receipts/integration-fix-green-01-post.json",
+      "bytes": 1832,
+      "sha256": "7cd130086251accafaa8ecd97392588956f3fb309296886f43cf3d244cabaf2e"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-pre.json",
+      "original": "task2-receipts/integration-fix-green-01-pre.json",
+      "bytes": 3419,
+      "sha256": "6639fbe26d1535791c915f17d8014507fa2d5375e7b9f93c67073f3258f323cc"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_failed_project_factory_cl0-child.log",
+      "original": "task2-receipts/integration-fix-green-01-test_failed_project_factory_cl0-child.log",
+      "bytes": 2002,
+      "sha256": "ccedb1422f3842036b636daaad4449fae0221058a7f61e7397fd477cd606a6c4"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_failed_project_factory_cl0-child.xml",
+      "original": "task2-receipts/integration-fix-green-01-test_failed_project_factory_cl0-child.xml",
+      "bytes": 383,
+      "sha256": "87df9472a91988bd1707b2cc3753796290dd52f2b2fd000f730863d924e8f858"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_issued_scope_uses_live_pa0-child.log",
+      "original": "task2-receipts/integration-fix-green-01-test_issued_scope_uses_live_pa0-child.log",
+      "bytes": 1998,
+      "sha256": "04295a4d7fb9df8127ab55bc2004ec99952d5b3237e9c48d3b4d9d661445b4fc"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_issued_scope_uses_live_pa0-child.xml",
+      "original": "task2-receipts/integration-fix-green-01-test_issued_scope_uses_live_pa0-child.xml",
+      "bytes": 381,
+      "sha256": "b61da7e364369dce71545737fc8a9c752a81dbbc8466c83fc1c10732daff3512"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_nested_pending_close_keep0-child.log",
+      "original": "task2-receipts/integration-fix-green-01-test_nested_pending_close_keep0-child.log",
+      "bytes": 2006,
+      "sha256": "5d22cb86a178267b1d31937efe98021d50a2cd04b601e119f27b06b89e85c536"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_nested_pending_close_keep0-child.xml",
+      "original": "task2-receipts/integration-fix-green-01-test_nested_pending_close_keep0-child.xml",
+      "bytes": 385,
+      "sha256": "b51de0e2beafde66b1067975858e268ad6839c37cd19c57eb70fa314647d3345"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n0-child.log",
+      "original": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n0-child.log",
+      "bytes": 2020,
+      "sha256": "c93e6eea929f90929f640ae84fc6cb720d01e8e2066f92993666223083eaa590"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n0-child.xml",
+      "original": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n0-child.xml",
+      "bytes": 392,
+      "sha256": "38b72d02a9ee42b7b7d698fc8d787244e7f52a1410084eda6f9c08207e14cda7"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n1-child.log",
+      "original": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n1-child.log",
+      "bytes": 2152,
+      "sha256": "373d97578729dd6c6590da8667946e7729e05674355f180378609fc1c2aa8435"
+    },
+    {
+      "member": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n1-child.xml",
+      "original": "task2-receipts/integration-fix-green-01-test_peer_pending_close_does_n1-child.xml",
+      "bytes": 391,
+      "sha256": "5d42f388de4123d2e91605855c9781c2c26f2a839a02043afa969dc5335f5fe8"
+    },
+    {
+      "member": "task2-receipts/integration-fix-red-01-parent.log",
+      "original": "task2-receipts/integration-fix-red-01-parent.log",
+      "bytes": 46348,
+      "sha256": "a66d4b656f7f3f2f4b33a9c5c00fa002bcbf6202aa3e73b448e517b83d604f68"
+    },
+    {
+      "member": "task2-receipts/integration-fix-red-01-parent.xml",
+      "original": "task2-receipts/integration-fix-red-01-parent.xml",
+      "bytes": 83219,
+      "sha256": "4b51752b7285c2a14d7557867e1d77db057cade1146e1d1be7d511fdfdc31658"
+    },
+    {
+      "member": "task2-receipts/integration-fix-red-01-post.json",
+      "original": "task2-receipts/integration-fix-red-01-post.json",
+      "bytes": 1665,
+      "sha256": "0fedac6237eb3c7a71f6dea15152bf9914dbc5330dfde54745d7b2f4412163c7"
+    },
+    {
+      "member": "task2-receipts/integration-fix-red-01-pre.json",
+      "original": "task2-receipts/integration-fix-red-01-pre.json",
+      "bytes": 2773,
+      "sha256": "af225e6eb26926fe25b68b8e8b5af53e972da4085a370b34d6e5b50d4168819f"
+    },
+    {
+      "member": "task2-receipts/integration-fix-red-01-test_nested_pending_close_keep0-child.log",
+      "original": "task2-receipts/integration-fix-red-01-test_nested_pending_close_keep0-child.log",
+      "bytes": 30394,
+      "sha256": "d6773801f21924e0f99b9ea8b636549186ce2a91ed97845951e8619fd97d7ffe"
+    },
+    {
+      "member": "task2-receipts/integration-fix-red-01-test_nested_pending_close_keep0-child.xml",
+      "original": "task2-receipts/integration-fix-red-01-test_nested_pending_close_keep0-child.xml",
+      "bytes": 19892,
+      "sha256": "9adeb86b015b8d800bfa466041f4310e12b18c2b67044c824678bfbb7d6d5aed"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/.github/workflows/derived-artifacts.yml",
+      "original": "integration-fix-snapshots/green-post/.github/workflows/derived-artifacts.yml",
+      "bytes": 76284,
+      "sha256": "6b70ba4136b8590c79ce961bd648102cc2ae161f4cd5d6beb95c8de88d07c05d"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "original": "integration-fix-snapshots/green-post/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "bytes": 3741,
+      "sha256": "52a3ec63b0ab918a397e3b9668e7e4cf81f68567e422356204ac6fc78dd9c6de"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "original": "integration-fix-snapshots/green-post/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "bytes": 24405,
+      "sha256": "5dabc9646552585a6dc59ee6cdcf1ea8e10741defc7003924ba9ea9df4ffbbc4"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "original": "integration-fix-snapshots/green-post/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "bytes": 74922,
+      "sha256": "545c0bea2d2fceb0e6e6151a590c5f73600bd15b133201280ad8fe92a7fc2f10"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Docs/Architecture/project-indexing.md",
+      "original": "integration-fix-snapshots/green-post/Docs/Architecture/project-indexing.md",
+      "bytes": 24430,
+      "sha256": "6c1ad4ddad3524ca66c83a7ab225c5e365363fa8a179f78ee2a797b5bca728a2"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "original": "integration-fix-snapshots/green-post/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "bytes": 49598,
+      "sha256": "cc3b90355b1807189ddf27ef929e58c14e4f75725c4f306a2ea24ae08ed9009a"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/manifest.json",
+      "original": "integration-fix-snapshots/green-post/manifest.json",
+      "bytes": 6115,
+      "sha256": "ef8ca5cb5ee58174cc825e46c0a5ed8233a0bc5f61adbb52b4b72e819a77df27"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/CI/test_ci_queue_pressure_contract.py",
+      "original": "integration-fix-snapshots/green-post/Tests/CI/test_ci_queue_pressure_contract.py",
+      "bytes": 77715,
+      "sha256": "8ce28b06683a742b9194e5a880a566d84a5f26d61fafe8cf0f28ae7820287ece"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/CI/test_derived_artifacts_workflow.py",
+      "original": "integration-fix-snapshots/green-post/Tests/CI/test_derived_artifacts_workflow.py",
+      "bytes": 25850,
+      "sha256": "75d495c2a30814dbd9dd01983d504cda057d3c0f0dbea490029d817f75c2d3f0"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "original": "integration-fix-snapshots/green-post/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "bytes": 3761,
+      "sha256": "7e0c9d6eb380f1a9480d0d824fde91fd15bb2336983cd7752c8e5e2bc7fb77ba"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/conftest.py",
+      "original": "integration-fix-snapshots/green-post/Tests/conftest.py",
+      "bytes": 97070,
+      "sha256": "dd87044f09f31caa93a87696584321c4cda1da7db710a660c047910d0a3a3b77"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/private_profile.py",
+      "original": "integration-fix-snapshots/green-post/Tests/private_profile.py",
+      "bytes": 18828,
+      "sha256": "d96b69562e65becc18dd5c2ef76b521dcb624f151a870f3eaa12a240aeb96f44"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/RAG/test_embeddings_lib_logging.py",
+      "original": "integration-fix-snapshots/green-post/Tests/RAG/test_embeddings_lib_logging.py",
+      "bytes": 12957,
+      "sha256": "117f3477032fb424f56841dff837161ca30d3dbc4405e97cfea006c443d97d45"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/RAG/test_project_projection_scope.py",
+      "original": "integration-fix-snapshots/green-post/Tests/RAG/test_project_projection_scope.py",
+      "bytes": 43865,
+      "sha256": "94faf85bd07b14eb666b287efc9ccb23c40460a6d7f349510c5d1d1a31911b5d"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/UI/test_project_semantic_consent.py",
+      "original": "integration-fix-snapshots/green-post/Tests/UI/test_project_semantic_consent.py",
+      "bytes": 25322,
+      "sha256": "f715f1d6f55d5360c6306eda0cc8d98765e25a9c1843cb6d5542bdd257c185df"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/Workspaces/project_index_support.py",
+      "original": "integration-fix-snapshots/green-post/Tests/Workspaces/project_index_support.py",
+      "bytes": 2212,
+      "sha256": "d1596900616a29a547f758ed8ee348525d59d44b2616edd86223ea38b626c17c"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_index_allocation.py",
+      "original": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_index_allocation.py",
+      "bytes": 34726,
+      "sha256": "dce7d2d867475cfe6a3a6490d1ff4c2d7bf5ce8cb12fdc8afcc911563e7b69d5"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "original": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "bytes": 36869,
+      "sha256": "399b18c635855abbacbe8145762a8ee3813f78e2bdfa7da8f3dd5e97f7986600"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_generations.py",
+      "original": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_generations.py",
+      "bytes": 76714,
+      "sha256": "6891c7c6d1694660b30e471295b65f5411f5cc49413209bbd612516c9f0b1030"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_search.py",
+      "original": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_search.py",
+      "bytes": 35488,
+      "sha256": "9eb103a8bcbe29d11fa197edbfc49ca3120b18bb4d5f62e12508911ba4d162e6"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_settings.py",
+      "original": "integration-fix-snapshots/green-post/Tests/Workspaces/test_project_semantic_settings.py",
+      "bytes": 11959,
+      "sha256": "6bd4062738a48eab44c02c56e8ac2fff6adc2576143d29183565608d46942ded"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "bytes": 93526,
+      "sha256": "2858160ee0e8b64b1b246b0829aa150a1dcc8a9269f1fb5da619849a03b223ae"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "bytes": 49193,
+      "sha256": "51e4b4ecffe9cf7cbe8985285ee56c084e99d0a0f108fdee807b37c2e6a4d86f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/RAG_Search/projection_scope.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/RAG_Search/projection_scope.py",
+      "bytes": 9326,
+      "sha256": "07fdd471ffdef623624d5507132db23229b9e53aab4493748bcb1c1933f492cb"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "bytes": 59127,
+      "sha256": "ce7c94a1a250d48760ff2aa8672da464f2264c100b04fbeb689c8cd96bfd2faf"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "bytes": 72,
+      "sha256": "e6292c8c8e9fee6da2ff9a54efe17396fa6927ccf294789d9dc89cd9dae9f26c"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "bytes": 14796,
+      "sha256": "b7e5382376a086f056ca85f5be36b11048a87ee647a3ac129067cc88c57af30a"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "bytes": 11341,
+      "sha256": "a1a86a8c91c7707cb906e9bf4337141198a0d3db0a56d49ea9d16394ad01e965"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/models.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/models.py",
+      "bytes": 16588,
+      "sha256": "191d6de9468ee7a0885b1403598b5602dbc0ee5b54349a36b443230f4d89f49f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "bytes": 888,
+      "sha256": "2bfc64b6683d975c00e4f39598cc4a3f936078148683322b5574ed093ee9847f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "bytes": 13352,
+      "sha256": "33778a422021ee70e8364f5b67718dcbe71fcaac6acda2d22ce2c522dfdedf3c"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "bytes": 22653,
+      "sha256": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "bytes": 12275,
+      "sha256": "d0351bb50d2753859330a871c058b4006c5944082f0388d197920a5912afb715"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "bytes": 1638,
+      "sha256": "a4cd45e0643db2e0e2ee8690b060dea8f6796b6caf99ce12108ba89616c1346f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/service.py",
+      "original": "integration-fix-snapshots/green-post/tldw_chatbook/Workspaces/project_index/service.py",
+      "bytes": 101358,
+      "sha256": "1ca01992481ee9ad063cfea09ae863b6a1e33ed97ba5ce8ab330d243e9fa2935"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/.github/workflows/derived-artifacts.yml",
+      "original": "integration-fix-snapshots/green-pre/.github/workflows/derived-artifacts.yml",
+      "bytes": 76284,
+      "sha256": "6b70ba4136b8590c79ce961bd648102cc2ae161f4cd5d6beb95c8de88d07c05d"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "original": "integration-fix-snapshots/green-pre/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "bytes": 3741,
+      "sha256": "52a3ec63b0ab918a397e3b9668e7e4cf81f68567e422356204ac6fc78dd9c6de"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "original": "integration-fix-snapshots/green-pre/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "bytes": 24405,
+      "sha256": "5dabc9646552585a6dc59ee6cdcf1ea8e10741defc7003924ba9ea9df4ffbbc4"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "original": "integration-fix-snapshots/green-pre/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "bytes": 74922,
+      "sha256": "545c0bea2d2fceb0e6e6151a590c5f73600bd15b133201280ad8fe92a7fc2f10"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Docs/Architecture/project-indexing.md",
+      "original": "integration-fix-snapshots/green-pre/Docs/Architecture/project-indexing.md",
+      "bytes": 24430,
+      "sha256": "6c1ad4ddad3524ca66c83a7ab225c5e365363fa8a179f78ee2a797b5bca728a2"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "original": "integration-fix-snapshots/green-pre/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "bytes": 49598,
+      "sha256": "cc3b90355b1807189ddf27ef929e58c14e4f75725c4f306a2ea24ae08ed9009a"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/manifest.json",
+      "original": "integration-fix-snapshots/green-pre/manifest.json",
+      "bytes": 6115,
+      "sha256": "ef8ca5cb5ee58174cc825e46c0a5ed8233a0bc5f61adbb52b4b72e819a77df27"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/CI/test_ci_queue_pressure_contract.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/CI/test_ci_queue_pressure_contract.py",
+      "bytes": 77715,
+      "sha256": "8ce28b06683a742b9194e5a880a566d84a5f26d61fafe8cf0f28ae7820287ece"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/CI/test_derived_artifacts_workflow.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/CI/test_derived_artifacts_workflow.py",
+      "bytes": 25850,
+      "sha256": "75d495c2a30814dbd9dd01983d504cda057d3c0f0dbea490029d817f75c2d3f0"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "bytes": 3761,
+      "sha256": "7e0c9d6eb380f1a9480d0d824fde91fd15bb2336983cd7752c8e5e2bc7fb77ba"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/conftest.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/conftest.py",
+      "bytes": 97070,
+      "sha256": "dd87044f09f31caa93a87696584321c4cda1da7db710a660c047910d0a3a3b77"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/private_profile.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/private_profile.py",
+      "bytes": 18828,
+      "sha256": "d96b69562e65becc18dd5c2ef76b521dcb624f151a870f3eaa12a240aeb96f44"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/RAG/test_embeddings_lib_logging.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/RAG/test_embeddings_lib_logging.py",
+      "bytes": 12957,
+      "sha256": "117f3477032fb424f56841dff837161ca30d3dbc4405e97cfea006c443d97d45"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/RAG/test_project_projection_scope.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/RAG/test_project_projection_scope.py",
+      "bytes": 43865,
+      "sha256": "94faf85bd07b14eb666b287efc9ccb23c40460a6d7f349510c5d1d1a31911b5d"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/UI/test_project_semantic_consent.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/UI/test_project_semantic_consent.py",
+      "bytes": 25322,
+      "sha256": "f715f1d6f55d5360c6306eda0cc8d98765e25a9c1843cb6d5542bdd257c185df"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/Workspaces/project_index_support.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/Workspaces/project_index_support.py",
+      "bytes": 2212,
+      "sha256": "d1596900616a29a547f758ed8ee348525d59d44b2616edd86223ea38b626c17c"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_index_allocation.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_index_allocation.py",
+      "bytes": 34726,
+      "sha256": "dce7d2d867475cfe6a3a6490d1ff4c2d7bf5ce8cb12fdc8afcc911563e7b69d5"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "bytes": 36869,
+      "sha256": "399b18c635855abbacbe8145762a8ee3813f78e2bdfa7da8f3dd5e97f7986600"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_generations.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_generations.py",
+      "bytes": 76714,
+      "sha256": "6891c7c6d1694660b30e471295b65f5411f5cc49413209bbd612516c9f0b1030"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_search.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_search.py",
+      "bytes": 35488,
+      "sha256": "9eb103a8bcbe29d11fa197edbfc49ca3120b18bb4d5f62e12508911ba4d162e6"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_settings.py",
+      "original": "integration-fix-snapshots/green-pre/Tests/Workspaces/test_project_semantic_settings.py",
+      "bytes": 11959,
+      "sha256": "6bd4062738a48eab44c02c56e8ac2fff6adc2576143d29183565608d46942ded"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "bytes": 93526,
+      "sha256": "2858160ee0e8b64b1b246b0829aa150a1dcc8a9269f1fb5da619849a03b223ae"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "bytes": 49193,
+      "sha256": "51e4b4ecffe9cf7cbe8985285ee56c084e99d0a0f108fdee807b37c2e6a4d86f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/RAG_Search/projection_scope.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/RAG_Search/projection_scope.py",
+      "bytes": 9326,
+      "sha256": "07fdd471ffdef623624d5507132db23229b9e53aab4493748bcb1c1933f492cb"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "bytes": 59127,
+      "sha256": "ce7c94a1a250d48760ff2aa8672da464f2264c100b04fbeb689c8cd96bfd2faf"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "bytes": 72,
+      "sha256": "e6292c8c8e9fee6da2ff9a54efe17396fa6927ccf294789d9dc89cd9dae9f26c"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "bytes": 14796,
+      "sha256": "b7e5382376a086f056ca85f5be36b11048a87ee647a3ac129067cc88c57af30a"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "bytes": 11341,
+      "sha256": "a1a86a8c91c7707cb906e9bf4337141198a0d3db0a56d49ea9d16394ad01e965"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/models.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/models.py",
+      "bytes": 16588,
+      "sha256": "191d6de9468ee7a0885b1403598b5602dbc0ee5b54349a36b443230f4d89f49f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "bytes": 888,
+      "sha256": "2bfc64b6683d975c00e4f39598cc4a3f936078148683322b5574ed093ee9847f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "bytes": 13352,
+      "sha256": "33778a422021ee70e8364f5b67718dcbe71fcaac6acda2d22ce2c522dfdedf3c"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "bytes": 22653,
+      "sha256": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "bytes": 12275,
+      "sha256": "d0351bb50d2753859330a871c058b4006c5944082f0388d197920a5912afb715"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "bytes": 1638,
+      "sha256": "a4cd45e0643db2e0e2ee8690b060dea8f6796b6caf99ce12108ba89616c1346f"
+    },
+    {
+      "member": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/service.py",
+      "original": "integration-fix-snapshots/green-pre/tldw_chatbook/Workspaces/project_index/service.py",
+      "bytes": 101358,
+      "sha256": "1ca01992481ee9ad063cfea09ae863b6a1e33ed97ba5ce8ab330d243e9fa2935"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/.github/workflows/derived-artifacts.yml",
+      "original": "integration-fix-snapshots/red-post/.github/workflows/derived-artifacts.yml",
+      "bytes": 76172,
+      "sha256": "a67ad23e548414640e2a833293ccf630986db8d9ff1d51ef44be531d6e26479e"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "original": "integration-fix-snapshots/red-post/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "bytes": 3741,
+      "sha256": "52a3ec63b0ab918a397e3b9668e7e4cf81f68567e422356204ac6fc78dd9c6de"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "original": "integration-fix-snapshots/red-post/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "bytes": 23038,
+      "sha256": "c441c050c56c71aaefb2f50378fffbf402c7ad2b3f17ef62d84988ca2a5317c7"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "original": "integration-fix-snapshots/red-post/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "bytes": 74922,
+      "sha256": "545c0bea2d2fceb0e6e6151a590c5f73600bd15b133201280ad8fe92a7fc2f10"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Docs/Architecture/project-indexing.md",
+      "original": "integration-fix-snapshots/red-post/Docs/Architecture/project-indexing.md",
+      "bytes": 24297,
+      "sha256": "380526bd9c3b78b81b3b14221ef536718605e48db86593c6197df6e79e03aa8f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "original": "integration-fix-snapshots/red-post/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "bytes": 49598,
+      "sha256": "cc3b90355b1807189ddf27ef929e58c14e4f75725c4f306a2ea24ae08ed9009a"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/manifest.json",
+      "original": "integration-fix-snapshots/red-post/manifest.json",
+      "bytes": 6115,
+      "sha256": "8a66183e1a1fcd6404903f3899af36f15c2601cfd9e364035e7904201b5b6e05"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/CI/test_ci_queue_pressure_contract.py",
+      "original": "integration-fix-snapshots/red-post/Tests/CI/test_ci_queue_pressure_contract.py",
+      "bytes": 77595,
+      "sha256": "9b846d93893eb383a5e13ce674c9127c31b949e3ef92d3a8c77550da0dd9d0fe"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/CI/test_derived_artifacts_workflow.py",
+      "original": "integration-fix-snapshots/red-post/Tests/CI/test_derived_artifacts_workflow.py",
+      "bytes": 25738,
+      "sha256": "d44f26d9dd2b8db35ace977dc19ccc865e230b6fab769136615295ec997d0054"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "original": "integration-fix-snapshots/red-post/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "bytes": 3695,
+      "sha256": "525db6538e8c2a1bae12c0357faaebf10e9a4e9b003d8fa0048f9b0e4ab718ef"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/conftest.py",
+      "original": "integration-fix-snapshots/red-post/Tests/conftest.py",
+      "bytes": 97070,
+      "sha256": "dd87044f09f31caa93a87696584321c4cda1da7db710a660c047910d0a3a3b77"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/private_profile.py",
+      "original": "integration-fix-snapshots/red-post/Tests/private_profile.py",
+      "bytes": 18828,
+      "sha256": "d96b69562e65becc18dd5c2ef76b521dcb624f151a870f3eaa12a240aeb96f44"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/RAG/test_embeddings_lib_logging.py",
+      "original": "integration-fix-snapshots/red-post/Tests/RAG/test_embeddings_lib_logging.py",
+      "bytes": 12957,
+      "sha256": "117f3477032fb424f56841dff837161ca30d3dbc4405e97cfea006c443d97d45"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/RAG/test_project_projection_scope.py",
+      "original": "integration-fix-snapshots/red-post/Tests/RAG/test_project_projection_scope.py",
+      "bytes": 43865,
+      "sha256": "94faf85bd07b14eb666b287efc9ccb23c40460a6d7f349510c5d1d1a31911b5d"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/UI/test_project_semantic_consent.py",
+      "original": "integration-fix-snapshots/red-post/Tests/UI/test_project_semantic_consent.py",
+      "bytes": 25322,
+      "sha256": "f715f1d6f55d5360c6306eda0cc8d98765e25a9c1843cb6d5542bdd257c185df"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/Workspaces/project_index_support.py",
+      "original": "integration-fix-snapshots/red-post/Tests/Workspaces/project_index_support.py",
+      "bytes": 2212,
+      "sha256": "d1596900616a29a547f758ed8ee348525d59d44b2616edd86223ea38b626c17c"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_index_allocation.py",
+      "original": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_index_allocation.py",
+      "bytes": 34726,
+      "sha256": "dce7d2d867475cfe6a3a6490d1ff4c2d7bf5ce8cb12fdc8afcc911563e7b69d5"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "original": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "bytes": 36869,
+      "sha256": "399b18c635855abbacbe8145762a8ee3813f78e2bdfa7da8f3dd5e97f7986600"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_generations.py",
+      "original": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_generations.py",
+      "bytes": 76714,
+      "sha256": "6891c7c6d1694660b30e471295b65f5411f5cc49413209bbd612516c9f0b1030"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_search.py",
+      "original": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_search.py",
+      "bytes": 35488,
+      "sha256": "9eb103a8bcbe29d11fa197edbfc49ca3120b18bb4d5f62e12508911ba4d162e6"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_settings.py",
+      "original": "integration-fix-snapshots/red-post/Tests/Workspaces/test_project_semantic_settings.py",
+      "bytes": 11959,
+      "sha256": "6bd4062738a48eab44c02c56e8ac2fff6adc2576143d29183565608d46942ded"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "bytes": 93526,
+      "sha256": "2858160ee0e8b64b1b246b0829aa150a1dcc8a9269f1fb5da619849a03b223ae"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "bytes": 49193,
+      "sha256": "51e4b4ecffe9cf7cbe8985285ee56c084e99d0a0f108fdee807b37c2e6a4d86f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/RAG_Search/projection_scope.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/RAG_Search/projection_scope.py",
+      "bytes": 9326,
+      "sha256": "07fdd471ffdef623624d5507132db23229b9e53aab4493748bcb1c1933f492cb"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "bytes": 59127,
+      "sha256": "ce7c94a1a250d48760ff2aa8672da464f2264c100b04fbeb689c8cd96bfd2faf"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "bytes": 72,
+      "sha256": "e6292c8c8e9fee6da2ff9a54efe17396fa6927ccf294789d9dc89cd9dae9f26c"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "bytes": 14796,
+      "sha256": "b7e5382376a086f056ca85f5be36b11048a87ee647a3ac129067cc88c57af30a"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "bytes": 11341,
+      "sha256": "a1a86a8c91c7707cb906e9bf4337141198a0d3db0a56d49ea9d16394ad01e965"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/models.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/models.py",
+      "bytes": 16588,
+      "sha256": "191d6de9468ee7a0885b1403598b5602dbc0ee5b54349a36b443230f4d89f49f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "bytes": 888,
+      "sha256": "2bfc64b6683d975c00e4f39598cc4a3f936078148683322b5574ed093ee9847f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "bytes": 13352,
+      "sha256": "33778a422021ee70e8364f5b67718dcbe71fcaac6acda2d22ce2c522dfdedf3c"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "bytes": 22653,
+      "sha256": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "bytes": 12275,
+      "sha256": "d0351bb50d2753859330a871c058b4006c5944082f0388d197920a5912afb715"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "bytes": 1638,
+      "sha256": "a4cd45e0643db2e0e2ee8690b060dea8f6796b6caf99ce12108ba89616c1346f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/service.py",
+      "original": "integration-fix-snapshots/red-post/tldw_chatbook/Workspaces/project_index/service.py",
+      "bytes": 101279,
+      "sha256": "bca40d4cd5f6e6e94d01529029b94790439ecedeea217c38c2e8c6e3e89ca8fc"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/.github/workflows/derived-artifacts.yml",
+      "original": "integration-fix-snapshots/red-pre/.github/workflows/derived-artifacts.yml",
+      "bytes": 76172,
+      "sha256": "a67ad23e548414640e2a833293ccf630986db8d9ff1d51ef44be531d6e26479e"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "original": "integration-fix-snapshots/red-pre/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-hosted-fixture-targets.ps1",
+      "bytes": 3741,
+      "sha256": "52a3ec63b0ab918a397e3b9668e7e4cf81f68567e422356204ac6fc78dd9c6de"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "original": "integration-fix-snapshots/red-pre/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "bytes": 23038,
+      "sha256": "c441c050c56c71aaefb2f50378fffbf402c7ad2b3f17ef62d84988ca2a5317c7"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "original": "integration-fix-snapshots/red-pre/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "bytes": 74922,
+      "sha256": "545c0bea2d2fceb0e6e6151a590c5f73600bd15b133201280ad8fe92a7fc2f10"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Docs/Architecture/project-indexing.md",
+      "original": "integration-fix-snapshots/red-pre/Docs/Architecture/project-indexing.md",
+      "bytes": 24297,
+      "sha256": "380526bd9c3b78b81b3b14221ef536718605e48db86593c6197df6e79e03aa8f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "original": "integration-fix-snapshots/red-pre/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "bytes": 49598,
+      "sha256": "cc3b90355b1807189ddf27ef929e58c14e4f75725c4f306a2ea24ae08ed9009a"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/manifest.json",
+      "original": "integration-fix-snapshots/red-pre/manifest.json",
+      "bytes": 6115,
+      "sha256": "8a66183e1a1fcd6404903f3899af36f15c2601cfd9e364035e7904201b5b6e05"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/CI/test_ci_queue_pressure_contract.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/CI/test_ci_queue_pressure_contract.py",
+      "bytes": 77595,
+      "sha256": "9b846d93893eb383a5e13ce674c9127c31b949e3ef92d3a8c77550da0dd9d0fe"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/CI/test_derived_artifacts_workflow.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/CI/test_derived_artifacts_workflow.py",
+      "bytes": 25738,
+      "sha256": "d44f26d9dd2b8db35ace977dc19ccc865e230b6fab769136615295ec997d0054"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/CI/test_ui_lane_shard_count_statements.py",
+      "bytes": 3695,
+      "sha256": "525db6538e8c2a1bae12c0357faaebf10e9a4e9b003d8fa0048f9b0e4ab718ef"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/conftest.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/conftest.py",
+      "bytes": 97070,
+      "sha256": "dd87044f09f31caa93a87696584321c4cda1da7db710a660c047910d0a3a3b77"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/private_profile.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/private_profile.py",
+      "bytes": 18828,
+      "sha256": "d96b69562e65becc18dd5c2ef76b521dcb624f151a870f3eaa12a240aeb96f44"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/RAG/test_embeddings_lib_logging.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/RAG/test_embeddings_lib_logging.py",
+      "bytes": 12957,
+      "sha256": "117f3477032fb424f56841dff837161ca30d3dbc4405e97cfea006c443d97d45"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/RAG/test_project_projection_scope.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/RAG/test_project_projection_scope.py",
+      "bytes": 43865,
+      "sha256": "94faf85bd07b14eb666b287efc9ccb23c40460a6d7f349510c5d1d1a31911b5d"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/UI/test_project_semantic_consent.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/UI/test_project_semantic_consent.py",
+      "bytes": 25322,
+      "sha256": "f715f1d6f55d5360c6306eda0cc8d98765e25a9c1843cb6d5542bdd257c185df"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/Workspaces/project_index_support.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/Workspaces/project_index_support.py",
+      "bytes": 2212,
+      "sha256": "d1596900616a29a547f758ed8ee348525d59d44b2616edd86223ea38b626c17c"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_index_allocation.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_index_allocation.py",
+      "bytes": 34726,
+      "sha256": "dce7d2d867475cfe6a3a6490d1ff4c2d7bf5ce8cb12fdc8afcc911563e7b69d5"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "bytes": 36869,
+      "sha256": "399b18c635855abbacbe8145762a8ee3813f78e2bdfa7da8f3dd5e97f7986600"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_generations.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_generations.py",
+      "bytes": 76714,
+      "sha256": "6891c7c6d1694660b30e471295b65f5411f5cc49413209bbd612516c9f0b1030"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_search.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_search.py",
+      "bytes": 35488,
+      "sha256": "9eb103a8bcbe29d11fa197edbfc49ca3120b18bb4d5f62e12508911ba4d162e6"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_settings.py",
+      "original": "integration-fix-snapshots/red-pre/Tests/Workspaces/test_project_semantic_settings.py",
+      "bytes": 11959,
+      "sha256": "6bd4062738a48eab44c02c56e8ac2fff6adc2576143d29183565608d46942ded"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "bytes": 93526,
+      "sha256": "2858160ee0e8b64b1b246b0829aa150a1dcc8a9269f1fb5da619849a03b223ae"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "bytes": 49193,
+      "sha256": "51e4b4ecffe9cf7cbe8985285ee56c084e99d0a0f108fdee807b37c2e6a4d86f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/RAG_Search/projection_scope.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/RAG_Search/projection_scope.py",
+      "bytes": 9326,
+      "sha256": "07fdd471ffdef623624d5507132db23229b9e53aab4493748bcb1c1933f492cb"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "bytes": 59127,
+      "sha256": "ce7c94a1a250d48760ff2aa8672da464f2264c100b04fbeb689c8cd96bfd2faf"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "bytes": 72,
+      "sha256": "e6292c8c8e9fee6da2ff9a54efe17396fa6927ccf294789d9dc89cd9dae9f26c"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "bytes": 14796,
+      "sha256": "b7e5382376a086f056ca85f5be36b11048a87ee647a3ac129067cc88c57af30a"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "bytes": 11341,
+      "sha256": "a1a86a8c91c7707cb906e9bf4337141198a0d3db0a56d49ea9d16394ad01e965"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/models.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/models.py",
+      "bytes": 16588,
+      "sha256": "191d6de9468ee7a0885b1403598b5602dbc0ee5b54349a36b443230f4d89f49f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "bytes": 888,
+      "sha256": "2bfc64b6683d975c00e4f39598cc4a3f936078148683322b5574ed093ee9847f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "bytes": 13352,
+      "sha256": "33778a422021ee70e8364f5b67718dcbe71fcaac6acda2d22ce2c522dfdedf3c"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "bytes": 22653,
+      "sha256": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "bytes": 12275,
+      "sha256": "d0351bb50d2753859330a871c058b4006c5944082f0388d197920a5912afb715"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "bytes": 1638,
+      "sha256": "a4cd45e0643db2e0e2ee8690b060dea8f6796b6caf99ce12108ba89616c1346f"
+    },
+    {
+      "member": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/service.py",
+      "original": "integration-fix-snapshots/red-pre/tldw_chatbook/Workspaces/project_index/service.py",
+      "bytes": 101279,
+      "sha256": "bca40d4cd5f6e6e94d01529029b94790439ecedeea217c38c2e8c6e3e89ca8fc"
+    },
+    {
+      "member": "integration-fix-green-trust-01-permission-before.json",
+      "original": "integration-fix-green-trust-01-permission-before.json",
+      "bytes": 502,
+      "sha256": "8503fac6123e5527724f4186f3879b789bd90394cb34f864748f5cfe25e7f86b"
+    },
+    {
+      "member": "integration-fix-red-trust-01-permission-before.json",
+      "original": "integration-fix-red-trust-01-permission-before.json",
+      "bytes": 502,
+      "sha256": "6e87af937d1848314bbcec08c17a45988aa481554b50c991853d87ec88b19a20"
+    },
+    {
+      "member": "integration-fix-green-trust-01-permission-after.json",
+      "original": "integration-fix-green-trust-01-permission-after.json",
+      "bytes": 473,
+      "sha256": "7e782f035b005362d71b137fd1788906891fc8a68f5395a1138dd4d21a789ebc"
+    },
+    {
+      "member": "integration-fix-red-trust-01-permission-after.json",
+      "original": "integration-fix-red-trust-01-permission-after.json",
+      "bytes": 473,
+      "sha256": "bfc33bce138e0de14f2ded4ebc114be229ed78185d99740207a2ba2bdcef36a4"
+    },
+    {
+      "member": "integration-fix-report-precommit.md",
+      "original": "integration-fix-report-precommit.md",
+      "bytes": 14132,
+      "sha256": "8e75a28fdd8d562ff669f8dfb0c52f7c77fd6d3d157b3bc216bf159d1d5c7a0b"
+    },
+    {
+      "member": "integration-fix-static.json",
+      "original": "integration-fix-static.json",
+      "bytes": 3305,
+      "sha256": "be53294b304aafce0c6660a91e1c6ff5037ef270f8a2ed33dcd5272befe9c0f4"
+    },
+    {
+      "member": "integration-fix-final-static.json",
+      "original": "integration-fix-final-static.json",
+      "bytes": 8132,
+      "sha256": "f1c3d06da85bb6f0313b950f76b38718f5d88b37ed5559644e63ecb22d6535cd"
+    },
+    {
+      "member": "integration-fix-changed-paths.json",
+      "original": "integration-fix-changed-paths.json",
+      "bytes": 582,
+      "sha256": "11327341c163782c65f7d0b769d5bff2678630935280bce336e8d2cf0fa73b07"
+    },
+    {
+      "member": "integration-fix-delta.diff",
+      "original": "integration-fix-delta.diff",
+      "bytes": 31138,
+      "sha256": "892fbf3d2f9c95e587df421bae4c35c324a184966d3835b5dc300c074f74414b"
+    },
+    {
+      "member": "integration-fix-green-01-process-retirement.json",
+      "original": "integration-fix-green-01-process-retirement.json",
+      "bytes": 162,
+      "sha256": "1f7b0573c60049a9eaecbbb6b5d081b34f13bc8086b9d92c0187c0f06ee59b49"
+    },
+    {
+      "member": "task4-old-head-prfast-120758047078-failure-raw.log",
+      "original": "task4-old-head-prfast-120758047078-failure-raw.log",
+      "bytes": 97443,
+      "sha256": "cb3933947d2c8575c5dfff760f9f0410b5ee5651463741c338997c7e7eb97221"
+    },
+    {
+      "member": "repair-sdd-test-trust.ps1",
+      "original": "repair-sdd-test-trust.ps1",
+      "bytes": 2710,
+      "sha256": "21d61845123369d07704284eafd2e0adf890281a0decc92a0725ced7c5705a05"
+    },
+    {
+      "member": "run-task4-hosted-fixture-targets.ps1",
+      "original": "run-task4-hosted-fixture-targets.ps1",
+      "bytes": 3741,
+      "sha256": "52a3ec63b0ab918a397e3b9668e7e4cf81f68567e422356204ac6fc78dd9c6de"
+    },
+    {
+      "member": "snapshot-integration-fix.py",
+      "original": "snapshot-integration-fix.py",
+      "bytes": 932,
+      "sha256": "e42a00f29cb176b77912b7c6b4ad64b0fb6b23c4d0c5bd9b9958a18a53e74d09"
+    },
+    {
+      "member": "verify-integration-fix-static.py",
+      "original": "verify-integration-fix-static.py",
+      "bytes": 3399,
+      "sha256": "fb07cb386164180104fae120ab91ad493b74c973afb8c754b6ef46a0783b2e6c"
+    },
+    {
+      "member": "retain-integration-fix-evidence.py",
+      "original": "retain-integration-fix-evidence.py",
+      "bytes": 6154,
+      "sha256": "e3c5f62f543bc61bfadf59d4e6a2de18fa8194167af3d0529ed20bc84a833d69"
+    }
+  ]
+}

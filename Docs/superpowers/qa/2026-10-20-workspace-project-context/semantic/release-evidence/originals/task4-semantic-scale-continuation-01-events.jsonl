@@ -1,0 +1,11 @@
+{"event": "retained_key_preflight", "keyword_epoch": 1, "keyword_indexed": 20000, "keyword_state": "Ready", "phase": "preflight", "semantic_revision": 3, "semantic_state": "Ready", "shape": "nested", "time_monotonic": 193254.203}
+{"event": "retained_key_preflight", "keyword_epoch": 1, "keyword_indexed": 20000, "keyword_state": "Ready", "phase": "preflight", "semantic_revision": 0, "semantic_state": "Off", "shape": "wide", "time_monotonic": 193259.265}
+{"event": "sample", "phase": "consent", "sampled_combined_rss": 219705344, "sampled_parent_rss": 219705344, "shape": "nested", "time_monotonic": 193280.296, "whole_binding_bytes": 74072173}
+{"event": "nested_persisted_ready_reused", "generation_id": "b5bc9b0b2ceb4e0c92d41b631662f5aa", "phase": "consent", "shape": "nested", "time_monotonic": 193285.265}
+{"event": "sample", "phase": "query", "sampled_combined_rss": 220250112, "sampled_parent_rss": 220250112, "shape": "nested", "time_monotonic": 193285.328, "whole_binding_bytes": 74072173}
+{"event": "sample", "phase": "query", "sampled_combined_rss": 220737536, "sampled_parent_rss": 220737536, "shape": "nested", "time_monotonic": 193290.343, "whole_binding_bytes": 74072173}
+{"error_class": "AssertionError", "event": "shape_adverse", "phase": "query", "shape": "nested", "time_monotonic": 193291.859}
+{"event": "shape_report_saved", "outcome": "adverse_cleanup_or_source_unproved", "phase": "cleanup", "shape": "nested", "time_monotonic": 193307.828}
+{"event": "preflight_owner_retirement", "pending": [], "phase": "app_cleanup", "shape": null, "time_monotonic": 193307.828}
+{"close_task_done": true, "event": "app_cleanup", "phase": "app_cleanup", "service_closed": true, "shape": null, "time_monotonic": 193307.828}
+{"error_class": "AssertionError", "error_location": "task4_semantic_scale_continuation.py:655:qualify_shape", "event": "process_adverse", "network_attempts": 0, "outcome": "adverse_incomplete", "phase": "app_cleanup", "shape": null, "shape_reports_present": ["nested"], "time_monotonic": 193307.843}

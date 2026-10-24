@@ -9,12 +9,14 @@ from types import SimpleNamespace
 from ..activation import async_guarded as activation_async_guarded
 from ..activation import guarded as activation_guarded
 from ..activation import source_paths
+from ..projection_scope import ProjectionExecutionScope, ProjectProjectionRequired
 from typing import Any, Dict, List, Optional, Union
 from loguru import logger
 import asyncio
 import os
 import re
 import time
+import threading
 import psutil
 import hashlib
 
@@ -170,6 +172,9 @@ class EmbeddingsServiceWrapper:
         base_url: Optional[str] = None,
         cache_dir: Optional[str] = None,
         embedding_cache_db: Optional[Any] = None,
+        *,
+        execution_scope: ProjectionExecutionScope | None = None,
+        local_files_only: Optional[bool] = None,
     ):
         """
         Initialize embeddings service using existing EmbeddingFactory.
@@ -192,14 +197,44 @@ class EmbeddingsServiceWrapper:
                 default-opens the user-data-dir DB itself (see
                 ``set_embedding_cache_store``).
         """
+        self._projection_execution_scope = None
+        self._project_rebind_lock = threading.Lock()
+        self._project_close_token = object()
+        self._project_close_started = False
+        self._project_close_complete = False
+        if execution_scope is not None:
+            from ..projection_scope import ProjectionExecutionScope
+
+            self._projection_execution_scope = ProjectionExecutionScope.require(
+                execution_scope
+            )
+            self._projection_execution_scope.validate_constructor(
+                model_name=model_name,
+                api_key=api_key,
+                base_url=base_url,
+                device=device,
+                cache_dir=cache_dir,
+                embedding_cache_db=embedding_cache_db,
+                local_files_only=local_files_only,
+            )
+        self._requested_device = device
         self.model_name = model_name
+        self._safe_model_id = hashlib.sha256(
+            (model_name + "|" + (
+                self._projection_execution_scope.settings.destination_fingerprint
+                if self._projection_execution_scope is not None else str(base_url or "")
+            )).encode()
+        ).hexdigest()[:16]
+        self._local_files_only = local_files_only
         self.device = device
         self._cache_size = cache_size
         self._api_key = api_key
         self._base_url = base_url
         self._cache_dir = cache_dir
         self._embedding_cache_db = embedding_cache_db
-        self._rag_activation_sources = source_paths(self)
+        self._rag_activation_sources = (
+            () if self._projection_execution_scope is not None else source_paths(self)
+        )
         self._use_mock_backend = str(model_name).lower() in {
             "mock",
             "mock-embedding-model",
@@ -231,12 +266,12 @@ class EmbeddingsServiceWrapper:
         # loading lazy, while callers retain the historical construction contract.
         self.factory = None
         self._config_dict = None
-        logger.info(f"Embeddings service configured with model: {model_name}")
+        logger.info("Embeddings service configured")
 
         # Log configuration metrics
         log_counter(
             "embeddings_service_configured",
-            labels={"model": model_name, "device": self.device},
+            labels={"model": self._safe_model_id, "device": self.device},
         )
 
         # Metrics tracking
@@ -282,7 +317,7 @@ class EmbeddingsServiceWrapper:
             ),
         )
         self._circuit_breaker = get_circuit_breaker(
-            f"embeddings_{model_name}", breaker_config
+            f"embeddings_{self._safe_model_id}", breaker_config
         )
         logger.info(
             f"Circuit breaker configured: failure_threshold={breaker_config.failure_threshold}, "
@@ -291,9 +326,36 @@ class EmbeddingsServiceWrapper:
 
         self._ensure_initialized()
 
+    def rebind_execution_scope(self, successor: ProjectionExecutionScope) -> None:
+        """Reuse one compatible factory after its prior project parent retires.
+
+        The caller issues a fresh carrier for each later build or query. An
+        idle wrapper keeps its cached model only, never a live project pin.
+        Credential or resolved-target changes require a new wrapper.
+        """
+        with self._project_rebind_lock:
+            if self._project_close_started:
+                raise ProjectProjectionRequired("project_embedding_close_pending")
+            previous = self._projection_execution_scope
+            if previous is None:
+                raise ProjectProjectionRequired()
+            accepted = previous.accepts_successor(successor)
+            accepted.validate_constructor(
+                model_name=self.model_name,
+                api_key=self._api_key,
+                base_url=self._base_url,
+                device=self._requested_device,
+                cache_dir=self._cache_dir,
+                embedding_cache_db=self._embedding_cache_db,
+                local_files_only=self._local_files_only,
+            )
+            self._projection_execution_scope = accepted
+
     @activation_guarded
     def _ensure_initialized(self):
         """Ensure the factory is initialized when first needed."""
+        if self._projection_execution_scope is not None and self._project_close_started:
+            raise ProjectProjectionRequired("project_embedding_close_pending")
         recovered = None
         if not self._use_mock_backend and not self.model_name.startswith("openai/"):
             from tldw_chatbook.Embeddings.Embeddings_Lib import HFModelCfg
@@ -301,7 +363,9 @@ class EmbeddingsServiceWrapper:
             from ..model_recovery import require_local_embedding
 
             recovered = require_local_embedding(
-                HFModelCfg(
+                HFModelCfg(**self._projection_execution_scope._config)
+                if self._projection_execution_scope is not None
+                else HFModelCfg(
                     model_name_or_path=self.model_name,
                     device=self.device,
                     cache_dir=self._cache_dir,
@@ -336,12 +400,24 @@ class EmbeddingsServiceWrapper:
 
         # Build configuration if not already done
         if self._config_dict is None:
-            self._config_dict = self._build_config(
-                self.model_name,
-                self.device,
-                self._api_key,
-                self._base_url,
-                self._cache_dir,
+            self._config_dict = (
+                {
+                    "default_model_id": "default",
+                    "models": {
+                        "default": {
+                            **self._projection_execution_scope._config,
+                            "allow_redirects": False,
+                        }
+                    },
+                }
+                if self._projection_execution_scope is not None
+                else self._build_config(
+                    self.model_name,
+                    self.device,
+                    self._api_key,
+                    self._base_url,
+                    self._cache_dir,
+                )
             )
 
         if recovered:
@@ -356,28 +432,30 @@ class EmbeddingsServiceWrapper:
                 cfg=validated_config,
                 max_cached=self._cache_size,
                 idle_seconds=900,  # 15 minutes idle timeout
-                allow_dynamic_hf=not bool(recovered),  # Recovery binds one reviewed model
+                allow_dynamic_hf=not bool(recovered)
+                and self._projection_execution_scope is None,
+                local_files_only=self._local_files_only,
             )
             if recovered or os.path.isdir(os.path.expanduser(self.model_name)):
                 from ..model_recovery import participant
 
                 participant.register_wrapper(self)
             logger.info(
-                f"Initialized embeddings factory with model: {self.model_name}, device: {self.device}"
+                "Initialized embeddings factory for configured model"
             )
 
             # Log initialization metrics
             log_counter(
                 "embeddings_factory_initialized",
-                labels={"model": self.model_name, "device": self.device},
+                labels={"model": self._safe_model_id, "device": self.device},
             )
             log_gauge("embeddings_cache_max_size", self._cache_size)
 
         except Exception as e:
-            logger.error(f"Failed to initialize embeddings factory: {e}")
+            logger.error("Failed to initialize embeddings factory ({})", type(e).__name__)
             log_counter(
                 "embeddings_factory_init_error",
-                labels={"model": self.model_name, "error": type(e).__name__},
+                labels={"model": self._safe_model_id, "error": type(e).__name__},
             )
             raise
 
@@ -423,6 +501,9 @@ class EmbeddingsServiceWrapper:
         the old store or the new one -- both are valid caches). Passing
         ``None`` detaches and restores no-cache behavior.
         """
+        if self._projection_execution_scope is not None and store is not None:
+            from ..projection_scope import ProjectProjectionRequired
+            raise ProjectProjectionRequired("project_embedding_cache_unsupported")
         self._embedding_cache_db = store
 
     def _embedding_cache_model_id(self) -> str:
@@ -431,7 +512,9 @@ class EmbeddingsServiceWrapper:
             return self.model_name
         config = self.factory.config
         model = config.models[config.default_model_id]
-        base_url = str(model.base_url) if model.base_url else "https://api.openai.com/v1"
+        base_url = (
+            str(model.base_url) if model.base_url else "https://api.openai.com/v1"
+        )
         endpoint = base_url.rstrip("/") + "/embeddings"
         # The validated factory config supplies the exact effective endpoint.
         # Persist only its digest: URLs can contain credentials or query secrets.
@@ -469,9 +552,12 @@ class EmbeddingsServiceWrapper:
         if store is None:
             return {}
         try:
-            return store.get_cached_embeddings(
-                self._embedding_cache_model_id(), content_hashes
-            ) or {}
+            return (
+                store.get_cached_embeddings(
+                    self._embedding_cache_model_id(), content_hashes
+                )
+                or {}
+            )
         except Exception as e:
             log_counter(
                 "embeddings_persistent_cache_error",
@@ -570,7 +656,7 @@ class EmbeddingsServiceWrapper:
             # Add base URL for OpenAI-compatible endpoints
             if base_url:
                 model_config["base_url"] = base_url
-                logger.info(f"Using OpenAI-compatible endpoint: {base_url}")
+                logger.info("Using configured OpenAI-compatible endpoint")
 
         else:
             # HuggingFace model (default)
@@ -598,7 +684,7 @@ class EmbeddingsServiceWrapper:
             if cache_dir:
                 model_config["cache_dir"] = cache_dir
                 logger.info(
-                    f"Using cache directory for HuggingFace models: {cache_dir}"
+                    "Using configured cache directory for HuggingFace models"
                 )
 
         # Construct the full configuration
@@ -607,7 +693,7 @@ class EmbeddingsServiceWrapper:
             "models": {default_model_id: model_config},
         }
 
-        logger.debug(f"Built embedding config: provider={provider}, model={model_path}")
+        logger.debug("Built embedding config: provider={}", provider)
         return config
 
     @timeit("embeddings_create_operation")
@@ -758,6 +844,9 @@ class EmbeddingsServiceWrapper:
         except Exception as e:
             self._errors_count += 1
             log_counter("embeddings_creation_error", labels={"error": type(e).__name__})
+            if self._projection_execution_scope is not None:
+                logger.error("Project embedding failed ({})", type(e).__name__)
+                raise RuntimeError("project_embedding_failed") from None
             logger.opt(exception=True).error(f"Failed to create embeddings: {e}")
             raise RuntimeError(f"Embedding creation failed: {e}") from e
 
@@ -882,6 +971,9 @@ class EmbeddingsServiceWrapper:
             log_counter(
                 "embeddings_async_creation_error", labels={"error": type(e).__name__}
             )
+            if self._projection_execution_scope is not None:
+                logger.error("Project async embedding failed ({})", type(e).__name__)
+                raise RuntimeError("project_embedding_failed") from None
             logger.opt(exception=True).error(
                 f"Failed to create embeddings asynchronously: {e}"
             )
@@ -919,9 +1011,13 @@ class EmbeddingsServiceWrapper:
             function = (
                 participant.worker(self.factory.embed) if local else self.factory.embed
             )
-            return await asyncio.to_thread(
-                native_worker(self, function), texts, as_list=False
+            from ..activation import join_retained_task
+
+            completion = asyncio.create_task(
+                asyncio.to_thread(native_worker(self, function), texts, as_list=False)
             )
+            await join_retained_task(completion)
+            return completion.result()
 
     @activation_async_guarded
     async def create_embedding_async(self, text: str) -> np.ndarray:
@@ -1086,6 +1182,8 @@ class EmbeddingsServiceWrapper:
 
         This is useful when switching models or freeing memory.
         """
+        if self._projection_execution_scope is not None:
+            raise ProjectProjectionRequired("project_embedding_cache_change_unsupported")
         try:
             if self.factory is not None:
                 self.factory.close()
@@ -1104,6 +1202,30 @@ class EmbeddingsServiceWrapper:
 
         Should be called when the service is no longer needed.
         """
+        if self._projection_execution_scope is not None:
+            with self._project_rebind_lock:
+                if self._project_close_complete:
+                    return
+                carrier = self._projection_execution_scope
+                operation = carrier._parent.operation
+                owner = carrier._service
+                owner._mark_projection_close_pending(
+                    operation, carrier.scope.key, self._project_close_token, self
+                )
+                self._project_close_started = True
+                try:
+                    if self.factory is not None:
+                        self.factory.close()
+                except BaseException:
+                    logger.error("Project embedding close failed")
+                    raise RuntimeError("project_embedding_close_failed") from None
+                owner._settle_projection_close_pending(
+                    operation, self._project_close_token, self
+                )
+                self.factory = None
+                self._project_close_complete = True
+            logger.info("Closed project embeddings service")
+            return
         try:
             # Close the factory first
             if hasattr(self, "factory") and self.factory is not None:

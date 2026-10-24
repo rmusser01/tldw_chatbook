@@ -1,0 +1,66 @@
+{
+  "scope": "Task4 review fix source snapshot before parent integration; final app/Console/scale qualification pending",
+  "base": "6bda3c739af2a0c814e00e5f1c9594b3b1ec7ecc",
+  "hashes": [
+    {
+      "path": ".github/workflows/derived-artifacts.yml",
+      "sha256": "2047F61C0847E7D3A66AB9C968F06D5F685DD2FE080664A6E6FB0896CF3E9DFD",
+      "bytes": 75357
+    },
+    {
+      "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+      "sha256": "696E80795B8245AB9CCB31DD57B5661ABD0A92C07FEFB9AED0292ED1EB0CDF9C",
+      "bytes": 76047
+    },
+    {
+      "path": "Tests/Chat/test_console_workspace_folder_note_contract.py",
+      "sha256": "62B4C490D74368C81328F8D13A528748307F5235E56DFBFE5A51D8901D6F8B8C",
+      "bytes": 20497
+    },
+    {
+      "path": "Tests/UI/test_project_semantic_consent.py",
+      "sha256": "7060D41AFACAD1B579EA31A50B199827E0FB6D9C79A249BF42886CAB2BE980D6",
+      "bytes": 24406
+    },
+    {
+      "path": "Tests/Workspaces/test_project_semantic_generations.py",
+      "sha256": "FB8F4FF48B5A658C0A1309FBD221BCEB13FEC5B838D43986D8730ADB69C055D2",
+      "bytes": 69242
+    },
+    {
+      "path": "Tests/Workspaces/test_project_semantic_app_quality.py",
+      "sha256": "360260C73E04B72DB2EEA3563765637AB079D37EF77E5F235F2155F9591F94DD",
+      "bytes": 35712
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "sha256": "00A2B093D665EC85B6E9E32200EC826C71B3C288D4A6987D50DDD2079328128B",
+      "bytes": 90236
+    },
+    {
+      "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "sha256": "5E2CD2FD4BEE9D224E050B531C6D61FA4715C72BFC161E3AF60D9A4CCEEF2A23",
+      "bytes": 48732
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "sha256": "33BE7CEEAA0B11F9B11D857E74453E8D77F2CC7031CEBB4B536B622C7EB09B7D",
+      "bytes": 58878
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+      "sha256": "4B573D07B475A9CCD64E6F7FA5CFFFDFFCC691F367C9A41396DCB1AD0B2B06C8",
+      "bytes": 32215
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/projection_scope.py",
+      "sha256": "03DDF404533D34E2E09018C135F7D1643B0E9BD902EA3DF430DD992D32E2751E",
+      "bytes": 9233
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "sha256": "9DB38B32B627F8CF10CE8CDE6D0974F67670CBFDAE1AB1E77272D7AFA0F51171",
+      "bytes": 98925
+    }
+  ]
+}

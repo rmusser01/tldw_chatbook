@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="17.149" timestamp="2026-10-23T16:35:01.397307-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_cleanup_retry_never_displays_revoked_old_semantic_state" time="16.097"><failure message="AssertionError: assert 'cleanup pending' in 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'&#10; +  where 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.' = str(Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'))&#10; +    where Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.') = render()&#10; +      where render = Static(classes='project-semantic-status settings-detail-row').render&#10; +        where Static(classes='project-semantic-status settings-detail-row') = query_one('.project-semantic-status', Static)&#10; +          where query_one = ProjectIndexBindingCard(classes='h-auto').query_one">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_cleanup_retry_never_displ0/private-profile-process/pytest/test_cleanup_retry_never_displ0')
+request = &lt;FixtureRequest for &lt;Coroutine test_cleanup_retry_never_displays_revoked_old_semantic_state&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001B9C82B4560&gt;
+
+    @private_profile_test
+    async def test_cleanup_retry_never_displays_revoked_old_semantic_state(
+        tmp_path, request, monkeypatch
+    ):
+        from tldw_chatbook.Workspaces.project_index.models import ProjectIndexRetirementUnproven
+    
+        mod = card_module()
+        rig = Rig(tmp_path)
+        rig.enable()
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        actual_disable = rig.service.disable_semantic
+        try:
+            async with CardApp(card).run_test(size=(100, 35)) as pilot:
+                await wait_for_card(card, pilot)
+                selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+                rig.service.enable_semantic(
+                    rig.key, selected,
+                    expected_epoch=card.status.scope.epoch,
+                    expected_semantic_revision=card.semantic_status.semantic_revision,
+                )
+                card.reload_status()
+                await wait_for_card(card, pilot)
+                assert card.semantic_status.enabled
+    
+                def revoked_then_pending(*args, **kwargs):
+                    result = actual_disable(*args, **kwargs)
+                    assert result.state == "Off" and not result.enabled
+                    raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
+    
+                monkeypatch.setattr(rig.service, "disable_semantic", revoked_then_pending)
+                monkeypatch.setattr(rig.service, "semantic_close_pending", lambda key: True)
+                next(b for b in card.query(Button) if b.name == "semantic-disable").press()
+                await pilot.pause()
+                while card._pending:
+                    await pilot.pause(0.02)
+                assert not rig.service.semantic_state(rig.key).enabled
+&gt;               assert "cleanup pending" in str(card.query_one(".project-semantic-status", Static).render())
+E               AssertionError: assert 'cleanup pending' in 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'
+E                +  where 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.' = str(Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'))
+E                +    where Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.') = render()
+E                +      where render = Static(classes='project-semantic-status settings-detail-row').render
+E                +        where Static(classes='project-semantic-status settings-detail-row') = query_one('.project-semantic-status', Static)
+E                +          where query_one = ProjectIndexBindingCard(classes='h-auto').query_one
+
+Tests\UI\test_project_semantic_consent.py:415: AssertionError</failure></testcase></testsuite></testsuites>

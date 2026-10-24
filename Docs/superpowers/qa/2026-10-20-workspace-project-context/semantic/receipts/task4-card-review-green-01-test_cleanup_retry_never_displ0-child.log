@@ -1,0 +1,82 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+________ test_cleanup_retry_never_displays_revoked_old_semantic_state _________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_cleanup_retry_never_displ0/private-profile-process/pytest/test_cleanup_retry_never_displ0')
+request = <FixtureRequest for <Coroutine test_cleanup_retry_never_displays_revoked_old_semantic_state>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B9C82B4560>
+
+    @private_profile_test
+    async def test_cleanup_retry_never_displays_revoked_old_semantic_state(
+        tmp_path, request, monkeypatch
+    ):
+        from tldw_chatbook.Workspaces.project_index.models import ProjectIndexRetirementUnproven
+    
+        mod = card_module()
+        rig = Rig(tmp_path)
+        rig.enable()
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        actual_disable = rig.service.disable_semantic
+        try:
+            async with CardApp(card).run_test(size=(100, 35)) as pilot:
+                await wait_for_card(card, pilot)
+                selected, _ = card._inspect_semantic_destination("all-MiniLM-L6-v2")
+                rig.service.enable_semantic(
+                    rig.key, selected,
+                    expected_epoch=card.status.scope.epoch,
+                    expected_semantic_revision=card.semantic_status.semantic_revision,
+                )
+                card.reload_status()
+                await wait_for_card(card, pilot)
+                assert card.semantic_status.enabled
+    
+                def revoked_then_pending(*args, **kwargs):
+                    result = actual_disable(*args, **kwargs)
+                    assert result.state == "Off" and not result.enabled
+                    raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
+    
+                monkeypatch.setattr(rig.service, "disable_semantic", revoked_then_pending)
+                monkeypatch.setattr(rig.service, "semantic_close_pending", lambda key: True)
+                next(b for b in card.query(Button) if b.name == "semantic-disable").press()
+                await pilot.pause()
+                while card._pending:
+                    await pilot.pause(0.02)
+                assert not rig.service.semantic_state(rig.key).enabled
+>               assert "cleanup pending" in str(card.query_one(".project-semantic-status", Static).render())
+E               AssertionError: assert 'cleanup pending' in 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'
+E                +  where 'Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.' = str(Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.'))
+E                +    where Content('Semantic index unavailable (last known Paused). Check status to retry. Cleanup pending; Retry semantic cleanup.') = render()
+E                +      where render = Static(classes='project-semantic-status settings-detail-row').render
+E                +        where Static(classes='project-semantic-status settings-detail-row') = query_one('.project-semantic-status', Static)
+E                +          where query_one = ProjectIndexBindingCard(classes='h-auto').query_one
+
+Tests\UI\test_project_semantic_consent.py:415: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-23 16:35:02.721 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-23 16:35:02.845 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-10-23 16:35:02.845 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-10-23 16:35:02.846 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-10-23 16:35:03.763 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-card-review-green-01\pytest-of-GDesktop-1\pytest-0\test_cleanup_retry_never_displ0\private-profile-process\pytest.xml -
+============================ slowest 25 durations =============================
+14.07s call     Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+1.93s setup    Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+
+(1 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_cleanup_retry_never_displays_revoked_old_semantic_state
+1 failed, 1 warning in 17.15s

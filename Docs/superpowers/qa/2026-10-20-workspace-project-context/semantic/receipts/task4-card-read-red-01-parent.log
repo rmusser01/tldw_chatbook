@@ -1,0 +1,135 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+___ test_semantic_read_error_preserves_last_known_state_and_retry_guidance ____
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-card-read-red-01\pytest-of-GDesktop-1\pytest-0\test_semantic_read_error_prese0\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert None == ProjectSemanticState(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', b..., enabled=False, settings=None, state='Off', reason=None, ready_generation_id=None, coverage=None, close_pending=False)
+E    +  where None = ProjectIndexBindingCard(classes='h-auto').semantic_status
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_semantic_read_error_prese0/private-profile-process/pytest/test_semantic_read_error_prese0')
+E   request = <FixtureRequest for <Coroutine test_semantic_read_error_preserves_last_known_state_and_retry_guidance>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000174184ED580>
+E   
+E       @private_profile_test
+E       async def test_semantic_read_error_preserves_last_known_state_and_retry_guidance(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E                   known = card.semantic_status
+E                   keyword = card.status
+E                   card.query_one(".project-index-prefixes", Input).value = "dirty-folder"
+E                   actual_state = rig.service.semantic_state
+E       
+E                   def failed_read(key):
+E                       raise RuntimeError("semantic_read_failed")
+E       
+E                   monkeypatch.setattr(rig.service, "semantic_state", failed_read)
+E                   card.reload_status()
+E                   await pilot.pause()
+E                   while card._pending:
+E                       await pilot.pause(0.02)
+E   >               assert card.semantic_status == known
+E   E               AssertionError: assert None == ProjectSemanticState(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', b..., enabled=False, settings=None, state='Off', reason=None, ready_generation_id=None, coverage=None, close_pending=False)
+E   E                +  where None = ProjectIndexBindingCard(classes='h-auto').semantic_status
+E   
+E   Tests\UI\test_project_semantic_consent.py:458: AssertionError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   ___ test_semantic_read_error_preserves_last_known_state_and_retry_guidance ____
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_semantic_read_error_prese0/private-profile-process/pytest/test_semantic_read_error_prese0')
+E   request = <FixtureRequest for <Coroutine test_semantic_read_error_preserves_last_known_state_and_retry_guidance>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000174184ED580>
+E   
+E       @private_profile_test
+E       async def test_semantic_read_error_preserves_last_known_state_and_retry_guidance(
+E           tmp_path, request, monkeypatch
+E       ):
+E           mod = card_module()
+E           rig = Rig(tmp_path)
+E           rig.enable()
+E           monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+E           monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+E           card = mod.ProjectIndexBindingCard(
+E               rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+E           )
+E           try:
+E               async with CardApp(card).run_test(size=(100, 35)) as pilot:
+E                   await wait_for_card(card, pilot)
+E                   known = card.semantic_status
+E                   keyword = card.status
+E                   card.query_one(".project-index-prefixes", Input).value = "dirty-folder"
+E                   actual_state = rig.service.semantic_state
+E       
+E                   def failed_read(key):
+E                       raise RuntimeError("semantic_read_failed")
+E       
+E                   monkeypatch.setattr(rig.service, "semantic_state", failed_read)
+E                   card.reload_status()
+E                   await pilot.pause()
+E                   while card._pending:
+E                       await pilot.pause(0.02)
+E   >               assert card.semantic_status == known
+E   E               AssertionError: assert None == ProjectSemanticState(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='workspace', b..., enabled=False, settings=None, state='Off', reason=None, ready_generation_id=None, coverage=None, close_pending=False)
+E   E                +  where None = ProjectIndexBindingCard(classes='h-auto').semantic_status
+E   
+E   Tests\UI\test_project_semantic_consent.py:458: AssertionError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 16:34:06.473 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 16:34:06.594 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 16:34:06.595 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 16:34:06.596 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 16:34:07.509 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-card-read-red-01\pytest-of-GDesktop-1\pytest-0\test_semantic_read_error_prese0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   8.71s call     Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+E   1.93s setup    Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+E   
+E   (1 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+E   1 failed, 1 warning in 11.77s
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+15.88s call     Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_semantic_read_error_preserves_last_known_state_and_retry_guidance
+1 failed, 1 warning in 17.72s

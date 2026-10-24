@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="8.738" timestamp="2026-10-23T13:46:17.001204-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_stale_semantic_action_after_clear_cannot_enable_new_epoch" time="7.728"><failure message="AttributeError: 'ProjectIndexBindingCard' object has no attribute 'SemanticActionRequested'">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_stale_semantic_action_aft0/private-profile-process/pytest/test_stale_semantic_action_aft0')
+request = &lt;FixtureRequest for &lt;Coroutine test_stale_semantic_action_after_clear_cannot_enable_new_epoch&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000014DCC7CC590&gt;
+
+    @private_profile_test
+    async def test_stale_semantic_action_after_clear_cannot_enable_new_epoch(
+        tmp_path, request, monkeypatch
+    ):
+        mod = card_module()
+        rig = Rig(tmp_path)
+        rig.enable()
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        try:
+            async with CardApp(card).run_test(size=(100, 35)) as pilot:
+                await wait_for_card(card, pilot)
+&gt;               action = card.SemanticActionRequested(
+                    card.binding_id, card.workspace_id, card.status,
+                    card.semantic_status, "stage", "all-MiniLM-L6-v2",
+                )
+E               AttributeError: 'ProjectIndexBindingCard' object has no attribute 'SemanticActionRequested'
+
+Tests\UI\test_project_semantic_consent.py:90: AttributeError</failure></testcase></testsuite></testsuites>

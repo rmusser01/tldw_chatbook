@@ -1,0 +1,6 @@
+{"phase": "synthetic_reused", "elapsed_seconds": 1.688, "files": 20000, "source_bytes": 680000, "private_bytes": 14758033}
+{"phase": "keyword_reused_ready", "elapsed_seconds": 13.735, "indexed": 20000, "semantic_revision": 2, "private_bytes": 14922097}
+{"phase": "semantic_started", "elapsed_seconds": 17.141, "native_owner": "project-semantic-owner"}
+{"phase": "disable_requested", "elapsed_seconds": 67.594, "pages": 4, "private_bytes": 15208817}
+{"phase": "semantic_retired", "elapsed_seconds": 76.938, "pages": 4, "private_bytes": 15208817}
+{"phase": "finished", "retired": true, "pages": 4, "private_bytes": 15044753}

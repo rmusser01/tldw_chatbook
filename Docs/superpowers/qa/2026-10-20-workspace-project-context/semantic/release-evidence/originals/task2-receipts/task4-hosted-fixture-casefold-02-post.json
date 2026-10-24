@@ -1,0 +1,29 @@
+{
+  "hashes": [
+    {
+      "sha256": "28918A0B5BAE7EE5D98EC47D0DBBC1515A28D80A35F4041CD0EDF6AD4C27737D",
+      "path": ".github/workflows/derived-artifacts.yml"
+    },
+    {
+      "sha256": "1877D76C77D6E08A3F6EE8ED860A8AB6D72B602E1804802660CB15B1EEA80206",
+      "path": "Tests/Agents/test_project_index_tool.py"
+    },
+    {
+      "sha256": "05759553BB79E72FEEF748C8A0C7CAD5A8A694FEEAB6BE32FB660D3F822385CD",
+      "path": "Tests/Workspaces/test_project_index_service.py"
+    },
+    {
+      "sha256": "A58BCA1CA010102415178CA5F8FF17BBCDD169283734CBCC4B1C8B0CE5710983",
+      "path": "tldw_chatbook/Utils/private_paths.py"
+    },
+    {
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C",
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py"
+    }
+  ],
+  "source_unchanged": true,
+  "run": "task4-hosted-fixture-casefold-02",
+  "parent_xml": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task2-receipts\\task4-hosted-fixture-casefold-02-parent.xml",
+  "exit_code": 0,
+  "parent_log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task2-receipts\\task4-hosted-fixture-casefold-02-parent.log"
+}

@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A diagnostic wrapper can replace the failure it is meant to observe (TASK-36420, 2026-10-23)
+
+**Incident.** During the semantic-cache allocation foundation, the supervisor cleared the retired run's exception to release its traceback. Reading run.error after join therefore could not identify the first failure. A temporary scanner observer then read nonexistent ScanRunResult.directories, raising its own AttributeError; two diagnostic runs were contaminated. A passive first-exception capture identified the actual SQLite SQLITE_FULL13. The wrapper was removed before the final Partial/Clear/rebuild control passed with a sampled10,684,846B peak under the12MiB fixture limit.
+
+**What to do.** Capture the actual first exception before its owner retires it, validate observer fields against the return type, and return the original value unchanged. Label observer-induced failures separately and preserve their receipts. A missing retired exception is not success evidence; a sampled peak is not an analytical quota proof.
+
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
 **Incident.** To show that a "the saved model list stays unchanged" test could fail, a temporary edit made `config.apply_settings_mutation_to_cli_config` also write `[providers]` whenever a mutation set `chat_defaults.model`. The wizard's test went red, but the Console test (pick, then Make default for new chats) stayed green. Console's default save builds a `config.LiteralSettingsMutation` with tuple paths (`Chat/console_settings_defaults.py`), and that goes through the literal-mutation writer, not this function. One run went to a negative control that never reached the code it was meant to exercise.
@@ -21548,7 +21554,13 @@ During optional keyword scanner qualification (TASK-36003, 2026-10-21), retainin
 
 During TASK-36132, a repository-wide guard run overlapped an implementer temporarily restoring baseline source for a redundant RED run in the same worktree. All four guards returned zero, but that scan could not certify one source snapshot. The final guard run had to be repeated after implementation handoff, with matching before/after source hashes.
 
-Serialize baseline reversals and shared scans. Private test profiles isolate storage, not the Python source checkout. Finish implementation handoff before repository-wide verification; record the reviewed source identity and verify it stays unchanged for the scan.
+During TASK-36422, task3-provider-registry-01 likewise overlapped a service source edit; it was retained as non-final evidence, then task3-final-exception-02 and exact final hash controls qualified the frozen paths. Serialize baseline reversals and shared scans. Private test profiles isolate storage, not the Python source checkout. Finish implementation handoff before repository-wide verification; record the reviewed source identity and verify it stays unchanged for the scan.
+
+During TASK-36423, task4-ui-green-01 raised a Textual selector API error before the first child completed. The card source was corrected while another selected child was still running in the same runner; the resulting mixed-source output cannot qualify either snapshot even though the error seemed local. The run and its prehash/child logs were retained as adverse evidence. Subsequent cases were run singly with source hashes checked before launch and after the entire child process retired. An early failure line is not a safe edit boundary when the runner still owns other children.
+
+During the same task, the outer Settings dark-08/light-01 runs reported passing tests, but their child logs warned that the default executor had not joined within its three-second shutdown grace. A later owner-02 probe also exited with a passing test while its child stack receipt showed one real `chachanotes_fts_backfill` future still pending at shutdown exit. Parent exit status and warning counts did not establish physical worker retirement. The settled-startup Settings control waited for that exact real boot worker to succeed while the app remained mounted, then rechecked the card and inspected the child log for shutdown warnings. Preserve both the adverse and settled receipts, and inspect child warnings and live-future evidence before claiming native retirement from a passing outer result.
+
+Task4's first fix commit exposed a different evidence trap: all 271 copied receipt files matched a SHA-256/byte manifest in the working tree, but Git's text line-ending normalization changed 231 committed blobs. One parent log was 1,873 bytes in the original and working copy, but 1,856 bytes in the commit. The independent review could not verify the original-byte claim from a fresh checkout. Pin exact-byte receipt directories with a scoped `-text` attribute, restage the original files, and compare **Git index and committed blob bytes** against the manifest; a working-tree hash check alone is insufficient. Do not rewrite the manifest to bless normalized copies.
 
 ## A UI shard cancelled with no failing test ran out its own job cap; the gate only reports it (PR #3190, TASK-35660, 2026-10-22)
 
@@ -21655,3 +21667,22 @@ attributes they touch. Do not list them from the domain model. Read mutable
 inputs by value at read time, because a held reference compares equal to
 itself after an in-place write. Give each input a test that changes it alone
 and ticks through the real gate.
+## Retain parent and child runtime bootstrap for offline qualification
+
+**Incident (TASK-36421, 2026-10-23).** Cached MiniLM qualification repeatedly stopped before model assertions with missing `pywintypes`: adding shared packages to `PYTHONPATH` did not process their `.pth`, and parent-only `site.addsitedir` did not configure the private child. One attempt also selected the worktree venv instead of the main checkout shared site. The preserved fix1-offline-final-01/02/03 runs are setup failures; fix1-offline-final-04 and the reusable runner composition then passed with the same source/backend and offline cache.
+
+**What to do.** Preserve and reuse the exact qualified parent and child bootstrap, interpreter, shared-site provenance, selectors and before-launch hashes. Read-only shared-site `.pth` processing and inherited child paths are distinct requirements. Keep this model-capable runner separate from the normal missing-optional-dependency keyword control; neither setup failure nor presence of a cached model certifies product behavior.
+
+
+## A qualification preflight needs finite registry ownership and pre-assert payload retention
+
+**Incident (TASK-36423, 2026-10-24).** Continuation 01 reused a real 20k Ready generation but failed a compound semantic-query assertion without saving ToolResult or individual predicates. Its actual fallback/refusal is unknown. Source inspection found raw preflight `get_runtime_binding` outside finite service ownership; WorkspaceDB retains per-thread handles, and a later semantic operation correctly refuses a borrowed caller connection. Thread reuse was not recorded, so that defect cannot be declared the old run's proven cause. Separately reviewed continuation 02 used the existing service registry owner around preflight, saved actual query result/fresh metrics/booleans before assertions and recorded thread/issuer/retirement exceptions without changing production catch behavior; both corpus journeys passed. Keep the adverse receipt, use the actual finite owner before registry lookup, and save diagnostic facts before a compound assertion. Do not close borrowed connections or weaken model admission to make a qualification pass.
+
+
+## A required lane has exact consumers beyond its workflow
+
+**Incident (TASK-36423, 2026-10-24).** The approved project-index lane was added to the required aggregate, but the old-head hosted Fast Lane failed five tests: exact workflow job/verdict expectations omitted it, current ADR103 runner counts stayed at nineteen instead of twenty, and the statement test indexed past its word table at twenty-one with perf-guard. The original hosted log and targeted RED/GREEN are retained in semantic/integration-fix-evidence. Update every exact workflow consumer and current count statement when adding a lane; preserve dated historical counts and support numeric counts beyond a fixed word table. A green focused new-lane contract alone does not qualify those other consumers.
+
+## Use forward slashes in Windows PYTEST_ADDOPTS paths
+
+**Incident (TASK-36423, 2026-10-24).** The qualified endpoint-cache RED passed a Windows backslash path to --junitxml through PYTEST_ADDOPTS. Pytest's shlex parsing consumed the separators and wrote one filename in the worktree root. The exact original XML was moved to its private receipt directory after retirement without changing bytes or replaying the test. GREEN used an absolute forward-slash path and wrote directly to the intended location. Record literal environment options and actual output paths; use forward slashes for paths parsed through PYTEST_ADDOPTS on Windows.

@@ -1,0 +1,29 @@
+{
+  "exit_code": 0,
+  "source_unchanged": true,
+  "hashes": [
+    {
+      "sha256": "28918A0B5BAE7EE5D98EC47D0DBBC1515A28D80A35F4041CD0EDF6AD4C27737D",
+      "path": ".github/workflows/derived-artifacts.yml"
+    },
+    {
+      "sha256": "05759553BB79E72FEEF748C8A0C7CAD5A8A694FEEAB6BE32FB660D3F822385CD",
+      "path": "Tests/Workspaces/test_project_index_service.py"
+    },
+    {
+      "sha256": "F6047EF16BFD66D52AAC9BF4CD4A5581982B6970F1CF8F43598D161DE2F394B7",
+      "path": "Tests/Workspaces/test_project_semantic_generations.py"
+    },
+    {
+      "sha256": "A58BCA1CA010102415178CA5F8FF17BBCDD169283734CBCC4B1C8B0CE5710983",
+      "path": "tldw_chatbook/Utils/private_paths.py"
+    },
+    {
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C",
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py"
+    }
+  ],
+  "parent_log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task2-receipts\\task4-coverage-settings-green-01-parent.log",
+  "run": "task4-coverage-settings-green-01",
+  "parent_xml": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task2-receipts\\task4-coverage-settings-green-01-parent.xml"
+}

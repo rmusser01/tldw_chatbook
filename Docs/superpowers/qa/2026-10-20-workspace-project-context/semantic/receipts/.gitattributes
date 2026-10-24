@@ -1,0 +1,2 @@
+# The receipt manifest pins the original captured bytes, including CRLF.
+* -text
