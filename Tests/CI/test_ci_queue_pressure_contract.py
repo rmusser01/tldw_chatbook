@@ -116,7 +116,7 @@ FAST_LANE_TARGETS = (
     # TASK-34000.31: both note exporters write YAML front matter a parser and
     # Add from files… read back for any title (pure renderer + real tmp
     # SQLite through the creator and importer; no app import, no Hypothesis;
-    # about thirteen seconds locally, 2026-10-24).
+    # 44 tests: 18 s at load 11, 14 s idle, measured 2026-10-24).
     "Tests/Chatbooks/test_note_frontmatter_round_trip.py",
     # TASK-34000.49: binding.note_version is never a precondition against
     # the live note (AST scan of the executor, under a second).

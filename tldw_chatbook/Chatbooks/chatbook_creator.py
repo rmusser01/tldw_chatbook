@@ -1538,10 +1538,12 @@ class ChatbookCreator:
                         "created_at": note_data["created_at"],
                         "updated_at": note_data["updated_at"],
                     }
-                    # ``_frontmatter_safe_keyword`` stays as belt-and-braces:
-                    # a quoted scalar may hold ``---`` or a newline and still
-                    # be valid YAML, but keeping such keywords off the block
-                    # costs nothing (the manifest is the record).
+                    # ``_frontmatter_safe_keyword`` stays: the dumper would
+                    # quote a keyword holding ``---`` or a line break into
+                    # valid YAML, but a reader that still splits on the first
+                    # fence -- the pre-fix importer, a foreign tool -- would
+                    # cut the body there. The manifest is the record, so the
+                    # keyword loses nothing by staying off this block.
                     frontmatter_tags = [
                         tag
                         for tag in note_data["tags"]

@@ -6,6 +6,7 @@ import csv
 import io
 import json
 import re
+from datetime import date, datetime
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -62,6 +63,13 @@ _FRONTMATTER_KEYS = ("tags", "keywords", "aliases")
 users already exported still restore their keywords.
 """
 _TAG_KEYS = frozenset({"tags", "keywords"})
+_OWN_EXPORT_KEYS = frozenset({"date", "note_id", "id", "created_at", "updated_at"})
+"""Provenance keys the app's own exporters write (``Export Markdown``, bundles).
+
+They are never imported -- the Library has its own ids and stamps -- and never
+reported as "not imported" either (TASK-34000.31 fix round 1, M3): dropping
+them loses nothing a user wrote.
+"""
 _ALIAS_KEYWORD_PREFIX = "alias: "
 """Marks a keyword that came from `aliases:` rather than from `tags:`."""
 _MAX_FRONTMATTER_LINES = 200
@@ -508,23 +516,33 @@ def _parse_text(
         # `source: "[[README]]"` property is metadata and is never rewritten.
         body = text
         unimported_keys: tuple[str, ...] = ()
-        # TASK-34000.31: the YAML block is read for EVERY Markdown file, not
-        # only in Obsidian mode. The toggle is offered for a vault alone, so a
-        # single exported note picked through Import once used to keep its
-        # own ``---`` block as body text and lose its keywords (the review's
-        # N-20 symptom, reproduced live). Obsidian mode still governs what is
-        # Obsidian's -- the vault's private folders and ``[[wikilinks]]``.
+        # TASK-34000.31: the YAML block is read outside a vault too, so a note
+        # exported with Export Markdown and picked through Import once (the
+        # toggle is offered for a vault alone) comes back with its title and
+        # keywords instead of its own ``---`` block as body text (the review's
+        # N-20 symptom, reproduced live). Fix round 1 ruling: outside a vault
+        # the block is stripped ONLY when every key is one the import honours
+        # or one the app's own exports write -- a user's ``Summary:`` or
+        # ``Yes:`` block stays in the body exactly as before, nothing of theirs
+        # is dropped. Obsidian mode still governs what is Obsidian's: the
+        # vault's private folders, ``[[wikilinks]]``, and stripping any block.
         if markdown:
             metadata, body = split_frontmatter(text)
+            if (
+                metadata is not None
+                and not obsidian_mode
+                and not _is_own_export_block(metadata)
+            ):
+                metadata, body = None, text
             # A note that is only frontmatter (an Obsidian Properties-only file,
             # a templated daily note) still has to import: keep the original
             # text as the body rather than turning a note this mode understands
             # BETTER into a failure it did not have before.
-            if body.strip():
+            if metadata is not None and body.strip():
                 text = body
                 # Only a stripped block loses anything (task-32262); a
                 # frontmatter-only note keeps every property in its content.
-                unimported_keys = _unimported_frontmatter_keys(metadata)
+                unimported_keys = _unimported_frontmatter_keys(metadata, bounds)
         stem = PurePosixPath(candidate.source.display_path).stem
         title = _frontmatter_title(metadata) or _text_title(text, stem, markdown)
         if len(title) > MAX_IMPORT_TITLE_LENGTH:
@@ -585,10 +603,13 @@ def split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
         closing fence, or ``(None, text)`` when there is no readable block.
     """
     lines = text.split("\n")
-    if not lines or lines[0].strip() != "---":
+    if not lines or lines[0].rstrip() != "---":
         return None, text
     for index, line in enumerate(lines[1 : _MAX_FRONTMATTER_LINES + 1], start=1):
-        if line.strip() not in {"---", "..."}:
+        # Only a fence at column 0 closes the block (TASK-34000.31 fix round
+        # 1, M1): the dumper folds a multi-line title so a continuation line
+        # can be an indented ``  ---``, which ``strip()`` mistook for the end.
+        if line.rstrip() not in {"---", "..."}:
             continue
         block = "\n".join(lines[1:index])
         try:
@@ -609,10 +630,17 @@ _split_frontmatter = split_frontmatter
 
 
 def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
-    """Return the frontmatter title, unless it is blank or a placeholder."""
+    """Return the frontmatter title, unless it is blank or a placeholder.
+
+    A number or a date the YAML reader typed (``title: 2026``) is the text the
+    author wrote, so it is used as ``str(value)`` (TASK-34000.31 fix round 1);
+    a bool, a list or a mapping is not a title and is reported instead.
+    """
     if metadata is None:
         return None
     value = metadata.get("title")
+    if isinstance(value, (int, float, date, datetime)) and not isinstance(value, bool):
+        value = str(value)
     if not isinstance(value, str):
         return None
     title = value.strip()
@@ -624,32 +652,88 @@ def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
 _IMPORTED_FRONTMATTER_KEYS = frozenset({"title", *_FRONTMATTER_KEYS})
 """Frontmatter properties the import actually keeps."""
 
+_STRIPPABLE_OUTSIDE_A_VAULT = _IMPORTED_FRONTMATTER_KEYS | _OWN_EXPORT_KEYS
+
 _MAX_REPORTED_FRONTMATTER_KEYS = 12
+
+
+def _is_own_export_block(metadata: Mapping[Any, Any]) -> bool:
+    """Is every key one the import honours or one the app's own exports write?
+
+    Outside a vault that is the only block worth removing from the body: it
+    round-trips the app's own ``Export Markdown`` file and bundles while a
+    block holding anything else -- a user's ``Summary:``, a ``Yes:`` key the
+    YAML reader typed as ``True`` -- stays in the note exactly as written.
+    """
+    return all(
+        isinstance(key, str) and key.strip().casefold() in _STRIPPABLE_OUTSIDE_A_VAULT
+        for key in metadata
+    )
 
 
 def _unimported_frontmatter_keys(
     metadata: Mapping[Any, Any] | None,
+    bounds: ImportBounds | None = None,
 ) -> tuple[str, ...]:
-    """Return the frontmatter property names this import drops, in file order.
+    """Return what this import drops from a stripped frontmatter block, in file order.
+
+    Property names that reach neither the title, the keywords nor the stored
+    body; a non-string key as ``str(key)`` (``Yes:`` reads as ``True``); a
+    ``title`` that is not text; and, when ``bounds`` is given, a ``tags`` /
+    ``keywords`` / ``aliases`` value the import could not keep -- too many
+    entries, or not readable as keywords -- named with its reason. Nothing a
+    stripped block held disappears silently (TASK-34000.31 fix round 1).
 
     Args:
         metadata: One parsed frontmatter mapping, or None when there was none.
+        bounds: The import bounds the keywords are checked against; None skips
+            the keyword report (callers that never keep keywords).
 
     Returns:
-        Bounded, deduplicated property names that reach neither the title, the
-        keywords nor the stored body.
+        Bounded, deduplicated entries for the review row's "not imported".
     """
     if metadata is None:
         return ()
     names: list[str] = []
     for key in metadata:
         if not isinstance(key, str):
+            name = str(key).strip()
+            if name:
+                names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
             continue
         name = key.strip()
-        if not name or name.casefold() in _IMPORTED_FRONTMATTER_KEYS:
+        if not name:
+            continue
+        folded = name.casefold()
+        if folded == "title":
+            if _frontmatter_title({"title": metadata[key]}) is None and metadata[key] is not None:
+                names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
+            continue
+        if folded in _IMPORTED_FRONTMATTER_KEYS or folded in _OWN_EXPORT_KEYS:
             continue
         names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
+    if bounds is not None:
+        names.extend(_unkept_keyword_reports(metadata, bounds))
     return tuple(dict.fromkeys(names))[:_MAX_REPORTED_FRONTMATTER_KEYS]
+
+
+def _unkept_keyword_reports(metadata: Mapping[Any, Any], bounds: ImportBounds) -> list[str]:
+    """Name each keyword property ``_frontmatter_keywords`` had to leave out."""
+    reports: list[str] = []
+    total = 0
+    for key in _FRONTMATTER_KEYS:
+        if key not in metadata or metadata[key] is None:
+            continue
+        try:
+            total += len(_keywords(metadata[key], bounds))
+        except _ParseFailure as error:
+            if error.reason_code == "too_many_keywords":
+                reports.append(f"{key} (more than {bounds.max_keywords_per_note})")
+            else:
+                reports.append(f"{key} (not readable as keywords)")
+    if total > bounds.max_keywords_per_note:
+        reports.append(f"keywords (more than {bounds.max_keywords_per_note} in total)")
+    return reports
 
 
 def _frontmatter_keywords(

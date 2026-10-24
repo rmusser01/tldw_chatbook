@@ -50,11 +50,10 @@ pytestmark = [pytest.mark.integration, pytest.mark.bootstrap_profile]
 
 EXPORT_NOW = datetime(2026, 10, 24, 9, 30, 15)
 
-# The task's AC#1 character set, one title per hazard. Two are negative
-# controls that already parsed on the base (``日本語のメモ 📝``, and the
-# date-shaped title, whose string form a plain parser also reads as a string
-# only because the exporter now quotes it -- on the base it read back as a
-# date-looking string too).
+# The task's AC#1 character set, one title per hazard. Two rows are negative
+# controls that already parsed on the base (``it's & that's @ 100%`` and
+# ``日本語のメモ 📝``); every other row was RED there -- the date-shaped title
+# included, which an unquoted block reads back as ``datetime.date``.
 AWKWARD_TITLES = (
     "Paper notes: Retrieval practice",
     "Trip planning: Lisbon",
@@ -68,6 +67,8 @@ AWKWARD_TITLES = (
     "日本語のメモ 📝",
     "2026-10-24",
     "true",
+    "! leading bang",
+    'trailing "quote"',
 )
 
 
@@ -172,38 +173,134 @@ def test_single_note_export_reimports_an_awkward_title_through_the_app_importer(
     assert "---" not in body
 
 
+def _import_once(root, files: dict, *, obsidian_mode: bool = False):
+    """Parse ``files`` (display path -> text) exactly as Add from files does.
+
+    ``discover_import_sources`` + ``parse_import_sources`` with the same
+    ``obsidian_mode`` the picker would pass: False for a picked file or plain
+    folder, True for a detected vault (``.obsidian/`` present).
+    """
+    from tldw_chatbook.Notes.note_import_discovery import discover_import_sources
+    from tldw_chatbook.Notes.note_import_parsers import parse_import_sources
+
+    root.mkdir(parents=True, exist_ok=True)
+    if obsidian_mode:
+        (root / ".obsidian").mkdir(exist_ok=True)
+    for name, text in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    bounds = _bounds()
+    discovery = discover_import_sources([root], bounds, obsidian_mode=obsidian_mode)
+    batch = parse_import_sources(discovery, bounds, obsidian_mode=obsidian_mode)
+    return {
+        source.candidate.source.display_path.split("/", 1)[1]: source.payloads[0]
+        for source in batch.parsed
+    }
+
+
 def test_add_from_files_import_once_reads_the_export_without_obsidian_mode(tmp_path):
     """AC#3 at the surface Add from files uses: a single exported ``.md`` picked
     through Import once is discovered and parsed with ``obsidian_mode=False``
     (the toggle is only offered for a vault). The live walk found the import
     kept the ``---`` block as body text and restored no keywords because
-    ``_parse_text`` read front matter only in Obsidian mode."""
-    from tldw_chatbook.Notes.note_import_discovery import discover_import_sources
-    from tldw_chatbook.Notes.note_import_parsers import parse_import_sources
-
-    export_dir = tmp_path / "exports"
-    export_dir.mkdir()
-    (export_dir / "paper.md").write_text(
-        build_note_export_content(
-            "Paper notes: Retrieval practice",
-            "Attendees: me.",
-            "meeting, thesis",
-            "n-1",
-            "markdown",
-            now=EXPORT_NOW,
-        ),
-        encoding="utf-8",
+    ``_parse_text`` read front matter only in Obsidian mode. The app's own
+    export keys (``date``, ``note_id``) are not reported as "not imported"."""
+    text = build_note_export_content(
+        "Paper notes: Retrieval practice",
+        "Attendees: me.",
+        "meeting, thesis",
+        "n-1",
+        "markdown",
+        now=EXPORT_NOW,
     )
-    bounds = _bounds()
-    discovery = discover_import_sources([export_dir], bounds, obsidian_mode=False)
-    batch = parse_import_sources(discovery, bounds, obsidian_mode=False)
-    [source] = batch.parsed
-    [payload] = source.payloads
+    payload = _import_once(tmp_path / "exports", {"paper.md": text})["paper.md"]
     assert payload.title == "Paper notes: Retrieval practice"
     assert payload.keywords == ("meeting", "thesis")
     assert payload.content.startswith("# Paper notes: Retrieval practice")
     assert "---" not in payload.content
     assert payload.wikilinks == ()
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_non_vault_import_keeps_a_block_with_foreign_keys_in_the_body(tmp_path):
+    """Fix round 1 (I-1): outside a vault, a block holding any key the import
+    does not honour is not the app's own export, so the WHOLE file stays as
+    on base -- nothing is dropped and nothing needs reporting."""
+    text = "---\nSummary: the meeting ran long\ntags: [meeting]\n---\n\n# Standup\n\nBody."
+    payload = _import_once(tmp_path / "plain", {"standup.md": text})["standup.md"]
+    assert payload.content == text
+    assert payload.title == "Standup"
+    assert payload.keywords == ()
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_non_vault_import_keeps_a_block_with_non_string_keys_in_the_body(tmp_path):
+    """``Yes:`` reads as the bool key True and ``2026:`` as an int key: outside a
+    vault the block stays in the body rather than being dropped silently."""
+    text = "---\nYes: we shipped it\n2026: a great year\n---\n\n# Year\n\nBody."
+    payload = _import_once(tmp_path / "plain", {"year.md": text})["year.md"]
+    assert payload.content == text
+    assert payload.title == "Year"
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_vault_import_reports_non_string_keys_too_many_tags_and_uses_a_numeric_title(
+    tmp_path,
+):
+    """Vault mode strips the block as before, but nothing goes silently: a
+    non-string key is reported as ``str(key)``, tags that fail their bounds are
+    kept out of the note AND reported, and ``title: 2026`` is used as "2026"."""
+    tags = ", ".join(f"t{i}" for i in range(101))
+    text = f"---\nYes: shipped\ntitle: 2026\ntags: {tags}\n---\n\n# Heading\n\nBody."
+    payload = _import_once(tmp_path / "vault", {"year.md": text}, obsidian_mode=True)[
+        "year.md"
+    ]
+    assert payload.title == "2026"
+    assert payload.content == "# Heading\n\nBody."
+    assert payload.keywords == ()
+    reported = payload.unimported_frontmatter_keys
+    assert "True" in reported
+    assert any(entry.startswith("tags") for entry in reported), reported
+
+
+def test_vault_import_does_not_report_the_apps_own_export_keys(tmp_path):
+    """M3: ``date``, ``note_id``, ``id``, ``created_at``, ``updated_at`` are the
+    exporters' own provenance; dropping them is not a loss worth a receipt line."""
+    text = (
+        "---\nid: n-1\ntitle: Kept\ndate: '2026-10-24 09:30:15'\nnote_id: n-1\n"
+        "created_at: '2026-10-24T09:00:00+00:00'\nupdated_at: '2026-10-24T09:30:00+00:00'\n"
+        "tags:\n- a\n---\n\n# Kept\n\nBody."
+    )
+    payload = _import_once(tmp_path / "vault", {"kept.md": text}, obsidian_mode=True)[
+        "kept.md"
+    ]
+    assert payload.title == "Kept"
+    assert payload.keywords == ("a",)
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_a_title_holding_a_fence_line_round_trips_through_both_exporters(tmp_path):
+    """M1: the dumper folds a multi-line title so one continuation line is an
+    indented ``  ---``; only a fence at column 0 may close the block."""
+    title = "a\n---\nb"
+    text = build_note_export_content(title, "body", "travel", "n-1", "markdown", now=EXPORT_NOW)
+    metadata, _body = split_frontmatter(text)
+    assert metadata is not None
+    assert metadata["title"] == title
+
+    source = _db_trio(tmp_path / "source", "fm-source")
+    note_id = _add_note(source["chachanotes_db"], title, ["travel"])
+    bundle = _export(source, {ContentType.NOTE: [note_id]}, tmp_path / "n.zip")
+    [item] = _manifest_items(bundle, ContentType.NOTE)
+    metadata, _body = split_frontmatter(_read_text(bundle, item["file_path"]))
+    assert metadata is not None
+    assert metadata["title"] == title
+    dest = _db_trio(tmp_path / "dest", "fm-dest")
+    _import(dest, bundle)
+    [note] = dest["chachanotes_db"].list_notes(limit=5)
+    assert note["title"] == title
+    assert note["content"] == f"Body of {title}"
 
 
 def test_legacy_single_note_export_with_a_keywords_key_still_imports_its_keywords():
@@ -277,6 +374,56 @@ def test_bundle_note_title_holding_a_fence_keeps_the_body_whole(tmp_path):
     [note] = dest["chachanotes_db"].list_notes(limit=5)
     assert note["title"] == title
     assert note["content"] == f"Body of {title}"
+
+
+def test_a_pre_fix_bundle_with_an_unparseable_block_still_imports_a_clean_body(tmp_path):
+    """M4: a bundle the OLD creator wrote -- unquoted ``title: Trip planning:
+    Lisbon`` (no parser reads it) and a comma ``tags:`` line, manifest tags
+    ``null`` -- still imports with the body free of the block and the
+    keywords taken from that line (the legacy fence-split fallback)."""
+    import json
+    import zipfile
+    from datetime import datetime, timezone
+
+    from Tests.Chatbooks.factories import ContentItemFactory, ManifestFactory
+    from tldw_chatbook.Chatbooks.chatbook_models import ChatbookVersion
+
+    stamp = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+    item = ContentItemFactory.create(
+        ContentType.NOTE,
+        item_id="legacy-note",
+        title="Trip planning: Lisbon",
+        tags=[],
+        created_at=stamp,
+        updated_at=stamp,
+        file_path="content/notes/legacy-note.md",
+    )
+    manifest = ManifestFactory.create(
+        name="Legacy", content_items=[item], version=ChatbookVersion.V1
+    ).to_dict()
+    manifest["content_items"][0]["tags"] = None
+    note_md = (
+        "---\n"
+        "id: legacy-note\n"
+        "title: Trip planning: Lisbon\n"
+        f"created_at: {stamp.isoformat()}\n"
+        f"updated_at: {stamp.isoformat()}\n"
+        "tags: meeting, moc\n"
+        "---\n\n"
+        "Legacy note body\n"
+    )
+    bundle = tmp_path / "legacy.zip"
+    with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        zf.writestr("content/notes/legacy-note.md", note_md)
+    assert split_frontmatter(note_md)[0] is None  # the block really is unreadable
+
+    dest = _db_trio(tmp_path / "dest", "fm-dest")
+    _import(dest, bundle)
+    [note] = dest["chachanotes_db"].list_notes(limit=5)
+    assert note["title"] == "Trip planning: Lisbon"
+    assert note["content"] == "Legacy note body"
+    assert _note_keywords(dest["chachanotes_db"], "Trip planning") == ["meeting", "moc"]
 
 
 def test_legacy_bundle_frontmatter_without_manifest_tags_still_yields_keywords(tmp_path):
