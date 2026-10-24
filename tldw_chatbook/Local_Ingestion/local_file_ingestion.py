@@ -9,6 +9,7 @@ e-books, etc.) without going through the UI, leveraging existing processing capa
 import json
 import math
 import os
+import re
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -290,6 +291,16 @@ def is_http_url(source: str) -> bool:
 
 # Backward-compatible alias retained for existing callers.
 _is_http_url = is_http_url
+
+# (task-35080) The pathlib-collapsed form of an http(s) URL -- "https:/host"
+# with ONE slash -- produced by ``str(Path("https://host/..."))``. The
+# local-STT lane transports URL jobs to its worker as
+# ``FileAudioSource(Path(job.source_path))``, so the pipeline can receive
+# exactly that mangled string; ``urlparse`` then sees no hostname, a
+# YouTube watch URL misclassifies as an article, and the article arm's
+# egress check rejects the invalid scheme. Only http(s) is restored;
+# every other spelling passes through untouched.
+_COLLAPSED_HTTP_SCHEME = re.compile(r"^(https?):/(?!/)")
 
 
 def classify_ingest_source(source: str) -> str:
@@ -1070,6 +1081,11 @@ def parse_local_file_for_ingest(
 
         url_provenance = _UrlProvenance.UNKNOWN
     raw_source = str(file_path)
+    # (task-35080) Undo pathlib's "//" -> "/" collapse (see
+    # ``_COLLAPSED_HTTP_SCHEME``) BEFORE classification, and rebind
+    # ``file_path`` so the audio/video arms hand the restored URL -- not the
+    # collapsed original -- to their URL-accepting processors.
+    raw_source = _COLLAPSED_HTTP_SCHEME.sub(r"\1://", raw_source)
     is_url = _is_http_url(raw_source)
     if is_url:
         # URL source: skip the file-path machinery entirely.
@@ -1077,6 +1093,7 @@ def parse_local_file_for_ingest(
         source_url = raw_source  # article branch overrides w/ canonical
         # keep file_path as the raw URL string so the audio/video branches'
         # `str(file_path)` passes the URL straight to the URL-accepting processor.
+        file_path = raw_source
     else:
         file_path = Path(file_path)
         if not file_path.exists():

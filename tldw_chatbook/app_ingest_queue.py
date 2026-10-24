@@ -2471,7 +2471,15 @@ class LibraryIngestQueueMixin:
                 "retry_of_attempt_id": failed_attempt.get("attempt_id")
                 if failed_attempt
                 else None,
-                "retry_of_job_id": job.retry_of_job_id,
+                # (task-35080) STT provenance validation rejects
+                # ``retry_of_job_id`` set without ``retry_of_attempt_id``
+                # AFTER transcription ("retry_of_job_id requires
+                # retry_of_attempt_id"), failing the whole retry. Gate both
+                # on the failed attempt actually having provenance: a retry
+                # of a failure that stored none (every local-STT
+                # ``inference_failed`` failure) runs as an unlinked attempt
+                # rather than an invalid pair.
+                "retry_of_job_id": job.retry_of_job_id if failed_attempt else None,
                 "retry_source_failure_provenance": failed_attempt,
             }
             external_scope_id = str(
