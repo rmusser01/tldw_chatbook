@@ -142,20 +142,29 @@ def test_every_wide_tier_rule_is_registered() -> None:
         assert set(rules) <= registered, (path.name, set(rules) - registered)
 
 
-@pytest.mark.parametrize(["anchor", "cap", "owner"], MODAL_WIDE_TIER)
-def test_every_anchor_targets_real_code(anchor: str, cap: int, owner: str) -> None:
+def test_every_anchor_targets_real_code() -> None:
     """Each registered anchor resolves inside its owner module.
 
     A renamed modal id (or a moved file) fails here naming the owner, so the
-    tier cannot silently keep styling an id nothing mounts.
+    tier cannot silently keep styling an id nothing mounts. One test over
+    every anchor, reporting all the bad ones at once: as ~90 parametrized
+    cases it cost ~1 s of teardown each in the UI lane (TASK-36382).
     """
-    owner_path = REPO_ROOT / "tldw_chatbook" / owner
-    assert owner_path.exists(), owner
-    owner_text = owner_path.read_text(encoding="utf-8")
-    for token in re.findall(
-        r"(?<!\w)([#.][A-Za-z0-9_-]+|[A-Z][A-Za-z0-9]+)(?!\w)", anchor
-    ):
-        assert token.lstrip("#.") in owner_text, (anchor, token, owner)
+    failures = []
+    for anchor, _cap, owner in MODAL_WIDE_TIER:
+        owner_path = REPO_ROOT / "tldw_chatbook" / owner
+        if not owner_path.exists():
+            failures.append(f"{anchor}: owner {owner} does not exist")
+            continue
+        owner_text = owner_path.read_text(encoding="utf-8")
+        failures.extend(
+            f"{anchor}: {token!r} not in {owner}"
+            for token in re.findall(
+                r"(?<!\w)([#.][A-Za-z0-9_-]+|[A-Z][A-Za-z0-9]+)(?!\w)", anchor
+            )
+            if token.lstrip("#.") not in owner_text
+        )
+    assert not failures, "anchors that no longer resolve:\n  " + "\n  ".join(failures)
 
 
 # --------------------------------------------------------------------------

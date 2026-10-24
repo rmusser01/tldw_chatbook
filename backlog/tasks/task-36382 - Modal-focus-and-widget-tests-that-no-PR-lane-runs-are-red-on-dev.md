@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: '2026-10-23 18:27'
+updated_date: '2026-10-24 15:47'
 labels:
 - follow-up
 - tests
@@ -94,7 +94,9 @@ Found by the implementation and reviews of TASK-35648/35649 (PR #3217, 2026-10-2
 
 **Review round 2.** The subject-pick failures were in the shared helper `_pick_via_overlay` (`test_evals_skill_eval_panel.py`). Its coordinate click could land before layout settled, leaving the Select closed and focus elsewhere. The helper now opens the dropdown from the keyboard: it focuses the Select, presses Space (which opens Select and SetSelect alike), and waits for the dropdown to open and take focus. It then presses Home plus `downs - 1` downs and Enter, and waits for the dropdown to close. A keyboard open highlights the NULL padding row where a click highlighted nothing, and without Home every pick moved one row: the first rewrite failed both screen tests 20/20 under the probe and three panel tests normally. The subject test's Run is now pressed, not clicked, after a wait for the persisted picks. Under the probe, the subject-pick and launch-picks tests passed 20/20 each. The panel file's other callers pass. Under the probe, `test_directory_path_subject_enables_run` fails 3 of 5 at its own coordinate Run click both before and after this change; that file runs on no lane.
 
-**Not verified.** The files' first CI run; CI timings are estimated from local serial runs.
+**Post-rebase round (onto dev after TASK-36512's census re-deal).** PR run 40007935895 showed `test_every_anchor_targets_real_code`'s ~90 parametrized cases costing about 1 s of teardown each. It is now one test that checks every anchor and names every one that no longer resolves in a single assertion; the census node id is unchanged. Renaming one registry anchor made it fail naming that anchor and its owner, and it was then reverted. Measured alone, its setup, call and teardown take 0.16 s, in a 1.2 s session. A whole-census `--collect-only --keep-duplicates` collects 89 fewer tests than at the previous head (the 90 cases became one), with no duplicate node ids. The block is now in the order the review's measured slack calls for (heavy entries on the shards with the most slack, sub-second ones on the near-cap shards), and the census and floor comments no longer claim the anchor check is cheap in total. Five files `-n 4`: 197 passed; `Tests/CI -n 4`: 1029 passed, 1 skipped; census checker OK; preflight passed.
+
+**Not verified.** This round's placement has not yet run in CI.
 
 Files: `Tests/UI/modal_wide_tier_registry.py`, `Tests/UI/test_modal_wide_tier.py`, `Tests/UI/test_non_obscuring_focus_contract.py`, `Tests/UI/test_css_staleness_manifest.py`, `Tests/UI/test_llamacpp_setup_refresh_gate.py`, `Tests/UI/test_evals_skill_eval_screen.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-textual.md`.
 <!-- SECTION:NOTES:END -->
