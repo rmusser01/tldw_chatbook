@@ -6,6 +6,7 @@ Related tasks: TASK-36551, TASK-36552, TASK-36553, TASK-36554, TASK-36555
 Amends: [ADR-242](242-console-radio-portrait-performance.md), generation/authoring portions only
 Design: [Console radio portraits](../../Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md)
 Plan: [Compositing implementation](../../Docs/superpowers/plans/2026-10-24-portrait-compositing-implementation.md)
+Implementation clarifications: [Three findings resolved and revised-plan review](../../Docs/superpowers/reviews/2026-10-24-portrait-compositing-plan-review.md#revised-plan-review-after-three-findings). Existing decision statements remain unchanged.
 
 ## Context
 

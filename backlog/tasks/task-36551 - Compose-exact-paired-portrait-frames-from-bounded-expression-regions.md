@@ -27,9 +27,11 @@ Preserve portrait lighting and exact eye/mouth pairing by deriving the six playb
 <!-- AC:BEGIN -->
 - [ ] #1 Validated source-pixel rectangles identify image-left eye, image-right eye and mouth on the exact prepared base; malformed, out-of-bounds, overlapping and undersized regions are rejected before composition.
 - [ ] #2 One base with open eyes and closed mouth plus eyelid/small-mouth/open-mouth edits produces exactly the six existing roles; base alpha and every pixel outside the masks remain unchanged, mouths match across blink pairs, and eyes match across mouth states.
-- [ ] #3 Composition rejects incompatible dimensions and animated/malformed/over-budget results, uses the existing shared decode reservations off the UI thread, and releases all buffers/reservations on success, cancellation and failure.
-- [ ] #4 Component replacement updates its dependent frame group atomically in the disposable draft, preserves unaffected frames exactly, and never repeatedly feathers an already composited patch.
-- [ ] #5 Existing manual six-frame imports remain usable without regions; pixel-oracle, transparent/non-square/edge-region, repeated-retry, partial-candidate and failure-cleanup tests cover the new composition contract.
+- [ ] #3 Canonical prepared-base identity hashes domain-tagged decoded RGBA pixels and dimensions, independently of PNG encoding; equivalent encodings validate the same recipe, while changed dimensions or any RGBA byte including transparent-pixel RGB changes the identity.
+- [ ] #4 Authoritative composition-snapshot replacement replaces all frames and components without merging; a fresh rest-only/zero-component snapshot cannot inherit a complete old set, and composed can_apply/frames publication requires all three current components and six current roles.
+- [ ] #5 Component retries replace their snapshot atomically, preserve unaffected encoded frames exactly and never repeatedly feather finished patches; failed validation retains previous frames, components, provenance and readiness together.
+- [ ] #6 Composition and hashing reject incompatible, animated, malformed or over-budget inputs, use existing shared decode reservations off the UI thread and release images, pixel buffers and reservations on success, cancellation and failure; discard releases candidate refs and image bytes stay out of routine repr/logs.
+- [ ] #7 Existing manual six-frame imports use their separate readiness rule and remain usable without regions; pixel, encoding-equivalence, fresh-reset, failed-retry, transparent/non-square/edge-region and failure-cleanup controls verify the new contract.
 <!-- AC:END -->
 
 ## Final Summary

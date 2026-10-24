@@ -2,7 +2,7 @@
 
 Date: 2026-10-23
 Status: Original design implemented; compositing direction approved 2026-10-24, detailed follow-up prepared for review
-Revision: 2026-10-24 user-approved compositing direction and one-time manual selection; generation/storage refinement in [ADR-243](../../../backlog/decisions/243-source-bound-portrait-compositing.md). Original source review: [review](../reviews/2026-10-23-console-radio-portraits-design-review.md)
+Revision: 2026-10-24 compositing direction, one-time manual selection and three follow-up review corrections; generation/storage refinement in [ADR-243](../../../backlog/decisions/243-source-bound-portrait-compositing.md). Original source review: [review](../reviews/2026-10-23-console-radio-portraits-design-review.md)
 Task: [TASK-36509](../../../backlog/tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
 Decision: [ADR-242](../../../backlog/decisions/242-console-radio-portrait-performance.md)
 Implementation: [Original completed plan](../plans/2026-10-23-console-radio-portraits-implementation.md); [compositing follow-up plan and five atomic tasks](../plans/2026-10-24-portrait-compositing-implementation.md) (planning only)
@@ -197,7 +197,7 @@ extra generation or automatic modification of the source portrait.
 
 Save regions is an explicit local preparation-settings write with source/profile/
 editor authority and its own optimistic revision. Reopen on the exact same source,
-prepared digest/dimensions and algorithm version reuses it without marking again.
+prepared pixel digest/dimensions and algorithm version reuses it without marking again.
 A different source/binding or unsupported algorithm requires new confirmed regions;
 never silently scale coordinates. One current recipe per character/expression
 bounds storage. Cancel region editing drops only unsaved changes. Saving an unchanged recipe with
@@ -205,6 +205,24 @@ the current revision is a no-op; stale revisions still conflict. Saving changed
 regions stops only the current draft sample before invalidating generated draft components and requires a fresh batch while
 keeping the applied portrait active. Manual imported frames remain independently
 usable. No provider call occurs during selection, save or offline preview.
+
+### Prepared-base identity
+
+Keep the original encoded source SHA-256 and full PerformanceSource unchanged for
+ownership/source fencing. A separate `base_pixel_sha256` identifies the prepared
+base for reusable regions and composition provenance. It hashes canonical decoded
+RGBA8 pixels, never PNG compression or metadata. The exact digest input is the ASCII
+tag `tldw-portrait-base-rgba-v1` followed by one NUL byte, unsigned 32-bit big-endian
+width and height, then unpremultiplied RGBA bytes in top-to-bottom, left-to-right
+order. Include all four channels, including RGB under zero alpha. Validate decoded
+limits before hashing and charge the pixel-byte buffer to the shared memory budget.
+
+Equivalent PNG encodings of the same prepared pixels reuse the recipe without a
+Save or revision bump. A change to dimensions, any RGBA byte, preparation semantics,
+source identity or supported mask algorithm is still detected; encoding equivalence
+does not permit retargeting to a different original source. Artifact/frame SHA-256
+values continue to cover encoded bytes for file integrity. Freeze one exact prepared
+reference object within each generation batch as before.
 
 ### Three generated components and exact six-pose assembly
 
@@ -236,12 +254,31 @@ across eye pairs and identical eye pixels across mouth states. `rest` equals the
 prepared base, whose normalization may differ from the original encoded source.
 Original source bytes remain unchanged.
 
-Sequential component results form one candidate bound to source, saved region
-revision and algorithm. Retain successful components when another fails, mark
-failed/uncertain components, and block Apply until all six validated poses exist.
-Do not mix a fresh batch with old or manual component lineage. Stage each dependent
-frame group atomically only after all its new frames and total bytes validate.
-A failed composition/staging attempt leaves the previous candidate group intact.
+Sequential component results form one immutable candidate snapshot bound to the
+prepared pixel identity, source, saved region revision and algorithm. Each snapshot
+owns both its available frames and its validated component planes; install them as
+one state change. A full batch, after consent and before its first provider request,
+atomically replaces the disposable candidate with only base `rest` and zero ready
+components. It never merges with previously loaded/manual/applied draft frames.
+Preparing this initial snapshot or cancelling consent leaves the previous draft
+unchanged if no new batch was admitted. The already applied database set stays active
+throughout every batch and retry.
+
+Retain successful components from this new batch when another fails. Composed Apply
+and Play speech sample require all three current components and exactly six current
+roles; six occupied slots alone are insufficient. The draft's publication accessor
+must enforce the same readiness as its buttons. Mark failed/uncertain components
+and permit explicit retry. A component retry replaces the entire derived candidate
+snapshot atomically, retaining unrelated frame bytes and current components. If the
+retry fails, its prior snapshot remains valid; a failed retry of a complete candidate
+does not make that previous valid candidate incomplete. Changing saved regions
+installs an empty composition candidate for the new recipe rather than relabeling
+old frames as manual. Normal manual imports retain their separate six-role rule.
+
+Validate all new frames and total bytes before any snapshot replacement. Check the
+captured previous snapshot identity and editor/source/recipe epochs after worker
+completion; stale results cannot replace a different candidate. A failure before
+replacement leaves frames, components, provenance and readiness unchanged together.
 
 A separate component selector offers **Eyelids**, **Small mouth**, **Open mouth**.
 **Regenerate component (1 edit)…** discloses its affected poses: eyelids updates all
@@ -258,12 +295,42 @@ source/character/profile or closing the draft cancels remaining work and rejects
 late results, including uncancellable remote jobs. Never automatically retry an
 uncertain paid request. Generation/retry alone does not publish active artwork.
 
-Review the labeled full-resolution 2×3 matrix, mask/detail crop, deterministic
-six-pose cycle, idle/blink and actual Console-sized preview before Apply. Small
-mosaics alone did not expose the original exposure/pairing failure. The existing
-explicit scoped TTS sample remains available; its owner and cancellation rules do
-not change. Masks guarantee pixel relationships and preserved surroundings, not
-proper eyelids, registration, local tone or plausible facial anatomy.
+### In-app pair review (TASK-36554)
+
+Provide **Review pairs…** beside Apply for a complete composed candidate. This is
+an in-app viewer implemented by TASK-36554, not only an offline QA artifact. It
+snapshots the six original normalized PNG frames and recipe. Its labeled 2×3 layout
+has columns closed/small/open mouth and rows eyes open/closed. A clearly labeled
+scaled overview shows composition, while source-detail mode shows a common source-
+pixel crop across all six poses. Select image-left eye, image-right eye or mouth and
+pan the same crop coordinates by keyboard/numeric controls to inspect every edge.
+
+Decode from the original frame bytes, never from `CharacterExpressionAvatar.current_image`
+or another fitted mosaic. Detail tiles preserve the original RGBA crop pixels with
+no pre-downsampling; final graphics/mosaic rendering retains the terminal's actual
+capabilities and does not claim physical one-screen-pixel correspondence. Derive
+crop size from available viewport/backend geometry; if the region is larger, pan
+through it. Bound the assembled review raster to 1,048,576 pixels, shorten the crop
+without resampling when necessary, and decode/crop/close one source pose at a time.
+Do not allocate a full six-canvas 6-megapixel montage. Share decode reservations,
+explicitly close all images on every exit, and cancel stale crop workers.
+
+Review is available with Static/Reduce motion and keyboard-only operation. It starts
+no audio, provider call or animation clock and never applies/saves artwork. Closing
+it changes no draft state. The controller explicitly retires the displayed modal and pending crops on
+candidate/source/profile/recipe changes, rather than relying only on a passive
+worker predicate or showing an old snapshot as current. Opening the viewer is not a new
+checkbox or acknowledgement gate; Apply readiness remains the actual candidate
+validation rule. TASK-36555 must open this real viewer in its installed journey,
+verify raw crop pixels and bounds, then inspect captures; generating a separate QA
+sheet does not satisfy the in-app requirement.
+
+Review these pairs, the mask/detail crop, deterministic six-pose cycle, idle/blink
+and actual Console-sized preview before Apply. Small mosaics alone did not expose
+the original exposure/pairing failure. The existing explicit scoped TTS sample
+remains available; its owner and cancellation rules do not change. Masks guarantee
+pixel relationships and preserved surroundings, not proper eyelids, registration,
+local tone or plausible facial anatomy.
 
 Imports accept six individually assigned still PNG, WebP or JPEG images through
 the existing file picker/path validation. No new ZIP/sprite-sheet format is needed.
@@ -289,7 +356,7 @@ new preparation against the new source.
 
 The follow-up adds one bounded source-bound preparation recipe per local character/
 expression with an independent monotonically increasing revision, in a character-FK
-SQLite table. Store full PerformanceSource identity, prepared-base SHA-256 and
+SQLite table. Store full PerformanceSource identity, canonical prepared-base RGBA pixel SHA-256 and
 dimensions, three integer rectangles, neutral-base confirmation and algorithm
 version. Canonical recipe JSON is at most 2048 UTF-8 bytes and contains no image
 bytes, paths, provider secrets or device-local authority identifier. The profile/DB
@@ -307,7 +374,10 @@ only committed performance publication/removal does so.
 No extra component PNGs or raw generation outputs are persisted. Reopening an
 applied composited set validates its stored recipe/base and six-frame invariants;
 `small`, `open` and `blink_rest` are already-composited component planes and support
-one-component retry without blending them again. Missing/corrupt/unknown provenance
+one-component retry without blending them again. Unchanged stored roles retain their
+encoded bytes after content/hash/geometry validation and performance CAS, even if
+re-encoding them with the current encoder would produce different bytes. New or
+changed input still passes the existing normalization boundary. Missing/corrupt/unknown provenance
 or a changed saved recipe disables component reuse and requires a new complete
 composition batch. Valid ordinary six-frame playback/import remains available.
 Saving a changed recipe never rewrites an applied set in the background.
@@ -562,12 +632,12 @@ Implementation verification must cover:
 
 | Area | Required evidence |
 | --- | --- |
-| Artwork and migration | Region bounds/mask/alpha/pixel-pair invariants, one-time-setting CAS, optional provenance and no-double-feather reopen, legacy upgrade, six-role validation, normalized-size caps, transaction rollback, persisted-source/save gate, local/server/profile authority isolation, stale-source/revision rejection, legacy data unchanged, soft-delete/restore and permanent purge |
+| Artwork and migration | Encoding-independent base identity, fresh-candidate reset/readiness, region bounds/mask/alpha/pixel-pair invariants, one-time-setting CAS, optional provenance and no-double-feather reopen, legacy upgrade, six-role validation, normalized-size caps, transaction rollback, persisted-source/save gate, local/server/profile authority isolation, stale-source/revision rejection, legacy data unchanged, soft-delete/restore and permanent purge |
 | Draft workflow | Generate/import use the same draft; reusable source-bound region settings; three-call component batch and one-component dependent-group retry; full-resolution paired matrix and offline six-pose preview at Console size; partial failure; guarded/destination-checked TTS sample with exact-owner cancellation; Cancel; successful Apply; character switch during generation; fresh editor reopen |
 | Motion logic | Known waveform with exact zero and nonzero quiet background, measured silence-gate response, loud/small hysteresis, partial/full underrun, stale progress, independent blinking and immediate terminal closure |
 | Ownership | Manual Speak, automatic replies, optional hands-free observer plus unchanged exactly-once completion/voice selection, sentence handoff, older-message replay/restore, preview isolation, cross-character replay, session switching and late terminal acknowledgement |
 | Output capability | Distinct source/device clocks, output-DAC mapping and retained device-tail metadata, resumed speech after inserted silence, partial zero padding, bounded metadata and stalled-reader behavior, supported WAV artifact path, external-player timing refusal, sink failure/fallback without double audio, confirmed transport pause/resume without changing legacy state machines |
-| Mounted UI | Actual changed portrait pixels, mood retention, reduced/static motion, hide/show, resize, focus and narrow/tall rail stability with production CSS |
+| Mounted UI | Actual in-app pair viewer with original-frame native-detail crops, bounded sequential decoding and stale-review rejection, actual changed portrait pixels, mood retention, reduced/static motion, hide/show, resize, focus and narrow/tall rail stability with production CSS |
 | Persistence | Restart retains applied sets; same-source Apply/Remove refreshes visible caches immediately after commit; stale predecessor workers cannot repaint; full-profile backup/restore retains frames and retires stale presentation; portable formats unchanged |
 | Static checks | Targeted lint/format/type checks as applicable, token governance, CSS bundle sync, migration packaging and Backlog guards |
 

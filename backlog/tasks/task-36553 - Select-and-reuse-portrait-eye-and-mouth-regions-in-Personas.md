@@ -25,11 +25,11 @@ Let users mark expression regions once on their prepared portrait and inspect th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The existing Living portrait editor offers three labeled image-space regions, a contain-mapped two-corner mouse selection, keyboard-accessible numeric adjustment and a detailed mask preview; letterboxing and terminal-cell aspect do not shift saved coordinates.
-- [ ] #2 Users explicitly confirm the prepared base has open eyes and closed mouth before saving a composition recipe; unsupported base artwork can still use the existing ready-made six-frame import workflow.
-- [ ] #3 Save regions reuses unchanged saved settings after reopen without provider calls, uses exact source/profile/editor/revision checks, and leaves the active portrait unchanged; Cancel discards only unsaved region edits.
-- [ ] #4 Saving changed regions invalidates disposable generated components, requires a new complete composition candidate and retains the currently applied performance; source/profile changes reject late preview/save work.
-- [ ] #5 Focused controls, narrow layouts, Static/Reduce motion, shared image budgets and token-backed styling work with production CSS; geometry/coordinate mapping, keyboard, stale-save and reopen tests verify the actual mounted editor.
+- [ ] #1 The existing Living portrait editor offers three labeled source-space regions, contain-mapped two-corner mouse selection, keyboard-accessible numeric adjustment and detailed mask preview; letterboxing and terminal-cell aspect do not shift saved coordinates.
+- [ ] #2 Users explicitly confirm an open-eyes/closed-mouth prepared base before saving a recipe; unsupported bases retain the existing ready-made six-frame import workflow.
+- [ ] #3 Save regions reuses unchanged canonical pixel identity/settings after reopen without provider calls or revision churn from equivalent PNG encoding; exact source/profile/editor/revision checks preserve active artwork and Cancel discards only unsaved edits.
+- [ ] #4 Saving changed regions retires the exact draft sample and atomically installs a rest-only/zero-component snapshot for the new recipe, without relabeling old frames as a complete manual set; the applied DB performance remains unchanged.
+- [ ] #5 Focused controls, narrow layouts, Static/Reduce motion, shared image budgets and token-backed styling work with production CSS; mounted coordinate/keyboard/stale-save/reopen tests reject late preview/save work.
 <!-- AC:END -->
 
 ## Final Summary

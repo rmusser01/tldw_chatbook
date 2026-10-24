@@ -25,12 +25,13 @@ Verify the new workflow end to end and document which pairing, persistence and r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An installed actual-app private-profile journey marks/saves regions, generates components, retries one mouth and the eyelids, reviews a labeled full-resolution 2×3 matrix and Console-sized preview, applies and reopens exact source/regions/provenance/frames.
-- [ ] #2 The corrected six poses work with the existing normal Console playback and offline/guarded speech preview controls; no test-only per-frame publication or replacement animation loop supplies evidence.
-- [ ] #3 A native full-profile restore followed by fresh application open and a component retry preserves one-time settings and exact pairs; original portrait bytes and ordinary portable exports remain unchanged.
-- [ ] #4 Pixel-level invariants, source/result hashes, real generated patch provenance, actual mounted captures and failure/cancellation controls are recorded; a real configured in-app reference-image adapter is qualified separately from externally generated/imported patch evidence.
-- [ ] #5 Targeted new/affected tests, lint/format, migration packaging, SQL allowlist, token/CSS and Backlog checks pass or unrelated failures are reproduced against the pre-change source; no full sweep runs without explicit user request.
-- [ ] #6 User/architecture guidance and final self-review describe neutral-base requirements, region selection/reuse, three-request cost disclosure, dependent retry groups, import mode and capability limits; unavailable live provider evidence remains open rather than being claimed from mocks.
+- [ ] #1 An installed actual-app private-profile journey marks/saves regions, generates/retries components, opens the actual Review pairs UI to inspect original-frame eye/mouth crop pixels and Console preview, applies and reopens exact source/settings/provenance/frames; an offline QA sheet cannot substitute for the viewer.
+- [ ] #2 Starting a fresh batch from an existing complete applied set and failing components leaves only new-batch partial roles, blocks Apply/sample/publication and preserves active DB frames/revision; a failed retry of a valid complete candidate preserves its previous readiness.
+- [ ] #3 A native full-profile restore followed by fresh app open and component retry preserves one-time settings and pairs; equivalent prepared PNG encodings preserve canonical identity/revision/retry, actual source/pixel changes reject reuse, and original bytes/portable exports remain unchanged.
+- [ ] #4 The existing normal Console playback and offline/guarded speech preview use the corrected six poses without test-only per-frame publication or a replacement animation loop.
+- [ ] #5 Pixel invariants, encoding-equivalence controls, hashes, actual bounded pair-viewer captures and real generated-patch provenance are recorded; real configured in-app adapter qualification is distinct from external patch evidence.
+- [ ] #6 Targeted new/affected tests, lint/format, migration packaging, SQL allowlist, token/CSS and Backlog checks pass or unrelated failures are reproduced on pre-change source; no full sweep runs without explicit user request.
+- [ ] #7 User/architecture guidance and final self-review explain neutral-base/region reuse, fresh versus retry semantics, canonical identity, three-request consent, in-app raw-frame pair review and import/capability limits; unavailable live evidence stays open.
 <!-- AC:END -->
 
 ## Final Summary
