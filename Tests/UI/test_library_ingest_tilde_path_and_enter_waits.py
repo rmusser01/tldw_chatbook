@@ -91,6 +91,31 @@ async def _type_path(screen, pilot, text: str) -> None:
     await pilot.pause()
 
 
+def _gate_precheck(monkeypatch: pytest.MonkeyPatch) -> threading.Event:
+    """Hold every pre-check of a ``~``-prefixed path until the gate is set.
+
+    Only the PRE-CHECK worker sees the raw ``~/`` text; the readiness worker
+    that runs after a submit receives the expanded source and must not be
+    held, or the base race could never show itself.
+    """
+    gate = threading.Event()
+    real_analyze = library_screen_module.analyze_path
+
+    def gated_analyze(path, **kwargs):
+        if str(path).lstrip().startswith("~"):
+            gate.wait(timeout=10)
+        return real_analyze(path, **kwargs)
+
+    monkeypatch.setattr(library_screen_module, "analyze_path", gated_analyze)
+    return gate
+
+
+async def _no_submit_for(pilot, submitted: list, seconds: float, why: str) -> None:
+    """Pin an absence: nothing reaches the seam for ``seconds`` wall-clock."""
+    await pilot.pause(seconds)
+    assert submitted == [], why
+
+
 def _precheck_is_current(screen) -> bool:
     form = screen._ingest_state.form
     # ``preflight_path`` is this task's new field; on the base commit the
@@ -201,18 +226,7 @@ async def test_enter_before_the_precheck_lands_waits_for_it_and_imports_only_an_
     handbook = _home_with_fixture(tmp_path, monkeypatch)
     submitted: list = []
     toasts: list[str] = []
-    gate = threading.Event()
-    real_analyze = library_screen_module.analyze_path
-
-    def gated_analyze(path, **kwargs):
-        # Only the PRE-CHECK worker sees the raw ``~/`` text; the readiness
-        # worker that runs after a submit receives the expanded source and
-        # must not be held, or the base race could never show itself.
-        if str(path).startswith("~"):
-            gate.wait(timeout=10)
-        return real_analyze(path, **kwargs)
-
-    monkeypatch.setattr(library_screen_module, "analyze_path", gated_analyze)
+    gate = _gate_precheck(monkeypatch)
     app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
     async with host.run_test(size=SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -249,3 +263,61 @@ async def test_enter_before_the_precheck_lands_waits_for_it_and_imports_only_an_
         assert len(submitted) == 1, "the armed submit imported a path the check refused"
         assert toasts == []
         await _wait_painted_once(host, pilot, PATH_PROBLEM_PREFIX)
+
+
+async def test_a_browse_pick_while_a_submit_is_armed_imports_nothing(
+    tmp_path, monkeypatch
+):
+    """Fix round 1, C1 (c): Enter on A while A's check is held, then Browse…
+    picks B. B must NOT be submitted without a press: the arm was for A's
+    exact text, and a different path through the picker drops it. B still
+    imports on its own Enter afterwards.
+    """
+    handbook = _home_with_fixture(tmp_path, monkeypatch)
+    other = handbook.with_name("glossary.md")
+    other.write_text("# Glossary\n", encoding="utf-8")
+    submitted: list = []
+    toasts: list[str] = []
+    gate = _gate_precheck(monkeypatch)
+    app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        await _type_path(screen, pilot, EXISTING)
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert submitted == []
+        # The real Browse… flow: the button pushes the picker, the picker's
+        # result runs the controller's callback (adopt + re-check).
+        await pilot.click("#library-ingest-browse")
+        await _wait_for_condition(
+            pilot,
+            lambda: host.screen is not screen,
+            timeout=10.0,
+            message="Browse… did not open the picker",
+        )
+        host.screen.dismiss(other)
+        await _wait_for_condition(
+            pilot,
+            lambda: host.screen is screen
+            and screen._ingest_state.form.path == str(other),
+            timeout=10.0,
+            message="the picker did not hand the path back",
+        )
+        gate.set()
+        await _wait_for_precheck(screen, pilot)
+        await _no_submit_for(
+            pilot, submitted, 1.0, "a Browse pick imported B under A's armed Enter"
+        )
+        assert toasts == []
+        # B imports only on its own press.
+        screen.query_one("#library-ingest-path", Input).focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot, lambda: submitted, timeout=10.0, message="Enter never imported B"
+        )
+        assert len(submitted) == 1
+        assert submitted[0]["source_path"] == str(other)

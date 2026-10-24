@@ -1122,6 +1122,13 @@ class LibraryIngestController:
             self._library_ingest_path_debounce_timer = None
         self._library_ingest_preflight_generation += 1
         self._cancel_library_ingest_preflight()
+        # (TASK-34000.20 fix round 1, C1) The fenced worker's result will be
+        # dropped, so the "Checking…" flag must not outlive it: a stuck flag
+        # left Enter dead on return (the reviewer's probe (a)). And an Enter
+        # or Start waiting on that check is not a "yes" for whatever canvas
+        # the user comes back to -- it is dropped, same rule as the consent.
+        self._library_ingest_form.preflight_checking = False
+        self._disarm_library_ingest_submit()
         self._invalidate_library_external_submission()
         self._library_ingest_clear_finished_armed = False
         # (task-3314) Same hygiene for the pending Start consent: changing
@@ -1596,6 +1603,9 @@ class LibraryIngestController:
             # (whose whole point is the path it would overwrite).
             self._disarm_library_ingest_start_confirm()
             self._disarm_library_ingest_retry_confirm()
+            # (TASK-34000.20 fix round 1, C1 (c)) ...and an Enter armed for
+            # the previous text must not import the picked one.
+            self._disarm_library_ingest_submit()
         return previous
 
     @on(Input.Changed, "#library-ingest-path")
@@ -1646,7 +1656,7 @@ class LibraryIngestController:
         # (TASK-34000.20 AC#3) An Enter/Start armed against the check for
         # the OLD text dies with it: the bumped generation would already
         # make it a no-op; clearing keeps the state honest.
-        self._library_ingest_submit_armed_generation = None
+        self._disarm_library_ingest_submit()
         # (task-2015) Feedback must not wait for blur: restart the debounce
         # timer on every edit; its fire runs the pre-flight for the text the
         # user has settled on. The blur/submit triggers still run
@@ -2079,7 +2089,7 @@ class LibraryIngestController:
         self._library_ingest_form.preflight_path = ""
         # (TASK-34000.20 AC#3) ...and no submit may be waiting on a check
         # that no longer exists.
-        self._library_ingest_submit_armed_generation = None
+        self._disarm_library_ingest_submit()
         # (task-3314) A consent armed against a forecast that no longer
         # exists must not survive it -- submit/Clear/reset all route here.
         self._disarm_library_ingest_start_confirm()
@@ -2102,7 +2112,12 @@ class LibraryIngestController:
                 Browse…, the retry button -- leave this at ``True`` and let
                 the config gate decide.
         """
-        if not path.strip():
+        # (TASK-34000.20 fix round 1, I1) ONE spelling of the text reaches
+        # the worker, whichever trigger called: Enter used to pass the raw
+        # field text while blur and the debounce passed it stripped, so a
+        # padded "  ~/x  " was refused by one path and imported by the other.
+        path = path.strip()
+        if not path:
             self._library_ingest_form.preflight_checking = False
             return
         # (TASK-34000.20 AC#3) A deliberate check supersedes the pending
@@ -2118,11 +2133,14 @@ class LibraryIngestController:
         self._library_ingest_preflight_generation += 1
         generation = self._library_ingest_preflight_generation
         if self._library_ingest_submit_armed_generation is not None:
-            # A re-check of the SAME text (blur, Retry check) while a submit
-            # waits: the wait follows the check that will actually land. A
-            # text change never reaches here armed -- the Changed handler
-            # disarms first.
-            self._library_ingest_submit_armed_generation = generation
+            if self._library_ingest_submit_armed_path == path:
+                # A re-check of the SAME text (blur, Retry check) while a
+                # submit waits: the wait follows the check that will land.
+                self._library_ingest_submit_armed_generation = generation
+            else:
+                # (fix round 1, C1 rule 2) A check for OTHER text is never
+                # the one the press was waiting for.
+                self._disarm_library_ingest_submit()
         self._library_ingest_form.preflight_checking = True
         # (task-2042) In-place: only the summary child re-renders, so a
         # trigger landing mid-word can neither steal focus nor swallow a
@@ -2170,12 +2188,49 @@ class LibraryIngestController:
         # result can land while the user is typing or mid-click.
         self._update_library_ingest_dynamic_regions()
         armed = self._library_ingest_submit_armed_generation
-        if armed is not None and armed == generation:
+        if armed is None:
+            return
+        fire = armed == generation and self._library_ingest_submit_may_fire()
+        # One-shot either way: a press that no longer describes what is on
+        # screen is dropped, never deferred (fix round 1, C1 rule 3).
+        self._disarm_library_ingest_submit()
+        if fire:
             # TASK-34000.20 AC#3: Enter (or Start) arrived while this check
             # was running; the one-shot submit fires now, against THIS
             # result, through the same gate the press would have used.
-            self._library_ingest_submit_armed_generation = None
-            self._submit_library_ingest_form()
+            self._submit_library_ingest_form(from_armed=True)
+
+    def _arm_library_ingest_submit(self, generation: int, text: str) -> None:
+        """Remember that Enter/Start is waiting on pre-check ``generation`` for ``text``."""
+        self._library_ingest_submit_armed_generation = generation
+        self._library_ingest_submit_armed_path = text
+
+    def _disarm_library_ingest_submit(self) -> None:
+        """Drop a waiting Enter/Start (text edit, canvas switch, Browse pick, clear)."""
+        self._library_ingest_submit_armed_generation = None
+        self._library_ingest_submit_armed_path = ""
+
+    def _library_ingest_submit_may_fire(self) -> bool:
+        """(fix round 1, C1 rule 3) The armed press still describes the screen.
+
+        True only while the ingest row is selected, the Library screen is the
+        app's active screen (a picker or any other modal on top means the
+        user is not looking at this form), and the field still shows the
+        exact text the press was made for. The reviewer imported a file by a
+        Tab alone, by navigating away, and by a Browse pick with no press --
+        each one a result landing for a press that no longer meant it.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return False
+        try:
+            if self.app.screen is not self._screen:
+                return False
+        except Exception:
+            return False
+        return (
+            self._library_ingest_submit_armed_path
+            == self._library_ingest_form.path.strip()
+        )
 
     @on(Button.Pressed, "#library-ingest-start")
     def handle_library_ingest_start(self, event: Button.Pressed) -> None:
@@ -2387,8 +2442,20 @@ class LibraryIngestController:
             and form.preflight_path == form.path.strip()
         )
 
-    def _submit_library_ingest_form(self) -> None:
+    def _library_ingest_preflight_worker_is_live(self) -> bool:
+        """True while a pre-check worker for this form is actually running."""
+        worker = self._library_ingest_preflight_worker
+        return worker is not None and not worker.is_finished
+
+    def _submit_library_ingest_form(self, *, from_armed: bool = False) -> None:
         """Validate the ingest form and submit a new Library ingest job.
+
+        Args:
+            from_armed: ``True`` when this call is the one-shot submit a
+                pre-check result fires for an earlier Enter/Start
+                (``_apply_library_ingest_preflight_result``). Such a call
+                never re-arms: a verdict that still refuses the path is the
+                answer, not a reason to check again.
 
         Shared by the Start import button and Enter in the path field. An
         invalid/missing path is a quiet warning notice, matching every
@@ -2413,16 +2480,27 @@ class LibraryIngestController:
             # Unchanged: the blank-path notice is ``_resolve_ingest_source``'s.
             self._resolve_ingest_source(raw_path)
             return
-        if not self._library_ingest_preflight_is_current():
+        stale_path_problem = (
+            not from_armed
+            and form.preflight is not None
+            and getattr(form.preflight, "path_invalid", False)
+        )
+        if not self._library_ingest_preflight_is_current() or stale_path_problem:
             # TASK-34000.20 AC#3: never import on a verdict for other text,
             # or on no verdict at all. Arm a one-shot submit for the check
             # that is (or is about to be) in flight; the result fires it.
             # The trigger bumps the generation BEFORE the arm reads it, so
             # the arm names the check that will land.
-            if not form.preflight_checking:
-                self._trigger_library_ingest_preflight(form.path)
-            self._library_ingest_submit_armed_generation = (
-                self._library_ingest_preflight_generation
+            # (fix round 1, I3) A press on a CURRENT "can't find that path"
+            # verdict re-checks too -- the footer promises "enter check this
+            # path", and the file may exist by now -- and the re-check's
+            # result decides. (fix round 1, C1 rule 5) The trigger is gated
+            # on a LIVE worker, not on the flag, so a fenced check never
+            # leaves Enter dead.
+            if not self._library_ingest_preflight_worker_is_live():
+                self._trigger_library_ingest_preflight(raw_path)
+            self._arm_library_ingest_submit(
+                self._library_ingest_preflight_generation, raw_path
             )
             return
         # (task-14823) A selection the pre-flight already knows can import

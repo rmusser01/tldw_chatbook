@@ -456,6 +456,15 @@ class TestPathErrorsAreMarked:
         assert len(result.errors) == 1
         assert "dangerous" not in result.errors[0]
 
+    def test_a_null_byte_in_a_tilde_path_is_a_refusal_not_a_crash(self) -> None:
+        """TASK-34000.20 fix round 1 (M1): ``Path("~\\x00user/x").expanduser()``
+        raises ``ValueError("embedded null byte")``; the pre-check must
+        answer with a refusal, as it did before the expansion moved here."""
+        result = analyze_path("~\x00user/x")
+        assert result.path_invalid is True
+        assert len(result.errors) == 1
+        assert result.total_files == 0
+
     def test_a_bare_tilde_is_the_home_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

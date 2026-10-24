@@ -257,7 +257,14 @@ _BUDGETS: dict[str, int] = {
     # `_apply_library_ingest_preflight_result`, the debounce stop + arm
     # re-point in `_trigger_library_ingest_preflight`, and two disarm sites:
     # 3080 -> 3164 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3164,
+    # 2026-10-23, TASK-34000.20 fix round 1 (same owner decision): the armed
+    # submit is bound to its exact text and fires only while the ingest row
+    # is selected, the Library screen is active and the field still shows
+    # that text (`_arm_/_disarm_library_ingest_submit`,
+    # `_library_ingest_submit_may_fire`, `_library_ingest_preflight_worker_
+    # is_live`), a press on a current not-found verdict re-checks, and the
+    # trigger normalises whitespace: 3164 -> 3242 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3242,
     # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
     # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
     # stance of holding this row at 371. That stance was correct FOR A

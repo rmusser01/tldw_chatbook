@@ -55,7 +55,9 @@ def expand_user_path(raw: str) -> Path | None:
     """
     try:
         return Path(raw).expanduser()
-    except (RuntimeError, KeyError):
+    except (RuntimeError, KeyError, ValueError):
+        # ValueError: an embedded null byte ("~\x00user/x") -- a refusal,
+        # as it was before expansion moved here (fix round 1, M1).
         return None
 
 

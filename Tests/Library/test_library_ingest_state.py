@@ -164,6 +164,44 @@ def test_a_path_problem_renders_exactly_one_sentence_and_no_gate_line() -> None:
     assert state.start_enabled is False
 
 
+_URL_CREDENTIALS_ERROR = (
+    "Invalid URL — check the address (it must be a plain http(s) link with "
+    "no embedded credentials)."
+)
+
+
+@pytest.mark.parametrize(
+    "path, error",
+    [
+        ("https://user:pw@example.com/doc.pdf", _URL_CREDENTIALS_ERROR),
+        ("/tmp/a-fifo", "Path is neither a file nor a directory: /tmp/a-fifo"),
+    ],
+    ids=["url-with-credentials", "fifo"],
+)
+def test_a_specific_path_error_keeps_its_own_sentence(path: str, error: str) -> None:
+    """TASK-34000.20 fix round 1 (I2): only the generic local not-found /
+    invalid-path errors collapse to ``PATH_PROBLEM_LINE``. A URL error
+    (TASK-19556's wording) or a non-regular-file error says something the
+    generic sentence cannot, so it stays -- still exactly ONE message under
+    the field, and the gate line beside Start still empty."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path=path),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=[error],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    assert state.errors == [error]
+    assert state.start_quiet_line == ""
+    assert state.start_enabled is False
+
+
 # --- start_quiet_line (L3b AB wave, A4) ------------------------------------
 
 

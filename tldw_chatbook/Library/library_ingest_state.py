@@ -83,6 +83,10 @@ MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
 PATH_PROBLEM_LINE = (
     "Can't find that path — check it, or use Browse… to pick a file or folder."
 )
+#: The pre-check's generic local-path errors (``ingest_preflight.analyze_path``)
+#: that ``PATH_PROBLEM_LINE`` replaces; every other ``path_invalid`` sentence
+#: keeps its own text (fix round 1, I2).
+_GENERIC_PATH_ERROR_PREFIXES = ("Path not found:", "Invalid path:")
 INGEST_UNAVAILABLE_COPY = "Import is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No import jobs yet."
@@ -3082,12 +3086,19 @@ def build_library_ingest_state(
         errors_are_path_problem = bool(
             errors and getattr(active_preflight, "path_invalid", False)
         )
-        if errors_are_path_problem:
+        if errors_are_path_problem and all(
+            error.startswith(_GENERIC_PATH_ERROR_PREFIXES) for error in errors
+        ):
             # TASK-34000.20 AC#2: the pre-check's own "Path not found: …" and
             # the gate line beside Start said the same thing twice (the
             # review's capture 02 showed three sentences for one typo). The
             # summary under the field is the one place: it sits where the
             # user types, and the "Choose a file…" button lives there.
+            # (fix round 1, I2) Only the GENERIC local errors collapse; a URL
+            # error (TASK-19556's wording) or "neither a file nor a
+            # directory" says something this sentence cannot and stays --
+            # still exactly one line, since each of those branches reports
+            # one error.
             errors = [PATH_PROBLEM_LINE]
         type_groups_list = list(type_groups.keys())
     else:
