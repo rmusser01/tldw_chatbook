@@ -1,7 +1,7 @@
 ---
 id: TASK-36694
 title: Handle each Speech Recognition button activation once
-status: To Do
+status: In Progress
 created_date: 2026-10-24 17:33
 labels:
 - textual-patterns
@@ -9,6 +9,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
+assignee:
+- '@codex'
+updated_date: 2026-10-24 18:56
 ---
 
 ## Description
@@ -44,3 +47,14 @@ Reason: Routine correction of handled-message delivery within existing Speech ro
 - [ ] #3 Other Speech views and container-owned controls retain their routing and ADR-031-compliant keyboard behavior.
 - [ ] #4 Mounted controls exercise the actual parent and child handlers with the same event identity and bounded audio collaborators, including ordinary Start and Stop.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. ADR paths: [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) and [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md). Reason: handled-message delivery correction within existing Speech routing, no new keys or boundaries.
+1. Add mounted mouse/Enter/Space Start and distinct Stop controls with actual STTS parent/Dictation child message delivery, bounded recorder I/O and real service where relevant; cover other handled and unhandled/container controls.
+2. Retain duplicate-delivery RED evidence, then consume only messages handled by the child while preserving other routing. Preserve the reviewed retirement/capture-publication implementation from TASK-36693.
+3. Run focused new and neighboring Speech controls, inspect private-child teardown, and run Ruff/format/whitespace checks.
+4. Obtain task-scoped Superpowers requesting-code-review, register every new regression in the required UI census, update Speech architecture notes and record implementation evidence. Final hosted PR qualification is part of overall delivery.
+Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task2).
+<!-- SECTION:PLAN:END -->

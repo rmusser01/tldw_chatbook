@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 18:16
+updated_date: 2026-10-24 18:56
 ---
 
 ## Description
@@ -42,10 +42,10 @@ Reason: Routine retirement of the existing view-owned service and callbacks, usi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Leaving or unmounting Speech Recognition retires the capture and processor owned by that view, so returning cannot leave an inaccessible earlier recorder running.
-- [ ] #2 Callbacks belonging to the departed view cannot publish into detached or replacement controls; teardown does not block the UI with a processing-thread join.
-- [ ] #3 Ordinary explicit Stop retains its existing completion semantics; visiting another Speech view without starting capture has no recording side effect.
-- [ ] #4 Mounted active-leave and explicit-Stop controls verify recorder retirement and the real owned processing thread using private profiles and injected audio I/O.
+- [x] #1 Leaving or unmounting Speech Recognition retires the capture and processor owned by that view, so returning cannot leave an inaccessible earlier recorder running.
+- [x] #2 Callbacks belonging to the departed view cannot publish into detached or replacement controls; teardown does not block the UI with a processing-thread join.
+- [x] #3 Ordinary explicit Stop retains its existing completion semantics; visiting another Speech view without starting capture has no recording side effect.
+- [x] #4 Mounted active-leave and explicit-Stop controls verify recorder retirement and the real owned processing thread using private profiles and injected audio I/O.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,9 +63,18 @@ Implementation plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-imp
 **Interfaces:** Consumes the existing STTS optional cleanup() and LazyLiveDictationService.abandon() contracts. Produces idempotent DictationWindow cleanup() -> None and retired callback authority; explicit Stop retains its result semantics.
 **ADR required:** no. **ADR path:** existing 025 and 033. **Reason:** same widget-owned service and existing nonblocking abandonment.
 
-- [ ] Write mounted active-leave/unmount, late-callback, replacement, explicit-Stop, unstarted and repeated-cleanup controls using injected audio I/O and the real processor thread. Ordinary Stop must yield stop_calls=1; active leave must retire capture and processing without a UI-thread join.
-- [ ] Run the focused cases before implementation and retain the relevant retirement/publication failures; distinguish setup/teardown errors from product failures.
-- [ ] Revoke callback publication before existing abandonment and before asynchronous settings flush/unmount waits. Use the existing cleanup seam, without creating a background capture owner.
-- [ ] Run the new module plus relevant existing dictation lifetime/settings controls; inspect child JUnit and run focused Ruff/format checks.
-- [ ] Self-review and commit only this task's source/tests, then obtain a task-scoped Superpowers review.
+- [x] Write mounted active-leave/unmount, late-callback, replacement, explicit-Stop, unstarted and repeated-cleanup controls using injected audio I/O and the real processor thread. Ordinary Stop must yield stop_calls=1; active leave must retire capture and processing without a UI-thread join.
+- [x] Run the focused cases before implementation and retain the relevant retirement/publication failures; distinguish setup/teardown errors from product failures.
+- [x] Revoke callback publication before existing abandonment and before asynchronous settings flush/unmount waits. Use the existing cleanup seam, without creating a background capture owner.
+- [x] Run the new module plus relevant existing dictation lifetime/settings controls; inspect child JUnit and run focused Ruff/format checks.
+- [x] Self-review and commit only this task's source/tests, then obtain a task-scoped Superpowers review.
 <!-- SECTION:PLAN:END -->
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Foreground Speech Recognition now retires its owned lazy service before settings-unmount waits. All five callbacks marshal processor publications onto the widget UI loop and recheck retirement/capture authority; old callbacks cannot affect removed, replacement or restarted captures. Existing abandonment stays nonjoining. Explicit Stop displays its complete returned transcript, including processor tails, and paused Stop uses the existing resume/Stop transition to preserve text and release capture.
+
+Verification: mounted private-profile recorder/real-processor RED/GREEN controls; final 14-case module passed, then the 8 affected Stop/retirement cases passed after the two-line paused-Stop correction (zero child failures, errors or skips). Scoped Ruff/format/whitespace checks passed. All 15 regression cases are registered individually in the required UI census; census and 17-shard contracts pass. Full local suite not run. One existing settings-debounce timing test fails with the original unmount too; its dirty-flag poll reads before its off-loop writer finishes, independently attributed in the implementation report. No physical microphone/model/network certification is claimed.
+
+ADR required: no; existing [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) and [ADR-033](../decisions/033-application-session-state-ownership.md) preserve the service/widget ownership boundary. Updated Docs/Architecture/speech.md and the UI census/coverage ratchet. Source/tests: UI/Dictation_Window_Improved.py and Tests/UI/test_dictation_view_retirement.py. Superpowers review I1 concurrency and paused-Stop follow-up addressed; task-scoped final re-review approved all findings; overall hosted PR qualification remains pending.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

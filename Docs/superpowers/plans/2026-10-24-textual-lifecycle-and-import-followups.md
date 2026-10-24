@@ -48,11 +48,11 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 **Interfaces:** Consumes the existing STTS optional cleanup() and LazyLiveDictationService.abandon() contracts. Produces idempotent DictationWindow cleanup() -> None and retired callback authority; explicit Stop retains its result semantics.
 **ADR required:** no. **ADR path:** existing 025 and 033. **Reason:** same widget-owned service and existing nonblocking abandonment.
 
-- [ ] Write mounted active-leave/unmount, late-callback, replacement, explicit-Stop, unstarted and repeated-cleanup controls using injected audio I/O and the real processor thread. Ordinary Stop must yield stop_calls=1; active leave must retire capture and processing without a UI-thread join.
-- [ ] Run the focused cases before implementation and retain the relevant retirement/publication failures; distinguish setup/teardown errors from product failures.
-- [ ] Revoke callback publication before existing abandonment and before asynchronous settings flush/unmount waits. Use the existing cleanup seam, without creating a background capture owner.
-- [ ] Run the new module plus relevant existing dictation lifetime/settings controls; inspect child JUnit and run focused Ruff/format checks.
-- [ ] Self-review and commit only this task's source/tests, then obtain a task-scoped Superpowers review.
+- [x] Write mounted active-leave/unmount, late-callback, replacement, explicit-Stop, unstarted and repeated-cleanup controls using injected audio I/O and the real processor thread. Ordinary Stop must yield stop_calls=1; active leave must retire capture and processing without a UI-thread join.
+- [x] Run the focused cases before implementation and retain the relevant retirement/publication failures; distinguish setup/teardown errors from product failures.
+- [x] Revoke callback publication before existing abandonment and before asynchronous settings flush/unmount waits. Use the existing cleanup seam, without creating a background capture owner.
+- [x] Run the new module plus relevant existing dictation lifetime/settings controls; inspect child JUnit and run focused Ruff/format checks.
+- [x] Self-review and commit only this task's source/tests, then obtain a task-scoped Superpowers review.
 
 ## Task 2: TASK-36694 — deliver handled Speech buttons once
 
