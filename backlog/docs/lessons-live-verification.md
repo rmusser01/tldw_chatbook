@@ -4513,3 +4513,17 @@ call chain (a probe that walks `sys._getframe` at the worker's creation), and co
 the arms' timelines around the transition. A function used as a cheap change detector
 must be read for side effects first; a "reader" that starts a worker moves that worker's
 publication to wherever the detector runs.
+
+
+### CoreAudio finished acknowledgement can precede scheduled output (TASK-36550)
+
+During Console radio portrait qualification on 2026-10-23, real PCM and WAV output
+on MacBook Pro Speakers reported NativeFinished about 24 ms before the final
+outputBufferDacTime interval ended. All fake-device ACK tests had passed; the WAV
+handler could still release its next-sentence/listening completion early. A complete
+known-waveform capture, exact sample-boundary/DAC mapping and terminal-flush trace
+exposed it. Natural drain now requires the native ACK **and** any valid final output
+tail, independently of portrait amplitude analysis; invalid timing keeps ACK fallback.
+Keep an early-ACK future-tail control and a held-close/settle control. Driver timing
+and device-submitted WAVs are not physical-loopback or audible-syllable evidence.
+Evidence: `Docs/superpowers/qa/console-radio-portraits/2026-10-23/qualification.md`.

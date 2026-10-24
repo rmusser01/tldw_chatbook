@@ -132,3 +132,33 @@ def test_parse_path_accepts_image_base64_key_directly():
     assert parsed is not None
     assert parsed["image_base64"] == payload
     assert "image_base64" not in parsed["extensions"]
+
+
+def test_local_performance_does_not_change_character_json_backup(db_instance):
+    from Tests.Character_Chat.test_portrait_performance import png
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        FRAME_ROLES,
+        capture_performance_source,
+        normalize_performance_frames,
+    )
+
+    character_id = db_instance.add_character_card(
+        {"name": "Local radio", "image": png()}
+    )
+    before = serialize_character_cards_for_backup(
+        db_instance.list_character_cards(include_image=True)
+    )
+    source, _ = capture_performance_source(
+        db_instance, character_id=character_id, requested_state="idle"
+    )
+    db_instance.apply_character_portrait_performance(
+        source,
+        normalize_performance_frames({role: png("blue") for role in FRAME_ROLES}),
+        expected_revision=0,
+    )
+    assert (
+        serialize_character_cards_for_backup(
+            db_instance.list_character_cards(include_image=True)
+        )
+        == before
+    )

@@ -48,6 +48,19 @@ Video adds cooperative cancel (threaded only to adapters that support it) and a 
 
 Both result and error callbacks carry the actual originating Worker. Immediately before UI publication, `_publish_generation` rejects canceled workers and detached screens. A newer Generate cancels the old exclusive worker, and explicit cancellation also prevents publication without a replacement. The worker may finish its existing provider/decode work; retirement adds no UI-thread join. TASK-36698 covers actual palette, provider, decode and queued publication boundaries under ADR-176/033.
 
+## Reviewed portrait-pose generation
+
+Personas' living-portrait controller uses the same configured image registry and
+`build_request`/`run_generation` validation boundary. After explicit destination/
+request-count confirmation, it submits six independent reference-image edits
+sequentially. One normalized frame-zero source retains the captured original digest;
+closed role directions ask for mouth/eyes changes while retaining identity and
+alignment. Outputs are bounded, normalized and staged for review, never published
+before Apply. A selected regeneration submits one explicit request. Partial successes
+survive slot failure; uncertain outcomes are not retried automatically. Source,
+profile, editor and registry/config identity are checked across awaits and after
+uncancellable results. No alternate provider or text-only fallback is selected.
+
 ## The video store
 
 `VideoStore` is an ephemeral, message-keyed file store under `<user_data_dir>/generated_videos/<message_id>/<slug>.<validated-ext>`:

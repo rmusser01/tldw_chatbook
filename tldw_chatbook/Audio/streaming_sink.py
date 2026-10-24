@@ -313,6 +313,22 @@ class _TimedSpeechPose:
     valid: bool
 
 
+def _read_output_timing(
+    timing: Any, status: Any, clock: Callable[[], float]
+) -> tuple[float, float, float] | None:
+    """Copy native timing scalars; unavailable timing never fails playback."""
+    try:
+        if bool(getattr(status, "output_underflow", False)):
+            return None
+        return (
+            float(clock()),
+            float(timing.currentTime),
+            float(timing.outputBufferDacTime),
+        )
+    except Exception:  # noqa: BLE001 - native timing is optional.
+        return None
+
+
 class _SpeechOutputObserver:
     """Bounded accepted-audio preparation and device-tail poses for one sink.
 
@@ -384,22 +400,13 @@ class _SpeechOutputObserver:
     def record_output(
         self, timing: Any, frames: int, source_frames: int, status: Any = None
     ) -> None:
-        try:
-            hardware_underflow = bool(getattr(status, "output_underflow", False))
-            timing_values = (
-                self.clock(),
-                float(timing.currentTime),
-                float(timing.outputBufferDacTime),
-            )
-        except Exception:  # noqa: BLE001 - missing timing cannot fail audio.
-            hardware_underflow = True
-            timing_values = (float("nan"),) * 3
+        timing_values = _read_output_timing(timing, status, self.clock)
         with self.lock:
             start = self.source_frames
             self.source_frames += source_frames
             if self.closed or self.unsupported:
                 return
-            if hardware_underflow:
+            if timing_values is None:
                 self.unsupported = True
                 return
             if len(self.raw) >= self.raw_cap:
@@ -652,7 +659,8 @@ class StreamingPcmSink:
                 Called as `factory(samplerate=..., channels=..., blocksize=...,
                 callback=..., finished_callback=...)`. The callback returns
                 a graceful-completion request; the finished callback confirms
-                all device output has played. Production leaves this `None`, which
+                output completion; a valid final DAC tail is also respected.
+                Production leaves this `None`, which
                 lazily imports `sounddevice` inside `open()`; tests inject a
                 fake stream here to drive playback synchronously.
             presentation: Optional exact-owner, latest-value speech observation.
@@ -668,6 +676,7 @@ class StreamingPcmSink:
         self._clock = clock
         self._drain_requested = False
         self._backend_finished_seen = False
+        self._drain_timing: tuple[float, float, float, float] | None = None
         self._lock = threading.Lock()
         self._buf: deque[bytes] = deque()  # arbitrary-size chunks
         self._buffered_bytes = 0  # bytes still queued whole in self._buf
@@ -716,7 +725,7 @@ class StreamingPcmSink:
         Safe to call from any thread and safe to call more than once (a
         second call finds `self._stream` already `None` and does nothing).
         Explicit Stop/failure aborts immediately. Natural completion passes
-        `abort=False` only after the backend acknowledges finished output.
+        `abort=False` after native acknowledgement and any qualified DAC tail.
         Never block on `stream.stop()` or discard a pending natural tail.
         """
         with self._lock:
@@ -747,11 +756,15 @@ class StreamingPcmSink:
             try:
                 job = self._notify_q.get(
                     timeout=_PRESENTATION_INTERVAL
-                    if self._observer is not None
+                    if self._observer is not None or self._backend_finished_seen
                     else None
                 )
             except queue.Empty:
                 self._publish_presentation()
+                if self._backend_finished_seen:
+                    with self._lock:
+                        if self._state not in ("stopped", "failed"):
+                            self._notify_q.put_nowait(("backend_finished", None))
                 continue
             try:
                 if job is _NOTIFY_STOP:
@@ -816,6 +829,24 @@ class StreamingPcmSink:
                 return
             unexpected = self._state != "draining" or not self._drain_requested
             if not unexpected:
+                timing = self._drain_timing
+                if timing is not None:
+                    callback_at, backend_now, dac_at, duration = timing
+                    end = callback_at + dac_at - backend_now + duration
+                    try:
+                        now = self._clock()
+                        # CoreAudio can acknowledge finished before its scheduled DAC tail.
+                        if (
+                            all(math.isfinite(value) for value in (*timing, now, end))
+                            and 0 <= dac_at - backend_now
+                            and 0 < dac_at - backend_now + duration <= 1.0
+                            and 0 < end - now <= 1.0
+                        ):
+                            return
+                    except Exception:  # noqa: BLE001 - invalid timing uses native acknowledgement.
+                        logger.debug(
+                            "Native output timing unavailable; using finished acknowledgement"
+                        )
                 self._state = "stopped"
                 self._terminal_reason = "drained"
         if unexpected:
@@ -1212,7 +1243,8 @@ class StreamingPcmSink:
 
         Returns:
             True only to request native graceful completion after the final
-            submitted block; terminal state waits for backend acknowledgement.
+            submitted block; terminal state waits for acknowledgement and any
+            qualified scheduled output tail.
         """
         try:
             need = frames * self._bytes_per_frame
@@ -1282,8 +1314,20 @@ class StreamingPcmSink:
             else:
                 outdata[:] = 0
             if drained:
+                timing = (
+                    _read_output_timing(_time, _status, self._clock)
+                    if self._audible
+                    else None
+                )
                 with self._lock:
                     self._drain_requested = self._state == "draining"
+                    if timing is not None:
+                        duration = (
+                            frames
+                            * self._bytes_per_frame
+                            / (self._cap_bytes // BUFFER_CAP_SECONDS)
+                        )
+                        self._drain_timing = (*timing, duration)
             self._block_index += 1
             return drained
         except Exception:

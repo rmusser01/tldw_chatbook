@@ -491,6 +491,18 @@ handle character names safely. No new design token was needed. See the atomic
 
 ### Unit 9 — TASK-36550: integrated qualification and documentation
 
+**Execution checkpoint:** still In Progress. Installed artwork and native restore
+journeys, portable exports, local waveform timing and real afplay fallback have
+passed. Hardware evidence exposed an early CoreAudio ACK; the reviewed correction
+adds a bounded final-output tail fence independent of portrait analysis and keeps
+deferred close in tracked queue work. Final sink/speech gate: 226 passed; real
+playback probes: three passed. See the [partial qualification review](../reviews/2026-10-23-task-36550-review.md)
+and [dated evidence](../qa/console-radio-portraits/2026-10-23/qualification.md).
+Real MOSS image generation remains pending reachable ComfyUI/workflow metadata;
+real TTS/perceptual/hands-free qualification is also still required. No completion
+is inferred from the known-waveform or mocked provider tests.
+
+
 **Files:** Create `Tests/ProductionApp/test_console_radio_portraits.py`, `Tests/Backup_Recovery/test_portrait_performance_restore.py`; extend `Tests/Actor_Packs/test_actor_pack_export.py`, `Tests/Chatbooks/test_local_chatbook_service_export.py` and `Tests/Character_Chat/test_character_backup_export_image.py`. Create evidence under `Docs/superpowers/qa/console-radio-portraits/` with a dated run record. Update `Docs/Architecture/{character-chat,speech,media-generation}.md`, `Docs/User_Guide/console/voice-and-hands-free.md` and `Docs/User_Guide/roleplay-chat-dictionaries/characters-and-personas.md`.
 
 **Consumes:** Units 1–8 as installed application behavior. **Produces:** Reproducible test/evidence records and accurate user documentation, no new feature subsystem.

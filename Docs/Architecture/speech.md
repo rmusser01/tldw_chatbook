@@ -116,8 +116,10 @@ voice=None/resolution=None selection plus cooldown bypass. Completion remains
 exactly once and waits for native drain; stale/duplicate sentence callbacks cannot
 change a replacement's counters. Guarded previews use existing destination and
 selected-character resolution, with exact lifecycle Stop on cancellation. No new
-speech coordinator, conversation message or player is introduced. Rendering remains
-a subsequent implementation unit.
+speech coordinator, conversation message or player is introduced. The living portrait and fixed radio telemetry read that exact owned channel;
+the existing avatar/Console clocks drive them without a second audio coordinator.
+Stale or unavailable output timing closes the mouth and hides the level bar while
+retaining truthful transport status.
 
 ## Speak action (dataflow)
 
@@ -192,3 +194,10 @@ ADR-023 (TTS adapter registry + audio.cpp runtime boundary), ADR-028 (character 
 3. Streaming holds the provider lease through playback; reconfiguration can be delayed by one utterance.
 4. Chatterbox's child process silences stdout/stderr before imports and speaks JSON on the dup'ed fd — any library print corrupts the protocol.
 5. Voice bundles are parsed with manual ZIP structs (member order, caps, 100× expansion ratio) — hostile-archive admission, not `zipfile` defaults.
+
+Native completion also respects the final bounded valid DAC interval, with or
+without portrait observation. CoreAudio qualification found finished callbacks about
+24 ms ahead of that interval's end. Invalid native timing retains acknowledgement
+fallback; amplitude-analysis errors cannot alter completion authority. The existing
+notification queue tracks deferred close and preserves settle/Stop/replacement
+contracts. See the dated Console radio qualification record for measured limits.

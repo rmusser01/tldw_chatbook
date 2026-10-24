@@ -3,6 +3,7 @@
 import asyncio
 import struct
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +42,13 @@ class NotifyingPresentation(SpeechPresentation):
             assert self.changed.wait_for(
                 lambda: self.read() is not None and predicate(self.read()), timeout=2
             ), self.read()
+
+
+def wait_for_drain(sink):
+    deadline = time.monotonic() + 1
+    while sink.terminal_reason is None and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert sink.terminal_reason == "drained" and sink.settle()
 
 
 class DelayedStream(FakeStream):
@@ -416,7 +424,9 @@ def test_observer_analysis_failure_cannot_change_audio_or_completion(
     speech.wait_for(lambda snap: snap.mouth == "rest" and not snap.timing_valid)
     assert stream.out[-1] == pcm and sink.terminal_reason is None
     stream.finish_output()
-    assert sink.settle() and sink.terminal_reason == "drained"
+    assert sink.settle() and sink.terminal_reason is None
+    clock[0] = 10.3
+    wait_for_drain(sink)
 
 
 def test_production_backend_wrapper_requests_graceful_completion_before_native_ack(
@@ -619,3 +629,115 @@ def test_notification_and_explicit_mapping_checks_cannot_analyze_pcm_concurrentl
         caller.join(timeout=2)
         assert not caller.is_alive()
     assert not collision.is_set()
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_native_finished_cannot_release_a_future_dac_tail(device_case, observed):
+    sink, stream, events, _speech, clock = device_case(observed=observed)
+    # Device clocks are independent of optional portrait analysis.
+    sink._clock = lambda: clock[0]
+    assert sink.feed(struct.pack(f"<{FRAMES}h", *([8192] * FRAMES)))
+    sink.close()
+    tick_at(stream, clock, 10.0)
+    stream.finish_output()
+    assert sink.settle()
+    assert sink.terminal_reason is None and not stream.closed
+    assert not any(isinstance(event, SinkDrained) for event in events)
+    clock[0] = 10.219
+    assert sink.terminal_reason is None
+    clock[0] = 10.221
+    wait_for_drain(sink)
+    assert sink.settle() and stream.closed and not stream.aborted
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_stop_still_wins_after_early_native_finished(device_case, observed):
+    sink, stream, events, _speech, clock = device_case(observed=observed)
+    sink._clock = lambda: clock[0]
+    assert sink.feed(struct.pack(f"<{FRAMES}h", *([8192] * FRAMES)))
+    sink.close()
+    tick_at(stream, clock, 10.0)
+    stream.finish_output()
+    assert sink.settle() and sink.terminal_reason is None
+    sink.stop()
+    clock[0] = 11.0
+    assert sink.settle()
+    assert sink.terminal_reason == "stopped" and stream.aborted
+    assert not any(isinstance(event, SinkDrained) for event in events)
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_new_output_retires_an_acknowledged_but_pending_old_tail(device_case, observed):
+    old, old_stream, old_events, _speech, clock = device_case(observed=observed)
+    old._clock = lambda: clock[0]
+    assert old.feed(struct.pack(f"<{FRAMES}h", *([8192] * FRAMES)))
+    old.close()
+    tick_at(old_stream, clock, 10.0)
+    old_stream.finish_output()
+    assert old.settle() and old.terminal_reason is None
+    new, new_stream, _events, _speech, _clock = device_case(observed=observed)
+    assert old.terminal_reason == "stopped" and old_stream.aborted
+    assert new.feed(struct.pack(f"<{FRAMES}h", *([8192] * FRAMES)))
+    clock[0] = 11.0
+    old_stream.finish_output()
+    assert old.settle() and not any(
+        isinstance(event, SinkDrained) for event in old_events
+    )
+    assert new.terminal_reason is None and not new_stream.closed
+
+
+@pytest.mark.parametrize(
+    "delay,status",
+    [
+        (float("nan"), None),
+        (-0.1, None),
+        (2.0, None),
+        (0.2, SimpleNamespace(output_underflow=True)),
+    ],
+)
+def test_unqualified_tail_uses_native_acknowledgement_without_estimated_wait(
+    device_case, delay, status
+):
+    sink, stream, _events, _speech, clock = device_case(observed=False)
+    sink._clock = lambda: clock[0]
+    assert sink.feed(struct.pack(f"<{FRAMES}h", *([8192] * FRAMES)))
+    sink.close()
+    import numpy as np
+
+    assert stream.callback(
+        np.zeros((FRAMES, 1), dtype=np.int16),
+        FRAMES,
+        SimpleNamespace(currentTime=100.0, outputBufferDacTime=100.0 + delay),
+        status,
+    )
+    stream.finish_output()
+    assert sink.settle() and sink.terminal_reason == "drained"
+
+
+def test_deferred_tail_completion_keeps_native_close_in_settled_work(
+    device_case, monkeypatch
+):
+    sink, stream, _events, _speech, clock = device_case(observed=False)
+    sink._clock = lambda: clock[0]
+    assert sink.feed(struct.pack(f"<{FRAMES}h", *([8192] * FRAMES)))
+    sink.close()
+    tick_at(stream, clock, 10.0)
+    stream.finish_output()
+    assert sink.settle() and sink.terminal_reason is None
+    entered, release = threading.Event(), threading.Event()
+    close = stream.close
+
+    def held_close():
+        entered.set()
+        assert release.wait(2)
+        close()
+
+    monkeypatch.setattr(stream, "close", held_close)
+    try:
+        clock[0] = 10.3
+        assert entered.wait(1)
+        assert not sink.settle(timeout=0.01)
+    finally:
+        release.set()
+        assert sink.settle()
+    assert stream.closed

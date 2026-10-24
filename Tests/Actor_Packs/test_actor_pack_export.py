@@ -643,3 +643,25 @@ def test_archive_validation_failure_keeps_assigned_uuid_and_writes_nothing(
 
     assert output.getvalue() == b""
     assert repository.get_identity("character", character_id) is not None
+
+
+def test_local_performance_does_not_change_portable_actor_archive(export_components):
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        FRAME_ROLES,
+        capture_performance_source,
+        normalize_performance_frames,
+    )
+
+    export, _repository, _local_service, database = export_components
+    character_id = database.add_character_card({"name": "Local radio", "image": _png()})
+    before = export.capture_snapshot("character", str(character_id), source="local")
+    source, _ = capture_performance_source(
+        database, character_id=character_id, requested_state="idle"
+    )
+    frames = normalize_performance_frames({role: _png("blue") for role in FRAME_ROLES})
+    database.apply_character_portrait_performance(source, frames, expected_revision=0)
+    after = export.capture_snapshot("character", str(character_id), source="local")
+    first, second = io.BytesIO(), io.BytesIO()
+    write_actor_pack_archive(before, first)
+    write_actor_pack_archive(after, second)
+    assert first.getvalue() == second.getvalue()

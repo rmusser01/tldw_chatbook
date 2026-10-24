@@ -75,7 +75,12 @@ elapsed-time estimates cannot establish accurate mouth timing.
    or DAC timing invalid. This deliberately corrects queue-exhaustion/abort drain.
    Stop/replacement remains immediate abort; stale completion cannot release a
    newer owner. Preserve the existing bounded drain watchdog. Driver timestamps
-   qualify mouth timing, not a substitute completion signal.
+   qualify mouth timing and provide an additional lower completion bound for a
+   valid final output interval; they never replace native acknowledgement.
+   Qualification on CoreAudio observed finished callbacks about 24 ms before the
+   last scheduled sample, so natural completion waits for both conditions even
+   without portrait observation. Invalid timing retains native acknowledgement;
+   amplitude-analysis failure cannot change this scalar output-tail fence.
 7. Keep one stable token-backed radio frame in the existing Character rail.
    Preserve expression precedence, geometry, keyboard access, current bounded
    preparation and stale-worker rejection. Existing motion/accessibility settings

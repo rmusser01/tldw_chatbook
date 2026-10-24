@@ -13,6 +13,28 @@ While hands-free is running, it owns reply speech; the two features never
 double-speak. **Speak replies** persists per conversation for normal
 (keyboard) use.
 
+## Living character portraits
+
+Prepare a character's six mouth/blink poses in [Personas → Living portrait](../roleplay-chat-dictionaries/characters-and-personas.md).
+The Console's Character section then follows that character's speech, with mouth
+movement reacting to measured audio and closing during pauses. Blinking and gentle
+idle movement are independent. **Static**, **Reduce motion**, animation/reaction
+settings and hiding the portrait retain their existing behavior.
+
+The radio status reads **Ready**, **Preparing voice**, **Transmitting**, **Paused** or
+**Voice unavailable**. The level bar requires fresh qualified output timing; silence
+empties it. An external file player can report actual playback status while leaving
+the mouth closed and bar hidden. It does not estimate lip sync from text or elapsed
+file duration. Changing conversations or profiles prevents an old speech owner from
+animating the new character. Normal speech transitions keep sidebar rows stable;
+compact layouts omit the level bar first.
+
+Eligible PCM streaming and complete PCM16 WAV artifacts use local device timing.
+Natural completion waits for the device's finished acknowledgement before the next
+sentence or listening handoff. **Stop** still interrupts immediately. Synchronization
+accuracy depends on the selected player/device; the source qualification record
+lists exercised paths and measurement limits.
+
 ## How formatted replies are spoken
 
 **Speak replies** and a completed message's **Speak** action turn Markdown
