@@ -553,7 +553,60 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-22, TASK-34000.10 final-review re-review (owner decision, same
     # rule): 6473 -> 6484 -- the blurred-terminal restore leaves another
     # screen's or a modal's own focus slot alone.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6484,
+    # 2026-10-22, TASK-34000.17 (owner decision, same rule): 6484 -> 6489 --
+    # Add from files begins on the chooser (one call into the sync
+    # controller's ``begin_add_from_files`` and its four-line comment).
+    # 2026-10-22, TASK-34000.17 fix round 1 (same owner decision): 6489 ->
+    # 6500 -- a setup review still held on arrival is released before the
+    # chooser reset (I-1), with the comment that names the exits as the
+    # braces this belt sits behind.
+    # 2026-10-23, TASK-34000.11 (owner decision, same rule): 6500 -> 6871
+    # (+371) -- the ``[[`` link picker (context sync on body change and
+    # caret move, the candidate loader worker, key routing, accept through
+    # ``TextArea.replace``), Preview's in-app link policy and the
+    # Enter-follows-link action with its follow-mode picker.
+    # 2026-10-23, TASK-34000.11 fix round 1 (same owner decision): 6871 ->
+    # 6966 (+95; the round-0 row had been set one line over the measured
+    # 6870) -- the held stale accept, the closer consumption, the row-click
+    # accept, the control-character link policy and the synchronous
+    # follow-picker keys.
+    # 2026-10-23, TASK-34000.11 fix round 2 (same owner decision): 6966 ->
+    # 6991 (+25) -- a held accept is cancelled by a highlight move over
+    # stale rows, a stale row click inserts nothing, the Tab claim lapses
+    # over a hint row, the no-context sync supersedes an in-flight load.
+    # 2026-10-23, TASK-34000.11 fix round 3 (same owner decision): 6991 ->
+    # 7109 (+118) -- the caret-visibility rule (a picker never anchors to a
+    # caret the user cannot see), the scroll re-anchor path, the two-step
+    # resize settle chain that waits for the compact restage to finish
+    # before it judges, and the follow-row click freed from insert mode's
+    # stale-row guard.
+    # 2026-10-23, TASK-34000.11 fix round 4 (same owner decision): 7109 ->
+    # 7229 (+120) -- ONE superseding resize settle chain (token, wall-clock
+    # floor past the newest resize, hard cap) that veils the box until its
+    # single judgement, Enter/Tab refused while it settles or while the box
+    # is off the terminal as it is now, and the picker's own caret-lost
+    # close routed through the controller's dismiss path.
+    # 2026-10-23, TASK-34000.11 fix round 5 (same owner decision): 7229 ->
+    # 7085 (-144) -- the resize settle chain, its token / wall-clock floor /
+    # cap, the veil and the is_seen accept gate are GONE; a resize closes
+    # the picker on the screen's own Resize through the one dismiss path
+    # (`close_library_note_link_picker_on_resize`).
+    # 2026-10-23, TASK-34000.71 (same owner decision): 7085 -> 7119 (+34) --
+    # ``_settle_library_notes_sync_start`` and its settle constant: Add from
+    # files… gives a lazily scheduled notes-sync start a bounded 0.5 s to
+    # settle before the chooser re-reads availability (AC#4).
+    # 2026-10-23, TASK-34000.71 fix round 1 (same owner decision): 7119 ->
+    # 7134 (+15) -- the settle waits only on the task the lazy path
+    # scheduled (M-1) and tells the start's cancellation from its own (M-4).
+    # 2026-10-23, TASK-34000 P1-B final fix round (same owner decision):
+    # 7134 -> 7200 (+66) -- the ``[[`` picker opens only on a typed edit and
+    # a caret move only follows an open one (C-1 (b)), the completion the
+    # picker was asked for is one state field every hot path reads first
+    # (I-1: id lookups instead of DOM walks, one candidate load per
+    # keystroke), a note switch dismisses a load in flight (M-1), the Preview
+    # link policy moved out to ``Notes/note_link_policy`` (I-2, M-2, M-3),
+    # and the dead "consume the closer" accept path is gone (M-11/M-5).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7200,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -595,7 +648,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-20, TASK-32451 rebase onto dev 250159834c, same owner decision:
     # 2378 -> 2397. Dev itself already measures 2394 against its own 2375
     # row (a pre-existing dev red); this branch adds the same +3 above.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2397,
+    # 2026-10-22, TASK-34000.17 (owner decision, same rule): 2397 -> 2438
+    # (+41) -- ``begin_add_from_files``, the one entry that resets the
+    # lasting phase to the chooser unless a check or activation is running
+    # (dev was already at 2394 before TASK-32451's +3; this stacks on it).
+    # 2026-10-22, TASK-34000.17 fix round 1 (same owner decision): 2438 ->
+    # 2443 -- the chooser re-reads availability from the runtime (M-3).
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2443,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

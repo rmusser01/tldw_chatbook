@@ -308,25 +308,71 @@ async def test_initial_branch_load_requests_independent_root_slices_and_isolates
 
 
 @pytest.mark.asyncio
-async def test_expansion_loads_only_one_parent_and_collapse_retains_fresh_branch():
+async def test_ensuring_the_root_requests_only_the_missing_slices_once():
+    """TASK-34000.14: the one seam that owes the root is idempotent.
+
+    Replaces the test of the retired ``_ensure_library_notes_tree_folder_
+    loaded`` (no production caller). An absent root slice is requested; a
+    second call finds both slices fresh and requests nothing; a slice a
+    mutation fence left ``uninitialized`` and not loading is requested again,
+    while one that is already loading is left to its worker.
+    """
     service = _BranchService()
-    service.folder_pages["personal"] = _folder_page("personal", "ideas")
-    service.placement_pages["personal"] = _placement_page("personal", "n1")
     fake = _branch_screen_fake(service)
 
-    await LibraryScreen._ensure_library_notes_tree_folder_loaded(fake, "personal")
-    first_calls = tuple(service.calls)
-    await LibraryScreen._ensure_library_notes_tree_folder_loaded(fake, "personal")
-
-    assert first_calls == (
-        ("folders", "personal", 0, 20),
-        ("placements", "personal", 0, 20),
+    requested = await LibraryScreen._ensure_library_notes_tree_root_loaded(
+        fake, await_load=True
     )
+    first_calls = tuple(service.calls)
+    again = await LibraryScreen._ensure_library_notes_tree_root_loaded(
+        fake, await_load=True
+    )
+
+    assert requested == [
+        NotesBranchKey(None, "folders"),
+        NotesBranchKey(None, "placements"),
+    ]
+    assert first_calls == (
+        ("folders", None, 0, 20),
+        ("placements", None, 0, 20),
+    )
+    assert again == []
     assert tuple(service.calls) == first_calls
     assert set(fake._notes_state.tree_branches) == {
-        NotesBranchKey("personal", "folders"),
-        NotesBranchKey("personal", "placements"),
+        NotesBranchKey(None, "folders"),
+        NotesBranchKey(None, "placements"),
     }
+
+    # The shape ``_fence_library_notes_tree_mutation`` leaves behind when it
+    # fences a slice mid-load: uninitialized and not loading -- owed again.
+    fenced_key = NotesBranchKey(None, "folders")
+    fake._notes_state.tree_branches[fenced_key] = replace(
+        fake._notes_state.tree_branches[fenced_key],
+        freshness="uninitialized",
+        loading=False,
+    )
+    loading_key = NotesBranchKey(None, "placements")
+    fake._notes_state.tree_branches[loading_key] = replace(
+        fake._notes_state.tree_branches[loading_key],
+        freshness="uninitialized",
+        loading=True,
+    )
+    third = await LibraryScreen._ensure_library_notes_tree_root_loaded(
+        fake, await_load=True
+    )
+    assert third == [fenced_key]
+    assert tuple(service.calls) == first_calls + (("folders", None, 0, 20),)
+
+    # Folder files has no tree: nothing is requested there.
+    fake._notes_state.source = "files"
+    fake._notes_state.tree_branches = {}
+    assert (
+        await LibraryScreen._ensure_library_notes_tree_root_loaded(
+            fake, await_load=True
+        )
+        == []
+    )
+    assert tuple(service.calls) == first_calls + (("folders", None, 0, 20),)
 
 
 def test_branch_projection_receives_authoritative_folder_protection_metadata():
@@ -1849,6 +1895,18 @@ def _mutation_fake(service: _MutationService):
     fake._notes_state.notice = ""
     fake._notes_state.deleted_folder_receipt = None
     fake._notes_state.tree_selected_placement_id = ""
+    # TASK-34000.14: a ``note_create`` reconcile owes the root folders slice
+    # through the slice WORKER (``_request_library_notes_tree_slice``); the
+    # fake records the worker group and closes the coroutine unrun.
+    fake._worker_groups = []
+
+    def _run_worker(work, **kwargs):
+        fake._worker_groups.append(kwargs.get("group"))
+        close = getattr(work, "close", None)
+        if callable(close):
+            close()
+
+    fake.run_worker = _run_worker
     return fake
 
 
@@ -3372,6 +3430,14 @@ async def test_note_create_refreshes_unfiled_and_every_exact_active_placement_pa
     assert fake._notes_state.tree_pending_target_placement_id == (
         FolderPlacementId.unfiled("created")
     )
+    # TASK-34000.14: the root FOLDERS slice was never loaded here, so the
+    # create owes it -- requested through its own slice worker, after the
+    # locate, while the fresh root placements slice above is left alone.
+    root_folders = fake._notes_state.tree_branches[NotesBranchKey(None, "folders")]
+    assert root_folders.loading is True
+    assert fake._worker_groups == [
+        f"library_notes_tree:{NotesBranchKey(None, 'folders').pager_id}"
+    ]
 
 
 @pytest.mark.asyncio

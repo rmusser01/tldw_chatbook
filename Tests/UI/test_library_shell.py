@@ -19341,7 +19341,8 @@ async def test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth()
         empty = await _wait_for_selector(screen, pilot, "#library-notes-empty")
 
         assert str(empty.renderable) == (
-            "No notes match “no such note”. Clear the filter."
+            "No notes match “no such note” in titles, bodies or keywords. "
+            "Try fewer words, or clear the filter."
         )
         assert "No notes yet" not in _visible_text(screen)
         screen.query_one("#library-notes-filter-clear", Button).press()

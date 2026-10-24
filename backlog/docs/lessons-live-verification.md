@@ -952,6 +952,26 @@ affordance → *the thing it opens*.
 
 ---
 
+## A lasting-sync folder under the harness run dir is refused as "inside Chatbook's own data directory" (TASK-34000.17, 2026-10-22)
+
+**What happened.** The live plan said to write the three Markdown files for Keep a folder
+synced under `$R/runs/<socket>/cwd/sync-folder/`. The configure form accepted the folder,
+but Check changes answered "That folder is inside Chatbook's own data directory. Pick a
+folder outside it, then Check again." and no review ever came: the run dir holds the
+profile's `config.toml` and `data/`, and the rule fences the whole profile tree, not only
+`data_dir`. The first "receipt" capture of the session was that refusal, named as a
+receipt, before the status line was read. Moving the folders to
+`$R/fixtures/<socket>/sync-folder/` (outside every run dir) let the same walk reach
+"3 safe · 0 need attention" and activate. The harness's own `seed_t4_sync_root.py` is not
+a counter-example: it writes its root straight into the state DB, which is why that seeded
+`VSync` root then reads "✕ Blocked · Next: Review settings" in Manage sync folders.
+
+**What to do.** Put any folder a live lasting-sync walk will activate OUTSIDE
+`$R/runs/<socket>/` (a `$R/fixtures/<socket>/` subfolder is fine), and read the
+configure form's status line before trusting a wait that only timed out.
+
+---
+
 ## Isolate the profile before touching runtime state
 
 **What happened.** The runtime-policy state file (which records local vs. server mode)
@@ -4074,6 +4094,12 @@ that redirects stderr is a harness artefact, not an app symptom.
 working directory**. One review agent's export landed a 2.3 MB `trace-export.json` in
 the reviewed worktree's root, which then showed up as an untracked file in the review
 branch. Launch the app from a scratch cwd whenever the checkout must stay clean.
+
+## A redirected stdout or stderr leaves the tmux pane blank, not broken (TASK-34000.71, 2026-10-23)
+
+**Incident.** Two isolated launches of `python -m tldw_chatbook` inside `tmux -L p1b-t5-1` painted nothing for 30 s, while the profile's `tldw_cli_app.log` showed an ordinary boot. The first launch redirected stdout to a file (to keep a crash readable); the frames landed in that file, sized 80x24. The second redirected only stderr; the 160x45 frames landed in that file instead. Textual's driver writes the screen to whichever of those streams it is given, so either redirect takes the paint away from the pane and nothing in the pane says why. Two relaunches, about four minutes.
+
+**What to do.** Launch the TUI in tmux with no redirect on either stream. A crash is already readable: the profile's `tldw_cli_app.log` under `get_user_data_dir()` carries the traceback, and `tmux capture-pane` shows Textual's own crash screen. If stdout must go somewhere, read the file as the frame it is before concluding the app is hung.
 
 ## A pytest file outside `Tests/` gets none of `Tests/conftest.py`'s isolation (Console UX review, 2026-09-29)
 

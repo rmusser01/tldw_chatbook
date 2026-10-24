@@ -49,12 +49,17 @@ The three FORMS this module defines, and the rule for picking one:
 from __future__ import annotations
 
 import re
-from typing import FrozenSet, Iterable, List
+from dataclasses import dataclass
+from typing import FrozenSet, Iterable, List, Optional, Tuple
 
 __all__ = [
     "FTS5_STOPWORDS",
+    "NOTES_FILTER_MAX_TOKENS",
+    "NOTES_FILTER_MIN_PREFIX_CHARS",
+    "NotesFilterMatch",
     "build_and_match_expression",
     "build_and_match_query",
+    "build_notes_filter_match",
     "build_phrase_match_query",
     "build_prefix_match_expression",
     "fts5_query_is_searchable",
@@ -426,7 +431,9 @@ def build_phrase_match_query(query: object) -> str:
     """Raw user text -> ONE quoted phrase, or ``""`` when it cannot be searched.
 
     The deliberate counterpart to ``build_and_match_query``, for the seams
-    whose documented behaviour is phrase matching and always was -- notes,
+    whose documented behaviour is phrase matching and always was -- notes
+    (the Notes LIST filter moved to ``build_notes_filter_match`` in
+    TASK-34000.12 -- a measured change; ``search_notes`` stays a phrase),
     keywords, keyword collections, datasets. TASK-19558 kept those as
     phrases on purpose: they matched phrases before the task too, so
     widening them to AND would be an unmeasured behaviour change smuggled in
@@ -446,3 +453,101 @@ def build_phrase_match_query(query: object) -> str:
     if not fts5_query_is_searchable(query):
         return ""
     return quote_fts5_token(str(query))
+
+
+#: The Library Notes list filter binds at most this many words (TASK-34000.12).
+#: The filter Input already caps the text at 200 characters; this bounds the
+#: number of ``MATCH`` legs the repository's CTE repeats.
+NOTES_FILTER_MAX_TOKENS = 32
+
+#: The last word of the filter is a PREFIX only when its final alphanumeric
+#: run is at least this long: ``a`` is matched whole rather than fanning out
+#: over every token that begins with ``a``.
+NOTES_FILTER_MIN_PREFIX_CHARS = 2
+
+#: The quote pairs that turn the whole filter into one phrase: straight, and
+#: the curly pair a phone or word processor substitutes.
+_NOTES_FILTER_QUOTE_PAIRS: Tuple[Tuple[str, str], ...] = (
+    ('"', '"'),
+    ("“", "”"),
+)
+
+
+@dataclass(frozen=True)
+class NotesFilterMatch:
+    """What the Library Notes list filter binds for one typed query.
+
+    Attributes:
+        expressions: One FTS5 MATCH expression per word, each built by
+            ``quote_fts5_token``/``quote_fts5_phrase`` (phrase mode: exactly
+            one). The repository binds every one of these as a parameter.
+        phrase: True when the input was wrapped in a matching pair of double
+            quotes and is therefore matched as one adjacent, in-order phrase.
+        fts_expression: All the expressions joined by FTS5's implicit AND,
+            for a consumer that can bind only one MATCH parameter.
+    """
+
+    expressions: Tuple[str, ...]
+    phrase: bool
+    fts_expression: str
+
+
+def build_notes_filter_match(query: object) -> Optional[NotesFilterMatch]:
+    """Raw filter text -> the Notes LIST filter's matching rule (TASK-34000.12).
+
+    The rule the review (notes-library-ux-review-2026-10-02, N-09) asked
+    for, stated once: **words in any order, the last word may be the start
+    of a word, and the input is a phrase only when the user quoted it.**
+    Before this task the whole box was ONE quoted phrase
+    (``build_phrase_match_query``), so ``meet`` missed "meeting", ``Lisb``
+    missed "Lisbon" and ``size chunk`` missed "chunk size". TASK-19558 had
+    kept that seam a phrase on purpose because widening it was an
+    unmeasured change; this function is that change, measured, and scoped
+    to the list filter (``search_notes`` -- the RAG/Search seam -- and the
+    keyword seams stay phrases).
+
+    * **Word mode** (the default): ``fts5_query_tokens`` splits the text on
+      whitespace, every token is quoted by ``quote_fts5_token``, the first
+      ``NOTES_FILTER_MAX_TOKENS`` are kept, and the LAST kept token gets a
+      trailing ``*`` (the star OUTSIDE the quotes, FTS5's prefix form) when
+      its final alphanumeric run is at least ``NOTES_FILTER_MIN_PREFIX_CHARS``
+      long. A typed ``OR``, ``NEAR``, ``col:`` or ``*`` is literal text,
+      never an operator; an unbalanced or interior ``"`` is doubled by the
+      primitive and read by FTS5 as a quote inside the literal, which the
+      tokenizer then drops.
+    * **Phrase mode**: when the stripped text is at least three characters
+      and its first and last characters are one of the pairs in
+      ``_NOTES_FILTER_QUOTE_PAIRS``, the text between them is ONE quoted
+      phrase (``quote_fts5_phrase``); words must be adjacent and in order.
+      Quotes around nothing searchable yield ``None``.
+
+    Every string this returns is built by the primitive's one escape, so no
+    user text is ever interpolated into a MATCH expression.
+
+    Args:
+        query: The raw value the filter box was handed; need not be a string.
+
+    Returns:
+        The match to bind, or ``None`` when the text cannot be searched
+        (``None``, empty, whitespace, punctuation-only, a NUL, or a quoted
+        pair around nothing searchable) -- the caller returns no rows.
+    """
+    if not fts5_query_is_searchable(query):
+        return None
+    text = str(query).strip()
+    if len(text) >= 3 and (text[0], text[-1]) in _NOTES_FILTER_QUOTE_PAIRS:
+        inner = text[1:-1].strip()
+        if not fts5_query_is_searchable(inner):
+            return None
+        phrase = quote_fts5_phrase(inner)
+        return NotesFilterMatch(expressions=(phrase,), phrase=True, fts_expression=phrase)
+    tokens = fts5_query_tokens(text)[:NOTES_FILTER_MAX_TOKENS]
+    expressions = [quote_fts5_token(token) for token in tokens]
+    last_runs = fts5_token_runs(tokens[-1])
+    if last_runs and len(last_runs[-1]) >= NOTES_FILTER_MIN_PREFIX_CHARS:
+        expressions[-1] = f"{expressions[-1]}*"
+    return NotesFilterMatch(
+        expressions=tuple(expressions),
+        phrase=False,
+        fts_expression=" ".join(expressions),
+    )

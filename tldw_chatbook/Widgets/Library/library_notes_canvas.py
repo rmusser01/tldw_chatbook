@@ -18,7 +18,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import Focus, Resize
+from textual.events import Blur, Focus, Key, Resize
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
@@ -937,6 +938,120 @@ class NoteEditorTextArea(DetachSafeTextArea):
 
     BINDINGS = _NOTE_BODY_BINDINGS
 
+    #: TASK-34000.11: the keys the open ``[[`` picker owns. Up/Down move its
+    #: highlight, Enter/Tab accept, Escape dismisses -- routed to the owning
+    #: screen as ``LinkPickerKey`` (ADR-031: routed, not bound), and never
+    #: a printable key, so typing keeps narrowing.
+    LINK_PICKER_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {"up", "down", "enter", "escape", "tab"}
+    )
+
+    #: TASK-34000.11: set by the Notes controller while the picker is open.
+    #: A plain attribute, not a reactive: it gates a key handler, nothing
+    #: paints from it.
+    link_picker_open: bool = False
+    #: Fix round 1 (M-11): whether the open picker shows a real row. With
+    #: only a hint row ("No note titled …", "Keep typing…") Enter and Tab
+    #: are NOT intercepted, so the editor inserts its newline / moves focus
+    #: and the context change closes the picker; Escape is still claimed.
+    link_picker_has_rows: bool = False
+    #: Fix round 5: the terminal size the open picker was armed at. A
+    #: resize closes the picker, through the screen's own ``Resize`` --
+    #: but the App batches that behind a 1/120 s timer, so a key pressed
+    #: right behind the terminal's resize reaches ``on_key`` first, while
+    #: ``app.size`` already says the new size. That key is handled as if
+    #: no picker were open (Enter is the editor's newline), never routed
+    #: to a box laid out for a terminal that no longer exists.
+    link_picker_terminal: tuple[int, int] | None = None
+
+    class LinkPickerKey(Message):
+        """One of ``LINK_PICKER_KEYS`` pressed while the picker is open."""
+
+        def __init__(self, text_area: "NoteEditorTextArea", key: str) -> None:
+            super().__init__()
+            self.text_area = text_area
+            self.key = key
+
+        @property
+        def control(self) -> "NoteEditorTextArea":
+            return self.text_area
+
+    def on_key(self, event: Key) -> None:
+        """Hand the picker its keys before ``TextArea._on_key`` sees them.
+
+        ``prevent_default()`` is what keeps Textual's MRO walk from reaching
+        the base ``_on_key`` (``message_pump._get_dispatch_methods`` breaks
+        on ``_no_default_action``), so Enter does not also insert a newline;
+        ``stop()`` keeps Up/Down/Escape from bubbling to the screen's
+        bindings. Tab reaches here only while the screen deactivates its
+        priority ``focus_next`` binding -- which it does for an open picker
+        that shows a REAL row; over a hint row Tab moves focus as usual
+        (fix round 2, R2-2).
+        """
+        if not self.link_picker_open or event.key not in self.LINK_PICKER_KEYS:
+            return
+        if self.link_picker_terminal_changed():
+            # Fix round 5: the terminal has already changed size; the
+            # screen's Resize (and the close it does) is still in the
+            # App's 1/120 s batch. The key is the editor's own, and the
+            # close is the controller's (routed, like every other close).
+            self.link_picker_open = False
+            self.link_picker_has_rows = False
+            self.post_message(self.LinkPickerKey(self, "resize"))
+            if event.key == "escape":
+                # Final fix round (P-2): the box is still painted, so the
+                # user's Escape means "close it" -- claimed here, or it
+                # fell through to the editor's Back and closed the editor.
+                event.stop()
+                event.prevent_default()
+            return
+        if event.key != "escape" and not self.link_picker_has_rows:
+            return
+        event.stop()
+        event.prevent_default()
+        self.post_message(self.LinkPickerKey(self, event.key))
+
+    def link_picker_terminal_changed(self) -> bool:
+        """Whether the terminal is a different size from the one the open
+        picker was armed at (fix round 5)."""
+        if not self.link_picker_open or self.link_picker_terminal is None:
+            return False
+        try:
+            return tuple(self.app.size) != self.link_picker_terminal
+        except Exception:  # noqa: BLE001 - no active app: nothing to compare
+            return False
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Fix round 3 (R3-3): a body scroll re-anchors the open picker, or
+        closes it when the caret row leaves the body -- routed as the
+        pseudo-key ``"scroll"`` so the controller owns the one re-anchor
+        path. ``Widget.watch_scroll_y`` still runs (the scrollbar, the
+        refresh); ``TextArea._watch_scroll_y`` is a separate private watcher."""
+        super().watch_scroll_y(old_value, new_value)
+        if self.link_picker_open and round(old_value) != round(new_value):
+            self.post_message(self.LinkPickerKey(self, "scroll"))
+
+    def on_resize(self, event: Resize) -> None:
+        """Fix round 5: a resize of the body closes the open picker (its
+        anchor geometry is gone), routed as the pseudo-key ``"resize"`` so
+        the controller owns the one close path. A terminal resize closes it
+        earlier, on the screen's own ``Resize``; this is the body-only case
+        (a pane toggle). ``TextArea._on_resize`` still runs after this (the
+        MRO walk)."""
+        if self.link_picker_open:
+            self.post_message(self.LinkPickerKey(self, "resize"))
+
+    def _on_blur(self, event: Blur) -> None:
+        """Fix round 1 (M-4): the picker goes with the focus.
+
+        A click on the Title or Shift+Tab out of the body used to leave the
+        picker open with this widget's key routing armed. Routed as the
+        pseudo-key ``"blur"`` so the controller owns the one close path;
+        the MRO walk still reaches ``TextArea._on_blur`` after this.
+        """
+        if self.link_picker_open:
+            self.post_message(self.LinkPickerKey(self, "blur"))
+
     def action_cursor_document_end(self) -> None:
         """Move the caret to the end of the note body."""
         self.move_cursor(self.document.end)
@@ -1106,6 +1221,11 @@ class LibraryNotePresentationState:
     #: Whether the backlink query has answered yet -- see
     #: ``library_note_backlink_header``.
     backlinks_status: str = "loading"
+    #: TASK-34000.11: ``(label, note_id)`` for each stored note link the body
+    #: carries, computed only while Preview is shown (the same gate the
+    #: preview source uses). The Preview's Enter follows the one link or
+    #: lists several; the footer advertises ``enter follow link`` from it.
+    note_links: tuple[tuple[str, str], ...] = ()
     #: Words in the draft body, for the editor chrome strip (task-32143).
     #: The controller counts this for ``metadata_line`` anyway; carrying the
     #: number instead of the sentence keeps the strip off a second scan.
@@ -2743,6 +2863,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     if row.status_text:
                         label = f"{label}  {row.status_text}"
                     classes = "library-notes-folder-row"
+                    if row.kind == "unfiled":
+                        # TASK-34000.14: lets the screen's "g" gate tell the
+                        # automatic group from a real folder row without a
+                        # second query.
+                        classes += " library-notes-unfiled-row"
                     if row.semantic_status == "connected":
                         classes += " library-notes-tree-connected"
                     elif row.semantic_status == "needs_attention":
@@ -3322,11 +3447,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="destination-section",
                 markup=False,
             )
+            # TASK-34000.11 (AC#3): ``open_links=False`` -- Textual's default
+            # hands every clicked href to ``app.open_url``, which sent a
+            # ``note://<id>`` to the operating system. The screen handles
+            # ``Markdown.LinkClicked`` for this body instead (a note link
+            # opens the note; http(s) goes to the browser through the app's
+            # own worker; anything else is refused with a notice).
             yield Markdown(
                 render_preview_source(content, title=title),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
+                open_links=False,
             )
+        # TASK-34000.11 (AC#1): the ``[[`` picker. Its own root, not a child
+        # of ``#library-note-editor-region``: that region is hidden while
+        # Preview shows, and the Preview's Enter lists several links through
+        # this same overlay (follow mode). Hidden in code until the
+        # controller shows it. Imported here, not at module level
+        # (ADR-097): the screen pre-import pass loads this canvas, and the
+        # picker is first needed when an editor composes.
+        from tldw_chatbook.Widgets.Library.library_note_link_picker import (
+            LibraryNoteLinkPicker,
+        )
+
+        yield root(
+            LibraryNoteLinkPicker(
+                id="library-note-link-picker", classes="library-note-link-picker"
+            )
+        )
         with root(VerticalScroll(id="library-note-context-region", can_focus=True)):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
@@ -3951,6 +4099,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         node("#library-note-preview-body").can_focus = False
         node("#library-note-preview-region").can_focus = show_preview
         node("#library-note-context-region").can_focus = show_context
+        # TASK-34000.11: the link picker lives with the surface that opened
+        # it -- the editor in insert mode, Preview in follow mode. When that
+        # surface goes (Preview pressed over an open ``[[`` picker, Back,
+        # Info), the picker goes with it and the body's key routing is
+        # released; the controller owns every other show/hide.
+        picker = node("#library-note-link-picker")
+        if picker.is_open and (
+            (picker.mode == "insert" and not show_editor)
+            or (picker.mode == "follow" and not show_preview)
+        ):
+            picker.hide()
+            body = node("#library-note-body")
+            body.link_picker_open = False
+            body.link_picker_has_rows = False
 
         for selector in (
             "#library-note-edit",
@@ -4324,6 +4486,27 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def _note_chrome_follows_caret(self, event: TextArea.SelectionChanged) -> None:
         """Follow the caret: arrow keys never reach the presentation state."""
         self.update_note_chrome_facts(body=event.text_area)
+
+    @on(Resize)
+    def _note_link_picker_follows_resize(self, event: Resize) -> None:
+        """The FOLLOW-mode picker re-anchors to the pane's new geometry (fix
+        round 3, R3-4: it is anchored to the Preview region, which a resize
+        moves). Decorated, like ``_note_chrome_follows_width`` beside it: the
+        pane's own ``on_resize`` keeps running."""
+        from tldw_chatbook.Widgets.Library.library_note_link_picker import (
+            LibraryNoteLinkPicker,
+        )
+
+        try:
+            picker = self.query_one("#library-note-link-picker", LibraryNoteLinkPicker)
+        except NoMatches:
+            return
+        # The insert-mode picker does not re-anchor on a resize: fix round 5
+        # CLOSES it on the screen's own Resize (the controller's
+        # ``close_library_note_link_picker_on_resize``), and typing within
+        # the ``[[`` reopens it. This hook is the follow picker's alone.
+        if picker.is_open and picker.mode == "follow":
+            picker.reanchor()
 
     def _restate_note_location(self) -> None:
         """Re-state the location row against the width the pane actually has.

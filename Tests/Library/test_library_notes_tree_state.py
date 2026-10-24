@@ -803,6 +803,41 @@ def test_initial_root_failure_keeps_root_specific_copy(
     assert next(row for row in projection.rows if row.kind == "pager").label == expected
 
 
+def test_an_uninitialized_unloading_root_folder_slice_emits_no_rows_and_a_loading_one_emits_the_loading_row() -> (
+    None
+):
+    """TASK-34000.14 negative control: the projection is not the defect.
+
+    After a Create arrival nothing had requested ``NotesBranchKey(None,
+    "folders")``, so the branch map either lacked the key or (after the
+    create's mutation fence) held it as ``uninitialized`` and not loading.
+    Both shapes project NO folder rows and NO "Loading folders…" row -- the
+    tree starts at Unfiled, exactly the review's capture -- while the same
+    slice marked ``loading`` projects the loading row at the top. The fix is
+    therefore the missing REQUEST (``_ensure_library_notes_tree_root_
+    loaded``), not a change here.
+    """
+    unfiled_note = _placement("loose", "Loose", None, None)
+    placements = _branch(None, "placements", items=(unfiled_note,), total=1)
+
+    def rows_with(folder_slice: NotesBranchSliceState | None) -> list[str]:
+        branches = {NotesBranchKey(None, "placements"): placements}
+        if folder_slice is not None:
+            branches[NotesBranchKey(None, "folders")] = folder_slice
+        projection = tree_state.build_paged_library_notes_tree(
+            branch_states=branches, expanded_folder_ids=set()
+        )
+        return [row.label for row in projection.rows]
+
+    fenced = _branch(None, "folders", freshness="uninitialized", loading=False)
+    assert fenced.item_ids == ()
+    assert rows_with(None) == ["Unfiled", "Loose"]
+    assert rows_with(fenced) == ["Unfiled", "Loose"]
+
+    loading = _branch(None, "folders", freshness="uninitialized", loading=True)
+    assert rows_with(loading) == ["Loading folders…", "Unfiled", "Loose"]
+
+
 @pytest.mark.parametrize(
     ("failed_direction", "expected"),
     (

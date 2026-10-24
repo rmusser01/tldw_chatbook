@@ -48,6 +48,7 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    Markdown,
     OptionList,
     SelectionList,
     Static,
@@ -477,6 +478,7 @@ from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
+    NoteEditorTextArea,
 )
 from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
 from ...Widgets.Library.library_notes_add_from_files_canvas import (
@@ -1080,6 +1082,15 @@ class LibraryScreen(BaseAppScreen):
         # view, so the broad focus-rail gate is False here too).
         ("escape", "library_media_trash_back", "Back to media list"),
         ("escape", "library_note_editor_back", "Back to notes list"),
+        # TASK-34000.11 (sharper AC#3): links inside a Textual Markdown are
+        # click meta on text, not focusable widgets, so the keyboard path is
+        # Enter on the focused Preview REGION -- follow the one link, or
+        # list several. Gated in ``check_action`` on that focus and on the
+        # note carrying a link; the Preview footer tier advertises it only
+        # then (ADR-031).
+        Binding(
+            "enter", "library_note_preview_follow_link", "Follow link", show=False
+        ),
         ("escape", "library_prompt_editor_back", "Back to prompts list"),
         # task-3302 (MI-04): a seventh "escape" binding, same disjoint-gate
         # contract -- active only while the Ingest canvas owns the row
@@ -3880,6 +3891,16 @@ class LibraryScreen(BaseAppScreen):
             )
         if app_lasting_runtime is not None:
             lasting_runtime = app_lasting_runtime
+            # TASK-34000.71: this is the first place the Library needs the
+            # owner. When boot's gate skipped the start (no root), the app
+            # schedules the non-forced start now, through its own start-task
+            # bookkeeping; on a no-root profile that settles to
+            # "not_configured" (setup offered) without opening the store.
+            ensure_started = getattr(
+                app_instance, "ensure_notes_sync_runtime_started", None
+            )
+            if callable(ensure_started):
+                ensure_started()
         elif getattr(
             app_instance, "_notes_sync_runtime_build_failure", None
         ) is not None:
@@ -8355,6 +8376,10 @@ class LibraryScreen(BaseAppScreen):
     def on_resize(self, event: events.Resize) -> None:
         """Capture only a crossing, decided by the measured invariant grid."""
         del event
+        # TASK-34000.11 fix round 5: the open ``[[`` picker closes HERE, on
+        # the earliest resize the screen sees, before any frame paints it
+        # detached from the caret (the body's own Resize lands ~150 ms later).
+        self._notes_controller.close_library_note_link_picker_on_resize()
         self._notes_state.resize_epoch += 1
         self._notes_state.resize_settling = True
         # TASK-22228 (item 7): the Media reader layout leg is scheduled only
@@ -8593,12 +8618,26 @@ class LibraryScreen(BaseAppScreen):
             # exactly as it does in Edit, and a blind Enter there fires Use
             # in Console -- so the tier owes the same focus chip the editor
             # tier has carried since task-32246.
-            return self._with_library_notes_focus_chip(
-                self._notes_footer_tier(
-                    self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
-                    self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
-                )
+            tier = self._notes_footer_tier(
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS,
+                self.LIBRARY_NOTES_PREVIEW_SHORTCUTS_COMPACT,
             )
+            # TASK-34000.11 (sharper AC#3): "enter follow link" only when the
+            # note carries a note link -- the key's own gate, so the chip is
+            # never a lie (ADR-031). Ahead of esc, as the Console tiers order
+            # their act-then-leave pairs.
+            if self._notes_controller._library_note_preview_links():
+                follow = (
+                    ("enter", "follow")
+                    if self._notes_state.compact
+                    else ("enter", "follow link")
+                )
+                tier = (
+                    tuple(pair for pair in tier if pair[0] != "esc")
+                    + (follow,)
+                    + tuple(pair for pair in tier if pair[0] == "esc")
+                )
+            return self._with_library_notes_focus_chip(tier)
         if region == "context":
             # task-32607 AC#1: this was the ONE Notes tier still rendering
             # its literal "enter run action" on every stop -- eleven Tabs
@@ -8873,7 +8912,20 @@ class LibraryScreen(BaseAppScreen):
         container = self.query_one_optional("#library-notes-list")
         if container is None:
             return []
-        return list(container.query(".library-notes-folder-row"))
+        rows = list(container.query(".library-notes-folder-row"))
+        # TASK-34000.14 (sharpened AC#3): the automatic Unfiled group carries
+        # the folder-row class too, so while the root folders slice had not
+        # loaded "g" was advertised and landed on Unfiled. Unfiled counts as
+        # a folder target only once the root slice is fresh and it is the
+        # only group there is; a tree whose folders are still loading (or
+        # were never requested) has no folder to go to, and the key's own
+        # gate -- the footer chip follows it (ADR-031) -- says so.
+        root_folders = self._notes_state.tree_branches.get(
+            NotesBranchKey(None, "folders")
+        )
+        if root_folders is not None and root_folders.freshness == "fresh":
+            return rows
+        return [row for row in rows if not row.has_class("library-notes-unfiled-row")]
 
     def action_library_notes_focus_folders(self) -> None:
         """``g``: jump to the folder tree beside the notes list.
@@ -9009,6 +9061,17 @@ class LibraryScreen(BaseAppScreen):
         settle-window timer is only ever the LAST resort for a
         still-armed, still-idle request.
         """
+        # TASK-34000.11: an open follow-mode link picker over the focused
+        # Preview claims Up/Down/Enter/Escape before any binding sees them
+        # (ADR-031: routed, not bound) -- the same overlay-first rule the
+        # Console's command popup applies in ``ChatScreen.on_key``.
+        if self._notes_controller.library_note_follow_picker_claims(event.key):
+            event.stop()
+            event.prevent_default()
+            # Synchronous (fix round 1, I-1): a worker per key let Enter
+            # cancel a Down that arrived in the same read.
+            self._notes_controller.handle_library_note_follow_picker_key(event.key)
+            return
         emergency_tab = bool(
             event.key in {"tab", "shift+tab", "backtab"}
             and self._library_emergency_stage == "canvas-only"
@@ -9440,6 +9503,12 @@ class LibraryScreen(BaseAppScreen):
     def refresh_notes_sync_runtime(self) -> None:
         """Project the app-owned runtime after detached startup settles."""
 
+        # TASK-34000.71 fix round 1 (M-5): the runtime's done-callback defers
+        # this through ``call_after_refresh``; one that lands after a
+        # same-refresh suspend must touch nothing (TASK-31521). Resume
+        # clears the flag before it re-dispatches this itself.
+        if getattr(self, "_library_screen_suspended", False):
+            return
         self._library_notes_sync_controller.refresh_roots()
         if (
             self.is_mounted
@@ -18262,15 +18331,62 @@ class LibraryScreen(BaseAppScreen):
                 return False
         return True
 
-    async def _ensure_library_notes_tree_folder_loaded(self, folder_id: str) -> None:
-        """Load the two missing slices for one expansion, retaining fresh slices."""
+    async def _ensure_library_notes_tree_root_loaded(
+        self, *, await_load: bool = False
+    ) -> list[NotesBranchKey]:
+        """Request whichever root slice the database-notes tree still owes.
+
+        TASK-34000.14 (N-13): the tree projects folder rows only from
+        ``NotesBranchKey(None, "folders")`` and the Unfiled group only from
+        ``NotesBranchKey(None, "placements")``, and only the rail's Notes row
+        requested both. A Create arrival (the palette's New Note, the rail's
+        Create ▸ New note, ``n``) reached the list through the create
+        reconcile, whose locator loads root PLACEMENTS alone, so the tree
+        came back as Unfiled plus the new note, ``g`` landed on Unfiled and
+        the folder pickers (which read the loaded branches) had nothing to
+        list. This is the one seam that owes the root wherever the list is
+        shown: a slice that is absent, or that a mutation fence left
+        ``uninitialized`` and not loading, is requested; a ``fresh``,
+        ``stale`` or ``loading`` slice is left alone, so the call is
+        idempotent and costs two dict lookups when the tree is whole. A root
+        slice whose FIRST load failed is still ``uninitialized`` (with its
+        ``error`` set and a "Couldn’t load folders · Retry" pager row), so
+        it is requested again here: a create or an editor return is a
+        reasonable moment to retry, and the Retry row stays if it fails
+        again (fix round 1 ruling, M-3).
+
+        Args:
+            await_load: ``True`` awaits each load inline (the orchestration
+                tests' form); ``False`` schedules the slice worker -- the
+                create reconcile's and the editor return's form -- so the
+                existing "Loading folders…" pager row paints while it runs.
+                A sync caller schedules this coroutine (``call_later``);
+                the worker form returns as soon as the workers are queued.
+
+        Returns:
+            The keys this call requested, in request order.
+        """
+        requested: list[NotesBranchKey] = []
+        if (
+            getattr(self._notes_state, "source", LIBRARY_NOTES_SOURCE_DATABASE)
+            != LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            return requested
         for kind in ("folders", "placements"):
-            key = NotesBranchKey(folder_id, kind)
+            key = NotesBranchKey(None, kind)
             state = self._notes_state.tree_branches.get(key)
-            if state is None or state.freshness == "uninitialized":
+            if state is not None and (
+                state.loading or state.freshness != "uninitialized"
+            ):
+                continue
+            requested.append(key)
+            if await_load:
                 await LibraryScreen._load_library_notes_tree_slice(
                     self, key, direction="replace", offset=0
                 )
+            else:
+                LibraryScreen._request_library_notes_tree_slice(self, key)
+        return requested
 
     async def _locate_library_notes_tree_target(
         self,
@@ -19029,6 +19145,19 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.tree_pending_target_placement_id = ""
         if filtered_selection:
             self._notes_state.tree_selected_placement_id = filtered_selection
+        if operation == "note_create":
+            # TASK-34000.14: a create that arrived without a Notes visit has
+            # no root slices at all, and the locator above loads root
+            # PLACEMENTS alone, so the tree came back as Unfiled plus the
+            # new note. Owe the root here, exactly as a rail entry would:
+            # the worker form, so the editor opens at once and the list
+            # shows "Loading folders…" until the slice lands. After the
+            # locate (fix round 1, M-1), so the placements slice it just
+            # loaded is found fresh and only the FOLDERS slice is fetched.
+            # Behind the same visit fence as every other await.
+            if not visit_is_current():
+                return
+            await LibraryScreen._ensure_library_notes_tree_root_loaded(self)
 
     def _invalidate_library_notes_tree_for_unmount(self) -> None:
         """Synchronously revoke every Notes page authority for this visit."""
@@ -21367,6 +21496,32 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
         return self._notes_controller.handle_library_note_body_changed(event)
 
+    @on(TextArea.SelectionChanged, "#library-note-body")
+    def handle_library_note_body_selection_changed(
+        self, event: TextArea.SelectionChanged
+    ) -> None:
+        return self._notes_controller.handle_library_note_body_selection_changed(event)
+
+    @on(NoteEditorTextArea.LinkPickerKey)
+    def handle_library_note_link_picker_key(
+        self, message: NoteEditorTextArea.LinkPickerKey
+    ) -> None:
+        return self._notes_controller.handle_library_note_link_picker_key(message)
+
+    @on(OptionList.OptionSelected, "#library-note-link-picker-options")
+    def handle_library_note_link_picker_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        return self._notes_controller.handle_library_note_link_picker_selected(event)
+
+    @on(Markdown.LinkClicked, "#library-note-preview-body")
+    async def handle_library_note_preview_link(self, event: Markdown.LinkClicked) -> None:
+        """Preview's link policy (TASK-34000.11 AC#3): handled in the app."""
+        return await self._notes_controller.handle_library_note_preview_link(event)
+
+    async def action_library_note_preview_follow_link(self) -> None:
+        return await self._notes_controller.action_library_note_preview_follow_link()
+
     @on(Input.Changed, "#library-note-keywords")
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
         return self._notes_controller.handle_library_note_keywords_changed(event)
@@ -22960,6 +23115,17 @@ class LibraryScreen(BaseAppScreen):
         if self._artifacts_controller is not None:
             self._artifacts_controller.leave()
         self._advance_library_stage_interaction()
+        # TASK-34000.17 fix round 1 (I-1): a rail row leaves a lasting-sync
+        # canvas without passing ‹ Notes or Esc, so the provisional setup
+        # review's runtime lease would outlive the visible flow -- and the
+        # chooser reset the next Add from files makes would then have nothing
+        # left to release. A running check or activation is left alone, as
+        # its own exit is (the press waits on the held pump until it settles).
+        if self._notes_state.view in {"lasting_add", "lasting_roots"} and (
+            self._library_notes_sync_controller.snapshot.phase
+            not in {"checking", "activating"}
+        ):
+            await self._library_notes_sync_controller.abandon_setup()
         if self._try_switch_retained_library_notes_route(row_id):
             return
         if (
@@ -26050,6 +26216,16 @@ class LibraryScreen(BaseAppScreen):
             default resolution.
         """
         if action in {"focus_next", "focus_previous"}:
+            # TASK-34000.11: while the ``[[`` picker is open over the body,
+            # Tab accepts the highlighted row (``NoteEditorTextArea.on_key``)
+            # -- the body's Tab is a PRIORITY binding the App resolves
+            # before the key reaches the widget, so the action is
+            # deactivated for exactly that window.
+            if (
+                action == "focus_next"
+                and self._notes_controller._library_note_link_picker_claims_tab()
+            ):
+                return False
             # task-32106 (PR #2571 re-review, NEW-1). These stay universal
             # everywhere except the canvas-only emergency stage, where
             # ``on_key``'s ``emergency_tab`` branch OWNS Tab: it advances the
@@ -26128,6 +26304,16 @@ class LibraryScreen(BaseAppScreen):
             return self._library_skill_save_available()
         if action == "library_skill_back":
             return self._library_skill_editor_active()
+        if action == "library_note_preview_follow_link":
+            # TASK-34000.11: only with the Preview REGION itself focused and
+            # the open note carrying at least one stored note link. The
+            # follow-mode picker's own keys are routed in ``on_key`` before
+            # this binding is consulted.
+            if self._library_notes_focus_region() != "preview":
+                return False
+            if getattr(self.focused, "id", None) != "library-note-preview-region":
+                return False
+            return bool(self._notes_controller._library_note_preview_links())
         if action == "library_notes_files_back":
             return self._file_notes_active()
         if action == "library_media_viewer_back":
@@ -28605,14 +28791,36 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_notes_manage_sync_folders(
         self, event: Button.Pressed
     ) -> None:
-        """Open the path-free lasting root list."""
+        """Open the path-free lasting root list from the notes toolbar."""
         event.stop()
+        await self._open_library_notes_sync_roots()
+
+    @on(LibraryNotesAddFromFilesCanvas.ManageRootsRequested)
+    async def handle_library_notes_sync_manage_roots(
+        self, event: LibraryNotesAddFromFilesCanvas.ManageRootsRequested
+    ) -> None:
+        """Open the root list from the activation receipt (TASK-34000.17 AC#4)."""
+        event.stop()
+        await self._open_library_notes_sync_roots()
+
+    async def _open_library_notes_sync_roots(self) -> None:
+        """Open the path-free lasting root list; the one body behind both doors."""
         if self._library_notes_mutation_fenced():
             return
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
-        self._library_notes_sync_controller.refresh_roots()
+        # TASK-34000.17 fix round 1 (M-4): the roots list shares the lasting
+        # status line, so after a chooser visit it read "Nothing chosen yet."
+        # ``return_to_roots`` refreshes the rows AND names the step ("Sync
+        # folders refreshed."); the receipt door also releases its finished
+        # setup review first, exactly as ‹ Notes from that receipt does.
+        if self._notes_state.view == "lasting_add" and (
+            self._library_notes_sync_controller.snapshot.phase
+            not in {"checking", "activating"}
+        ):
+            await self._library_notes_sync_controller.abandon_setup()
+        self._library_notes_sync_controller.return_to_roots()
         self._notes_state.lasting_origin = None
         self._notes_state.view = "lasting_roots"
         self._apply_library_notes_footer_context()
@@ -31450,6 +31658,15 @@ class LibraryScreen(BaseAppScreen):
         def finish_list_projection() -> None:
             restore_after_projection()
             self._refresh_local_source_snapshot()
+            # TASK-34000.14: every editor-to-list return (a create, a deep
+            # link, a media "Note" action) shows a list that owes its root
+            # slices -- including one a mutation fence left ``uninitialized``
+            # mid-load; a whole tree costs two dict lookups here. The helper
+            # is a coroutine, so it is scheduled on the pump, not called --
+            # and never against a suspended screen (TASK-31521).
+            if self._library_screen_suspended:
+                return
+            self.call_later(LibraryScreen._ensure_library_notes_tree_root_loaded, self)
 
         _sync_library_canvas(self, "notes", then=finish_list_projection)
         return True

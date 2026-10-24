@@ -1022,7 +1022,40 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-22, P1-A final review C-1 (same owner decision): 37559 -> 37560
     #: (+1), the ``_library_media_selected_backing_id`` docstring says the
     #: Reader target is the loaded item whatever the view. Methods 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37560, 1354),
+    #: 2026-10-22, TASK-34000.17 (same owner decision): 37560 -> 37572 (+12),
+    #: methods 1354 -> 1356 -- the Manage sync folders toolbar handler's body
+    #: is extracted into ``_open_library_notes_sync_roots`` so the activation
+    #: receipt's own ``ManageRootsRequested`` handler can share it.
+    #: 2026-10-22, TASK-34000.17 fix round 1 (same owner decision): 37572 ->
+    #: 37593 (+21), methods unchanged -- the rail route releases a held setup
+    #: review before leaving a lasting view (I-1), and the roots door names
+    #: its step through ``return_to_roots`` (M-4).
+    #: 2026-10-22, TASK-34000.14 (same owner decision): 37593 -> 37675 (+82),
+    #: methods unchanged -- the dead ``_ensure_library_notes_tree_folder_
+    #: loaded`` becomes ``_ensure_library_notes_tree_root_loaded`` (the one
+    #: seam that owes the root slices), the ``note_create`` reconcile and the
+    #: editor-to-list return call it (fix round 1: after the locate, and
+    #: never against a suspended screen), and the ``g`` gate tells Unfiled
+    #: from a real folder row.
+    #: 2026-10-23, TASK-34000.11 (same owner decision): 37675 -> 37753 (+78),
+    #: methods 1356 -> 1360 -- the Preview's Enter-follows-link binding and
+    #: its ``check_action`` arm, the follow-picker ``on_key`` branch, the
+    #: ``[[`` picker's Tab gate, three ``@on`` delegators (caret, picker
+    #: keys, ``Markdown.LinkClicked``) and the Preview footer chip.
+    #: 2026-10-23, TASK-34000.11 fix round 1 (same owner decision): 37753 ->
+    #: 37757 (+4), methods 1360 -> 1361 -- the picker row-click delegator;
+    #: the follow-picker key branch is synchronous.
+    #: 2026-10-23, TASK-34000.11 fix round 5 (same owner decision): 37757 ->
+    #: 37761 (+4), methods unchanged -- ``on_resize`` closes the open ``[[``
+    #: picker first, on the earliest resize the screen sees (one call).
+    #: 2026-10-23, TASK-34000.71 (same owner decision): 37761 -> 37771
+    #: (+10), methods unchanged -- the constructor asks the app to schedule
+    #: the notes-sync runtime's lazy non-forced start once it holds the
+    #: owner (the no-root "Keep a folder synced" deadlock).
+    #: 2026-10-23, TASK-34000.71 fix round 1 (same owner decision): 37771 ->
+    #: 37777 (+6), methods unchanged -- ``refresh_notes_sync_runtime`` is a
+    #: no-op on a suspended screen (M-5, TASK-31521).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37777, 1361),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

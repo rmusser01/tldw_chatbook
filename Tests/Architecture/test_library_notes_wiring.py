@@ -112,8 +112,17 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: veto named, which the editor outlines with the reason under it
 #: (110 + 1 = 111). **112**: TASK-34000.10 fix round 1 -- ``validation_message``,
 #: that veto's own reason, kept with the field so the mark can outlive a key
-#: typed into another field (111 + 1 = 112).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 112
+#: typed into another field (111 + 1 = 112). **113-114**: TASK-34000.11
+#: (2026-10-23) -- ``link_picker_generation``, the ``[[`` picker's
+#: candidate-load generation that drops a stale answer, and
+#: ``link_picker_latch``, the completion start Escape dismissed so the picker
+#: stays closed until the context changes (112 + 2 = 114). **115**:
+#: TASK-34000.11 final fix round (2026-10-23) -- ``link_picker_request``, the
+#: ``(start, query)`` completion the picker was last asked for, the one
+#: field every hot path (caret move, Tab, resize frame) reads before doing
+#: anything, and the reason one keystroke starts one candidate load
+#: (114 + 1 = 115).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 115
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
