@@ -596,6 +596,7 @@ def _read_library_ingest_options_from_config() -> dict[str, Any]:
 
     Returns:
         A dict with ``transcribe_cpp_configured`` (bool),
+        ``transcription_default_model`` (the configured Auto model),
         ``generic_form_fields`` (the top-level generic toggles that were
         actually present in config) and ``type_options`` (group -> stored
         option map). Pure data -- no widget references -- so it is safe to
@@ -638,6 +639,9 @@ def _read_library_ingest_options_from_config() -> dict[str, Any]:
     return {
         "transcribe_cpp_configured": bool(
             get_cli_setting("transcription.transcribe_cpp", "model_path", None)
+        ),
+        "transcription_default_model": (
+            get_cli_setting("transcription.default_model", "base") or "base"
         ),
         "generic_form_fields": generic_form_fields,
         "type_options": type_options,
@@ -4054,6 +4058,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_restoring_focus = False
         self._library_notes_programmatic_focus_target: Widget | None = None
         self._transcribe_cpp_configured = False
+        self._transcription_default_model = "base"
         # One provisional external-root scope exists only while its captured
         # submission is being verified or awaiting VAD consent.
         self._library_external_submit_generation: int = 0
@@ -21305,6 +21310,9 @@ class LibraryScreen(BaseAppScreen):
             ingest_backend=ingest_backend,
             server_ingest_available=server_ingest_available,
             transcribe_cpp_configured=self._transcribe_cpp_configured,
+            transcription_default_model=getattr(
+                self, "_transcription_default_model", "base"
+            ),
             clear_finished_armed=self._ingest_state.clear_finished_armed,
             recent_ledger=tuple(self._ingest_state.recent_ledger),
             expanded_details=self._ingest_state.expanded_details,
@@ -29860,6 +29868,19 @@ class LibraryScreen(BaseAppScreen):
                 active_duplicate_consent, confirmed_consent,
             )
             return
+        if captured_backend == "local" and audio_options.get(
+            "transcription_provider"
+        ) in (None, "default"):
+            # Freeze Auto to the displayed model; queued jobs must not reread a
+            # newer config default. Copy only the submission, leaving the form intact.
+            model = getattr(self, "_transcription_default_model", "base") or "base"
+            audio_options = dict(
+                audio_options,
+                transcription_provider="faster-whisper",
+                transcription_model=model,
+                model=model,
+            )
+            submit_kwargs["ingest_options"] = dict(snapshot, audio_video=audio_options)
         external_directory = str(
             audio_options.get("transcription_model_dir") or ""
         ).strip()
@@ -29901,7 +29922,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if getattr(self, "_library_external_submit_scope_id", None):
             self._invalidate_library_external_submission()
-        self._enqueue_library_ingest_snapshot(submit_kwargs)
+        self._enqueue_library_ingest_snapshot(submit_kwargs, preference_options=snapshot)
 
     @work(
         thread=True,
@@ -29943,7 +29964,7 @@ class LibraryScreen(BaseAppScreen):
                     service = self.app_instance._ensure_parakeet_source_service()
                 check_transcription_readiness(
                     options,
-                    default_model=get_cli_setting("transcription.default_model", "base")
+                    default_model=getattr(self, "_transcription_default_model", "base")
                     or "base",
                     transcribe_cpp_model_path=get_cli_setting(
                         "transcription.transcribe_cpp.model_path"
@@ -30370,6 +30391,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         submit_kwargs: dict[str, Any],
         *,
+        preference_options: dict[str, dict[str, Any]] | None = None,
         generation: int | None = None,
         scope_id: str | None = None,
     ) -> None:
@@ -30497,7 +30519,8 @@ class LibraryScreen(BaseAppScreen):
         # option -- roughly six full reload cycles for a single submitted file,
         # growing with every option and every submission.
         option_settings: dict[str, dict[str, Any]] = {}
-        for group, values in snapshot.items():
+        saved_options = snapshot if preference_options is None else preference_options
+        for group, values in saved_options.items():
             persisted = dict(values)
             if group == "audio_video":
                 persisted.pop("transcription_model_dir", None)
@@ -30577,6 +30600,9 @@ class LibraryScreen(BaseAppScreen):
         form = self._ingest_state.form
         cached = _library_ingest_options_for(self)
         self._transcribe_cpp_configured = cached["transcribe_cpp_configured"]
+        self._transcription_default_model = cached.get(
+            "transcription_default_model", "base"
+        )
         for name, value in cached["generic_form_fields"].items():
             setattr(form, name, value)
         for group, stored in cached["type_options"].items():

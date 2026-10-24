@@ -279,6 +279,16 @@ choosing an unusable model leaves it failed. If the retry removes the focused
 row action, focus returns to the source field. A newer focus move or navigation
 away from Import is respected when model validation finishes.
 
+For local audio/video imports, the summary beside **Start import** names the
+transcription backend and effective model. **Auto** uses
+`[transcription] default_model`: fresh installs use `base`; existing configured
+choices, including `distil-large-v3`, are preserved. Choosing **Faster Whisper**
+explicitly uses the **Transcription model** selection instead. Custom model paths
+are shown as “custom model” in the summary; server imports use server settings.
+Each local Auto submission keeps the model shown when Library was opened,
+including while queued. Restart Chatbook after editing `default_model` externally
+to load the new choice; saved settings and the Auto selection stay unchanged.
+
 **Parakeet setup:** Installing the Python package adds the transcription runtime;
 it does not download the model files. In the Audio & video options, select
 "Parakeet (ONNX)", then press "Install verified Parakeet v2 INT8 (630.6 MiB)…"

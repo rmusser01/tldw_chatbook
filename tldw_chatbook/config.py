@@ -6339,7 +6339,8 @@ default_provider = "__DEFAULT_TRANSCRIPTION_PROVIDER__"
 # For canary: nvidia/canary-1b-flash, nvidia/canary-1b
 #   Note: Canary supports multilingual ASR and translation between en, de, es, fr
 # For remote-whisper: Depends on your server (e.g., "whisper-1" for OpenAI)
-default_model = "distil-large-v3"
+# Fresh installs use the smaller base model. Existing configured choices win.
+default_model = "base"
 
 # Default language for transcription (use "auto" for automatic detection)
 # For source language in transcription

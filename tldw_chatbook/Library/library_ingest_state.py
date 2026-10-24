@@ -2757,6 +2757,44 @@ def _missing_dependency_from(message: str, chain: Sequence[str]) -> str:
     return ""
 
 
+def _transcription_summary_line(
+    options: Mapping[str, Any], default_model: str, *, gguf_configured: bool
+) -> str:
+    """Describe the local route without exposing custom filesystem paths."""
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        BatchSTTRoutingError,
+        resolve_batch_stt_model,
+        resolve_batch_stt_route,
+    )
+
+    try:
+        route = resolve_batch_stt_route(
+            provider=options.get("transcription_provider") or "default",
+            language=options.get("language"),
+            precision=options.get("transcription_precision"),
+        )
+    except BatchSTTRoutingError:
+        return ""
+    model = resolve_batch_stt_model(
+        route,
+        selected_model=options.get("model") or options.get("transcription_model"),
+        default_model=default_model or "base",
+    )
+    if route.provider == "faster-whisper":
+        catalog = next(
+            field.options
+            for field in get_capabilities("audio_video").fields
+            if field.name == "transcription_model"
+        )
+        label = model if model in catalog else "custom model"
+        auto = " (Auto)" if route.requested_provider == "default" else ""
+        return f"Transcription: Faster Whisper · {label}{auto}"
+    if route.provider == "parakeet-onnx":
+        return f"Transcription: Parakeet ONNX · {model} · {route.precision.upper()}"
+    label = "configured GGUF" if gguf_configured else "choose a GGUF model"
+    return f"Transcription: transcribe.cpp · {label}"
+
+
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],
     *,
@@ -2770,6 +2808,7 @@ def build_library_ingest_state(
     ingest_backend: str = "local",
     server_ingest_available: bool = False,
     transcribe_cpp_configured: bool = False,
+    transcription_default_model: str = "base",
     recent_ledger: Sequence[LibraryIngestJob] = (),
     clear_finished_armed: bool = False,
     expanded_details: frozenset[str] | set[str] = frozenset(),
@@ -2828,6 +2867,7 @@ def build_library_ingest_state(
             ``form.preflight_checking``.
         transcribe_cpp_configured: Whether the dedicated direct-local model
             setting exists. Only the boolean reaches render state.
+        transcription_default_model: Captured configured Whisper model used by Auto.
         start_confirm_armed: Whether the screen has an immutable pending
             consent snapshot for the current request.
         start_confirm_line: Optional active-duplicate/combined consent copy.
@@ -3197,7 +3237,7 @@ def build_library_ingest_state(
     else:
         start_quiet_line = ""
 
-    # (task-2130) A one-line commit summary beside Start for a valid
+    # (task-2130) A compact commit summary beside Start for a valid
     # selection: the forecast lives at the top of a long form, and the
     # commit point at the bottom -- restate the outcome where the finger
     # is.
@@ -3213,6 +3253,18 @@ def build_library_ingest_state(
     # A blocked-but-real selection (bad option value, armed consent) keeps
     # its numbers, which is what AC#4 is about.
     commit_summary_line = "" if unavailable_line else forecast_summary_line(forecast)
+    if (
+        commit_summary_line
+        and "audio_video" in type_groups
+        and str(ingest_backend or "local").strip().lower() != "server"
+    ):
+        transcription_line = _transcription_summary_line(
+            form.type_options.get("audio_video", {}),
+            transcription_default_model,
+            gguf_configured=transcribe_cpp_configured,
+        )
+        if transcription_line:
+            commit_summary_line += "\n" + transcription_line
     if forecast is not None:
         # (task-2223 ruling) Zero imports + ≥1 predicted match keeps Start
         # ENABLED (the dedup probe is capped best-effort, never a blocker)
