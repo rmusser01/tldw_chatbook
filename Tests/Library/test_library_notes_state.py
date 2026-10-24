@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
 import pytest
+import yaml
 from rich.cells import cell_len
 
 from tldw_chatbook.Library.library_notes_state import (
@@ -274,14 +275,21 @@ EXPORT_NOW = datetime(2026, 7, 7, 9, 30, 15)
 
 
 def test_export_content_markdown_has_frontmatter_and_heading():
+    """TASK-34000.31: the block is real YAML -- ``tags`` is a list (the key the
+    importer reads; ``keywords: retro, q3`` was a comma line it dropped), a
+    plain title stays an unquoted line, and the stamp reads back as a string."""
     text = build_note_export_content(
         "Q3 retro", "alpha body", "retro, q3", "n-1", "markdown", now=EXPORT_NOW
     )
     assert text.startswith("---\n")
     assert "title: Q3 retro\n" in text
-    assert "date: 2026-07-07 09:30:15\n" in text
-    assert "keywords: retro, q3\n" in text
-    assert "note_id: n-1\n" in text
+    block = yaml.safe_load(text.split("---\n", 2)[1])
+    assert block == {
+        "title": "Q3 retro",
+        "date": "2026-07-07 09:30:15",
+        "tags": ["retro", "q3"],
+        "note_id": "n-1",
+    }
     assert "---\n\n# Q3 retro\n\nalpha body" in text
 
 

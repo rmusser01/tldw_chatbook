@@ -154,6 +154,7 @@ jobs:
             Tests/Library/test_library_notes_canvas_pending_lookup.py \
             Tests/App/test_detached_focus_guard.py \
             Tests/Architecture/test_notes_sync_binding_profile_commits.py \
+            Tests/Chatbooks/test_note_frontmatter_round_trip.py \
             Tests/Architecture/test_notes_sync_version_proxy_sites.py \
             Tests/Notes/test_sync_containment.py \
             Tests/Agents/test_mcp_unavailable_builtin_tools.py \

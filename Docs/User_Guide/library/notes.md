@@ -173,7 +173,10 @@ editor's own Back control returns to its list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
   **Keep a folder synced** relationship before reading a source. Both buttons
   sit together, each directly under its own description; the bar below holds
-  only **‹ Notes**.
+  only **‹ Notes**. A Markdown file's YAML front matter is read whatever the
+  source: `title` names the note, `tags` (or `keywords`) and `aliases` become
+  keywords, and the block itself is not kept in the body — so a note you
+  exported with **Export Markdown** comes back as it left.
 - **Manage sync folders** — appears when roots or migration candidates exist;
   it shows text-explicit status and the valid action for each root.
 
@@ -1207,7 +1210,8 @@ With it on:
 - `.obsidian/`, `.trash/` and `Templates/` are listed under **Skipped** as one
   row each, naming the vault reason ("Obsidian configuration — skipped…"),
   rather than one row per file inside them.
-- YAML frontmatter is read: `title` becomes the note title, and `tags` and
+- YAML frontmatter is read: `title` becomes the note title, and `tags` (or
+  `keywords`, the key this app's own older exports wrote) and
   `aliases` become keywords (there is no separate alias field, and keeping them
   as keywords is what makes the note findable by its alternate names). An alias
   is an alternate *name*, not a tag, so it is stored as `alias: <name>` — in
@@ -1455,6 +1459,10 @@ written locally, and a note is a local write.
 3. If that file already exists, the "Replace existing file?" prompt asks
    first. **Cancel** is focused, so Enter or Escape keeps your file as it
    is; choose **Replace** to overwrite it.
+
+The front matter is real YAML (`title`, `date`, `tags`, `note_id`): a title
+with a colon or a leading `*` is quoted, and `tags` is a list, so Obsidian,
+Pandoc and **Add from files…** all read it back.
 
 ### Undo a deleted note
 
