@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 18:10
+updated_date: 2026-10-24 01:22
 labels:
 - follow-up
 - console
@@ -126,4 +126,23 @@ No User Guide change: no page says that a launch rewrites config.toml.
   - Second run: 8 failed, 134 passed. All 8 are in the pre-existing set that also fails at dev (4 keepalive, 4 compact_access display checks).
   - Screen ratchet: 4 passed.
   - Preflight passed.
+
+**CI round (PR #3225, head 1780a9b9b9):**
+- **The failure.** `Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved[model]` failed on both CI runs (UI Fast Lane shard 3): the rebuilt Chat settings modal never appeared after Settings ▸ Return. It reproduced locally: 5 of 5 serial runs failed at head and 5 of 5 passed with base 5b5920b8e2's two source files (load average 7-15).
+- **Cause: a test fixture, not a product regression.**
+  - The test set `app.app_config["chat_defaults"]` and `["api_settings"]` in memory only. That dict is also `load_settings()`'s cache.
+  - At base, Console's mount saved its default rail state. That write reloaded the cache from the file before the test began, so the chat took the file's full defaults (temperature 0.6 and others), and the test's commit of temperature 0.7 counted as user work.
+  - At head there is no such write, so the commit equalled the in-memory defaults and changed nothing. The chat stayed blank.
+  - The stubbed Settings save then applied model-b to that same dict, the blank chat converged to it (ADR-095 D1), and the restore was refused ("Chat settings changed while credentials were open").
+  - Traced with temporary instrumentation (reverted) of the convergence, settings-revision bumps and config generation.
+- **Not a regression.** Two probes, each run twice at head and at base:
+  - With the defaults saved to the file, the test passed at both.
+  - A truly blank chat with the real (unstubbed) Settings save failed the same way at both, on the same assertion. That is existing D1 behaviour.
+- **Fix:** the test saves its defaults through `save_settings_to_cli_config` instead of setting them on `app_config`, and asserts its precondition: the commit leaves the chat with its own settings (`has_user_work`).
+- **Evidence:**
+  - Before the fix the test failed at head (5 of 5, above).
+  - The fixed test passed 5 of 5 runs of both cases at head and 3 of 3 at base.
+  - With the old in-memory setup put back temporarily, it fails on the new precondition assertion.
+  - The whole file: 44 passed at head.
+- Lesson: a follow-up paragraph on the TASK-22988 entry in `lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->

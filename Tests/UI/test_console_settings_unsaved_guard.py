@@ -43,7 +43,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
 )
-from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.config import ConfigMutationResult, save_settings_to_cli_config
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
@@ -752,11 +752,15 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         "persist_provider_settings_atomic",
         lambda *_args, **_kwargs: ConfigMutationResult(True, True, None),
     )
+    # TASK-36385: saved through the real writer, not set on app_config. Set
+    # only in memory it diverged from the file, and the chat stayed blank
+    # (equal to its defaults) once Console's mount stopped writing the file.
+    assert save_settings_to_cli_config(
+        {"chat_defaults": {"provider": "openai", "model": "gpt-5"}}
+    )
     app = _build_production_app(configured_default="chat")
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-5"
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
-    app.app_config["api_settings"] = {"openai": {}}
     app.providers_models = {"openai": ["gpt-5", "model-b"]}
     committed = ConsoleSessionSettings(
         provider="openai", model="gpt-5", temperature=0.7
@@ -775,7 +779,10 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.replace_session_settings(session.id, committed)
+        # The chat has its own settings, so a saved default never converges
+        # it. A blank chat converges to the new default and its return is
+        # refused (ADR-095 D1; TASK-36534).
+        assert store.replace_session_settings(session.id, committed).has_user_work
         assert await console._open_console_settings() is True
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):

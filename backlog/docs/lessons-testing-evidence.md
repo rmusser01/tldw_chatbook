@@ -3460,6 +3460,8 @@ settings through their normal synchronization path. Include one deliberate
 save/reload in the test so a future cache invalidation cannot silently erase the
 fixture.
 
+**TASK-36385 follow-up, 2026-10-24: removing that mount write broke a test in the other direction.** `test_credential_round_trip_keeps_the_restored_edit_unsaved[model]` set `app.app_config["chat_defaults"]` in memory, on the same dict object as `load_settings()`'s cache. While Console's mount saved its default rail state, that write reloaded the cache from disk before the test began, so the chat took the file's defaults and the test's commit counted as user work. Without the write, the commit equalled the in-memory defaults, the chat stayed blank, and the stubbed Settings save converged it (ADR-095 D1), which refused the return. Its CI shard failed on both runs. Locally, the head failed 5 of 5 serial runs and the base passed 5 of 5. Saving the defaults through the writer made it pass at both. A test can depend on a config write it never makes; when you remove one, run the suites whose fixtures set `app.app_config` in memory, and assert the precondition the write used to create (here, `has_user_work`).
+
 ## A same-route rail press can invalidate the control a harness is about to press
 
 **TASK-613, 2026-08-28.** The Skills import integration helper pressed the Skills
