@@ -11381,30 +11381,17 @@ class ChatScreen(BaseAppScreen):
         box: tuple[int, int] | None = None,
         prerendered: "CharacterAvatarPrerender | None" = None,
     ) -> Widget:
-        """Build a fresh avatar widget from the cached spec (data, not a widget).
+        """Build a disposable avatar from the controller's immutable spec.
 
-        `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
-        `_refresh_active_character_avatar_if_scope_changed`). With no spec,
-        or a spec whose image decode failed/is pending, render a compact
-        text placeholder. The cache holds this spec (data), not a live
-        widget -- every (re)mount builds a fresh widget from it.
-
-        This method must NEVER raise: it is reached from
-        `_render_character_avatar_into_section`, which runs outside
-        `_refresh_active_character_avatar_if_scope_changed`'s try/except (and
-        that refresh itself must never raise into the 0.2s Console sync
-        poll). Any image-build failure -- graphics mount OR the rich_pixels
-        fallback -- degrades to the same text placeholder used for the
-        no-image case.
+        Animation/performance buffers belong to the widget; static images use
+        the existing render cache. Missing art degrades to a text placeholder.
+        Renderer and fit failures must not escape into Console sync.
 
         Args:
-            spec: The cached avatar spec, or None.
-            box: The rail's target cell box, if it has one.
-            prerendered: A renderable already built off the event loop
-                (TASK-22221). Used ONLY when its recorded image, resolved
-                box, and colour mode still match what this build resolves --
-                otherwise the mosaic is rebuilt inline, which is exactly what
-                a viewport that moved mid-render must fall back to.
+            spec: Current source, optional performance and speech reader.
+            box: Target cell box measured by the rail.
+            prerendered: Off-thread raster, reused only when its image, fitted
+                box and colour mode still match the live request.
         """
         if spec and spec.get("animation_bytes") and box != (0, 0):
             from types import SimpleNamespace
@@ -11434,6 +11421,8 @@ class ChatScreen(BaseAppScreen):
                 id="console-character-avatar-image",
                 decode_identity=spec.get("decode_identity"),
                 fallback_decode_identity=spec.get("animation_fallback_identity"),
+                performance=spec.get("performance"),
+                read_speech=spec.get("read_speech"),
             )
         if not spec or (
             spec.get("pil") is None

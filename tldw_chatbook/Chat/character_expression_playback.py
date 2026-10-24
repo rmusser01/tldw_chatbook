@@ -11,9 +11,15 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Utils.Utils import coerce_bool_flag
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        PortraitPerformanceRecord,
+    )
+    from tldw_chatbook.Chat.portrait_performance_state import PerformanceMotionValues
 
 MAX_PREPARATION_BYTES = 64 * 1024 * 1024
 _DECODE_LOCK = threading.Lock()
@@ -488,3 +494,113 @@ def _prepare_from_shared(
     finally:
         if reserved:
             _adjust_budget(-reserved)
+
+
+@dataclass
+class PreparedPerformance:
+    """Six aligned fitted poses, sharing existing preparation reservations."""
+
+    frames: tuple[Any, ...]
+    motion: PerformanceMotionValues
+    _preparations: tuple[PreparedExpression, ...]
+    fallback_reason: str = ""
+
+    def render_pose(self, index: int, offset_px: float) -> PreparedExpression:
+        """Allocate one fixed-canvas pose off-thread; caller owns the result."""
+        from PIL import Image
+
+        if (
+            not 0 <= index < len(self.frames)
+            or not math.isfinite(offset_px)
+            or abs(offset_px) > 1
+        ):
+            raise ValueError("portrait_performance_pose_invalid")
+        image = self.frames[index]
+        owned = image.width * image.height * 4
+        _adjust_budget(owned)
+        shifted = None
+        try:
+            shifted = image.transform(
+                image.size,
+                Image.Transform.AFFINE,
+                (1, 0, 0, 0, 1, -offset_px),
+                resample=Image.Resampling.BICUBIC,
+            )
+            return PreparedExpression((shifted,), (0,), 1, _owned_bytes=owned)
+        except BaseException:
+            if shifted is not None:
+                shifted.close()
+            _adjust_budget(-owned)
+            raise
+
+    def close(self) -> None:
+        """Release every prepared role once, after all render workers settle."""
+        for prepared in self._preparations:
+            prepared.close()
+        self._preparations = ()
+        self.frames = ()
+
+
+def prepare_performance(
+    record: PortraitPerformanceRecord, box: tuple[int, int]
+) -> PreparedPerformance:
+    """Fit six validated still roles off-thread using the shared decode budget."""
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        FRAME_ROLES,
+        MAX_FRAME_BYTES,
+        MAX_FRAME_PIXELS,
+        MAX_SET_BYTES,
+    )
+    from tldw_chatbook.Chat.portrait_performance_state import (
+        load_performance_motion_values,
+    )
+
+    if (
+        not record.active
+        or tuple(f.role for f in record.frames) != FRAME_ROLES
+        or sum(len(f.png) for f in record.frames) > MAX_SET_BYTES
+    ):
+        raise ValueError("portrait_performance_set_invalid")
+    motion = load_performance_motion_values()
+    prepared = []
+    try:
+        for frame in record.frames:
+            if (
+                len(frame.png) > MAX_FRAME_BYTES
+                or frame.width * frame.height > MAX_FRAME_PIXELS
+                or expression_image_size(frame.png) != (frame.width, frame.height)
+                or hashlib.sha256(frame.png).hexdigest() != frame.sha256
+            ):
+                raise ValueError("portrait_performance_frame_invalid")
+            item = prepare_expression(frame.png, box, animate=False)
+            prepared.append(item)
+            # Fit small art once so one idle pixel stays one canvas pixel.
+            ratio = min(box[0] / frame.width, box[1] / frame.height)
+            target = max(1, int(frame.width * ratio)), max(1, int(frame.height * ratio))
+            if item.frames[0].size != target:
+                from PIL import Image
+
+                owned = target[0] * target[1] * 4
+                _adjust_budget(owned)
+                resized = None
+                try:
+                    resized = item.frames[0].resize(target, Image.Resampling.LANCZOS)
+                    replacement = PreparedExpression(
+                        (resized,), (0,), 1, _owned_bytes=owned
+                    )
+                except BaseException:
+                    if resized is not None:
+                        resized.close()
+                    _adjust_budget(-owned)
+                    raise
+                item.close()
+                prepared[-1] = replacement
+        if len({p.frames[0].size for p in prepared}) != 1:
+            raise ValueError("portrait_performance_geometry_mismatch")
+        return PreparedPerformance(
+            tuple(p.frames[0] for p in prepared), motion, tuple(prepared)
+        )
+    except BaseException:
+        for item in prepared:
+            item.close()
+        raise

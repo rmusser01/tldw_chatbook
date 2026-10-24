@@ -521,3 +521,9 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+
+/* Living portraits: visible-time motion within a fixed fitted canvas. */
+$ds-portrait-blink-min: 3s;
+$ds-portrait-blink-max: 7s;
+$ds-portrait-idle-cycle: 6s;
+$ds-portrait-idle-offset-px: 1;

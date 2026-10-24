@@ -78,9 +78,33 @@ permanent character deletion cascades through the parent and frames.
 
 These attachments are profile-local (ADR-242). Native full-profile SQLite backup
 and recovery schema admission include them; original artwork, character cards,
-Actor Packs, Chatbooks and sync formats are unchanged. Preparation/editor, speech
-observation and Console animation are later implementation units, not exposed by
-this storage API alone. See [ADR-242](../../backlog/decisions/242-console-radio-portrait-performance.md).
+Actor Packs, Chatbooks and sync formats are unchanged. The authoring editor remains
+a later unit. See [ADR-242](../../backlog/decisions/242-console-radio-portrait-performance.md).
+
+`prepare_performance` reuses existing per-image decode reservations to prepare six
+aligned fitted frames off-thread. Small artwork is fitted once, keeping idle offset
+in canvas pixels. Current/next pose images share the same 64 MiB active/in-flight
+budget; the existing independent shared-decode cap is unchanged. Failures close
+partial allocations and retain the selected poster rather than a different talking
+face. No pose decode, SQLite lookup or rail remount occurs on the frame timer.
+
+`PortraitPerformanceClock` keeps blink and idle timing independent of mouth pose.
+It reads packaged scalar motion tokens once during preparation: blink spacing
+3–7 s, hold `$ds-duration-fast`, six-second idle cycle and one-pixel offset inside
+a fixed canvas. Hidden time does not advance it. `CharacterExpressionAvatar`
+paints at most 30 fps, rejects stale speech and rechecks mouth qualification after
+slow rendering so an old loud frame cannot reopen after silence. Unmount waits
+for decode/render workers before releasing their input images.
+
+The Console matches the exact local profile/session/character owner and current
+canonical source before using a performance. Active revision, inactive tombstone
+or explicit absence participates in spec identity. Forced refresh workers have
+separate generations, so unchanged artwork keeps its mounted animation while late
+replaced work cannot paint. Manual selection wins; owned older-message replay uses
+its valid immutable mood and restores the current mood afterward. Missing historical
+art never borrows neutral talking frames. Static, Reduce motion, animations-off,
+reactions-off and avatar visibility preserve their existing rules. The image viewer
+copies the current fitted canvas without acquiring a timer.
 
 ## Failure behaviors
 

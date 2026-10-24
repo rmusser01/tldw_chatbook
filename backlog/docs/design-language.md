@@ -89,7 +89,11 @@ make intent visible:
 
 `$ds-duration-fast: 0.2s` (hover feedback), `$ds-duration-medium: 0.3s`
 (panel/visibility changes), `$ds-duration-slow: 0.5s` (large layout shifts
-only). No other durations in new UI.
+only). Living portraits use `$ds-portrait-blink-min: 3s`,
+`$ds-portrait-blink-max: 7s`, `$ds-portrait-idle-cycle: 6s` and
+`$ds-portrait-idle-offset-px: 1`; blink hold reuses `$ds-duration-fast`.
+These values describe motion inside a fixed image canvas, never rail geometry.
+Other new motion durations must be added to this language first.
 
 ### 2.5 Opacity and the disabled state
 

@@ -38,3 +38,32 @@ retirement epoch on termination. Retain that retirement marker for duplicate
 cleanup; in-flight poses retain their older epoch. Serialize non-realtime analysis
 and metadata release, while keeping Stop independent of the publisher lock. Test
 the equal-timestamp race with barriers, rather than relying on elapsed time.
+
+## A prepared loud frame can outlive its speech sample (TASK-36546, 2026-10-23)
+
+**Incident.** A barrier-held mosaic render started while the owned mouth was open.
+After the channel changed to silence, the old render completed and painted blue
+(open) pixels over the resting portrait. Selecting the right role at timer entry
+was insufficient; slow rendering created another publication boundary.
+
+**What to do.** Recheck source/context and the current qualified mouth immediately
+before adopting rendered pixels. Only record a pose as displayed when the paint
+actually commits. Keep current/next images reserved until their render workers
+finish, then close discarded results. The TASK-36546 barrier regression verifies
+actual fitted pixels, not only the earlier role selection.
+
+## Reused Console fixtures need their defining constructor namespace (TASK-36546, 2026-10-23)
+
+**Incident.** Importing the existing mounted avatar fixture into the performance
+test initially failed with an uncaptured-runtime refusal. The ownership fixture
+looked at the importing module, while the real app constructor ran in the fixture's
+defining module. An automatic unused-import fix also removed its explicit ownership
+fixture import, making a later standalone run fail before the behavioral assertion.
+
+**What to do.** Import fixture dependencies explicitly with their pytest re-export
+noqa, and expose the reused fixture's defining namespace through the ownership
+helper's existing `_character_screen` seam. Keep its bootstrap profile convention.
+Do not reset runtime or recovery registries to conceal the refusal. The new
+performance and existing geometry files then run independently with actual owner
+retirement. Under NO_COLOR, compare shade glyphs instead of absent background
+colours; a HEAD-source probe reproduced the old colour-only assertion failure.
