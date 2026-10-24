@@ -334,6 +334,10 @@ ADMISSION_TARGETS = (
     "Tests/Notes/test_notes_sync_version_only_move.py",
     "Tests/Notes/test_notes_sync_resave_window.py",
     "Tests/Notes/test_notes_sync_attention_fence.py",
+    # TASK-34000.16 (P1-C final fix round, I-D ruling): the refused-file
+    # data-integrity pins (identity-first rename, no deletion review for a
+    # corrupted bound file, activation refused before any mutation).
+    "Tests/Notes/test_notes_sync_refused_files_integrity.py",
     "Tests/Agents/test_first_request_window_honest_plan.py",
     "Tests/Chat/test_console_capacity_refusal_copy.py",
     # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites.
@@ -517,6 +521,7 @@ NOTES_SYNC_REAL_STACK_TARGETS = (
     "Tests/Notes/test_notes_sync_version_only_move.py",
     "Tests/Notes/test_notes_sync_resave_window.py",
     "Tests/Notes/test_notes_sync_attention_fence.py",
+    "Tests/Notes/test_notes_sync_refused_files_integrity.py",
 )
 HEAVY_JOB_KEYS = {
     "core-tests",
