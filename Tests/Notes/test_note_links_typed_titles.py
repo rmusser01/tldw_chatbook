@@ -23,6 +23,12 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 
+# The real CharactersRAGDB opens through the profile bootstrap; outside a
+# kept profile it raises RecoveryRequired(raw_source_selection_changed).
+# PR #3234's PR Fast Lane failed exactly that way -- the same marker the
+# FAST_LANE chatbook round trip carries (test_chatbook_keywords_round_trip).
+pytestmark = pytest.mark.bootstrap_profile
+
 USER_ID = "typed-link-user"
 LISBON = "Trip planning: Lisbon"
 TYPED = "See [[Trip planning: Lisbon]] for the itinerary."
