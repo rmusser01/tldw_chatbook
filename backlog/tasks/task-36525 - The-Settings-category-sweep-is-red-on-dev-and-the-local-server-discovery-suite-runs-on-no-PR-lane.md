@@ -1,0 +1,36 @@
+---
+id: TASK-36525
+title: The Settings category sweep is red on dev, and the local server discovery suite runs on no PR lane
+status: To Do
+created_date: 2026-10-24 00:26
+labels:
+- follow-up
+- tests
+- settings
+priority: medium
+references:
+- Tests/UI/test_settings_category_sweep.py
+- Tests/UI/test_settings_theme_picker_screen.py
+- Tests/Chat/test_local_server_discovery.py
+- .github/workflows/derived-artifacts.yml
+dependencies:
+- TASK-36381
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Found by TASK-36381's review (branch fu/h-settingsreds, 2026-10-23), checked on dev 5b5920b8e2.
+
+**The category sweep.** `Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus` fails at both sizes. It is not in the UI census, so no PR run reports it.
+- Run plainly, it fails in the call phase with `RecoveryRequired: raw_source_selection_changed` (`raw_participants.py:307`). This is the trap TASK-36381 explains: the test builds app config on the per-test path.
+- Under a temporary `@private_profile_test` (since reverted), it fails on a stale expectation: "Expected focus on settings-category-theme, got ThemeOptionList(id='settings-theme-list') at (80, 24)". A rail click on Theme focuses the theme list on purpose; `test_settings_theme_picker_screen.py::test_rail_click_and_open_theme_focus_the_theme_list` pins that.
+
+**Local server discovery.** `Tests/Chat/test_local_server_discovery.py` (59 tests) runs on no PR lane. The UI census takes only Tests/UI. `derived-artifacts.yml` has a lane with a Tests/Chat target list, and this file is not on it. TASK-36381 fixes the file's one red node (`test_probe_handles_recursive_json_as_bounded_failure`, still red on dev) but leaves the lane, because that burn-down could not edit the workflow.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 test_every_settings_category_renders_and_restores_focus passes on dev at both sizes, and its Theme expectation matches the Theme picker's focus rule
+- [ ] #2 test_settings_category_sweep.py and Tests/Chat/test_local_server_discovery.py run on a PR-required lane, with a matching Tests/CI lane-contract pin where the lane has one
+<!-- AC:END -->
