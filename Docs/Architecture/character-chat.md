@@ -90,7 +90,12 @@ resets to rest-only before dispatch; candidate identity, source, settings revisi
 config fence late work. Manual/composed readiness uses `draft.can_apply`. The actual
 `PortraitCompositionReview` consumes immutable original frame PNGs for a labeled 2×3
 matrix and common native eye/mouth crops, supports keyboard/numeric pan, and retires
-exact displayed owners even beneath another modal. Its output raster is capped at
+exact displayed owners even beneath another modal. While either authoring dialog is
+open, the existing context poll coalesces one owned off-thread source/settings-revision
+check. Persisted changes retire the draft/dialogs; a read failure closes the review but
+keeps draft frames. Captured epochs/handles reject queued or late old checks, own Save
+is fenced, and screen close drains native validation before releasing its owner.
+Its output raster is capped at
 1 megapixel and native rendering introduces no fitted-thumbnail resampling. Ordinary
 Console animation and speech presentation ownership are unchanged.
 

@@ -249,7 +249,10 @@ original frame PNGs. Arrow keys or h/j/k/l pan while the image has focus; the la
 numeric X/Y offsets allow precise navigation. Large regions use bounded crops instead
 of a six-canvas montage. Terminal glyph colors are approximations; review data itself
 uses original RGBA pixels. Close returns to the same draft with no generation, audio,
-Save or Apply. Review has no mandatory acknowledgement checkbox.
+Save or Apply. Review has no mandatory acknowledgement checkbox. If another editor changes the saved
+source or regions, the open review closes and clears its old artwork; Prepare again
+to review the new state. A temporarily unavailable check closes the dialog while
+retaining your draft.
 
 Exact pairing does not guarantee convincing eyelids, lips or registration within a
 patch. Inspect for seams and alignment; retry a component or adjust regions as needed.

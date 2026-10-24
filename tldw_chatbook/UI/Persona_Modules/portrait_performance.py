@@ -63,6 +63,7 @@ class PortraitPerformanceController:
         self._base_pixel_sha256 = ""
         self._region_modal = None
         self._pair_review = None
+        self._review_check_task: asyncio.Task | None = None
 
     def _capture(self) -> _Authority:
         screen = self._screen()
@@ -122,8 +123,70 @@ class PortraitPerformanceController:
         return editor.query_one(PortraitPerformanceEditor) if editor else None
 
     def _check_context(self) -> None:
-        if self._authority is not None and not self._current(self._authority):
+        authority = self._authority
+        if authority is None:
+            return
+        if not self._current(authority):
             self.discard()
+            return
+        if (
+            not self._saving
+            and (self._region_modal is not None or self._pair_review is not None)
+            and (self._review_check_task is None or self._review_check_task.done())
+        ):
+            self._review_check_task = asyncio.create_task(
+                self._check_saved_review(
+                    authority,
+                    self.draft,
+                    self._epoch,
+                    self._regions_revision,
+                    (self._region_modal, self._pair_review),
+                )
+            )
+
+    async def _check_saved_review(
+        self, authority, draft, epoch, revision, dialogs
+    ) -> None:
+        """Validate open dialogs off-thread; a late old read cannot retire a new owner."""
+        if (
+            epoch != self._epoch
+            or self.draft is not draft
+            or not self._current(authority)
+        ):
+            return
+        requested, local = self._source_request, self._local_authority
+
+        def read_revision():
+            self._verify_source(authority, draft, requested, local)
+            row = authority.db.execute_query(
+                "SELECT revision FROM character_portrait_regions WHERE character_id=? AND expression_key=?",
+                (draft.source.character_id, draft.source.expression_key),
+            ).fetchone()
+            return row[0] if row is not None else 0
+
+        outcome = await self._native(authority, read_revision)
+        if (
+            outcome.cancellation
+            or epoch != self._epoch
+            or self.draft is not draft
+            or self._regions_revision != revision
+            or dialogs != (self._region_modal, self._pair_review)
+            or self._saving
+            or not self._current(authority)
+        ):
+            return
+        if isinstance(outcome.error, PerformanceConflict) or (
+            outcome.completed and outcome.error is None and outcome.value != revision
+        ):
+            self.discard()
+        elif outcome.error:
+            self._retire_pair_review()
+            if self._region_modal is not None:
+                self._region_modal.retire()
+                self._region_modal = None
+            self._view().status(
+                "Review retired: saved artwork could not be checked. Draft retained; reopen to retry."
+            )
 
     def discard(self) -> None:
         """Fence in-flight work before dropping any draft or preview bytes."""
@@ -658,5 +721,10 @@ class PortraitPerformanceController:
     async def close(self) -> None:
         """Drain any actual native callback before retiring this screen owner."""
         self.discard()
-        if self._task is not None and self._task is not asyncio.current_task():
-            await asyncio.gather(self._task, return_exceptions=True)
+        tasks = tuple(
+            task
+            for task in (self._task, self._review_check_task)
+            if task is not None and task is not asyncio.current_task()
+        )
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

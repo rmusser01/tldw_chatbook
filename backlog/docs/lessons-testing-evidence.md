@@ -21734,3 +21734,15 @@ During the MCP pending-file-read repair, a guard used `panel.is_mounted` to auth
 The repair checks current attachment and pruning together with owner request/editor revisions. Both direct-retirement controls and ordinary/Cancel controls pass. When qualifying an asynchronous widget publication, exercise removal through the real owner as well as the Cancel gesture; an ever-mounted flag cannot establish current publication authority.
 
 **TASK-36698 follow-up.** A final Image Gen review found a second interval: native removal marks the screen `_pruning` before its own Unmount cancels workers, while child teardown can already detach result widgets. A deterministic real-worker regression held a status child's Unmount, witnessed the screen still attached and worker uncanceled, and released queued success/error publication. Both variants changed the retired status before the shared pruning guard; both pass afterward. This is a contained status/log defect, not a demonstrated app crash. Test publication during removal as well as after detachment; current attachment alone does not exclude native teardown.
+
+## Capture queued coroutine ownership before scheduling (TASK-36554 correction, 2026-10-24)
+
+**Incident.** The portrait dialog validation fix first read its epoch/draft when the
+coroutine started. A context check followed immediately by Cancel let that queued
+coroutine adopt the discarded epoch and empty draft; its read-error path overwrote
+the cancellation status. A mounted regression caught this even though held-running
+worker tests passed.
+
+**What to do.** Capture owner arguments before `create_task` and validate them before
+native work as well as after awaits. Exercise the no-yield schedule-then-Cancel case;
+holding an already-running callback covers a different lifetime boundary.

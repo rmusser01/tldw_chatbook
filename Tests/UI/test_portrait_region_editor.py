@@ -510,3 +510,228 @@ def test_preview_budget_refusal_retains_foreign_reservation():
         assert playback.preparation_bytes() == before + held
     finally:
         playback._adjust_budget(-held)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action,change,covered",
+    [
+        ("review", "regions", False),
+        ("review", "source", False),
+        ("regions", "regions", False),
+        ("regions", "source", False),
+        ("review", "regions", True),
+    ],
+)
+async def test_open_dialog_retires_after_another_editor_changes_saved_artwork(
+    personas_editor_with_saved_character, action, change, covered
+):
+    import asyncio
+
+    from textual.pilot import Pilot
+    from textual.screen import ModalScreen
+
+    from Tests.Character_Chat.test_portrait_compositing import core, png
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Widgets.Persona_Widgets.portrait_composition_review import (
+        PortraitCompositionReview,
+    )
+
+    app, screen, db, cid, _, controller, recipe = await prepare(
+        personas_editor_with_saved_character
+    )
+    source = controller.draft.source
+    assert await controller._save_regions(
+        controller._authority, controller.draft, controller._epoch, recipe
+    )
+    base, _, components = scene()
+    frames = core().assemble_components(base, recipe, components)
+    db.apply_character_portrait_performance(
+        source,
+        frames,
+        expected_revision=0,
+        composition_recipe=recipe,
+        expected_regions_revision=1,
+    )
+    controller.discard()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    before = db.get_character_portrait_performance(
+        character_id=cid, expression_key="neutral"
+    )
+    kind = (
+        PortraitCompositionReview
+        if action == "review"
+        else region_ui().PortraitRegionEditor
+    )
+    task = asyncio.create_task(
+        screen.run_worker(
+            controller.handle(CharacterPerformanceRequested(action))
+        ).wait()
+    )
+    other = None
+    cover = None
+    try:
+        async with asyncio.timeout(5):
+            while not isinstance(app.screen, kind):
+                await Pilot(app).pause()
+        modal = app.screen
+        await Pilot(app).pause()
+        if action == "review":
+            await modal.wait_for_render()
+            assert modal._raster is not None
+        canvas = modal.query_one(
+            "#portrait-pairs-canvas"
+            if action == "review"
+            else "#portrait-regions-source",
+            Static,
+        )
+        if covered:
+            cover = ModalScreen()
+            await app.push_screen(cover)
+        other = CharactersRAGDB(db.db_path, "other-editor")
+        if change == "regions":
+            assert (
+                other.save_character_portrait_regions(
+                    source,
+                    replace(
+                        recipe,
+                        mouth=replace(recipe.mouth, width=recipe.mouth.width - 1),
+                    ),
+                    expected_revision=1,
+                )
+                == 2
+            )
+        else:
+            card = other.get_character_card_by_id(cid)
+            assert other.update_character_card(
+                cid, {"image": png((0, 0, 255, 255))}, card["version"]
+            )
+        async with asyncio.timeout(4):
+            while not modal._retired:
+                await Pilot(app).pause(0.05)
+        assert controller.draft is None
+        if action == "review":
+            assert modal._raster is None
+            assert str(canvas.renderable) == "Review retired."
+        else:
+            assert modal._transform is None
+            assert str(canvas.renderable) == "Region editor retired."
+        assert (
+            db.get_character_portrait_performance(
+                character_id=cid, expression_key="neutral"
+            )
+            == before
+        )
+        if cover:
+            assert app.screen is cover
+            cover.dismiss(None)
+            await Pilot(app).pause()
+        await task
+        assert modal not in app.screen_stack
+    finally:
+        if cover is not None and app.screen is cover:
+            cover.dismiss(None)
+        controller.discard()
+        await task
+        if other is not None:
+            other.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["replacement", "close", "read_error"])
+async def test_dialog_validation_is_coalesced_owned_and_drained(
+    personas_editor_with_saved_character, monkeypatch, change
+):
+    import asyncio
+    from threading import Event
+
+    from textual.pilot import Pilot
+
+    app, screen, _, _, _, controller, _ = await prepare(
+        personas_editor_with_saved_character
+    )
+    draft = controller.draft
+    entered, release = Event(), Event()
+    original = controller._verify_source
+    calls = []
+
+    def held(*args):
+        calls.append(args)
+        entered.set()
+        assert release.wait(5)
+        if change == "read_error":
+            raise OSError("unavailable native read")
+        return original(*args)
+
+    monkeypatch.setattr(controller, "_verify_source", held)
+    action = asyncio.create_task(
+        screen.run_worker(
+            controller.handle(CharacterPerformanceRequested("regions"))
+        ).wait()
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        for _ in range(20):
+            controller._check_context()
+        assert len(calls) == 1
+        check = controller._review_check_task
+        if change == "replacement":
+            controller.discard()
+            await action
+            assert await controller.handle(CharacterPerformanceRequested("prepare"))
+            replacement = controller.draft
+            release.set()
+            await check
+            assert controller.draft is replacement and replacement is not draft
+        elif change == "close":
+            closing = asyncio.create_task(controller.close())
+            await Pilot(app).pause(0.05)
+            assert not closing.done()
+            release.set()
+            await closing
+            assert check.done() and controller.draft is None
+        else:
+            modal = app.screen
+            release.set()
+            await check
+            await action
+            assert modal._retired and controller.draft is draft
+    finally:
+        release.set()
+        await controller.close()
+        await action
+
+
+@pytest.mark.asyncio
+async def test_queued_dialog_validation_cannot_overwrite_discard_status(
+    personas_editor_with_saved_character,
+):
+    import asyncio
+
+    from textual.pilot import Pilot
+
+    app, screen, _, _, view, controller, _ = await prepare(
+        personas_editor_with_saved_character
+    )
+    action = asyncio.create_task(
+        screen.run_worker(
+            controller.handle(CharacterPerformanceRequested("regions"))
+        ).wait()
+    )
+    try:
+        async with asyncio.timeout(3):
+            while not isinstance(app.screen, region_ui().PortraitRegionEditor):
+                await Pilot(app).pause()
+        pending = controller._review_check_task
+        if pending is not None:
+            await pending
+        controller._check_context()
+        check = controller._review_check_task
+        controller.discard()
+        status = view.query_one("#portrait-performance-status", Static)
+        before = status.renderable
+        await check
+        assert status.renderable == before
+    finally:
+        await controller.close()
+        await action
