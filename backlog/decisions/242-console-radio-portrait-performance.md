@@ -1,6 +1,6 @@
 # ADR-242: Console radio portraits and character performance attachments
 
-Status: Accepted (design only; revised spec acknowledged 2026-10-23)
+Status: Accepted; generation/region authoring partially Superseded by ADR-243 (2026-10-24). Other decisions remain Accepted.
 Date: 2026-10-23
 Related Task: [TASK-36509](../tasks/task-36509%20-%20Design-Console-radio-portraits-with-audio-reactive-character-performance.md)
 Spec: [Console radio portraits](../../Docs/superpowers/specs/2026-10-23-console-radio-portraits-design.md)
@@ -8,6 +8,11 @@ Review: [Source-anchored design review](../../Docs/superpowers/reviews/2026-10-2
 Implementation review: [Three corrections and revised-plan review](../../Docs/superpowers/reviews/2026-10-23-console-radio-portraits-implementation-review.md)
 Plan: [Implementation and atomic tasks](../../Docs/superpowers/plans/2026-10-23-console-radio-portraits-implementation.md)
 Supersedes: N/A
+
+Generation follow-up: [ADR-243](243-source-bound-portrait-compositing.md) replaces
+six independent edits with three source-bound component edits and local assembly.
+It also adds explicit reusable region settings/provenance. The six-frame playback,
+speech, source ownership and portable-export boundaries here remain in force.
 
 ## Context
 

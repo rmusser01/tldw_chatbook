@@ -1,5 +1,11 @@
 # Console Radio Portraits Implementation Plan
 
+> Historical completed plan for TASK-36542–36550. Its six-request generation and
+> per-slot paid retry instructions describe the original implementation, superseded
+> for new work by the [2026-10-24 compositing plan](2026-10-24-portrait-compositing-implementation.md)
+> and [ADR-243](../../../backlog/decisions/243-source-bound-portrait-compositing.md).
+> Preserve completed task evidence; execute the five follow-up tasks for the new flow.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execution: inline, sequential atomic tasks with self-review before each next unit (authorized 2026-10-23).
 
 **Goal:** Give Console characters reviewed six-pose artwork, silence-aware TTS mouth movement, independent blinking/idle motion, and stable radio-screen framing.

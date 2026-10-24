@@ -208,3 +208,5 @@ Do not reuse numbers.
 
 | [ADR-227: Native Console goal runs](227-native-console-goal-runs.md) | Accepted | Bounded native goal iterations, evidence, storage and current-dev runtime integration; preserves source ADR-141 provenance. |
 | [ADR-240: Retire the MCP destination; Settings hosts the Tools & MCP hub](240-mcp-destination-retirement-tools-hub-in-settings.md) | Accepted | Re-home the four-mode MCP workbench intact as a Settings category (ADR-172 retirement template); `mcp`/`tools_settings` alias Settings and ctrl+9 survives as a compatibility deep-link; amends ADR-015 (14 -> 13 destinations). |
+
+| [ADR-243: Source-bound portrait compositing](243-source-bound-portrait-compositing.md) | Accepted for planning | Reusable manual expression regions, three component edits, exact local six-pose assembly and profile-local provenance; amends ADR-242 generation/authoring. |
