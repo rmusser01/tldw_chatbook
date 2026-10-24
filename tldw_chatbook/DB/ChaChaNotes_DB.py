@@ -8140,9 +8140,8 @@ DELETE FROM keywords
                 if changed.rowcount != 1:
                     raise SchemaError("V83→V84 version update failed")
         except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
-            raise SchemaError(
-                f"Migration V83→V84 failed: {type(exc).__name__}"
-            ) from exc
+            raise SchemaError(f"Migration V83→V84 failed: {type(exc).__name__}") from exc
+
 
     def _migrate_from_v82_to_v83(self, conn: sqlite3.Connection) -> None:
         """Install source-bound local portrait sets without sync triggers."""
@@ -8164,9 +8163,7 @@ DELETE FROM keywords
                 if changed.rowcount != 1:
                     raise SchemaError("V82→V83 version update failed")
         except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
-            raise SchemaError(
-                f"Migration V82→V83 failed: {type(exc).__name__}"
-            ) from exc
+            raise SchemaError(f"Migration V82→V83 failed: {type(exc).__name__}") from exc
 
     def _migrate_from_v81_to_v82(self, conn: sqlite3.Connection) -> None:
         """Permit immutable sibling ties while preserving one root per Canvas."""
@@ -8586,6 +8583,7 @@ DELETE FROM keywords
                     80: self._migrate_from_v80_to_v81,
                     81: self._migrate_from_v81_to_v82,
                     82: self._migrate_from_v82_to_v83,
+                    83: self._migrate_from_v83_to_v84,
                 }
 
                 if current_db_version == 0:

@@ -10,7 +10,6 @@ from textual.widgets import Button, Select, Static
 
 from Tests.Character_Chat.test_portrait_compositing import core, scene
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -119,7 +118,7 @@ def test_review_sequentially_closes_sources_and_honors_shared_budget(monkeypatch
         playback._adjust_budget(-held)
 
 
-class ReviewApp(ThemeVariableDefaultsMixin, ConsolidatedCSSApp):
+class ReviewApp(ConsolidatedCSSApp):
     CSS_PATH: ClassVar = [BUNDLED_STYLESHEET]
 
 

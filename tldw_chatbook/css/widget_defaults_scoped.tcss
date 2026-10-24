@@ -2725,10 +2725,10 @@ WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions Button.workspace
 
 
 
-    PortraitRadio #console-character-voice-status { color: $text-muted; }
-    PortraitRadio #console-character-voice-status.voice-failed { color: $text-error; }
-    PortraitRadio #console-character-voice-meter { color: $primary; }
-    PortraitRadio #console-character-voice-meter.voice-suppressed { visibility: hidden; }
+PortraitRadio #console-character-voice-status { color: $text-muted; }
+PortraitRadio #console-character-voice-status.voice-failed { color: $text-error; }
+PortraitRadio #console-character-voice-meter { color: $primary; }
+PortraitRadio #console-character-voice-meter.voice-suppressed { visibility: hidden; }
 
 /* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
 

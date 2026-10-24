@@ -1,4 +1,4 @@
-"""A real v82 attachment survives the executed next-version migration."""
+"""A real v83 attachment survives the executed next-version migration."""
 
 import sqlite3
 
@@ -9,14 +9,14 @@ from Tests.Character_Chat.test_portrait_compositing import scene
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 
 
-def test_v82_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path):
+def test_v83_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path):
     base, _, components = scene()
     from Tests.Character_Chat.test_portrait_compositing import core
 
     _, recipe, _ = scene()
     frames = core().assemble_components(base, recipe, components)
-    path = tmp_path / "v82.db"
-    with chachanotes_db_at_version(path, 82) as old:
+    path = tmp_path / "v83.db"
+    with chachanotes_db_at_version(path, 83) as old:
         cid = old.add_character_card({"name": "Old set", "image": base})
         import hashlib
 
@@ -32,7 +32,7 @@ def test_v82_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
             )
     db = CharactersRAGDB(path, "upgraded")
     try:
-        assert db._get_db_version(db.get_connection()) == 83
+        assert db._get_db_version(db.get_connection()) == 84
         record = db.get_character_portrait_performance(
             character_id=cid, expression_key="neutral"
         )
@@ -48,7 +48,7 @@ def test_v82_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
             is None
         )
         assert db.execute_query("PRAGMA foreign_key_check").fetchall() == []
-        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V83_SCHEMAS
+        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V84_SCHEMAS
 
         actual = tuple(
             row[0]
@@ -56,7 +56,7 @@ def test_v82_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
-        assert actual in CHACHANOTES_V83_SCHEMAS
+        assert actual in CHACHANOTES_V84_SCHEMAS
         assert (
             db.execute_query(
                 "SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name='character_portrait_regions'"
@@ -71,13 +71,13 @@ def test_region_migration_failure_rolls_back_added_column_table_and_version(
     tmp_path, monkeypatch
 ):
     path = tmp_path / "failed.db"
-    with chachanotes_db_at_version(path, 82):
+    with chachanotes_db_at_version(path, 83):
         pass
     original = CharactersRAGDB._execute_migration_statements
 
     def fail(self, cursor, sql, label):
         original(self, cursor, sql, label)
-        if label == "V82→V83":
+        if label == "V83→V84":
             raise sqlite3.OperationalError("injected migration failure")
 
     monkeypatch.setattr(CharactersRAGDB, "_execute_migration_statements", fail)
@@ -88,7 +88,7 @@ def test_region_migration_failure_rolls_back_added_column_table_and_version(
             conn.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
-            == 82
+            == 83
         )
         assert not conn.execute(
             "SELECT name FROM sqlite_schema WHERE name='character_portrait_regions'"

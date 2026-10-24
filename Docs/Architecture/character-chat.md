@@ -107,7 +107,7 @@ Canonical source identities use the actual resolved expression, source digest an
 immutable asset or legacy-image IDs; current and historical resolution of one
 asset have the same identity.
 
-Schema 82 adds `character_portrait_performances` and
+Schema 83 adds `character_portrait_performances` and
 `character_portrait_performance_frames`. `CharactersRAGDB` Apply/get/Remove APIs
 publish all six poses atomically, revalidate source selection and expected revision,
 and retain increasing inactive revision tombstones after Remove. Savepoints also
@@ -116,7 +116,7 @@ leaves the old record available for explicit revision-checked replacement; consu
 must match its source before rendering it. Soft deletion preserves rows, while
 permanent character deletion cascades through the parent and frames.
 
-Schema 83 (ADR-243) adds `character_portrait_regions`, one source-bound recipe per
+Schema 84 (ADR-243) adds `character_portrait_regions`, one source-bound recipe per
 character/expression, and nullable `composition_recipe_json` on the performance parent.
 `DB/portrait_region_settings.py` validates bounded canonical recipe JSON and prepared
 RGBA identity, independently saves regions under source/settings CAS, and atomically
@@ -129,7 +129,7 @@ recipes read as absent, leaving ordinary six-frame artwork usable; component rec
 requires the compositor's complete pixel invariant check. No raw provider edit or
 finished-component sidecar is stored. Regions follow character soft-delete/restore and
 permanent-delete cascades. The installed recovery catalog retains historical schemas
-and has the fixed v82→v83 step; native full-profile restore preserves both contracts.
+and has the fixed v82→v83→v84 portrait steps after the v81→v82 Canvas step; native full-profile restore preserves both contracts.
 
 These attachments are profile-local (ADR-242/243). Native full-profile SQLite backup
 and recovery schema admission include them; original artwork, character cards,

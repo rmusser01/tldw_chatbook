@@ -124,3 +124,16 @@ real worker/render readiness barriers and the original timeouts.
 zero-request backend inventory and verification counts. Earlier captures/results above
 remain historical evidence rather than being relabeled as the corrected build. There
 is still no live reference-image adapter execution or new hardware audio evidence.
+
+
+## PR #3244 current-dev integration
+
+The feature was rebased onto dev `2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4`.
+Canvas retains v81→v82; portrait storage and regions now occupy v82→v83 and v83→v84.
+Earlier evidence above keeps its original build/schema label. Fresh results under
+`rebase/` retain the installed authoring/Console and original native F9 restore/edit
+journeys, both wheels' exact 50-file/three-migration identities, targeted counts,
+failed-node comparison against unmodified dev and the unchanged zero-request live
+inventory. See [the integration review](../../../reviews/2026-10-24-portrait-compositing-dev-rebase.md)
+for the baseline UI/Actor Pack failures and initial native-child timeout. TASK-36555
+AC5 remains open; this does not add live-provider/TTS/hardware or full-suite evidence.

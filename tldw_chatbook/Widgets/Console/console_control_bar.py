@@ -331,7 +331,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 _summary_line(self.state),
-                markup=False,
                 id="console-control-status-line",
                 classes="console-control-summary-line",
                 markup=False,
@@ -340,7 +339,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 self.state.provider_label,
-                markup=False,
                 id="console-provider-label",
                 classes="console-control-label console-hidden-control",
                 markup=False,
@@ -349,7 +347,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 self.state.model_label,
-                markup=False,
                 id="console-model-label",
                 classes="console-control-label console-hidden-control",
                 markup=False,
@@ -358,7 +355,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 self.state.assistant_label,
-                markup=False,
                 id="console-assistant-label",
                 classes="console-control-label console-hidden-control",
                 markup=False,
@@ -367,7 +363,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 self.state.rag_label,
-                markup=False,
                 id="console-rag-label",
                 classes="console-control-label console-hidden-control",
                 markup=False,
@@ -376,7 +371,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 self.state.sources_label,
-                markup=False,
                 id="console-sources-label",
                 classes="console-control-label console-hidden-control",
                 markup=False,
@@ -385,7 +379,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 self.state.tools_label,
-                markup=False,
                 id="console-tools-label",
                 classes="console-control-label console-hidden-control",
                 markup=False,
@@ -394,7 +387,6 @@ class ConsoleControlBar(Vertical):
         yield self._compatibility_layout_widget(
             Static(
                 self.state.approvals_label,
-                markup=False,
                 id="console-approvals-label",
                 classes="console-control-label console-hidden-control",
                 markup=False,

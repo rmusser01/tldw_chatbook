@@ -468,3 +468,18 @@ Existing ADR-243 applies; these restore approved contracts and add no architectu
 - [x] Final installed restore/edit verification and combined corrections review are recorded; existing live-adapter AC5 remains open independently.
 
 See [corrections review](../reviews/2026-10-24-portrait-compositing-corrections-review.md).
+
+
+## PR #3244 current-dev integration (2026-10-24)
+
+ADR required: no
+ADR path: N/A — direct integration of existing [ADR-242](../../../backlog/decisions/242-console-radio-portrait-performance.md) and [ADR-243](../../../backlog/decisions/243-source-bound-portrait-compositing.md).
+Reason: Preserve the approved storage, recovery, generation and speech contracts while rebasing onto dev; migration numbering follows the already-shipped Canvas predecessor.
+
+1. Replay the 24 feature commits onto fetched dev `2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4`, preserving its Canvas v81→v82 step, current Personas helpers and markup handling.
+2. Place portrait performance storage at v82→v83 and regions/provenance at v83→v84. Update exact installed recovery catalogs/steps, migration fixtures and the Canvas current-version assertion. Keep original historical QA evidence labeled with its original build.
+3. Rebuild CSS from source modules; adapt the pair-viewer test to dev's existing theme-aware consolidated App. Compile merged Python and check duplicate definitions and upstream-only methods.
+4. Run focused schema/recovery, core/export/packaging, speech, portrait authoring, Console/adjacent UI, probe and CSS gates; run fresh installed authoring and native F9 restore/edit journeys. Reproduce any unrelated failure against unmodified fetched dev.
+5. Retain integration evidence and review, update PR #3244, then push with an explicit lease against the previously published head. Keep the PR draft and TASK-36555 AC5 open; no live provider request or full-suite claim.
+
+Results are recorded in `Docs/superpowers/reviews/2026-10-24-portrait-compositing-dev-rebase.md` and the adjacent QA `rebase/` evidence.

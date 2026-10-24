@@ -127,7 +127,7 @@ def test_v81_upgrade_preserves_rows_and_rolls_back_index_rewrite(
     upgraded = CharactersRAGDB(path, client_id="upgraded")
     fresh = CharactersRAGDB(tmp_path / "fresh.sqlite", client_id="fresh")
     try:
-        assert _version(path) == 82
+        assert _version(path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert _canvas_schema(upgraded.get_connection()) == _canvas_schema(
             fresh.get_connection()
         )

@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/243-source-bound-portrait-compositing.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 21:55
+updated_date: 2026-10-24 22:58
 ---
 
 ## Description
@@ -84,4 +84,5 @@ Ruff/format; diff is clean. Combined corrections review found and fixed an addit
 queued-cancellation race; no further defect found. See the corrections review and
 QA corrections/ evidence. ADR-243 applies. AC8 satisfied; AC5 remains open, zero live
 requests, current default/only enabled backend SwarmUI unsupported by reference path.
+PR #3244 rebased onto dev 2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4. Preserved Canvas v81→v82; portrait storage now v82→v83 and regions/provenance v83→v84, with exact recovery lineage and migration dispatch. Updated current-schema fixtures and theme-aware pair-review harness; rebuilt CSS and retained dev markup protection. Feature/integration gates include 89 migration/recovery, 122 core/export/packaging, 323 speech, 80 authoring, 53 Console/adjacent, 10 probe, 13 CSS/token and 15 prompt passes (3 prompt cases overlap core), plus successful fresh installed authoring/Console and original native F9 restore/edit journeys. Native restore originally timed out in its child; a diagnostic run and original uninstrumented isolated run passed with unchanged timeouts. Both successful wheels match all 50 changed production files and the Canvas/portrait/region SQL chain. All 51 failed nodes in broader selected legacy UI/Actor Pack runs reproduce on unmodified dev; no branch-only failed node. No added diagnostics versus exact legacy lint baselines. See Docs/superpowers/reviews/2026-10-24-portrait-compositing-dev-rebase.md and QA rebase/ evidence. Existing ADR-242/243 apply; no new ADR. AC5 remains unchecked and status In Progress: fresh inventory still SwarmUI only, reference path unsupported, zero image requests and live_qualified=false. No full suite or new live image/TTS/hardware qualification.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

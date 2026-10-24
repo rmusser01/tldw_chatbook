@@ -466,7 +466,6 @@ class ModeStrip(Horizontal):
         # name), so markup is off; `update` in `_sync_mode_label` follows it.
         label = Static(
             mode.label,
-            markup=False,
             id=self._mode_id(mode),
             classes=mode.css_classes,
             markup=False,
