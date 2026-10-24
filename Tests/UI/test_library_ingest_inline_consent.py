@@ -280,6 +280,7 @@ def _stage_warned_pdf(screen: LibraryScreen, tmp_path) -> str:
     pdf.write_text("dummy")
     form = screen._ingest_state.form
     form.path = str(pdf)
+    form.preflight_path = str(pdf)  # (TASK-34000.20) a staged verdict names the path it describes
     form.preflight = _preflight(
         type_groups={"pdf": [str(pdf)]},
         warnings=[dict(_WARNING)],
@@ -292,6 +293,7 @@ def _stage_plain_file(screen: LibraryScreen, tmp_path) -> str:
     source = tmp_path / "file.txt"
     source.write_text("body")
     screen._ingest_state.form.path = str(source)
+    screen._ingest_state.form.preflight_path = str(source)
     screen._ingest_state.form.preflight = _preflight(
         type_groups={"generic": [str(source)]},
         total_files=1,
@@ -304,6 +306,7 @@ def _stage_external_parakeet_audio(screen: LibraryScreen, tmp_path) -> str:
     source.write_bytes(b"RIFF")
     form = screen._ingest_state.form
     form.path = str(source)
+    form.preflight_path = str(source)
     form.preflight = _preflight(
         type_groups={"audio_video": [str(source)]},
         total_files=1,
@@ -484,6 +487,7 @@ def test_identical_warning_text_with_changed_affected_count_rearms_consent(
     second.write_text("second")
     form = screen._ingest_state.form
     form.path = str(tmp_path)
+    form.preflight_path = str(tmp_path)
     form.preflight = _preflight(
         type_groups={"pdf": [str(first)], "generic": [str(second)]},
         warnings=[dict(_WARNING)],
@@ -530,6 +534,7 @@ def test_folder_preview_counts_distinct_active_files(tmp_path):
         path.write_text(path.stem)
         screen.app_instance.library_ingest_jobs.submit(source_path=str(path))
     screen._ingest_state.form.path = str(folder)
+    screen._ingest_state.form.preflight_path = str(folder)
     screen._ingest_state.form.preflight = _preflight(
         type_groups={"generic": [str(path) for path in paths]},
         total_files=2,
@@ -669,6 +674,7 @@ def test_late_refusal_fallback_folder_can_be_confirmed(tmp_path):
     hidden.write_text("body")
     job = screen.app_instance.library_ingest_jobs.submit(source_path=str(hidden))
     screen._ingest_state.form.path = str(folder)
+    screen._ingest_state.form.preflight_path = str(folder)
     screen._ingest_state.form.preflight = _preflight(
         type_groups={"generic": [str(child)]}, total_files=1
     )
@@ -757,6 +763,7 @@ def test_external_authoritative_fallback_second_preparation_queues_override(
         child.write_bytes(b"RIFF")
         submitted_source = str(folder)
         screen._ingest_state.form.path = submitted_source
+        screen._ingest_state.form.preflight_path = submitted_source
         screen._ingest_state.form.preflight = _preflight(
             type_groups={"audio_video": [str(child)]}, total_files=1
         )
@@ -1000,6 +1007,7 @@ def test_submit_without_warnings_is_a_single_press(tmp_path):
     screen = _minimal_library_screen()
     form = screen._ingest_state.form
     form.path = str(txt)
+    form.preflight_path = str(txt)
     form.preflight = _preflight(type_groups={"generic": [str(txt)]}, total_files=1)
 
     mock_app = MagicMock()
@@ -1024,6 +1032,7 @@ def test_submit_clears_the_stale_preflight_summary(tmp_path):
     screen = _minimal_library_screen()
     form = screen._ingest_state.form
     form.path = str(txt)
+    form.preflight_path = str(txt)
     form.title = "Some title"
     form.preflight = _preflight(type_groups={"generic": [str(txt)]}, total_files=1)
 

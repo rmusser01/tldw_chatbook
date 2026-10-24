@@ -1,9 +1,11 @@
 """App-level guards for Textual defects, composed into ``TextualAppGuards``.
 
-Three App mixins live here, and ``TldwCli`` carries them through the one
+Four App mixins live here, and ``TldwCli`` carries them through the one
 ``TextualAppGuards`` base: ``TextSelectionCrashGuard`` (task-14903, this
-docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class) and
-``UserInputTap`` (TASK-33620.15.3: keeps the idle heap re-freeze off typing).
+docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class),
+``UserInputTap`` (TASK-33620.15.3: keeps the idle heap re-freeze off typing)
+and ``DetachedFocusGuard`` (TASK-34000.26: a removed widget under focus must
+not swallow the next key).
 They share a module so a new App-level guard costs neither another ``app.py``
 line (size ratchet) nor another boot-path module (ADR-097 census).
 
@@ -65,10 +67,12 @@ from typing import Any, Callable, Optional
 from loguru import logger
 from textual import events
 from textual.message import Message
+from textual.screen import Screen
 
 from tldw_chatbook.Utils.ui_responsiveness import note_user_input
 
 __all__ = [
+    "DetachedFocusGuard",
     "FreshContextExecutor",
     "TextSelectionCrashGuard",
     "TextualAppGuards",
@@ -238,5 +242,64 @@ class UserInputTap:
         await super().on_event(event)  # type: ignore[misc]
 
 
-class TextualAppGuards(TextSelectionCrashGuard, UserInputTap, ThreadWorkerContextGuard):
+class DetachedFocusGuard:
+    """App mixin: a dead ``focused`` must not swallow the next key (TASK-34000.26).
+
+    ``App.on_event`` forwards every non-priority key to ``self.focused``
+    (textual/app.py:4137 in 8.2.8). If that widget was removed after a focus
+    write landed on it mid-prune, the key goes to a closed message pump: F1,
+    Ctrl+P, Tab and the screen's own bindings all die until a mouse click
+    (review finding S-10, ``verify/nl-v-s-10/textual-dead-focus-mechanism.out``).
+    The screen-side refusal (``BaseAppScreen.set_focus``) closes the writes
+    this app makes; this guard closes any route, Textual's own included: the
+    dead focus is cleared and the SAME key is forwarded to the screen, so Tab
+    moves, F1 opens help and Ctrl+P opens the palette. Nothing is re-focused
+    here on purpose: a key that found a corpse must never be delivered to a
+    widget the user did not choose (Enter would press it).
+
+    A strict no-op whenever ``focused`` is ``None`` or attached. The check is
+    one ``_pruning`` read plus ``is_attached``, which walks the ancestor chain
+    (O(depth): about 2 us per key at depth 30, a few percent of key dispatch)
+    and touches nothing else. Skipped once the app is exiting: Textual's
+    ``is_attached`` answers False for every node after ``App.exit()``, which
+    would otherwise log a false "removed widget" warning per key during
+    shutdown (fix round 1, M-1).
+    ``_pruning`` is private Textual state -- listed with its other readers in
+    ``lessons-textual.md`` (TASK-23025 entry).
+    """
+
+    async def on_event(self, event: events.Event) -> None:
+        if (
+            isinstance(event, events.Key)
+            and not event.is_forwarded
+            # M-1: after ``App.exit()`` every node reads as detached.
+            and not getattr(self, "_exit", False)
+        ):
+            try:
+                focused = self.focused  # type: ignore[attr-defined]
+                dead = focused is not None and (
+                    getattr(focused, "_pruning", False) or not focused.is_attached
+                )
+            except Exception:  # noqa: BLE001 - never let a guard break input
+                focused, dead = None, False
+            if dead:
+                # The widget id or class name only -- never the key: a healed
+                # press can be a typed character, and this line persists.
+                logger.warning(
+                    "Keyboard focus was on a removed widget ({}); cleared so the "
+                    "key reaches the screen (TASK-34000.26).",
+                    getattr(focused, "id", None) or type(focused).__name__,
+                )
+                try:
+                    # The BASE method on purpose: a screen's own ``set_focus``
+                    # override must not be able to refuse the ``None`` write.
+                    Screen.set_focus(self.screen, None)  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    logger.debug("Clearing a dead focus failed.", exc_info=True)
+        await super().on_event(event)  # type: ignore[misc]
+
+
+class TextualAppGuards(
+    DetachedFocusGuard, TextSelectionCrashGuard, UserInputTap, ThreadWorkerContextGuard
+):
     """Every guard in this module; add BEFORE ``App`` in the base list."""

@@ -174,6 +174,44 @@ class BaseAppScreen(Screen):
             *regions, repaint=repaint, layout=layout, recompose=recompose
         )
 
+    def set_focus(
+        self,
+        widget: "Widget | None",
+        scroll_visible: bool = True,
+        from_app_focus: bool = False,
+    ) -> None:
+        """Focus ``widget`` unless it is detached or being removed (TASK-34000.26).
+
+        Textual 8.2.8 accepts a focus write onto a widget that ``App._prune``
+        has already marked ``_pruning`` (``Screen.set_focus`` checks only
+        ``focusable``, which reads ``visible`` and never ``_pruning``) and
+        leaves ``screen.focused`` on it after the detach; every non-priority
+        key then dispatches into a dead message pump and the keyboard is gone
+        until a click (review finding S-10; mechanism in
+        ``verify/nl-v-s-10/textual-dead-focus-mechanism.out``).
+
+        A refused write leaves focus where it was, so a caller that checks
+        ``self.focused is widget`` sees "not landed" and retries against the
+        live tree (the Library's list-entry arm does exactly that). A ``None``
+        write is always honoured. ``_pruning`` is private Textual state:
+        listed in ``lessons-textual.md`` (TASK-23025 entry) with the other
+        readers.
+
+        Args:
+            widget: The widget to focus, or ``None`` to clear focus.
+            scroll_visible: Forwarded to ``Screen.set_focus``.
+            from_app_focus: Forwarded to ``Screen.set_focus``.
+        """
+        if widget is not None and (
+            getattr(widget, "_pruning", False) or not widget.is_attached
+        ):
+            logger.debug(
+                "Refused a focus write onto a widget being removed: {}",
+                getattr(widget, "id", None) or type(widget).__name__,
+            )
+            return
+        super().set_focus(widget, scroll_visible, from_app_focus)
+
     def _queue_focus_restore_after_recompose(self, previous: Optional[str]) -> None:
         """Re-post the restore behind everything else this refresh queued."""
         self.call_after_refresh(self.restore_focus_after_recompose, previous)

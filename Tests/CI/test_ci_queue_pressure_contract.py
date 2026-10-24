@@ -92,6 +92,9 @@ FAST_LANE_TARGETS = (
     # ``_pending_children``; a Textual change fails here by name (one bare
     # ``run_test``, about a second).
     "Tests/Library/test_library_notes_canvas_pending_lookup.py",
+    # TASK-34000.26: a bare Textual app proves the dead-focus heal (about two
+    # seconds).
+    "Tests/App/test_detached_focus_guard.py",
     # TASK-34000.48: every file-profile comparison and binding commit goes
     # through the newline rule (AST scan of the three sync modules, seconds).
     "Tests/Architecture/test_notes_sync_binding_profile_commits.py",
@@ -331,6 +334,10 @@ ADMISSION_TARGETS = (
     "Tests/Notes/test_notes_sync_version_only_move.py",
     "Tests/Notes/test_notes_sync_resave_window.py",
     "Tests/Notes/test_notes_sync_attention_fence.py",
+    # TASK-34000.16 (P1-C final fix round, I-D ruling): the refused-file
+    # data-integrity pins (identity-first rename, no deletion review for a
+    # corrupted bound file, activation refused before any mutation).
+    "Tests/Notes/test_notes_sync_refused_files_integrity.py",
     "Tests/Agents/test_first_request_window_honest_plan.py",
     "Tests/Chat/test_console_capacity_refusal_copy.py",
     # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites.
@@ -514,6 +521,7 @@ NOTES_SYNC_REAL_STACK_TARGETS = (
     "Tests/Notes/test_notes_sync_version_only_move.py",
     "Tests/Notes/test_notes_sync_resave_window.py",
     "Tests/Notes/test_notes_sync_attention_fence.py",
+    "Tests/Notes/test_notes_sync_refused_files_integrity.py",
 )
 HEAVY_JOB_KEYS = {
     "core-tests",

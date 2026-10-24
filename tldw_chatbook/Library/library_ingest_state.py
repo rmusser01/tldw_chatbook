@@ -77,6 +77,16 @@ INGEST_SERVER_NEEDS_SERVER_MODE_COPY = (
     "import on the server."
 )
 MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
+#: (TASK-34000.20 AC#2) The ONE sentence a path problem paints, under the
+#: path field beside the ``Choose a file…`` button. Owner ruling 2026-10-23
+#: (question 2): the gate line beside Start stays empty for a path problem.
+PATH_PROBLEM_LINE = (
+    "Can't find that path — check it, or use Browse… to pick a file or folder."
+)
+#: The pre-check's generic local-path errors (``ingest_preflight.analyze_path``)
+#: that ``PATH_PROBLEM_LINE`` replaces; every other ``path_invalid`` sentence
+#: keeps its own text (fix round 1, I2).
+_GENERIC_PATH_ERROR_PREFIXES = ("Path not found:", "Invalid path:")
 INGEST_UNAVAILABLE_COPY = "Import is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No import jobs yet."
@@ -1319,6 +1329,8 @@ class LibraryIngestFormState:
         preflight: The most recent pre-flight analysis result, if any.
         preflight_checking: Whether a pre-flight analysis is currently
             running (used to show a spinner/disable controls).
+        preflight_path: The stripped field text ``preflight`` describes
+            (TASK-34000.20); ``""`` when there is no result.
     """
 
     path: str = ""
@@ -1342,6 +1354,11 @@ class LibraryIngestFormState:
     type_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     preflight: PreflightResult | None = None
     preflight_checking: bool = False
+    #: (TASK-34000.20 AC#3) The exact field text (stripped) that ``preflight``
+    #: describes. A submit may only proceed when this equals the text in the
+    #: field right now -- a verdict for other text, or no verdict, is never
+    #: enough to import on. Cleared with ``preflight``.
+    preflight_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -3069,6 +3086,20 @@ def build_library_ingest_state(
         errors_are_path_problem = bool(
             errors and getattr(active_preflight, "path_invalid", False)
         )
+        if errors_are_path_problem and all(
+            error.startswith(_GENERIC_PATH_ERROR_PREFIXES) for error in errors
+        ):
+            # TASK-34000.20 AC#2: the pre-check's own "Path not found: …" and
+            # the gate line beside Start said the same thing twice (the
+            # review's capture 02 showed three sentences for one typo). The
+            # summary under the field is the one place: it sits where the
+            # user types, and the "Choose a file…" button lives there.
+            # (fix round 1, I2) Only the GENERIC local errors collapse; a URL
+            # error (TASK-19556's wording) or "neither a file nor a
+            # directory" says something this sentence cannot and stays --
+            # still exactly one line, since each of those branches reports
+            # one error.
+            errors = [PATH_PROBLEM_LINE]
         type_groups_list = list(type_groups.keys())
     else:
         type_groups = {}
@@ -3219,9 +3250,11 @@ def build_library_ingest_state(
         # needs the server's own vocabulary and its own recovery.
         start_quiet_line = server_nothing_sendable_line(forecast)
     elif errors_are_path_problem:
-        start_quiet_line = (
-            "Can't find that path — check it, or use Browse… to pick a file or folder."
-        )
+        # (TASK-34000.20 AC#2) The reason is already on screen as the one
+        # ``PATH_PROBLEM_LINE`` under the field; Start stays disabled via
+        # ``start_enabled`` and this gate line stays empty rather than
+        # repeating the sentence two rows down.
+        start_quiet_line = ""
     elif option_errors:
         start_quiet_line = (
             f"Fix the highlighted options to start: {option_errors[0][2]}"

@@ -86,6 +86,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
+    FILE_GATE_REASON_CODES,
     NotesSyncFilesystemError,
     PosixNotesSyncFilesystem,
     proven_profile,
@@ -101,6 +102,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationAttention,
     ReconciliationAttentionKind,
     ReconciliationInput,
+    ReconciliationItemSkip,
     ReconciliationPlan,
     _observation_token,
     assert_review_current,
@@ -1141,10 +1143,19 @@ class _ProductionRuntimeAdapter:
         # display-path convention here.
         discovered_sources: dict[str, ImportSource] = {}
         reused_files = 0
-        # TASK-32244: refusals are counted across the whole walk instead of
-        # raising on the first one, so "discovery did not finish" can say how
-        # many files were refused and for what.
-        refusals: Counter[str] = Counter()
+        # TASK-32244 counted per-file refusals across the whole walk and
+        # refused the root with the dominant one. TASK-34000.16: a per-file
+        # gate is now that file's own skip row, recorded by path so the review
+        # can name it; the root is refused only for a failure of the root.
+        refused: dict[str, str] = {}
+        # Fix round 1 (I-1/I-3): a refused file's identity, from the walk's
+        # own stat, so a bound binding whose file was RENAMED onto a refused
+        # path is recognised as that file (a skip), never as a deleted one.
+        refused_identities: dict[str, str] = {}
+        # Fix round 2 (R2-2): the refused files that are a BOUND binding's own
+        # file (by path, or by identity after a rename). Only these hold a
+        # migration's activation; the rest are plain per-file rows.
+        refused_bound: set[str] = set()
         syncable_files = 0
         for candidate in discovery.candidates:
             relative_path = candidate.source.source_path.relative_to(
@@ -1171,22 +1182,32 @@ class _ProductionRuntimeAdapter:
                     filesystem.observe, relative_path
                 )
             except NotesSyncFilesystemError as error:
-                if error.reason_code != "missing_target":
-                    refusals[error.reason_code] += 1
-        if refusals:
-            dominant, count = refusals.most_common(1)[0]
-            # `reason_code`, not only `detail`: every per-file gate lands on
-            # this one exception -- `mixed_newlines`, `unsupported_encoding`,
-            # `max_file_bytes_exceeded`, `non_regular`, … -- so a caller that
-            # reads the gate name alone can only give permission advice, which
-            # is wrong for all but one of them.
-            raise NotesSyncRootRefused(
-                "root_discovery_incomplete",
-                reason_code=dominant,
-                detail=(
-                    f"{sum(refusals.values())} of {syncable_files} files refused; "
-                    f"{count} for {dominant}"
-                ),
+                if error.reason_code == "missing_target":
+                    continue
+                if error.reason_code in FILE_GATE_REASON_CODES:
+                    # TASK-34000.16: one file's refusal is that file's row,
+                    # not the folder's. Recorded by path so the review can
+                    # name it; counted (never pathed) in the log below.
+                    refused[relative_path] = error.reason_code
+                    refused_identities[
+                        NotesSyncExecutor.identity_digest(
+                            candidate.identity.device, candidate.identity.inode
+                        )
+                    ] = relative_path
+                    continue
+                raise NotesSyncRootRefused(
+                    "root_discovery_incomplete", reason_code=error.reason_code
+                )
+        if refused:
+            # TASK-32243: reason codes and counts only -- never a path (nor
+            # the root's own id, which the diagnostic inventory reads as a
+            # path-shaped expression; the Check's refusal log at the UI layer
+            # already names the root).
+            logger.warning(
+                "notes sync skipped {} of {} files in a root: {}",
+                len(refused),
+                syncable_files,
+                dict(Counter(refused.values())),
             )
 
         # TASK-21532: this read-all stays. It looks like the projection shape
@@ -1280,6 +1301,23 @@ class _ProductionRuntimeAdapter:
                 # guard did.
                 identity_resolved = len(matches) == 1
                 file = matches[0] if identity_resolved else None
+                refused_file_path = (
+                    binding.normalized_relative_path
+                    if binding.normalized_relative_path in refused
+                    else refused_identities.get(binding.stable_identity_digest)
+                )
+                if file is None and refused_file_path is not None:
+                    refused_bound.add(refused_file_path)
+                    # TASK-34000.16: the bound file EXISTS -- at its own path
+                    # or renamed onto a refused one -- but could not be read
+                    # as sync text. Its binding is left alone this pass (the
+                    # refused file is already a named skip row), so a Check
+                    # can never read it as a deleted file. Fix round 1 (I-1):
+                    # the identity lookup above runs FIRST, so a binding whose
+                    # path was taken by a new bad file is still observed at
+                    # the path its inode moved to -- a move, not a fresh
+                    # candidate beside a hidden claim on the same inode.
+                    continue
             if file is not None:
                 claimed_paths.add(file.observation.relative_path)
             file_digest = file.observation.content_digest if file else None
@@ -1413,6 +1451,10 @@ class _ProductionRuntimeAdapter:
                 (item.note_version for item in observed), default=0
             ),
             obsidian_mode=self.obsidian_mode(root.root_id),
+            refused_files=tuple(
+                ReconciliationItemSkip(path, code, bound=path in refused_bound)
+                for path, code in sorted(refused.items())
+            ),
         )
         # The full plan used to be classified here per pass only to read
         # `observation_token`; the token is derived from the request alone
@@ -4576,6 +4618,18 @@ class NotesSyncRuntimeOwner:
             raise ValueError("stale_review")
         if self._blocked_plan_status(fresh) is not None:
             return NotesSyncControlResult(False, "needs_attention", "review_changes")
+        if setup is None and any(
+            skip.bound and skip.reason_code in FILE_GATE_REASON_CODES
+            for skip in fresh.item_skips
+        ):
+            # TASK-34000.16 fix round 1 (I-2): a migrated candidate whose file
+            # the walk could not read has no action, so the candidate-coverage
+            # check below would refuse the activation AFTER the folder was
+            # created and recovery recorded. Refuse here, before any mutation;
+            # the root stays where it is, and the review names the file.
+            # Fix round 2 (R2-2): only a CANDIDATE's own file (``bound``)
+            # holds it -- an unrelated refused file is a plain skip row.
+            return NotesSyncControlResult(False, "paused", "review_migration")
         display_name = (
             setup.display_name
             if setup is not None

@@ -35,6 +35,31 @@ from tldw_chatbook.Notes.sync_paths import (
 
 _UTF8_BOM = b"\xef\xbb\xbf"
 
+#: TASK-34000.16: the reasons ``PosixNotesSyncFilesystem.observe`` raises that
+#: are about ONE file's own bytes, metadata or shape. A root walk records these
+#: per file and plans the rest of the folder. Not in the set, by decision (fix
+#: round 1): ``missing_target`` (the file vanished mid-walk; the runtime
+#: ignores it), and the ``read_bytes`` reasons that say the FOLDER moved under
+#: the walk -- ``cross_device``, ``target_identity_changed``,
+#: ``missing_parent``, ``parent_identity_changed``, ``non_directory_parent``
+#: (and ``root_identity_changed``) -- which stay root-level refusals: a plan
+#: built over a folder that is no longer the folder would read every unseen
+#: bound file as deleted.
+FILE_GATE_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "unsupported_encoding",
+        "mixed_newlines",
+        "unsupported_newline",
+        "unsupported_metadata",
+        "max_file_bytes_exceeded",
+        "non_regular",
+        "multiple_links",
+        "link_or_reparse",
+        "target_changed_during_read",
+        "operation_failed",
+    }
+)
+
 
 def _windows_stable_identity_digest(identity: Any) -> str:
     payload = f"{identity.device}\0{identity.inode}"

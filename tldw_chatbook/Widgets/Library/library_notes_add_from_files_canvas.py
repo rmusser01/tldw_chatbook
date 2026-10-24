@@ -31,6 +31,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncReviewRow,
     LastingSyncReviewSource,
     LibraryNotesLastingSyncSnapshot,
+    migration_activation_blocked_line,
     review_group_key,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
@@ -38,6 +39,7 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     NotesSyncConflictChoice,
 )
 from tldw_chatbook.Notes.notes_sync_models import validate_notes_sync_opaque_id
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
     bounded_row_name,
@@ -1076,7 +1078,25 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                         id="notes-sync-activate",
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=self.snapshot.review.attention_count > 0,
+                        disabled=not self.snapshot.review.can_activate,
+                        # TASK-34000.16 fix round 1 (I-2): a migrated candidate
+                        # the walk could not read holds Activate; the tooltip
+                        # names the file and the fix. Fix round 2 (R2-1): the
+                        # file name is the USER'S and a tooltip is Rich markup
+                        # -- `x[/]y.md` raised MarkupError from the tooltip
+                        # timer and crashed the app, `[draft] plan.md` painted
+                        # " plan.md". Escaped here, at the tooltip site only:
+                        # the same lines feed the markup=False status line,
+                        # which must not show backslashes (TASK-1513 rule).
+                        tooltip=(
+                            escape_markup(
+                                migration_activation_blocked_line(
+                                    self.snapshot.review.activation_blockers
+                                )
+                            )
+                            if self.snapshot.review.activation_blockers
+                            else None
+                        ),
                     )
                 else:
                     yield ReviewActionButton(

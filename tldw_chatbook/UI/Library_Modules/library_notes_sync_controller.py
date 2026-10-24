@@ -25,6 +25,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
     build_reconciliation_review,
     check_failure_line,
+    migration_activation_blocked_line,
     ROOT_STATUS_LABELS,
     root_status_label,
     check_failure_row,
@@ -421,6 +422,7 @@ class LibraryNotesSyncController:
                 if binding_labels is None
                 else binding_labels
             ),
+            source=source,
         )
         return replace(
             review,
@@ -1075,12 +1077,17 @@ class LibraryNotesSyncController:
         )
         if installed is None:
             return
+        blockers = self._state.review.activation_blockers
         self._state = replace(
             self._state,
             phase="review",
             status_line=(
                 (
-                    "Review migration before activating this folder."
+                    # TASK-34000.16 fix round 1 (I-2): a migrated candidate the
+                    # walk could not read holds Activate; say which and why.
+                    migration_activation_blocked_line(blockers)
+                    if source == "migration" and blockers
+                    else "Review migration before activating this folder."
                     if source == "migration"
                     else "Review the mutation-free check before applying changes."
                 )
@@ -2208,6 +2215,17 @@ class LibraryNotesSyncController:
             self._state = replace(
                 self._state,
                 status_line="Activation unavailable. Check the current migration review again.",
+            )
+            self._publish()
+            return False
+        if review.activation_blockers:
+            # TASK-34000.16 fix round 1 (I-2): the runtime refuses this too,
+            # before any mutation; the controller never even asks.
+            self._state = replace(
+                self._state,
+                status_line=migration_activation_blocked_line(
+                    review.activation_blockers
+                ),
             )
             self._publish()
             return False

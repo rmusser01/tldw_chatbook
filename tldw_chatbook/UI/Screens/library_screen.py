@@ -151,7 +151,7 @@ from ...Library.ingest_capabilities import (
     get_capabilities,
     list_type_groups,
 )
-from ...Library.ingest_preflight import analyze_path
+from ...Library.ingest_preflight import analyze_path, expand_user_path
 from ...Library.ingest_types import PreflightResult
 from ...Widgets.Library.library_ingest_canvas import (
     ingest_scope_label,
@@ -9504,6 +9504,13 @@ class LibraryScreen(BaseAppScreen):
         if ingest_timer is not None:
             ingest_timer.stop()
             self._ingest_state.path_debounce_timer = None
+        # (TASK-34000.20 fix round 2, R2-1) An Enter/Start waiting on an
+        # ingest pre-check is dropped by ANY suspend -- another tab, a pushed
+        # modal, the Browse picker even when it is cancelled. A covering
+        # screen is a change of canvas, and changing canvases is "not a yes"
+        # (task-3314). The in-flight check itself is left alone, per the
+        # rule above: its result is fresher data at resume, nothing more.
+        self._ingest_controller._disarm_library_ingest_submit()
         # (wave-6 task 3) The prompts search-debounce timer moved to
         # ``_prompts_state`` for the same reason, and left the string loop
         # above for the same explicit block the ingest timer already uses.
@@ -10859,6 +10866,10 @@ class LibraryScreen(BaseAppScreen):
 
         def _tick() -> None:
             self._library_list_entry_focus_retry_timer = None
+            if not self.is_attached:
+                # TASK-34000.26: a screen timer firing after the screen left
+                # the stack has no live tree to focus into.
+                return
             self._focus_library_list_entry_if_current(generation)
 
         self._library_list_entry_focus_retry_timer = self.set_timer(
@@ -11139,6 +11150,13 @@ class LibraryScreen(BaseAppScreen):
                 control = self.query_one(selector, Widget)
             except (NoMatches, QueryError):
                 continue
+            if getattr(control, "_pruning", False):
+                # TASK-34000.26 (fix round 1, M-4): a canvas recompose has
+                # already marked this control for removal. It is still the
+                # PREFERRED control, so stop here rather than fall through
+                # to a lower-preference one; the caller sees ``_pruning``
+                # and retries against the replacement (review S-10).
+                return control
             if not getattr(control, "disabled", False):
                 return control
         return None
@@ -11165,8 +11183,22 @@ class LibraryScreen(BaseAppScreen):
             # Loading and ready results can both precede replacement of old rows.
             self._retry_library_list_entry_focus_while_armed()
             return
-        rows = list(self.query(f".{row_class}"))
+        # TASK-34000.26: a row a canvas recompose is already removing still
+        # answers the query; a focus write onto it is accepted by Textual
+        # 8.2.8 and leaves the keyboard dead after the detach (review S-10).
+        # Skipping it here makes the "only a landing counts" checks below
+        # true, and the retry re-attempts against the replacement rows.
+        raw_rows = list(self.query(f".{row_class}"))
+        rows = [row for row in raw_rows if not getattr(row, "_pruning", False)]
         if not rows:
+            if raw_rows:
+                # (P1-C final fix round, M5) Every row the query found is being
+                # replaced: the list is NOT empty, so its filter is not the
+                # answer -- the fallback below would park entry focus there
+                # while the replacement rows mount a frame later. Wait for
+                # them instead, the same as the M-4 preferred-control rule.
+                self._retry_library_list_entry_focus_while_armed()
+                return
             if (
                 row_class == "library-skill-row"
                 and self._library_skills_browse_controller.visible_result.items
@@ -11192,6 +11224,11 @@ class LibraryScreen(BaseAppScreen):
                 except (NoMatches, QueryError):
                     pass
                 else:
+                    if getattr(control, "_pruning", False):
+                        # TASK-34000.26: the filter the recompose is
+                        # replacing; wait for its replacement instead.
+                        self._retry_library_list_entry_focus_while_armed()
+                        return
                     self.set_focus(control)
                     # task-32228: only a landing counts as done. A control
                     # that is mounted but not yet focusable (a canvas still
@@ -11204,6 +11241,11 @@ class LibraryScreen(BaseAppScreen):
             if row_class == "library-media-row":
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
+                    if getattr(control, "_pruning", False):
+                        # TASK-34000.26: the preferred control is being
+                        # replaced; wait for its replacement instead.
+                        self._retry_library_list_entry_focus_while_armed()
+                        return
                     self._library_notes_programmatic_focus_target = control
                     self.set_focus(control)
                     if self.focused is control:
@@ -29723,16 +29765,17 @@ class LibraryScreen(BaseAppScreen):
                 total_files=0,
             )
         self.app.call_from_thread(
-            self._apply_library_ingest_preflight_result, result, generation
+            self._apply_library_ingest_preflight_result, result, generation, path
         )
 
     def _apply_library_ingest_preflight_result(
         self,
         result: PreflightResult,
         generation: int,
+        path: str = "",
     ) -> None:
         return self._ingest_controller._apply_library_ingest_preflight_result(
-            result, generation
+            result, generation, path
         )
 
     def _trigger_preflight(self, path: str) -> None:
@@ -29785,10 +29828,16 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return None
             return raw_path
+        # (TASK-34000.20) One expansion rule, two readers: the pre-check's
+        # ``analyze_path`` expands ``~`` through this same helper, so the
+        # verdict shown under the field and the path imported here agree.
+        # An unexpandable ``~user`` is "not found" through the one existing
+        # warning below (no second diagnostic site).
         try:
-            validated_path = validate_path_simple(
-                Path(raw_path).expanduser(), require_exists=True
-            )
+            expanded = expand_user_path(raw_path)
+            if expanded is None:
+                raise ValueError("~user prefix names no account on this machine")
+            validated_path = validate_path_simple(expanded, require_exists=True)
         except ValueError:
             logger.opt(exception=True).warning(
                 f"Rejected Library ingest path {raw_path!r}."

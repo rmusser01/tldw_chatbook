@@ -108,6 +108,7 @@ async def _stage_warning_preflight(screen, pilot) -> None:
     path_input.value = _STAGED_PATH
     form = screen._ingest_state.form
     form.path = _STAGED_PATH
+    form.preflight_path = _STAGED_PATH  # (TASK-34000.20) a staged verdict names the path it describes
     form.preflight = _staged_preflight(_STAGED_PATH)
     form.preflight_checking = False
     screen._update_library_ingest_dynamic_regions()
@@ -291,6 +292,7 @@ async def test_clear_keeps_generic_options_reachable_for_next_generic_path(
         generic_path = "/tmp/next-note.txt"
         form = screen._ingest_state.form
         form.path = generic_path
+        form.preflight_path = generic_path
         form.preflight = PreflightResult(
             type_groups={"generic": [generic_path]},
             warnings=[],

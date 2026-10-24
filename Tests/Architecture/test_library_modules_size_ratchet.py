@@ -248,7 +248,31 @@ _BUDGETS: dict[str, int] = {
     # Keyword-only constructor arity measured, not assumed: 38 -> 41 (43
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3080,
+    # 2026-10-23, TASK-34000.20 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value). dev `d0d926e11b` was
+    # ALREADY over this row before the P1-C batch (measured 3087 vs 3080).
+    # This task adds `_library_ingest_preflight_is_current`, the wait-gate at
+    # the top of `_submit_library_ingest_form` (Enter and Start now import
+    # only on a pre-check for the current text), the armed-submit fire in
+    # `_apply_library_ingest_preflight_result`, the debounce stop + arm
+    # re-point in `_trigger_library_ingest_preflight`, and two disarm sites:
+    # 3080 -> 3164 (measured).
+    # 2026-10-23, TASK-34000.20 fix round 1 (same owner decision): the armed
+    # submit is bound to its exact text and fires only while the ingest row
+    # is selected, the Library screen is active and the field still shows
+    # that text (`_arm_/_disarm_library_ingest_submit`,
+    # `_library_ingest_submit_may_fire`, `_library_ingest_preflight_worker_
+    # is_live`), a press on a current not-found verdict re-checks, and the
+    # trigger normalises whitespace: 3164 -> 3242 (measured).
+    # 2026-10-23, TASK-34000.20 fix round 2 (same owner decision): the fire-time
+    # text check reads the live path Input instead of the form echo
+    # (`_library_ingest_submit_may_fire`): 3242 -> 3247 (measured).
+    # 2026-10-24, TASK-34000.20 P1-C final fix round (same owner decision): a
+    # press on a CURRENT verdict that shut the gate for what the check found
+    # (empty folder, nothing importable, nothing the server takes) re-checks
+    # like the path problem does (`_library_ingest_gate_is_shut_by_the_
+    # precheck`, I-B): 3247 -> 3281 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3281,
     # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
     # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
     # stance of holding this row at 371. That stance was correct FOR A
@@ -595,7 +619,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-20, TASK-32451 rebase onto dev 250159834c, same owner decision:
     # 2378 -> 2397. Dev itself already measures 2394 against its own 2375
     # row (a pre-existing dev red); this branch adds the same +3 above.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2397,
+    #
+    # 2026-10-24, TASK-34000.16 fix round 1 (I-2), owner decision ("expand
+    # the limits, don't modify other code to make it fit", 2026-10-04):
+    # 2397 -> 2415 (+18). A migrated candidate whose file the walk could not
+    # read holds Activate: `_review_projection` hands the review's `source`
+    # to the builder (+1), the migration check's status line names the
+    # skipped files (+4), and `activate_root` refuses before asking the
+    # runtime (+10 with its comment); the import is one line.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2415,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

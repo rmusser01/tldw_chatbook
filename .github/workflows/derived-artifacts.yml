@@ -148,6 +148,7 @@ jobs:
             Tests/Chatbooks/test_chatbook_keywords_round_trip.py \
             Tests/Library/test_library_media_source_link.py \
             Tests/Library/test_library_notes_canvas_pending_lookup.py \
+            Tests/App/test_detached_focus_guard.py \
             Tests/Architecture/test_notes_sync_binding_profile_commits.py \
             Tests/Architecture/test_notes_sync_version_proxy_sites.py \
             Tests/Notes/test_sync_containment.py \
@@ -313,6 +314,7 @@ jobs:
             Tests/Notes/test_notes_sync_version_only_move.py \
             Tests/Notes/test_notes_sync_resave_window.py \
             Tests/Notes/test_notes_sync_attention_fence.py \
+            Tests/Notes/test_notes_sync_refused_files_integrity.py \
             Tests/Agents/test_first_request_window_honest_plan.py \
             Tests/Chat/test_console_capacity_refusal_copy.py \
             Tests/UI/test_roleplay_frame_harness.py \

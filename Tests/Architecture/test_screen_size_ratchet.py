@@ -1022,7 +1022,29 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-22, P1-A final review C-1 (same owner decision): 37559 -> 37560
     #: (+1), the ``_library_media_selected_backing_id`` docstring says the
     #: Reader target is the loaded item whatever the view. Methods 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37560, 1354),
+    #: 2026-10-23, TASK-34000.20 (owner decision 2026-10-04: a fix over a size
+    #: ratchet raises the row to the measured value). dev `d0d926e11b` was
+    #: ALREADY over this row before the P1-C batch (measured 37586 vs 37560).
+    #: This task adds the ``expand_user_path`` import, the ``path`` pass-through
+    #: from the pre-flight worker into the apply, and the one-expansion-rule
+    #: block in ``_resolve_ingest_source``: 37560 -> 37593 (measured). Methods
+    #: unchanged at 1354.
+    #: 2026-10-23, TASK-34000.20 fix round 2 (same owner decision): ``on_screen_
+    #: suspend`` drops a waiting ingest Enter/Start (any suspend -- another
+    #: tab, a modal, the Browse picker -- is "not a yes"): 37593 -> 37600.
+    #: 2026-10-24, TASK-34000.26 (same owner decision 2026-10-04): the list-
+    #: entry picker never offers a ``_pruning`` row, filter or Media fallback
+    #: control, and the retry tick returns on a detached screen (review S-10,
+    #: the dead keyboard): 37600 -> 37623 (measured). Methods unchanged at 1354.
+    #: 2026-10-24, TASK-34000.26 fix round 1 (same owner decision): the Media
+    #: empty-list fallback stops at a pruning preferred control and the picker
+    #: retries instead of falling through to a lower-preference one (M-4):
+    #: 37623 -> 37630 (measured). Methods unchanged at 1354.
+    #: 2026-10-24, TASK-34000.26 P1-C final fix round (same owner decision):
+    #: the picker retries when every row the query found is being replaced
+    #: instead of parking entry focus on the live filter (M5):
+    #: 37630 -> 37635 (measured). Methods unchanged at 1354.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37635, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

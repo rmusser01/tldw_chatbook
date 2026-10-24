@@ -1335,6 +1335,19 @@ child pytest, so under load two focus assertions that wait one `pilot.pause()` f
 passed alone three times. This is diagnosis for a local change, as above: it does not make the
 tests run in CI.
 
+**TASK-34000 P1-B / PR #3234, 2026-10-23: the wall is not local-only for a file that lacks
+the marker.** `Tests/Notes/test_note_links_typed_titles.py` opened a real `CharactersRAGDB`
+with no `bootstrap_profile` marker. Locally it was only ever run under the `ptplug_all`
+scratch plugin, which marks EVERY item `bootstrap_profile`, so it passed; in CI the PR Fast
+Lane ran it as the plain file and it died in its body with
+`RecoveryRequired(raw_source_selection_changed)` — the same wall this entry files under
+"local". The plugin does not diagnose a missing marker; it supplies it. Rule: every NEW
+test file, in any directory (not just `Tests/UI`), carries `pytestmark` with
+`bootstrap_profile` if it opens a real database, and is run once with NO plugin before it
+is called green — the plain run is the one CI does. (The P1-C batch added the plain run
+to its brief for the same reason; `Tests/Notes/test_notes_sync_refused_files_integrity.py`
+is the worked example: real `NotesDeviceStateStore`, marker carried, green with no plugin.)
+
 ## A mutation check against one of two layered guards proves nothing (TASK-34000.22 fix round 1, 2026-10-21)
 
 **Incident.** The review asked for a mutation check on the `on_descendant_focus`
