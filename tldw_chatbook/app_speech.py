@@ -335,6 +335,7 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
                         action="play",
                         message_id=event.message_id,
                         playback_lifecycle=playback_lifecycle,
+                        presentation=event.presentation,
                     ),
                 )
                 if accepted is False and playback_lifecycle is not None:

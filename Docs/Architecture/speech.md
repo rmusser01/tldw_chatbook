@@ -100,8 +100,24 @@ pose with an equal timestamp cannot reopen the mouth. Duplicate old cleanup
 cannot invalidate a newer output epoch. Termination invalidates its level immediately; the request adapter projects the
 logical terminal state after it knows whether a WAV failure falls back to legacy
 playback. This preserves one owner through fallback without reopening a terminal
-channel. Console request adapters/rendering remain subsequent implementation units;
-these optional sink contracts alone do not enable a moving Console portrait.
+channel. Optional observation is forwarded by Console message requests, manual/auto
+playback events, hands-free utterances and guarded app-owned previews. The existing
+TTSPlaybackLifecycle projects confirmed playing/terminal status before invoking
+listeners; terminal acknowledgements settle their own channel even after a visible
+context becomes stale. Pause/resume comes only from real legacy-player state and
+never enters the admission lifecycle. Legacy output remains status-only.
+
+ConsoleMessageController retains one current presentation with a host-issued
+profile/session/message owner and a read-time validator. A replacement visible
+channel invalidates older admission; profile/session changes hide it. Hands-free
+captures reply/sequencer/session/character identity synchronously before scheduling
+its worker, revalidates around awaits and provider admission, and preserves current
+voice=None/resolution=None selection plus cooldown bypass. Completion remains
+exactly once and waits for native drain; stale/duplicate sentence callbacks cannot
+change a replacement's counters. Guarded previews use existing destination and
+selected-character resolution, with exact lifecycle Stop on cancellation. No new
+speech coordinator, conversation message or player is introduced. Rendering remains
+a subsequent implementation unit.
 
 ## Speak action (dataflow)
 

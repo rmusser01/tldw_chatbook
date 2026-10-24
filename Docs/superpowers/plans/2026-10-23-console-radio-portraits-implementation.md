@@ -1,6 +1,6 @@
 # Console Radio Portraits Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execution method is not selected; do not start product implementation during planning.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execution: inline, sequential atomic tasks with self-review before each next unit (authorized 2026-10-23).
 
 **Goal:** Give Console characters reviewed six-pose artwork, silence-aware TTS mouth movement, independent blinking/idle motion, and stable radio-screen framing.
 
@@ -294,9 +294,13 @@ Add a final-block test in which the fake device has 200 ms of pending output aft
 
 **Consumes:** Unit 3 sink observation and existing `TTSPlaybackLifecycle`, snapshots, destination checks and sequencer tokens.
 
-**Produces:** Optional `presentation: SpeechPresentation | None = None` on `TTSMessageSpeechRequestEvent`, `TTSCompleteEvent`, `TTSPlaybackEvent`, `speak_utterance` and `speak_guarded_utterance`, forwarded through `_admit_tts_generation`, `_generate_tts_with_rate_limit`, `_generate_tts`, `_stream_text_pieces_if_applicable` and the Unit 3 sink/file paths. Existing parameters/return values and message/lifecycle validation stay compatible. `ConsoleMessageController.current_speech_presentation() -> SpeechPresentation | None` exposes the exact current UI owner, not a second speech coordinator. Add a `speech_presentation` read seam to Console character-controller wiring; Unit 5 consumes it.
+**Produces:** Optional `presentation: SpeechPresentation | None = None` on `TTSMessageSpeechRequestEvent`, `TTSCompleteEvent`, `TTSPlaybackEvent`, `speak_utterance` and `speak_guarded_utterance`, forwarded through `_admit_tts_generation`, `_generate_tts_with_rate_limit`, `_generate_tts`, `_stream_text_pieces_if_applicable` and the Unit 3 sink/file paths. `TTSPlaybackLifecycle` retains the matching optional presentation and projects its
+confirmed transport independently of listener success. `speak_utterance` also accepts
+an optional current-owner validator for Console injection; absent validators preserve
+legacy admission. Existing parameters/return values and message/lifecycle validation
+stay compatible. `ConsoleMessageController.current_speech_presentation() -> SpeechPresentation | None` exposes the exact current UI owner, not a second speech coordinator. Add a `speech_presentation` read seam to Console character-controller wiring; Unit 5 consumes it.
 
-- [ ] **1. Add failing owner and cancellation assertions.** In the existing hands-free fake-handler test, simulate a generation that calls completion twice and verify the public callback still fires once. The new callback forwarding test must contain these assertions after actual `speak_utterance` dispatch:
+- [x] **1. Add failing owner and cancellation assertions.** In the existing hands-free fake-handler test, simulate a generation that calls completion twice and verify the public callback still fires once. The new callback forwarding test must contain these assertions after actual `speak_utterance` dispatch:
 
 ```python
 assert finished == [True]
@@ -307,13 +311,13 @@ assert handler_generation_kwargs["resolution"] is None  # retain current hands-f
 ```
 
 Use the existing fake generation/handler setup in the named tests; `finished` records completion, `observed` is `presentation.read()`, and `handler_generation_kwargs` records the forwarded real generation call. Pin manual/auto snapshot revalidation, sentence A terminal arriving after B start, session/profile/character replacement, unknown historical provenance, absent observers and listener failure. In the guarded test, start a newer request before cancelling the preview and assert only the old exact lifecycle reaches Stop.
-- [ ] **2. Run these targeted speech tests red.** A changed callback signature in a fake handler must not be accepted as sufficient evidence; drive the actual forwarding entry and assert owner/terminal behavior.
-- [ ] **3. Add optional observation to existing entries.** Capture host-issued owner tokens plus current scope/session epoch/character/message or sequencer token before awaits; revalidate on admission/result publication. Hands-free keeps its synthetic request ID and completion/quiet/cooldown behavior. Editor samples use guarded app-owned speech with existing destination confirmation and exact stop in cancellation cleanup. Terminal acknowledgements settle their own observer even after visible-session admission becomes stale.
+- [x] **2. Run these targeted speech tests red.** A changed callback signature in a fake handler must not be accepted as sufficient evidence; drive the actual forwarding entry and assert owner/terminal behavior.
+- [x] **3. Add optional observation to existing entries.** Capture host-issued owner tokens plus current scope/session epoch/character/message or sequencer token before awaits; revalidate on admission/result publication. Hands-free keeps its synthetic request ID and completion/quiet/cooldown behavior. Editor samples use guarded app-owned speech with existing destination confirmation and exact stop in cancellation cleanup. Terminal acknowledgements settle their own observer even after visible-session admission becomes stale.
 
   Consume Unit 3's corrected natural completion: keep `_active_stream_playback_owner`, request/observer ownership and the adapter lease alive until backend-confirmed drain or explicit stop/failure. Do not report lifecycle terminal, run `on_finished(True)`, admit the next hands-free sentence or reopen listening when only the software queue has emptied. Test sentence A with a delayed final device block: B/listening cannot start before acknowledgement; explicit cancellation still interrupts A, and its later acknowledgement cannot clear B or fire completion twice.
-- [ ] **4. Expose confirmed transport status without adding `paused` to `TTSPlaybackLifecycle`.** Project pause/resume from the real player into `SpeechPresentation`; do not add a pause control or claim exact seek/resume support. Keep generation/admission lifecycle and Buddy consumers compatible. Resolve older-message mood only with existing valid actor/asset provenance; no inferred metadata writes.
-- [ ] **5. Run the new file and affected existing cases green.** Cover real start, drain, stop/failure, prior-owner replacement, preview cancellation and callbacks with/without observation. Review every caller of both public utterance methods, including Buddy; default `None` preserves behavior.
-- [ ] **6. Commit.** Suggested message: `feat: bind portrait speech to exact Console and preview owners`.
+- [x] **4. Expose confirmed transport status without adding `paused` to `TTSPlaybackLifecycle`.** Project pause/resume from the real player into `SpeechPresentation`; do not add a pause control or claim exact seek/resume support. Keep generation/admission lifecycle and Buddy consumers compatible. Resolve older-message mood only with existing valid actor/asset provenance; no inferred metadata writes.
+- [x] **5. Run the new file and affected existing cases green.** Cover real start, drain, stop/failure, prior-owner replacement, preview cancellation and callbacks with/without observation. Review every caller of both public utterance methods, including Buddy; default `None` preserves behavior.
+- [x] **6. Commit.** Suggested message: `feat: bind portrait speech to exact Console and preview owners`.
 
 ### Unit 5 — TASK-36546: living portrait rendering
 

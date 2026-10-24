@@ -112,6 +112,11 @@ import inspect
 import os
 import uuid
 
+from tldw_chatbook.Audio.speech_presentation import (
+    SpeechPresentation,
+    SpeechPresentationOwner,
+)
+
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.widgets import Button
@@ -447,6 +452,8 @@ class ConsoleMessageController:
         self._console_speech_request_generation = 0
         self._console_speech_lifetime_generation = 0
         self._console_speech_owner: Any | None = None
+        self._speech_presentation: SpeechPresentation | None = None
+        self._speech_presentation_validator: Callable[[], bool] | None = None
         self._console_speech_pending_stop: tuple[str, int] | None = None
         self._pending_console_swipe_selection: str | None = None
 
@@ -1077,6 +1084,31 @@ class ConsoleMessageController:
             )
         await self._sync_native_console_chat_ui()
 
+    def bind_speech_presentation(
+        self, presentation: SpeechPresentation, validator: Callable[[], bool]
+    ) -> Callable[[], bool]:
+        """Retain one disposable visible owner, validated again on each read."""
+
+        def is_current() -> bool:
+            return self._speech_presentation is presentation and validator() is True
+
+        presentation.set_transport("preparing")
+        self._speech_presentation = presentation
+        self._speech_presentation_validator = is_current
+        return is_current
+
+    def current_speech_presentation(self) -> SpeechPresentation | None:
+        """Return only the exact presentation still belonging to this context."""
+        validator = getattr(self, "_speech_presentation_validator", None)
+        if validator is None:
+            return None
+        try:
+            if validator() is True:
+                return self._speech_presentation
+        except Exception:  # noqa: BLE001 - stale observation must fail closed.
+            logger.debug("Console speech presentation context unavailable")
+        return None
+
     async def request_console_message_speech(
         self,
         message_id: str,
@@ -1173,8 +1205,11 @@ class ConsoleMessageController:
         request_generation = self._begin_console_speech_presentation(message_id)
         lifetime_generation = self._console_speech_lifetime_generation
         active_session_epoch = store.active_session_epoch()
+        scope_token = getattr(self.app_instance, "chachanotes_db", None)
 
         def playback_is_current() -> bool:
+            if getattr(self.app_instance, "chachanotes_db", None) is not scope_token:
+                return False
             if self._console_speech_request_generation != request_generation:
                 return False
             if self._console_speech_lifetime_generation != lifetime_generation:
@@ -1221,11 +1256,34 @@ class ConsoleMessageController:
             elif state == "failed":
                 report_outcome(False)
 
+        ref = speech_snapshot.character_ref
+        character_id = (
+            int(ref.character_id)
+            if ref is not None
+            and ref.source == "local"
+            and ref.character_id.isdecimal()
+            else None
+        )
+        presentation = SpeechPresentation(
+            SpeechPresentationOwner(
+                buddy_owner,
+                scope_token,
+                speech_snapshot.session_id,
+                active_session_epoch,
+                character_id,
+                message_id,
+                None,
+            )
+        )
+        playback_is_current = self.bind_speech_presentation(
+            presentation, playback_is_current
+        )
         playback_lifecycle = TTSPlaybackLifecycle(
             message_id=message_id,
             request_id=request_generation,
             validator=playback_is_current,
             callback=report_playback,
+            presentation=presentation,
         )
         self._console_speech_owner = playback_lifecycle
 
@@ -1242,6 +1300,7 @@ class ConsoleMessageController:
             expected_destination_fingerprint=expected_destination_fingerprint,
             retry_failed_auto=retry_failed_auto,
             playback_lifecycle=playback_lifecycle,
+            presentation=presentation,
         )
         try:
             posted = self.app_instance.post_message(event)

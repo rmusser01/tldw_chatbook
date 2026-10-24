@@ -120,8 +120,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from loguru import logger
+
+from tldw_chatbook.Audio.speech_presentation import (
+    SpeechPresentation,
+    SpeechPresentationOwner,
+)
 
 # TASK-22504: `console_voice_input` (and its STT-stack closure) is loaded
 # on FIRST VOICE USE, not at module import -- this module rides the Chat
@@ -465,6 +471,10 @@ class ConsoleHandsFreeController:
         runtime_accessor: Callable[[], Any],
         project_voice_preview: Callable[[VoicePreviewProjection], None],
         clear_voice_preview: Callable[[], None],
+        bind_speech_presentation: Callable[
+            [SpeechPresentation, Callable[[], bool]], Callable[[], bool]
+        ]
+        | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -560,6 +570,7 @@ class ConsoleHandsFreeController:
         self._runtime_accessor = runtime_accessor
         self._project_voice_preview_fn = project_voice_preview
         self._clear_voice_preview_fn = clear_voice_preview
+        self._bind_speech_presentation = bind_speech_presentation
         self._voice_status_announcer: VoiceStatusAnnouncementThrottle | None = None
 
         # The pipeline engine's own state, moved verbatim from
@@ -2086,8 +2097,47 @@ class ConsoleHandsFreeController:
         session.controller.on_first_utterance()
         session.utterances_dispatched += 1
         token = session.sequencer.current_utterance_token
+        presentation = None
+        validator = None
+        if self._bind_speech_presentation is not None:
+            store = self._ensure_console_chat_store()
+            active = store.ensure_session()
+            session_id, epoch = active.id, store.active_session_epoch()
+            scope = getattr(self.app_instance, "chachanotes_db", None)
+            character_id = active.local_character_id()
+            reply_id = session.reply_id
+
+            def current() -> bool:
+                return (
+                    self._console_hands_free is session
+                    and session.reply_id == reply_id
+                    and session.sequencer.current_utterance_token == token
+                    and store.active_session_id == session_id
+                    and store.active_session_epoch() == epoch
+                    and active.local_character_id() == character_id
+                    and getattr(self.app_instance, "chachanotes_db", None) is scope
+                )
+
+            presentation = SpeechPresentation(
+                SpeechPresentationOwner(
+                    uuid4().hex,
+                    scope,
+                    session_id,
+                    epoch,
+                    character_id,
+                    reply_id,
+                    token,
+                )
+            )
+            validator = self._bind_speech_presentation(presentation, current)
         self.run_worker(
-            self._speak_console_hands_free_utterance(text, token, session),
+            self._speak_console_hands_free_utterance(
+                text,
+                token,
+                session,
+                presentation=presentation,
+                validator=validator,
+            ),
             exclusive=False,
             group="console-hands-free-speech",
             exit_on_error=False,
@@ -2098,6 +2148,9 @@ class ConsoleHandsFreeController:
         text: str,
         token: int | None,
         dispatching_session: "ConsoleHandsFreeSession",
+        *,
+        presentation: SpeechPresentation | None = None,
+        validator: Callable[[], bool] | None = None,
     ) -> None:
         """Speak one utterance via the cooldown-free `speak_utterance` entry.
 
@@ -2118,13 +2171,21 @@ class ConsoleHandsFreeController:
         reply then passes `quiet=True` and only logs.
         """
         session = dispatching_session
-        if self._console_hands_free is not session:
+        if self._console_hands_free is not session or (
+            validator is not None and not validator()
+        ):
             # The loop that dispatched this utterance is gone (exited, or
             # replaced by a re-entry); its sequencer was torn down with it,
             # so there is nothing live to report into. Touch no session.
+            if presentation is not None:
+                presentation.set_transport("stopped")
             return
         handler = await self.app_instance._ensure_tts_handler()
-        if self._console_hands_free is not session:
+        if self._console_hands_free is not session or (
+            validator is not None and not validator()
+        ):
+            if presentation is not None:
+                presentation.set_transport("stopped")
             return
         if handler is None:
             # PR #2638 Qodo #1: a missing TTS handler is a failure for THIS
@@ -2132,15 +2193,23 @@ class ConsoleHandsFreeController:
             # whose handler never initializes drains with zero counted
             # failures and never reaches `_maybe_escalate_all_failed_reply`
             # -- a fully silent reply with no visible notice.
+            if presentation is not None:
+                presentation.set_transport("failed")
             session.toast_shown_for_reply = True
             session.utterances_failed += 1
             session.sequencer.utterance_finished(False, token=token)
             return
         quiet = session.toast_shown_for_reply
 
+        finished = False
+
         def _on_finished(ok: bool) -> None:
+            nonlocal finished
+            if finished:
+                return
+            finished = True
             current = self._console_hands_free
-            if current is not session:
+            if current is not session or (validator is not None and not validator()):
                 # A different loop entry (or none at all) owns the screen's
                 # hands-free state now; this utterance's own sequencer/token
                 # bookkeeping is no longer live to report back into.
@@ -2150,7 +2219,13 @@ class ConsoleHandsFreeController:
                 session.utterances_failed += 1
             session.sequencer.utterance_finished(ok, token=token)
 
-        await handler.speak_utterance(text, on_finished=_on_finished, quiet=quiet)
+        await handler.speak_utterance(
+            text,
+            on_finished=_on_finished,
+            quiet=quiet,
+            presentation=presentation,
+            validator=validator,
+        )
 
     def _stop_console_hands_free_speech(self) -> None:
         """`SentenceSequencer`'s `stop_speech` callable: the existing

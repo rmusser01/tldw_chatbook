@@ -92,6 +92,7 @@ class ConsoleCharacterController:
         console_image_default_mode: Callable[[], str | None],
         is_mounted: Callable[[], bool],
         render_character_avatar: Callable[..., Awaitable[None]],
+        speech_presentation: Callable[[], Any | None] = lambda: None,
     ) -> None:
         self._app_config_accessor = app_config_accessor
         self._chat_store_accessor = chat_store_accessor
@@ -113,6 +114,7 @@ class ConsoleCharacterController:
         self._console_image_default_mode = console_image_default_mode
         self._is_mounted = is_mounted
         self._render_character_avatar = render_character_avatar
+        self._speech_presentation = speech_presentation
 
         self._active_character_avatar: dict | None = None
         self._active_character_avatar_name: str | None = None
