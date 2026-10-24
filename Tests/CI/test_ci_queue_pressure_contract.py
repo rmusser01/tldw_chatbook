@@ -664,6 +664,7 @@ PROJECT_INDEX_TARGETS = (
     "Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[reconfigure]",
     "Tests/RAG/test_project_projection_scope.py::test_peer_pending_close_does_not_poison_admitted_carrier_retirement",
     "Tests/RAG/test_embeddings_lib_logging.py::test_openai_redirect_respects_project_destination_without_changing_library",
+    "Tests/RAG/test_project_projection_scope.py::test_nested_pending_close_keeps_actual_shared_operation_and_keyword",
     "Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call",
 )
 

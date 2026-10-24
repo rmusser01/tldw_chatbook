@@ -111,9 +111,9 @@ cron entry on `dev`.
   grown since: the UI lane runs its census as shards (TASK-34353; thirteen since
   TASK-35834), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
-  tracking tests and the Dreams and Guardian boundary contracts are jobs of
-  their own (TASK-34916, TASK-34929, TASK-34986), so an ordinary unlabeled,
-  non-GGUF PR now runs nineteen test runners at once, twenty with perf-guard
+  tracking tests, Dreams and Guardian boundary contracts, and project-index
+  contracts are jobs of their own (TASK-34916, TASK-34929, TASK-34986,
+  TASK-36423), so an ordinary unlabeled, non-GGUF PR now runs twenty test runners at once, twenty-one with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -273,8 +273,8 @@ the aggregate.
 2026-10-20 (TASK-35834): thirteen UI shards replace ten, retaining the serial
 round-robin checker, all gated tests, dependencies, 20-minute job cap,
 180-second test timeout and fail-closed aggregation. TASK-35834: thirteen UI
-shards. The current total is nineteen concurrent test runners per PR, twenty
-with perf-guard. Historical counts above retain their dates.
+shards. At that change, nineteen concurrent test runners per PR ran, twenty
+including perf-guard. Historical counts above retain their dates.
 
 The model-defaults whole-file selector becomes all 16 function selectors,
 including every parameter case (415 -> 430 census entries). Only the existing
@@ -299,3 +299,11 @@ Task4 placement refinement: the mounted stage/cancel consent node uses the real 
 
 ### Final semantic review regression coverage (Task36423)
 The existing approved Project index contracts job adds exactly four selectors: held public Disable, held public reconfiguration, the two peer-carrier slow/failed-close parameters, and the four real 307/308 project/Library transport parameters. Existing selected local128normal now also proves retained Partial forbidden text never reaches the provider; the settings file includes portable lease refusal and actual unsupported-runtime refusal controls. The target count changes12 to16 and measured case projection33 to44, with about91.3 seconds measured additional critical-node calls and a conservative284-second total including the extra portable lease case. Preserve the1200-second job cap, Python3.12.10 actual source/options assertions, dependencies, test timeout180,13 UI shards, required context and aggregation. Root recorded explicit GO before workflow edits. Native-positive tests alone may skip unsupported comprehensive runtimes; the required Windows preflight still fails closed and its selected positives must execute with zero skips. No new lane or optional ML dependency.
+
+
+### Hosted contract accounting and shared-parent retirement control
+
+The current total is twenty concurrent test runners per PR, twenty-one
+with perf-guard, after the already-approved project-index job. Current exact workflow/job/verdict and runner statements now include that job; historical dated counts remain unchanged in meaning. The count assertion accepts only the actual numeric count or its known exact word and safely handles counts beyond its word list; hyphenated twenty-one is recognized. No lane, dependency, cap, shard or aggregation behavior changes.
+
+Add the critical real-issued nested-parent pending-close regression to the SAME Windows project-index job:17 selectors/45 cases instead of16/44. The new one-case control covers same-binding and different-binding nested carriers plus keyword evidence, actual factory retry and positive owner retirement. Its RED outer call cost64.27 seconds (57.81 child) plus the previous314.19-second exact lane projects about379 seconds; retain the1200-second job and180-second per-test cap unchanged. Root plan18 authorizes this critical addition; local qualification targets this ownership delta and existing independent-peer/own-close/native-child controls plus directly related CI contracts, without replaying the44-case lane or real models merely for hashes.

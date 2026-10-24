@@ -21,7 +21,7 @@ WORKFLOW = ".github/workflows/derived-artifacts.yml"
 ADR = "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md"
 _WORDS = (
     "zero one two three four five six seven eight nine ten eleven twelve"
-    " thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+    " thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one"
 ).split()
 
 #: (file, pattern whose one group is the stated number, what it counts).
@@ -42,7 +42,7 @@ _STATEMENTS = (
     (ADR, r"current total is (\w+) concurrent test runners per PR", "runners"),
     (ADR, r"TASK-34353; (\w+) since\s+TASK-35834", "shards"),
     (ADR, r"now runs (\w+) test runners at once", "runners"),
-    (ADR, r"(\w+) with perf-guard", "runners+perf"),
+    (ADR, r"([\w-]+) with perf-guard", "runners+perf"),
 )
 
 
@@ -52,8 +52,9 @@ def _counts() -> dict[str, int]:
 
     The runners are the shards plus every other lane the required check
     ``needs`` (the PR Fast Lane's three jobs, the Console P0 gate, the Dreams
-    tracking tests and the Dreams and Guardian boundary contracts since
-    TASK-34916, TASK-35575, TASK-34929 and TASK-34986), each one runner:
+    tracking tests, Dreams and Guardian boundary contracts and project-index
+    contracts since
+    TASK-34916, TASK-35575, TASK-34929, TASK-34986 and TASK-36423), each one runner:
     a second matrix job among them fails here instead of miscounting.
     """
     jobs = _jobs(WORKFLOW)
@@ -76,7 +77,7 @@ def test_a_stated_shard_count_is_the_matrix_size(path, pattern, counts):
     stated = re.findall(pattern, (REPO_ROOT / path).read_text(encoding="utf-8"))
 
     assert len(stated) == 1, f"{path}: expected one match of {pattern!r}, got {stated}"
-    assert stated[0] in (str(number), _WORDS[number]), (
+    assert stated[0] in (str(number), *_WORDS[number : number + 1]), (
         f"{path} says {stated[0]!r} where the ui-fast-lane matrix makes it "
         f"{number} ({counts})"
     )
