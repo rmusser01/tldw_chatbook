@@ -310,6 +310,44 @@ def begin_console_sync(screen: Any) -> bool:
     return not poll and _held_for_durable_commit(screen, poll=False)
 
 
+#: TASK-33620.15.4: a send's start (see ``send_start_in_progress``) ends at
+#: its provider request, or this long after acceptance if it never makes one.
+SEND_START_LIMIT_SECONDS = 3.0
+
+
+def note_send_accepted(screen: Any) -> None:
+    """Record that the Console accepted a send (its start begins now)."""
+    screen._console_send_accepted_at = time.monotonic()
+
+
+def send_start_in_progress(screen: Any) -> bool:
+    """Whether a send the screen accepted has not made its provider request yet.
+
+    TASK-33620.15.4 (measured live 2026-10-23, 8 first sends per arm): an
+    off-loop display read opens its own SQLite connection (34 ms wall, 10 ms
+    CPU measured alone; 20-60 ms CPU each in the app), and the Library
+    activity, registry and appearance re-reads started at acceptance and right
+    after the durable commit took that CPU from the send's own work, so first
+    sends reached the provider a median 66 ms later than with the same reads
+    made on the loop (0.3-3 ms each, as on the base). During a send's start
+    those reads stay synchronous; elsewhere they stay off the loop. The start
+    ends at the provider request (any send's: a later request cannot predate
+    this acceptance) or after ``SEND_START_LIMIT_SECONDS``.
+
+    Args:
+        screen: The Console screen.
+
+    Returns:
+        True from acceptance until the provider request (or the limit).
+    """
+    accepted = getattr(screen, "_console_send_accepted_at", None)
+    if accepted is None or time.monotonic() - accepted >= SEND_START_LIMIT_SECONDS:
+        return False
+    diagnostics = sys.modules.get("tldw_chatbook.Chat.console_send_diagnostics")
+    entered = diagnostics.provider_entered_at() if diagnostics is not None else 0.0
+    return entered < accepted
+
+
 def warm_run_presentation(screen: Any) -> None:
     """Re-read an aging checked display as run work starts (TASK-33620.15.4).
 

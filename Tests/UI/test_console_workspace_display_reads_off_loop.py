@@ -253,3 +253,42 @@ async def test_a_run_tick_build_rereads_an_expired_appearance_map_off_the_ui_loo
         assert screen.poll_asks == 1
     finally:
         chat_db.close()
+
+
+@pytest.mark.asyncio
+async def test_a_sends_start_reads_the_registry_live_until_its_provider_request(
+    registry,
+):
+    """Measured live 2026-10-23: an off-loop re-read opens its own SQLite
+    connection (34 ms, 10 ms CPU in isolation; 20-60 ms CPU in the app), and
+    those reads, started right after a send's durable commit, delayed first
+    sends by ~66 ms (8 sends per arm). From acceptance to the provider request
+    the build reads live, as on the base (a 0.3-3 ms read on the loop)."""
+    from tldw_chatbook.Chat import console_send_diagnostics as diagnostics
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
+    screen = _RunScreen()
+    workspace = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+    )
+    view = workspace._console_registry_reads_view()
+    view.list_workspaces()
+    getattr(config_sync, "note_send_accepted", lambda _screen: None)(screen)
+    registry.create_workspace(workspace_id="beta", name="Beta")
+    try:
+        with _Statements() as sql, _stale_reads(workspace):
+            shown = view.list_workspaces()
+        assert sql.main > 0, "a send's start re-read the registry off the UI loop"
+        assert "beta" in {item.workspace_id for item in shown}
+        assert not screen.workers
+
+        # Once the send has made its provider request, reads go off-loop again.
+        diagnostics.record_send_stage("provider_entry")
+        registry.create_workspace(workspace_id="gamma", name="Gamma")
+        with _Statements() as sql, _stale_reads(workspace):
+            view.list_workspaces()
+        assert sql.main == 0
+        assert screen.workers
+    finally:
+        await _settle(screen)

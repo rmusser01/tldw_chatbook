@@ -343,3 +343,21 @@ async def test_any_other_read_failure_degrades_as_the_synchronous_read_did(
         assert harness.controller.view.actions == ()
     finally:
         harness.close()
+
+
+@pytest.mark.asyncio
+async def test_a_sends_start_reads_durable_rows_synchronously(tmp_path):
+    """From a send's acceptance to its provider request the rows are read on
+    the loop, as on the base: an off-loop read opens its own SQLite connection,
+    and those reads delayed first sends by ~66 ms (measured live 2026-10-23)."""
+    harness = _Harness(tmp_path)
+    harness.controller.live_reads = lambda: True  # A send's start.
+    try:
+        with _ReadThreads() as reads:
+            harness.controller.sync_projection()
+            assert not harness.tasks, "a send's start read the rows on a worker"
+        assert reads.on_main() == 1, reads.threads
+        assert harness.rail.views[-1] == ("event-1",)
+    finally:
+        await harness.settle()
+        harness.close()

@@ -180,3 +180,60 @@ def test_each_commit_holds_once_until_the_next_tick_and_never_two_ticks():
         assert held(screen, poll=True) is False
         assert held(screen, poll=True) is True
         assert held(screen, poll=True) is False
+
+
+@pytest.mark.asyncio
+async def test_a_sends_start_lasts_from_acceptance_to_its_provider_request():
+    """The window in which display reads stay live (as on the base)."""
+    from tldw_chatbook.Chat import console_send_diagnostics as diagnostics
+
+    in_progress = getattr(config_sync, "send_start_in_progress", lambda _s: False)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console = await _held_run(host, pilot, gateway)  # Before the provider.
+            try:
+                assert in_progress(console), "acceptance recorded no send start"
+                assert console._library_activity.live_reads() is True
+                diagnostics.record_send_stage("provider_entry")
+                assert not in_progress(console)
+                assert console._library_activity.live_reads() is False
+            finally:
+                gateway.validation_release.set()
+
+
+def test_a_send_start_ends_on_its_own_after_its_limit():
+    """A send that never reaches its provider cannot hold reads live for long."""
+    import time
+    from types import SimpleNamespace
+
+    in_progress = getattr(config_sync, "send_start_in_progress", lambda _s: False)
+    screen = SimpleNamespace()
+    getattr(config_sync, "note_send_accepted", lambda _s: None)(screen)
+    assert in_progress(screen)
+    limit = getattr(config_sync, "SEND_START_LIMIT_SECONDS", 0.0)
+    screen._console_send_accepted_at = time.monotonic() - limit - 0.01
+    assert not in_progress(screen)
+
+
+@pytest.mark.asyncio
+async def test_a_received_sends_start_begins_at_its_acceptance(monkeypatch):
+    """The stock send path (received intent) opens the window too.
+
+    Measured live 2026-10-23: the first version marked only the dispatched
+    path's draft commit; a real Console send goes through the received
+    intent, so its start never opened and its reads stayed off-loop.
+    """
+    from Tests.UI.test_console_received_intent_feedback import (
+        _held_received_record,
+        _received_console_case,
+        _send,
+    )
+
+    in_progress = getattr(config_sync, "send_start_in_progress", lambda _s: False)
+    async with _received_console_case(monkeypatch, "send-start") as case:
+        assert not in_progress(case.console)
+        _send(case, "enter")
+        await _held_received_record(case)  # Received; no provider request yet.
+        assert in_progress(case.console), "a received send opened no send start"
+        assert case.console._library_activity.live_reads() is True

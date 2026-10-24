@@ -61,6 +61,7 @@ class ConsoleLibraryActivityController:
         run_worker: Callable[[Any], Any] | None = None,
         presentation_paused: Callable[[], bool] | None = None,
         torn_down: Callable[[], bool] | None = None,
+        live_reads: Callable[[], bool] | None = None,
     ) -> None:
         self.app_instance = app_instance
         self._ensure_store = ensure_store
@@ -73,6 +74,8 @@ class ConsoleLibraryActivityController:
         self.run_worker = run_worker
         self.presentation_paused = presentation_paused or (lambda: False)
         self.torn_down = torn_down or (lambda: False)
+        #: TASK-33620.15.4: True during a send's start, which reads on the loop.
+        self.live_reads = live_reads or (lambda: False)
         #: (database, conversation id, activity revision) and the durable rows
         #: a worker read for it; and the key of the newest read requested.
         self._durable: tuple[tuple, tuple[Any, ...]] | None = None
@@ -220,9 +223,10 @@ class ConsoleLibraryActivityController:
         Only the stock persistence over a file-backed ChaChaNotes database:
         an in-memory database's connection is per thread, and a custom store
         keeps its own read. A session with no persisted conversation has no
-        durable rows to read.
+        durable rows to read. During a send's start the read stays on the
+        loop (``config_sync.send_start_in_progress``).
         """
-        if self.run_worker is None:
+        if self.run_worker is None or self.live_reads():
             return None
         from tldw_chatbook.Chat.chat_persistence_service import (
             ChatPersistenceService,

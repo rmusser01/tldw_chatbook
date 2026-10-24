@@ -558,9 +558,13 @@ def receive_console_visible_intent(
     )
     if config.current_config_identity() != config_identity:
         raise RuntimeError("Console configuration changed; Send again.")
-    return runtime.accept_received_intent(
+    turn_id = runtime.accept_received_intent(
         intent, _configuration_preparation=preparation
     )
+    from .config_sync import note_send_accepted
+
+    note_send_accepted(screen)  # TASK-33620.15.4: the send's start begins.
+    return turn_id
 
 
 def _raw_cli_run_log_root() -> Path:
@@ -669,7 +673,10 @@ def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> 
 
 def _commit_sent_console_draft(screen: Any, session_id: str, stash: Any) -> None:
     """Take a sent draft out of the chat it was sent from (TASK-33620.15.2)."""
+    from .config_sync import note_send_accepted
     from .sent_draft import take_out_sent_draft
+
+    note_send_accepted(screen)  # TASK-33620.15.4: the send's start begins.
 
     take_out_sent_draft(
         session_id,
@@ -862,6 +869,13 @@ def _console_presentation_paused(screen: Any) -> bool:
     return bool(getattr(screen, "_console_sync_maintenance_paused", False)) or (
         local_pause_active()
     )
+
+
+def _console_send_start_in_progress(screen: Any) -> bool:
+    """Whether a send's start keeps display reads live (TASK-33620.15.4)."""
+    from .config_sync import send_start_in_progress
+
+    return send_start_in_progress(screen)
 
 
 def _console_widget_or_none(screen: Any, selector: str) -> Any | None:
@@ -1606,6 +1620,7 @@ def build_console_controllers(
         ),
         presentation_paused=lambda: _console_presentation_paused(screen),
         torn_down=resume_screen_is_torn_down,
+        live_reads=lambda: _console_send_start_in_progress(screen),
     )
     from ...Widgets.Console.portrait_radio import update_portrait_radio
 

@@ -6819,13 +6819,18 @@ class ConsoleWorkspaceController:
         whose landing publishes to the next tick (within one poll interval).
         Only the stock registry and ChaChaNotes services over file-backed
         databases (an in-memory database's connection is per thread); with
-        no run poll, or any other owner, the reads stay live as before.
+        no run poll, or any other owner, the reads stay live as before. So
+        do they during a send's start (``config_sync.send_start_in_progress``):
+        each re-read opens its own connection, whose CPU delayed first sends.
         """
+        from .config_sync import send_start_in_progress
+
         screen = self._screen
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         database = getattr(registry, "db", None)
         if (
             getattr(screen, "_console_transcript_sync_timer", None) is None
+            or send_start_in_progress(screen)
             or type(registry) is not LocalWorkspaceRegistryService
             or type(database) is not WorkspaceDB
             or database.is_memory_db
