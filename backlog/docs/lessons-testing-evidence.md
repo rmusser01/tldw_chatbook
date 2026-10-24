@@ -26,6 +26,35 @@ Separately, a diagnostic wrapper on `ChatScreen._sync_native_console_chat_ui` ma
 
 **What to do.** In a mounted Console test, focus the bar itself and wait on the state you need with a bounded condition, not a fixed sleep. To leave the bar unfocused, blur it again inside the wait until it stays blurred: nothing focused is not a resting state while the activation restore is pending. Once the wait returns, do your loads and assertions without awaiting, so no restore can land between them. Before trusting `widget.focus()`, check that the widget can take focus (`focusable`).
 
+## An off-loop read can cost the critical path more than the loop read it replaced (TASK-33620.15.4 rework, 2026-10-23)
+
+**Incident.** The branch moved three small Console display reads off the UI
+loop (Library activity rows, workspace registry, conversation appearance;
+0.3-3 ms each on the loop). After its durable-commit fix, warm sends reached
+the provider 7 ms sooner than dev, but first sends were 23 ms later (paired
+median, 20 first sends per arm, timing-only probe). Loop-side profiles showed
+nothing: the extra time was not on the UI loop. A probe that timed executor
+work items (`concurrent.futures.thread._WorkItem.run`, labelled by the
+callable inside `Context.run`/`partial`/closures) found it: each off-loop read
+goes through `run_owned_db_call`, which opens a fresh SQLite connection (34 ms
+wall, 10 ms CPU measured alone; 20-60 ms CPU each in the app), and the reads
+started at acceptance and right after the commit, in the middle of the send's
+own thread work (+264 ms of thread CPU per first send). Putting those reads
+back on the synchronous path, in a probe only, made first sends 66 ms faster
+(1418 -> 1352 ms, 8 per arm).
+
+**What to do.** Before moving a read off the loop, compare its loop cost with
+the off-loop path's fixed cost (a new connection per `run_owned_db_call`),
+and keep cheap reads that land on a critical path where they are. When a
+change makes a critical path slower and the UI loop is not busier, measure
+the threads: label executor work items by their real callable and sum their
+CPU inside the window, base against branch. Then test the suspect with a
+probe that switches it off, interleaved against the branch, before changing
+code. And check the fix live: the first version marked a send's start only on
+the dispatched path, which the mounted send harness takes; a real Console send
+goes through the received intent, so the window never opened (a live probe
+recorded zero acceptances) until a test drove the stock received path.
+
 ## Fewer syncs do not mean fewer renders, and a deferral's gap can be what the critical path relied on (TASK-33620.15.4, 2026-10-23)
 
 **Incident.** The task was filed against a 2026-10-10 profile in which the
@@ -47,6 +76,16 @@ redundant syncs, count the paints a window needs, not the syncs, to bound
 what is left. And when you remove a deferral or a stall, time the critical
 path that ran beside it (here Enter to the provider call, split warm and
 first sends): the gap may have been shielding it.
+
+**Follow-up (same day).** Restoring the gap on purpose took two tries. The
+first hold let a held explicit sync force the poll's next tick to run, to
+serve it. But the poll's own first sync re-armed a whole sync as it ended;
+that re-arm was the held request, so the next tick still painted inside the
+commit (commit 203 vs 182 ms on dev, 32 warm sends per arm). Holding until the
+next tick, and having that tick skip, left one sync per commit. A timer-level
+label made this visible: every Textual timer callback profiles as
+`task:Timer._run_timer` until the probe names the timer's callback, which also
+separates the poll from Textual's `screen_update` repaint.
 
 ## A negative control in `apply_settings_mutation_to_cli_config` misses Console's default saves (TASK-35578, 2026-10-22)
 
