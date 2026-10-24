@@ -323,16 +323,20 @@ def test_wikilink_targets_are_recorded_without_embeds(vault: Path) -> None:
     assert payload.wikilinks == ("Daily/2026-09-07", "README", "Missing")
 
 
-def test_obsidian_mode_off_leaves_frontmatter_and_links_untouched(
+def test_obsidian_mode_off_still_reads_frontmatter_but_leaves_links_untouched(
     vault: Path,
 ) -> None:
-    """With the toggle off the parser behaves exactly as it did before."""
+    """With the toggle off, ``[[wikilinks]]`` are plain text; the YAML block is
+    still read (TASK-34000.31: a single exported note has no vault, and Import
+    once used to keep its own ``---`` block as body and drop its keywords)."""
+    on = _payloads(vault)["vault/Projects/Library review.md"]
     payload = _payloads(vault, obsidian_mode=False)["vault/Projects/Library review.md"]
 
-    assert payload.title == "Ignored heading"
-    assert payload.keywords == ()
+    assert payload.title == on.title
+    assert payload.keywords == on.keywords
+    assert payload.content == on.content
+    assert not payload.content.startswith("---")
     assert payload.wikilinks == ()
-    assert payload.content.startswith("---")
 
 
 def test_a_frontmatter_only_note_still_imports_with_its_metadata(

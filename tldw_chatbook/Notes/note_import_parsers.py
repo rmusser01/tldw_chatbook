@@ -54,7 +54,14 @@ _CSV_RESERVED_HEADERS = frozenset(
     (*_TITLE_ALIASES, *_CONTENT_ALIASES, *_KEYWORD_ALIASES, "template")
 )
 _MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown"})
-_FRONTMATTER_KEYS = ("tags", "aliases")
+_FRONTMATTER_KEYS = ("tags", "keywords", "aliases")
+"""Front matter properties read as keywords, in precedence order.
+
+``keywords`` is a read alias for ``tags`` (TASK-34000.31): the single-note
+**Export Markdown** file wrote ``keywords: a, b`` before that fix, so the files
+users already exported still restore their keywords.
+"""
+_TAG_KEYS = frozenset({"tags", "keywords"})
 _ALIAS_KEYWORD_PREFIX = "alias: "
 """Marks a keyword that came from `aliases:` rather than from `tags:`."""
 _MAX_FRONTMATTER_LINES = 200
@@ -501,8 +508,14 @@ def _parse_text(
         # `source: "[[README]]"` property is metadata and is never rewritten.
         body = text
         unimported_keys: tuple[str, ...] = ()
-        if obsidian_mode and markdown:
-            metadata, body = _split_frontmatter(text)
+        # TASK-34000.31: the YAML block is read for EVERY Markdown file, not
+        # only in Obsidian mode. The toggle is offered for a vault alone, so a
+        # single exported note picked through Import once used to keep its
+        # own ``---`` block as body text and lose its keywords (the review's
+        # N-20 symptom, reproduced live). Obsidian mode still governs what is
+        # Obsidian's -- the vault's private folders and ``[[wikilinks]]``.
+        if markdown:
+            metadata, body = split_frontmatter(text)
             # A note that is only frontmatter (an Obsidian Properties-only file,
             # a templated daily note) still has to import: keep the original
             # text as the body rather than turning a note this mode understands
@@ -554,11 +567,22 @@ def _text_title(text: str, stem: str, markdown: bool) -> str:
     return stem
 
 
-def _split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
+def split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
     """Split one leading `---` YAML block from the note body.
 
     Anything that is not a complete, safely loadable mapping is left in the body
     exactly as written, so an odd block degrades to today's behaviour.
+
+    Public since TASK-34000.31: the chatbook importer and the exporters' tests
+    read a note file the same way **Add from files…** does, so the one reader
+    is shared rather than re-implemented with a naive ``split("---")``.
+
+    Args:
+        text: The note file's text.
+
+    Returns:
+        ``(metadata, body)`` -- the parsed mapping and the text after the
+        closing fence, or ``(None, text)`` when there is no readable block.
     """
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
@@ -578,6 +602,10 @@ def _split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
             return None, text
         return metadata, "\n".join(lines[index + 1 :]).lstrip("\n")
     return None, text
+
+
+_split_frontmatter = split_frontmatter
+"""Pre-TASK-34000.31 name; kept for one release for out-of-tree callers."""
 
 
 def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
@@ -628,7 +656,7 @@ def _frontmatter_keywords(
     metadata: Mapping[Any, Any] | None,
     bounds: ImportBounds,
 ) -> tuple[str, ...]:
-    """Return `tags` then `aliases` as deduplicated keywords.
+    """Return `tags`, then `keywords`, then `aliases` as deduplicated keywords.
 
     Aliases are alternate titles in Obsidian and there is no separate note
     metadata store here, so they are kept as keywords: the note stays findable by
@@ -647,7 +675,7 @@ def _frontmatter_keywords(
         except _ParseFailure:
             continue
         for value in values:
-            keyword = value if key == "tags" else f"{_ALIAS_KEYWORD_PREFIX}{value}"
+            keyword = value if key in _TAG_KEYS else f"{_ALIAS_KEYWORD_PREFIX}{value}"
             if len(keyword) > MAX_IMPORT_KEYWORD_LENGTH:
                 # `_keywords` already bounded `value`, so only our display
                 # prefix pushed it over. Keep the alternate name findable
