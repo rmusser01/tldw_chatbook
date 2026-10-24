@@ -4,7 +4,7 @@ title: Tests/Performance compact-setup, voice-latency, tab-sync and keystroke te
 status: Done
 assignee: ['@claude']
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 23:10
+updated_date: 2026-10-24 00:57
 labels:
 - follow-up
 - tests
@@ -77,6 +77,8 @@ The history node then exposed a real regression, so it is now `xfail(strict=True
 - Result: XFAIL, and `--runxfail` shows `assert 14 == 0` at the scan-count assert. A strict XPASS fails the lane step, so whoever fixes TASK-36510 removes the marker.
 
 **Tab sync.** This was a harness gap, not a product bug. The cold FULL control was red from birth: `NameError: run_controls` at 3e618d7119, then `KeyError: '__name__' not in globals` once 267413eb56 added `from ..Console_Modules import config_sync`. Both were shown by running each commit's test against its own chat_screen. The exec namespace now has `__package__`, a stand-in `ChatScreen`, and a stand-in `run_controls` whose poll source is None, which is what the real one returns for a non-ChatScreen. The real `poll_source` imports chat_screen, which the teardown check forbids. Red at dev: 1 failed, 23 passed. Now 24 passed.
+
+**Rebase onto dev 5b5920b8e2.** Dev's a896d33fdd (#3191) moved chat_screen's `config_sync` import to module level and stubbed `begin_console_sync` in this harness. The resolution compiles config_sync's installed source into the namespace, so the cold FULL control runs its real `sync_console_core_state`, `project_console_tick` and `replay_whole_console_sync`. `__package__` stays: without it the cold path's function-local `character_context` import raises the `KeyError`. Evidence: real code 24/24; `replay_whole_console_sync` returning True is red ("ran past its deferred projection"); dropping its retry is red (`[] == [{'delayed': True}]`).
 
 **Keystroke reds: two setup-cost modes, no product change.** The call sites are old (character.py:368 is 9aa12e5584, TASK-22204; message.py:995 is 391b7bf69a). Both modes end in one full sync inside the burst, which takes 3 snapshots: 2 from avatar, 1 from transcript.
 - *In-flight cold read.* A probe on `run_worker`/`_record_ui_worker_started` caught 5 failures in 12 runs (6 parallel x 2). Each time, a `console-readiness-config` refresh started before typing was still running at COUNT-ON. `_settle_publications()` waits for those groups to be quiet; with it, 0 of 12 runs showed the mode.
