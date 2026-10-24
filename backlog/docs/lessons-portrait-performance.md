@@ -13,3 +13,15 @@ savepoint inside the existing transaction. Test a caller catching failure and
 successfully committing its outer transaction, then read the record again. The
 TASK-36542 regressions retain all prior frames and the prior revision after both a
 failed Apply and a failed Remove; an uncaught outer failure is a separate control.
+
+## Count gate windows instead of waiting for rounded milliseconds (TASK-36543, 2026-10-23)
+
+**Incident.** The first silence gate accumulated 40 ms before closure. Two nominal
+20 ms windows can each be slightly shorter at fractional sample-rate boundaries;
+the regression with two 19.999 ms quiet windows returned small instead of rest.
+That postponed closure to a third window despite the two-raw-window contract.
+
+**What to do.** Count consecutive below-threshold raw windows for the silence gate;
+use each window's actual duration only for exponential smoothing. Separately test
+fractional-rate source positions and two slightly-short quiet windows. The corrected
+TASK-36543 filter closes on the second quiet window without accumulated-time drift.

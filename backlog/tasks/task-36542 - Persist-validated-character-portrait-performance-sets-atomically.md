@@ -16,7 +16,7 @@ documentation:
 - backlog/docs/lessons-portrait-performance.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 00:17
+updated_date: 2026-10-24 00:30
 ---
 
 ## Description
@@ -47,7 +47,7 @@ Reason: Implement ADR-242's local, atomic source-bound performance attachments; 
 3. Implement bounded six-still PNG normalization and canonical source capture, reusing installed artwork validation and database operation guards.
 4. Add atomic Apply/get/Remove with source/revision revalidation, inactive revision preservation and permanent-delete cascades; retain original artwork, exports and sync behavior.
 5. Run targeted new and existing expression/visual-identity/migration/backup checks, Ruff/format/import/packaging guards and scoped diff checks; update the character architecture doc.
-6. Self-review the complete atomic change, correct findings, record evidence and implementation notes, then commit and mark Done before starting TASK-36543.
+6. Self-review the complete atomic change, correct findings, record evidence and implementation notes, then commit and mark Done before starting the next atomic unit.
 Scope traced before implementation: include DB/recovery_core_schema.py and DB/recovery_core.py's pinned schema lineage/migration policy, DB/sql_validation.py's new-table allowlist, Tests/Backup_Recovery/test_core_owners.py, and the current-schema expectations in Tests/DB/test_response_rules_migration.py. These are required callers of the V81→V82 migration, not new feature scope. Verify full-profile attachment inclusion through real SQLite backup/catalog admission now; full UI profile restore remains TASK-36550.
 <!-- SECTION:PLAN:END -->
 
@@ -60,7 +60,7 @@ Schema 81→82 is an executed packaged SQL migration. Updated DB/recovery_core_s
 
 Verification: initial missing-module red; nested caught-Apply red (revision 2 instead of 1), then green with Apply/Remove savepoints. Final new files plus response-rule migration callers: 40 passed. Broader new/existing expression, visual identity, migration and SQL guards: 179 passed. Native recovery policy/capture: 10 passed. Export regressions: 21 passed, 2 golden-byte failures reproduced identically on unchanged base export sources and fixtures; not introduced here. Importlib mode is required for Actor Pack relative imports. New files pass Ruff/format checks, zero introduced findings against exact per-file legacy HEAD baselines, 127-table guard passes, packaged migration glob covers V82, fresh import remains lazy, and scoped diff check passes.
 
-Self-review completed before TASK-36543; no unresolved blocking finding. See Docs/superpowers/reviews/2026-10-23-task-36542-review.md. The nested-transaction incident is recorded in backlog/docs/lessons-portrait-performance.md. Full suite, installed full-profile UI restore and live rendering/audio/image quality remain later qualification obligations.
+Self-review completed before the next atomic unit; no unresolved blocking finding. See Docs/superpowers/reviews/2026-10-23-task-36542-review.md. The nested-transaction incident is recorded in backlog/docs/lessons-portrait-performance.md. Full suite, installed full-profile UI restore and live rendering/audio/image quality remain later qualification obligations.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

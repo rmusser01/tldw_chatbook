@@ -57,6 +57,25 @@ a discarded import emits no success notification (TASK-36363).
 
 Two paths, never both for one response: **live PCM streaming** through `StreamingPcmSink` (PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio calls from the callback), or **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
 
+## Pure speech presentation contracts
+
+`Audio/speech_presentation.py` supplies stdlib-only PCM16 energy windows, a raw
+silence gate with finite dBFS smoothing, immutable owner/snapshot values and a
+thread-safe latest-value channel. PCM windows follow accepted source frames,
+including split channel samples and fractional frames per 20 ms window; this
+module does not open a device, run a thread or assign an output clock.
+
+`SpeechPresentation` belongs to one exact host-issued owner instance and cannot
+be retargeted. It rejects old generations/observations, preserves confirmed pause
+and terminal transport, and closes stale (>100 ms), future or invalid progress.
+Qualified silence has a closed mouth and no finite level while retaining valid
+timing; unknown timing is separate. Clock failure degrades observation without
+raising into audio callers. No waveform/history is stored in the channel.
+
+Device-time publication, backend completion and Console request adapters belong
+to the following radio-portrait implementation units (ADR-242); these pure
+contracts alone do not enable a moving Console portrait.
+
 ## Speak action (dataflow)
 
 1. Speak on an assistant message → the store **issues a snapshot** (`issue_tts_message_speech_snapshot`) — rejects non-assistant/incomplete/blank/off-active-path messages with bounded rejection codes ("Message changed before speech started; select Speak again.").

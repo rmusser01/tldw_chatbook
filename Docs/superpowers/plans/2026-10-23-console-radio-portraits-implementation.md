@@ -163,7 +163,7 @@ class SpeechPresentation:
     def set_transport(self, state: TransportState) -> None: ...
 ```
 
-Signatures in these blocks are declarations, not partial implementation bodies. `scope_token` preserves host-issued authority identity without coercion. A new owner gets a new token; do not infer ownership from synthetic message ID prefixes. The channel stores one latest snapshot, rejects mismatched owners/old generations, and applies freshness when read. Its observer state cannot mutate speech admission. Remaining exported names are defined in their owning unit below.
+Signatures in these blocks are declarations, not partial implementation bodies. `scope_token` preserves host-issued authority identity without coercion. A new owner gets a new token; do not infer ownership from synthetic message ID prefixes. The channel stores one latest snapshot, rejects mismatched owners/old generations and older same-generation observations, and applies freshness when read. Its `owner` is read-only; publications carry that exact issued owner instance. Confirmed pause requires explicit resume; terminal state is final for this owner. Qualified zero/missing level closes the mouth while retaining valid timing, independently of timing-unavailable fallback. Its observer state cannot mutate speech admission. Remaining exported names are defined in their owning unit below.
 
 ## Common execution and verification
 
@@ -216,7 +216,7 @@ The `performance_case` fixture belongs in the new repository test module: `(Char
 
 **Consumes:** PCM16 samples and a monotonic clock. **Produces:** The Unit 2 shared contracts, no sound device, thread, widget or provider side effect.
 
-- [ ] **1. Add deterministic failing tests**, including actual assertions for nonzero quiet background and finite reopen:
+- [x] **1. Add deterministic failing tests**, including actual assertions for nonzero quiet background and finite reopen:
 
 ```python
 def test_nonzero_pause_bypasses_release_and_reopens_finitely():
@@ -240,10 +240,10 @@ def test_pcm_sample_split_matches_one_chunk():
 ```
 
 Also assert small/open hysteresis, 48 kHz/stereo anti-phase energy (sum squared channel samples, not cancellation-prone mono averaging), malformed final sample rejection, invalid rates/channels, old-owner/generation rejection, one-snapshot retention and >100 ms freshness forcing rest. Seed the clock and owner directly; no wall-clock sleeps.
-- [ ] **2. Run `Tests/Audio/test_speech_presentation.py` red.** Expected missing module or failed numerical/state assertions.
-- [ ] **3. Implement the shared contracts and finite filter.** Carry incomplete samples/windows between pushes; reject an incomplete final PCM sample on finish. Window positions are source frames, not interleaved sample counts. Apply silence gating before smoothing; after closure the next finite speech window seeds the filter. `SpeechPresentation.read()` returns closed/invalid timing for stale progress without overwriting a newer transport terminal. Observer errors cannot propagate into audio callers.
-- [ ] **4. Run the file green plus a fresh interpreter import.** Assert neither `textual`, `sounddevice` nor TTS package modules were imported by `Audio.speech_presentation`. Verify the numerical thresholds in Global Constraints and the accepted-chunk input contract needed by Unit 3.
-- [ ] **5. Commit.** Suggested message: `feat: derive bounded silence-aware speech presentation`.
+- [x] **2. Run `Tests/Audio/test_speech_presentation.py` red.** Expected missing module or failed numerical/state assertions.
+- [x] **3. Implement the shared contracts and finite filter.** Carry incomplete samples/windows between pushes; reject an incomplete final PCM sample on finish. Window positions are source frames, not interleaved sample counts. Apply silence gating before smoothing; after closure the next finite speech window seeds the filter. `SpeechPresentation.read()` returns closed/invalid timing for stale progress without overwriting a newer transport terminal. Observer errors cannot propagate into audio callers.
+- [x] **4. Run the file green plus a fresh interpreter import.** Assert neither `textual`, `sounddevice` nor TTS package modules were imported by `Audio.speech_presentation`. Verify the numerical thresholds in Global Constraints and the accepted-chunk input contract needed by Unit 3.
+- [x] **5. Commit.** Suggested message: `feat: derive bounded silence-aware speech presentation`.
 
 ### Unit 3 — TASK-36544: qualified device timing and WAV output
 
