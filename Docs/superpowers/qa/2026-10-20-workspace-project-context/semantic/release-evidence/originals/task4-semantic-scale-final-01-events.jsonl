@@ -1,0 +1,629 @@
+{"event": "retained_key_preflight", "keyword_epoch": 1, "keyword_indexed": 20000, "keyword_state": "Ready", "phase": "preflight", "semantic_revision": 1, "semantic_state": "Building", "shape": "nested", "time_monotonic": 188509.765}
+{"event": "retained_key_preflight", "keyword_epoch": 1, "keyword_indexed": 20000, "keyword_state": "Ready", "phase": "preflight", "semantic_revision": 0, "semantic_state": "Off", "shape": "wide", "time_monotonic": 188513.687}
+{"event": "sample", "phase": "consent", "sampled_combined_rss": 218583040, "sampled_parent_rss": 218583040, "shape": "nested", "time_monotonic": 188685.281, "whole_binding_bytes": 30482541}
+{"event": "retained_semantic_revoked", "from_revision": 1, "from_state": "Building", "phase": "consent", "returned_revision": 2, "returned_state": "Off", "shape": "nested", "time_monotonic": 188688.25}
+{"event": "sample", "phase": "consent", "sampled_combined_rss": 219299840, "sampled_parent_rss": 219299840, "shape": "nested", "time_monotonic": 188690.296, "whole_binding_bytes": 30482541}
+{"event": "build_started", "job_revision": 3, "phase": "build", "shape": "nested", "time_monotonic": 188691.906}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 219516928, "sampled_parent_rss": 219516928, "shape": "nested", "time_monotonic": 188695.328, "whole_binding_bytes": 30482541}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 701775872, "sampled_parent_rss": 701775872, "shape": "nested", "time_monotonic": 188700.421, "whole_binding_bytes": 30482541}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 779874304, "sampled_parent_rss": 779874304, "shape": "nested", "time_monotonic": 188705.453, "whole_binding_bytes": 30482541}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 780607488, "sampled_parent_rss": 780607488, "shape": "nested", "time_monotonic": 188710.468, "whole_binding_bytes": 30482541}
+{"device": "cpu", "dtype": "torch.float32", "event": "hf_constructor_return", "phase": "build", "shape": "nested", "time_monotonic": 188713.375}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188713.39}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188713.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 858869760, "sampled_parent_rss": 858869760, "shape": "nested", "time_monotonic": 188715.484, "whole_binding_bytes": 30625901}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 860909568, "sampled_parent_rss": 860909568, "shape": "nested", "time_monotonic": 188720.515, "whole_binding_bytes": 30765165}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188723.421}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188723.64, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 862105600, "sampled_parent_rss": 862105600, "shape": "nested", "time_monotonic": 188725.531, "whole_binding_bytes": 30904429}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 862343168, "sampled_parent_rss": 862343168, "shape": "nested", "time_monotonic": 188730.546, "whole_binding_bytes": 31043693}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188732.984}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188733.187, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 869629952, "sampled_parent_rss": 869629952, "shape": "nested", "time_monotonic": 188735.562, "whole_binding_bytes": 31182957}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 869904384, "sampled_parent_rss": 869904384, "shape": "nested", "time_monotonic": 188740.578, "whole_binding_bytes": 31322221}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188742.515}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188742.718, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 875491328, "sampled_parent_rss": 875491328, "shape": "nested", "time_monotonic": 188745.609, "whole_binding_bytes": 31531117}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 875491328, "sampled_parent_rss": 875491328, "shape": "nested", "time_monotonic": 188750.625, "whole_binding_bytes": 31596653}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188752.296}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188752.5, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 875659264, "sampled_parent_rss": 875659264, "shape": "nested", "time_monotonic": 188755.656, "whole_binding_bytes": 31805549}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 875667456, "sampled_parent_rss": 875667456, "shape": "nested", "time_monotonic": 188760.671, "whole_binding_bytes": 31875181}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188761.765}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188761.968, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 875732992, "sampled_parent_rss": 875732992, "shape": "nested", "time_monotonic": 188765.687, "whole_binding_bytes": 32153709}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 875732992, "sampled_parent_rss": 875732992, "shape": "nested", "time_monotonic": 188770.718, "whole_binding_bytes": 32153709}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188771.156}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188771.343, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 876101632, "sampled_parent_rss": 876101632, "shape": "nested", "time_monotonic": 188775.734, "whole_binding_bytes": 32432237}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188780.562}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 876175360, "sampled_parent_rss": 876175360, "shape": "nested", "time_monotonic": 188780.765, "whole_binding_bytes": 32432237}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188780.765, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 876257280, "sampled_parent_rss": 876257280, "shape": "nested", "time_monotonic": 188785.781, "whole_binding_bytes": 32710765}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188790.171}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188790.359, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 876400640, "sampled_parent_rss": 876400640, "shape": "nested", "time_monotonic": 188790.812, "whole_binding_bytes": 32710765}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 876498944, "sampled_parent_rss": 876498944, "shape": "nested", "time_monotonic": 188795.828, "whole_binding_bytes": 32993389}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188799.734}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188799.921, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 876576768, "sampled_parent_rss": 876576768, "shape": "nested", "time_monotonic": 188800.843, "whole_binding_bytes": 33058925}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 876810240, "sampled_parent_rss": 876810240, "shape": "nested", "time_monotonic": 188805.875, "whole_binding_bytes": 33267821}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188809.328}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188809.515, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 877461504, "sampled_parent_rss": 877461504, "shape": "nested", "time_monotonic": 188810.89, "whole_binding_bytes": 33337453}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 877461504, "sampled_parent_rss": 877461504, "shape": "nested", "time_monotonic": 188815.906, "whole_binding_bytes": 33546349}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188818.812}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188819.015, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 877547520, "sampled_parent_rss": 877547520, "shape": "nested", "time_monotonic": 188820.921, "whole_binding_bytes": 33689709}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 877551616, "sampled_parent_rss": 877551616, "shape": "nested", "time_monotonic": 188825.953, "whole_binding_bytes": 33824877}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188828.281}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188828.468, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 877940736, "sampled_parent_rss": 877940736, "shape": "nested", "time_monotonic": 188830.984, "whole_binding_bytes": 34033773}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 877940736, "sampled_parent_rss": 877940736, "shape": "nested", "time_monotonic": 188835.984, "whole_binding_bytes": 34107501}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188837.703}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188837.906, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 878469120, "sampled_parent_rss": 878469120, "shape": "nested", "time_monotonic": 188841.0, "whole_binding_bytes": 34312301}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 878465024, "sampled_parent_rss": 878465024, "shape": "nested", "time_monotonic": 188846.015, "whole_binding_bytes": 34386029}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188847.203}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188847.39, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 878866432, "sampled_parent_rss": 878866432, "shape": "nested", "time_monotonic": 188851.046, "whole_binding_bytes": 34668653}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 878866432, "sampled_parent_rss": 878866432, "shape": "nested", "time_monotonic": 188856.062, "whole_binding_bytes": 34668653}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188856.593}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188856.781, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880476160, "sampled_parent_rss": 880476160, "shape": "nested", "time_monotonic": 188861.078, "whole_binding_bytes": 34947181}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880467968, "sampled_parent_rss": 880467968, "shape": "nested", "time_monotonic": 188866.109, "whole_binding_bytes": 34947181}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188866.125}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188866.343, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880721920, "sampled_parent_rss": 880721920, "shape": "nested", "time_monotonic": 188871.125, "whole_binding_bytes": 35225709}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188875.703}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188875.906, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880721920, "sampled_parent_rss": 880721920, "shape": "nested", "time_monotonic": 188876.14, "whole_binding_bytes": 35225709}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880721920, "sampled_parent_rss": 880721920, "shape": "nested", "time_monotonic": 188881.171, "whole_binding_bytes": 35500141}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188885.406}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188885.609, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880721920, "sampled_parent_rss": 880721920, "shape": "nested", "time_monotonic": 188886.187, "whole_binding_bytes": 35500141}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880721920, "sampled_parent_rss": 880721920, "shape": "nested", "time_monotonic": 188891.203, "whole_binding_bytes": 35782765}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188895.234}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188895.437, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880779264, "sampled_parent_rss": 880779264, "shape": "nested", "time_monotonic": 188896.218, "whole_binding_bytes": 35782765}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880779264, "sampled_parent_rss": 880779264, "shape": "nested", "time_monotonic": 188901.234, "whole_binding_bytes": 36057197}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188904.687}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188904.89, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880783360, "sampled_parent_rss": 880783360, "shape": "nested", "time_monotonic": 188906.25, "whole_binding_bytes": 36135021}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880783360, "sampled_parent_rss": 880783360, "shape": "nested", "time_monotonic": 188911.265, "whole_binding_bytes": 36343917}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188914.156}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188914.343, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 880783360, "sampled_parent_rss": 880783360, "shape": "nested", "time_monotonic": 188916.281, "whole_binding_bytes": 36487277}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888475648, "sampled_parent_rss": 888475648, "shape": "nested", "time_monotonic": 188921.312, "whole_binding_bytes": 36622445}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188923.625}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188923.828, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888479744, "sampled_parent_rss": 888479744, "shape": "nested", "time_monotonic": 188926.328, "whole_binding_bytes": 36835437}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888479744, "sampled_parent_rss": 888479744, "shape": "nested", "time_monotonic": 188931.343, "whole_binding_bytes": 36905069}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188933.187}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188933.375, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888487936, "sampled_parent_rss": 888487936, "shape": "nested", "time_monotonic": 188936.359, "whole_binding_bytes": 37113965}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888483840, "sampled_parent_rss": 888483840, "shape": "nested", "time_monotonic": 188941.39, "whole_binding_bytes": 37183597}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188942.718}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188942.906, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888483840, "sampled_parent_rss": 888483840, "shape": "nested", "time_monotonic": 188946.406, "whole_binding_bytes": 37462125}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888483840, "sampled_parent_rss": 888483840, "shape": "nested", "time_monotonic": 188951.421, "whole_binding_bytes": 37462125}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188952.218}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188952.421, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888483840, "sampled_parent_rss": 888483840, "shape": "nested", "time_monotonic": 188956.453, "whole_binding_bytes": 37740653}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888479744, "sampled_parent_rss": 888479744, "shape": "nested", "time_monotonic": 188961.468, "whole_binding_bytes": 37740653}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188961.671}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188961.89, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889761792, "sampled_parent_rss": 889761792, "shape": "nested", "time_monotonic": 188966.484, "whole_binding_bytes": 38019181}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188971.078}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188971.281, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889827328, "sampled_parent_rss": 889827328, "shape": "nested", "time_monotonic": 188971.515, "whole_binding_bytes": 38019181}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889823232, "sampled_parent_rss": 889823232, "shape": "nested", "time_monotonic": 188976.531, "whole_binding_bytes": 38293613}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188980.515}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188980.718, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889835520, "sampled_parent_rss": 889835520, "shape": "nested", "time_monotonic": 188981.562, "whole_binding_bytes": 38293613}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889843712, "sampled_parent_rss": 889843712, "shape": "nested", "time_monotonic": 188986.578, "whole_binding_bytes": 38576237}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188990.093}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188990.296, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888832000, "sampled_parent_rss": 888832000, "shape": "nested", "time_monotonic": 188991.593, "whole_binding_bytes": 38645869}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888815616, "sampled_parent_rss": 888815616, "shape": "nested", "time_monotonic": 188996.625, "whole_binding_bytes": 38854765}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188999.718}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 188999.937, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888913920, "sampled_parent_rss": 888913920, "shape": "nested", "time_monotonic": 189001.64, "whole_binding_bytes": 38924397}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888913920, "sampled_parent_rss": 888913920, "shape": "nested", "time_monotonic": 189006.656, "whole_binding_bytes": 39133293}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189009.468}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189009.703, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888987648, "sampled_parent_rss": 888987648, "shape": "nested", "time_monotonic": 189011.671, "whole_binding_bytes": 39272557}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 888987648, "sampled_parent_rss": 888987648, "shape": "nested", "time_monotonic": 189016.687, "whole_binding_bytes": 39407725}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189019.031}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189019.25, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889049088, "sampled_parent_rss": 889049088, "shape": "nested", "time_monotonic": 189021.718, "whole_binding_bytes": 39620717}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889049088, "sampled_parent_rss": 889049088, "shape": "nested", "time_monotonic": 189026.734, "whole_binding_bytes": 39690349}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189028.484}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189028.687, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889167872, "sampled_parent_rss": 889167872, "shape": "nested", "time_monotonic": 189031.75, "whole_binding_bytes": 39895149}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889167872, "sampled_parent_rss": 889167872, "shape": "nested", "time_monotonic": 189036.765, "whole_binding_bytes": 39964781}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189037.89}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189038.109, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889163776, "sampled_parent_rss": 889163776, "shape": "nested", "time_monotonic": 189041.781, "whole_binding_bytes": 40243309}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 889163776, "sampled_parent_rss": 889163776, "shape": "nested", "time_monotonic": 189046.812, "whole_binding_bytes": 40243309}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189047.359}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189047.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890277888, "sampled_parent_rss": 890277888, "shape": "nested", "time_monotonic": 189051.828, "whole_binding_bytes": 40525933}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189056.781}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890277888, "sampled_parent_rss": 890277888, "shape": "nested", "time_monotonic": 189056.843, "whole_binding_bytes": 40525933}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189056.984, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890937344, "sampled_parent_rss": 890937344, "shape": "nested", "time_monotonic": 189061.875, "whole_binding_bytes": 40808557}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189066.281}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189066.484, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890937344, "sampled_parent_rss": 890937344, "shape": "nested", "time_monotonic": 189066.906, "whole_binding_bytes": 40808557}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890933248, "sampled_parent_rss": 890933248, "shape": "nested", "time_monotonic": 189071.921, "whole_binding_bytes": 41082989}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189075.875}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189076.093, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890933248, "sampled_parent_rss": 890933248, "shape": "nested", "time_monotonic": 189076.937, "whole_binding_bytes": 41082989}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890933248, "sampled_parent_rss": 890933248, "shape": "nested", "time_monotonic": 189081.968, "whole_binding_bytes": 41361517}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189086.125}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189086.328, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890937344, "sampled_parent_rss": 890937344, "shape": "nested", "time_monotonic": 189086.984, "whole_binding_bytes": 41361517}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189092.015, "whole_binding_bytes": 41644141}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189095.546}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189095.765, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189097.046, "whole_binding_bytes": 41713773}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189102.062, "whole_binding_bytes": 41922669}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189104.968}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189105.171, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189107.078, "whole_binding_bytes": 42061933}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189112.109, "whole_binding_bytes": 42197101}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189114.375}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189114.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189117.14, "whole_binding_bytes": 42414189}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189122.156, "whole_binding_bytes": 42479725}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189123.687}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189123.906, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189127.171, "whole_binding_bytes": 42762349}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189132.187, "whole_binding_bytes": 42762349}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189133.125}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189133.328, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189137.203, "whole_binding_bytes": 43036781}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189142.218, "whole_binding_bytes": 43036781}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189142.812}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189143.046, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189147.25, "whole_binding_bytes": 43315309}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890986496, "sampled_parent_rss": 890986496, "shape": "nested", "time_monotonic": 189152.265, "whole_binding_bytes": 43315309}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189152.359}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189152.562, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 891756544, "sampled_parent_rss": 891756544, "shape": "nested", "time_monotonic": 189157.281, "whole_binding_bytes": 43593837}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189161.734}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189161.937, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890990592, "sampled_parent_rss": 890990592, "shape": "nested", "time_monotonic": 189162.296, "whole_binding_bytes": 43593837}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 890990592, "sampled_parent_rss": 890990592, "shape": "nested", "time_monotonic": 189167.312, "whole_binding_bytes": 43876461}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189171.125}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189171.328, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 891043840, "sampled_parent_rss": 891043840, "shape": "nested", "time_monotonic": 189172.328, "whole_binding_bytes": 43941997}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 891039744, "sampled_parent_rss": 891039744, "shape": "nested", "time_monotonic": 189177.343, "whole_binding_bytes": 44150893}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189180.546}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189180.75, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189182.359, "whole_binding_bytes": 44224621}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189187.375, "whole_binding_bytes": 44433517}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189189.953}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189190.156, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189192.406, "whole_binding_bytes": 44568685}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189197.421, "whole_binding_bytes": 44712045}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189199.296}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189199.5, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189202.421, "whole_binding_bytes": 44916845}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189207.453, "whole_binding_bytes": 44990573}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189208.734}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189208.937, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892018688, "sampled_parent_rss": 892018688, "shape": "nested", "time_monotonic": 189212.468, "whole_binding_bytes": 45265005}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189217.484, "whole_binding_bytes": 45265005}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189218.328}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189218.531, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189222.5, "whole_binding_bytes": 45547629}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189227.531, "whole_binding_bytes": 45547629}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189227.843}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189228.046, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189232.546, "whole_binding_bytes": 45822061}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189237.234}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189237.437, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892022784, "sampled_parent_rss": 892022784, "shape": "nested", "time_monotonic": 189237.578, "whole_binding_bytes": 45822061}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892026880, "sampled_parent_rss": 892026880, "shape": "nested", "time_monotonic": 189242.593, "whole_binding_bytes": 46100589}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189246.578}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189246.796, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892030976, "sampled_parent_rss": 892030976, "shape": "nested", "time_monotonic": 189247.609, "whole_binding_bytes": 46100589}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892026880, "sampled_parent_rss": 892026880, "shape": "nested", "time_monotonic": 189252.625, "whole_binding_bytes": 46379117}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189256.046}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189256.25, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892297216, "sampled_parent_rss": 892297216, "shape": "nested", "time_monotonic": 189257.64, "whole_binding_bytes": 46448749}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892297216, "sampled_parent_rss": 892297216, "shape": "nested", "time_monotonic": 189262.656, "whole_binding_bytes": 46661741}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189265.484}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189265.687, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892297216, "sampled_parent_rss": 892297216, "shape": "nested", "time_monotonic": 189267.687, "whole_binding_bytes": 46796909}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892297216, "sampled_parent_rss": 892297216, "shape": "nested", "time_monotonic": 189272.718, "whole_binding_bytes": 46936173}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189274.89}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189275.109, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892293120, "sampled_parent_rss": 892293120, "shape": "nested", "time_monotonic": 189277.734, "whole_binding_bytes": 47149165}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892293120, "sampled_parent_rss": 892293120, "shape": "nested", "time_monotonic": 189282.765, "whole_binding_bytes": 47218797}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189284.484}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189284.687, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892293120, "sampled_parent_rss": 892293120, "shape": "nested", "time_monotonic": 189287.781, "whole_binding_bytes": 47427693}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892293120, "sampled_parent_rss": 892293120, "shape": "nested", "time_monotonic": 189292.812, "whole_binding_bytes": 47497325}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189294.078}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189294.296, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892293120, "sampled_parent_rss": 892293120, "shape": "nested", "time_monotonic": 189297.828, "whole_binding_bytes": 47775853}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892293120, "sampled_parent_rss": 892293120, "shape": "nested", "time_monotonic": 189302.843, "whole_binding_bytes": 47775853}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189303.5}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189303.703, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189307.859, "whole_binding_bytes": 48054381}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189312.89, "whole_binding_bytes": 48054381}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189312.921}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189313.125, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189317.906, "whole_binding_bytes": 48337005}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189322.453}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189322.656, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189322.921, "whole_binding_bytes": 48337005}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189327.953, "whole_binding_bytes": 48615533}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189331.875}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189332.109, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189332.968, "whole_binding_bytes": 48615533}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189337.984, "whole_binding_bytes": 48894061}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189341.359}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189341.562, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189343.015, "whole_binding_bytes": 48963693}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189348.031, "whole_binding_bytes": 49168493}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189350.921}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189351.109, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189353.046, "whole_binding_bytes": 49311853}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892563456, "sampled_parent_rss": 892563456, "shape": "nested", "time_monotonic": 189358.078, "whole_binding_bytes": 49451117}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189360.296}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189360.5, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892309504, "sampled_parent_rss": 892309504, "shape": "nested", "time_monotonic": 189363.093, "whole_binding_bytes": 49655917}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892305408, "sampled_parent_rss": 892305408, "shape": "nested", "time_monotonic": 189368.109, "whole_binding_bytes": 49725549}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189369.687}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189369.89, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892325888, "sampled_parent_rss": 892325888, "shape": "nested", "time_monotonic": 189373.125, "whole_binding_bytes": 50004077}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892325888, "sampled_parent_rss": 892325888, "shape": "nested", "time_monotonic": 189378.156, "whole_binding_bytes": 50004077}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189379.468}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189379.703, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892375040, "sampled_parent_rss": 892375040, "shape": "nested", "time_monotonic": 189383.187, "whole_binding_bytes": 50286701}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 892375040, "sampled_parent_rss": 892375040, "shape": "nested", "time_monotonic": 189388.203, "whole_binding_bytes": 50286701}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189389.046}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189389.265, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189393.218, "whole_binding_bytes": 50569325}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189398.25, "whole_binding_bytes": 50569325}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189398.609}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189398.812, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189403.281, "whole_binding_bytes": 50843757}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189408.0}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189408.234, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189408.296, "whole_binding_bytes": 50843757}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189413.328, "whole_binding_bytes": 51122285}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189417.453}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189417.671, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189418.343, "whole_binding_bytes": 51122285}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189423.359, "whole_binding_bytes": 51400813}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189426.89}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189427.093, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189428.39, "whole_binding_bytes": 51470445}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189433.406, "whole_binding_bytes": 51679341}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189436.281}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189436.484, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189438.437, "whole_binding_bytes": 51814509}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189443.453, "whole_binding_bytes": 51953773}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189445.781}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189446.0, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189448.468, "whole_binding_bytes": 52097133}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189453.484, "whole_binding_bytes": 52244589}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189455.359}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189455.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189458.5, "whole_binding_bytes": 52449389}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189463.515, "whole_binding_bytes": 52519021}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189464.843}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189465.046, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189468.531, "whole_binding_bytes": 52797549}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189473.546, "whole_binding_bytes": 52797549}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189474.25}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189474.453, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189478.578, "whole_binding_bytes": 53071981}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189483.609, "whole_binding_bytes": 53071981}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189483.734}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189483.953, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189488.625, "whole_binding_bytes": 53354605}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189493.203}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189493.421, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189493.64, "whole_binding_bytes": 53354605}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189498.656, "whole_binding_bytes": 53629037}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189503.125}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189503.343, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189503.671, "whole_binding_bytes": 53629037}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189508.703, "whole_binding_bytes": 53911661}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189512.734}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189512.937, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189513.703, "whole_binding_bytes": 53911661}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189518.734, "whole_binding_bytes": 54194285}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189522.171}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189522.375, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189523.75, "whole_binding_bytes": 54263917}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189528.765, "whole_binding_bytes": 54476909}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189531.593}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189531.796, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189533.781, "whole_binding_bytes": 54616173}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189538.812, "whole_binding_bytes": 54751341}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189541.0}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189541.218, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189543.828, "whole_binding_bytes": 54960237}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189548.843, "whole_binding_bytes": 55029869}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189550.703}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189550.984, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189553.859, "whole_binding_bytes": 55238765}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189558.875, "whole_binding_bytes": 55308397}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189560.359}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189560.562, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189563.89, "whole_binding_bytes": 55586925}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189568.921, "whole_binding_bytes": 55586925}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189569.828}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189570.046, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189573.937, "whole_binding_bytes": 55865453}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893353984, "sampled_parent_rss": 893353984, "shape": "nested", "time_monotonic": 189578.953, "whole_binding_bytes": 55865453}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189579.234}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189579.453, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189583.984, "whole_binding_bytes": 56148077}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189588.687}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189588.906, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189589.0, "whole_binding_bytes": 56148077}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893358080, "sampled_parent_rss": 893358080, "shape": "nested", "time_monotonic": 189594.015, "whole_binding_bytes": 56422509}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189598.14}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189598.343, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893485056, "sampled_parent_rss": 893485056, "shape": "nested", "time_monotonic": 189599.046, "whole_binding_bytes": 56422509}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 893485056, "sampled_parent_rss": 893485056, "shape": "nested", "time_monotonic": 189604.062, "whole_binding_bytes": 56701037}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189607.687}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189607.89, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894402560, "sampled_parent_rss": 894402560, "shape": "nested", "time_monotonic": 189609.093, "whole_binding_bytes": 56770669}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894402560, "sampled_parent_rss": 894402560, "shape": "nested", "time_monotonic": 189614.109, "whole_binding_bytes": 56975469}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189617.171}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189617.406, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894402560, "sampled_parent_rss": 894402560, "shape": "nested", "time_monotonic": 189619.125, "whole_binding_bytes": 57122925}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894402560, "sampled_parent_rss": 894402560, "shape": "nested", "time_monotonic": 189624.14, "whole_binding_bytes": 57262189}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189627.14}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189627.343, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894402560, "sampled_parent_rss": 894402560, "shape": "nested", "time_monotonic": 189629.171, "whole_binding_bytes": 57401453}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894640128, "sampled_parent_rss": 894640128, "shape": "nested", "time_monotonic": 189634.203, "whole_binding_bytes": 57536621}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189636.781}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189636.968, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894664704, "sampled_parent_rss": 894664704, "shape": "nested", "time_monotonic": 189639.218, "whole_binding_bytes": 57679981}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894664704, "sampled_parent_rss": 894664704, "shape": "nested", "time_monotonic": 189644.234, "whole_binding_bytes": 57819245}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189646.218}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189646.437, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894664704, "sampled_parent_rss": 894664704, "shape": "nested", "time_monotonic": 189649.265, "whole_binding_bytes": 58028141}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894664704, "sampled_parent_rss": 894664704, "shape": "nested", "time_monotonic": 189654.281, "whole_binding_bytes": 58097773}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189655.953}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189656.171, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894660608, "sampled_parent_rss": 894660608, "shape": "nested", "time_monotonic": 189659.312, "whole_binding_bytes": 58302573}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894660608, "sampled_parent_rss": 894660608, "shape": "nested", "time_monotonic": 189664.312, "whole_binding_bytes": 58376301}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189665.375}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189665.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894660608, "sampled_parent_rss": 894660608, "shape": "nested", "time_monotonic": 189669.343, "whole_binding_bytes": 58650733}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894660608, "sampled_parent_rss": 894660608, "shape": "nested", "time_monotonic": 189674.375, "whole_binding_bytes": 58650733}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189674.812}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189675.015, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 894660608, "sampled_parent_rss": 894660608, "shape": "nested", "time_monotonic": 189679.39, "whole_binding_bytes": 58929261}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189684.359}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189684.421, "whole_binding_bytes": 58929261}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189684.609, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189689.437, "whole_binding_bytes": 59207789}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189693.828}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189694.078, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189694.453, "whole_binding_bytes": 59207789}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189699.468, "whole_binding_bytes": 59490413}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189703.39}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189703.656, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189704.484, "whole_binding_bytes": 59490413}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189709.5, "whole_binding_bytes": 59764845}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189712.921}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189713.125, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189714.515, "whole_binding_bytes": 59838573}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189719.531, "whole_binding_bytes": 60047469}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189722.375}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189722.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895193088, "sampled_parent_rss": 895193088, "shape": "nested", "time_monotonic": 189724.562, "whole_binding_bytes": 60186733}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895209472, "sampled_parent_rss": 895209472, "shape": "nested", "time_monotonic": 189729.578, "whole_binding_bytes": 60321901}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189731.765}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189731.968, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895209472, "sampled_parent_rss": 895209472, "shape": "nested", "time_monotonic": 189734.609, "whole_binding_bytes": 60538989}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189739.625, "whole_binding_bytes": 60604525}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189741.125}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189741.328, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189744.64, "whole_binding_bytes": 60883053}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189749.656, "whole_binding_bytes": 60883053}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189750.546}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189750.781, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189754.687, "whole_binding_bytes": 61169773}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189759.703, "whole_binding_bytes": 61169773}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189760.484}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189760.687, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189764.718, "whole_binding_bytes": 61444205}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189769.75, "whole_binding_bytes": 61444205}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189770.078}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189770.296, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895217664, "sampled_parent_rss": 895217664, "shape": "nested", "time_monotonic": 189774.765, "whole_binding_bytes": 61722733}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189779.656}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189779.796, "whole_binding_bytes": 61722733}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189779.937, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189784.796, "whole_binding_bytes": 62001261}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189789.156}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189789.359, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189789.828, "whole_binding_bytes": 62001261}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189794.843, "whole_binding_bytes": 62279789}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189798.593}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189798.812, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189799.859, "whole_binding_bytes": 62345325}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895213568, "sampled_parent_rss": 895213568, "shape": "nested", "time_monotonic": 189804.875, "whole_binding_bytes": 62554221}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189808.187}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189808.406, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895254528, "sampled_parent_rss": 895254528, "shape": "nested", "time_monotonic": 189809.89, "whole_binding_bytes": 62627949}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895254528, "sampled_parent_rss": 895254528, "shape": "nested", "time_monotonic": 189814.921, "whole_binding_bytes": 62836845}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189817.625}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189817.843, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895262720, "sampled_parent_rss": 895262720, "shape": "nested", "time_monotonic": 189819.937, "whole_binding_bytes": 62980205}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 895262720, "sampled_parent_rss": 895262720, "shape": "nested", "time_monotonic": 189824.953, "whole_binding_bytes": 63115373}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189827.078}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189827.281, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189829.984, "whole_binding_bytes": 63328365}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189835.0, "whole_binding_bytes": 63393901}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189836.468}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189836.671, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189840.031, "whole_binding_bytes": 63668333}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189845.046, "whole_binding_bytes": 63668333}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189845.89}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189846.093, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189850.062, "whole_binding_bytes": 63955053}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189855.078, "whole_binding_bytes": 63955053}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189855.421}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189855.625, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189860.093, "whole_binding_bytes": 64229485}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189864.859}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189865.078, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896258048, "sampled_parent_rss": 896258048, "shape": "nested", "time_monotonic": 189865.109, "whole_binding_bytes": 64229485}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189870.125, "whole_binding_bytes": 64508013}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189874.375}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189874.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189875.14, "whole_binding_bytes": 64508013}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189880.171, "whole_binding_bytes": 64790637}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189884.062}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189884.265, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189885.187, "whole_binding_bytes": 64860269}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189890.218, "whole_binding_bytes": 65069165}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189893.796}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189894.109, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189895.234, "whole_binding_bytes": 65134701}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189900.25, "whole_binding_bytes": 65343597}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189904.14}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189904.359, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189905.265, "whole_binding_bytes": 65343597}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189910.296, "whole_binding_bytes": 65626221}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189913.625}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189913.828, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189915.312, "whole_binding_bytes": 65691757}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189920.343, "whole_binding_bytes": 65900653}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189923.171}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189923.406, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189925.375, "whole_binding_bytes": 66039917}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189930.39, "whole_binding_bytes": 66179181}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189932.671}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189932.875, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189935.421, "whole_binding_bytes": 66392173}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189940.453, "whole_binding_bytes": 66461805}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189942.078}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189942.281, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189945.468, "whole_binding_bytes": 66670701}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189950.484, "whole_binding_bytes": 66740333}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189951.562}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189951.765, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189955.5, "whole_binding_bytes": 67022957}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189960.515, "whole_binding_bytes": 67022957}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189961.125}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189961.328, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189965.546, "whole_binding_bytes": 67301485}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189970.531}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189970.562, "whole_binding_bytes": 67301485}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189970.734, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189975.578, "whole_binding_bytes": 67584109}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189980.0}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189980.218, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 189980.593, "whole_binding_bytes": 67584109}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189985.609, "whole_binding_bytes": 67858541}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189989.375}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189989.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 189990.625, "whole_binding_bytes": 67924077}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896258048, "sampled_parent_rss": 896258048, "shape": "nested", "time_monotonic": 189995.64, "whole_binding_bytes": 68141165}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189998.765}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 189998.968, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896258048, "sampled_parent_rss": 896258048, "shape": "nested", "time_monotonic": 190000.671, "whole_binding_bytes": 68276333}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896258048, "sampled_parent_rss": 896258048, "shape": "nested", "time_monotonic": 190005.687, "whole_binding_bytes": 68419693}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190008.296}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190008.5, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896258048, "sampled_parent_rss": 896258048, "shape": "nested", "time_monotonic": 190010.703, "whole_binding_bytes": 68563053}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 190015.734, "whole_binding_bytes": 68702317}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190018.281}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190018.484, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 190020.75, "whole_binding_bytes": 68837485}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 190025.781, "whole_binding_bytes": 68976749}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190027.703}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190027.89, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190030.796, "whole_binding_bytes": 69185645}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190035.812, "whole_binding_bytes": 69255277}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190037.093}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190037.296, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190040.843, "whole_binding_bytes": 69533805}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190045.859, "whole_binding_bytes": 69533805}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190046.718}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190046.921, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190050.875, "whole_binding_bytes": 69816429}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 190055.89, "whole_binding_bytes": 69816429}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190056.421}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190056.609, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896270336, "sampled_parent_rss": 896270336, "shape": "nested", "time_monotonic": 190060.921, "whole_binding_bytes": 70090861}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190065.859}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190065.953, "whole_binding_bytes": 70090861}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190066.062, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190070.984, "whole_binding_bytes": 70369389}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190075.312}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190075.5, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190076.0, "whole_binding_bytes": 70369389}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896266240, "sampled_parent_rss": 896266240, "shape": "nested", "time_monotonic": 190081.015, "whole_binding_bytes": 70652013}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190084.703}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190084.89, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190086.031, "whole_binding_bytes": 70717549}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190091.046, "whole_binding_bytes": 70930541}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190094.109}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190094.312, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190096.062, "whole_binding_bytes": 71065709}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896520192, "sampled_parent_rss": 896520192, "shape": "nested", "time_monotonic": 190101.093, "whole_binding_bytes": 71204973}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190103.546}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190103.75, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896258048, "sampled_parent_rss": 896258048, "shape": "nested", "time_monotonic": 190106.109, "whole_binding_bytes": 71348333}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896262144, "sampled_parent_rss": 896262144, "shape": "nested", "time_monotonic": 190111.125, "whole_binding_bytes": 71491693}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190113.078}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190113.281, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896282624, "sampled_parent_rss": 896282624, "shape": "nested", "time_monotonic": 190116.14, "whole_binding_bytes": 71696493}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896282624, "sampled_parent_rss": 896282624, "shape": "nested", "time_monotonic": 190121.156, "whole_binding_bytes": 71766125}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190122.5}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190122.718, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896315392, "sampled_parent_rss": 896315392, "shape": "nested", "time_monotonic": 190126.171, "whole_binding_bytes": 72044653}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896315392, "sampled_parent_rss": 896315392, "shape": "nested", "time_monotonic": 190131.187, "whole_binding_bytes": 72044653}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190131.984}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190132.171, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896393216, "sampled_parent_rss": 896393216, "shape": "nested", "time_monotonic": 190136.218, "whole_binding_bytes": 72319085}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896393216, "sampled_parent_rss": 896393216, "shape": "nested", "time_monotonic": 190141.234, "whole_binding_bytes": 72319085}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190141.453}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190141.64, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896393216, "sampled_parent_rss": 896393216, "shape": "nested", "time_monotonic": 190146.265, "whole_binding_bytes": 72601709}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190150.796}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190150.984, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896458752, "sampled_parent_rss": 896458752, "shape": "nested", "time_monotonic": 190151.281, "whole_binding_bytes": 72601709}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896458752, "sampled_parent_rss": 896458752, "shape": "nested", "time_monotonic": 190156.296, "whole_binding_bytes": 72876141}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190160.375}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190160.578, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896458752, "sampled_parent_rss": 896458752, "shape": "nested", "time_monotonic": 190161.312, "whole_binding_bytes": 72876141}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896458752, "sampled_parent_rss": 896458752, "shape": "nested", "time_monotonic": 190166.328, "whole_binding_bytes": 73154669}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190169.859}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190170.062, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896520192, "sampled_parent_rss": 896520192, "shape": "nested", "time_monotonic": 190171.343, "whole_binding_bytes": 73228397}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896520192, "sampled_parent_rss": 896520192, "shape": "nested", "time_monotonic": 190176.375, "whole_binding_bytes": 73441389}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190179.25}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190179.453, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896524288, "sampled_parent_rss": 896524288, "shape": "nested", "time_monotonic": 190181.39, "whole_binding_bytes": 73580653}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 896524288, "sampled_parent_rss": 896524288, "shape": "nested", "time_monotonic": 190186.421, "whole_binding_bytes": 73719917}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190188.734}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 128, "time_monotonic": 190188.953, "vectors": 128}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 901230592, "sampled_parent_rss": 901230592, "shape": "nested", "time_monotonic": 190191.437, "whole_binding_bytes": 73932909}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 901230592, "sampled_parent_rss": 901230592, "shape": "nested", "time_monotonic": 190196.453, "whole_binding_bytes": 73998445}
+{"event": "hf_embed_enter", "phase": "build", "shape": "nested", "texts": 32, "time_monotonic": 190198.14}
+{"dimension": 384, "event": "hf_encode_completed", "phase": "build", "shape": "nested", "texts": 32, "time_monotonic": 190198.25, "vectors": 32}
+{"event": "wrapper_close_return", "phase": "build", "shape": "nested", "time_monotonic": 190199.812}
+{"event": "carrier_close_return", "phase": "build", "shape": "nested", "time_monotonic": 190199.812}
+{"event": "sample", "phase": "build", "sampled_combined_rss": 860569600, "sampled_parent_rss": 860569600, "shape": "nested", "time_monotonic": 190201.468, "whole_binding_bytes": 74072173}
+{"error_class": "AssertionError", "event": "shape_adverse", "phase": "build", "shape": "nested", "time_monotonic": 190203.39}
+{"event": "shape_report_saved", "outcome": "adverse_cleanup_or_source_unproved", "phase": "cleanup", "shape": "nested", "time_monotonic": 190221.515}
+{"event": "preflight_owner_retirement", "pending": [], "phase": "app_cleanup", "shape": null, "time_monotonic": 190221.515}
+{"close_task_done": true, "event": "app_cleanup", "phase": "app_cleanup", "service_closed": true, "shape": null, "time_monotonic": 190221.531}
+{"error_class": "AssertionError", "error_location": "task4_semantic_scale_final.py:486:qualify_shape", "event": "process_adverse", "network_attempts": 0, "outcome": "adverse_incomplete", "phase": "app_cleanup", "shape": null, "shape_reports_present": ["nested"], "time_monotonic": 190221.531}

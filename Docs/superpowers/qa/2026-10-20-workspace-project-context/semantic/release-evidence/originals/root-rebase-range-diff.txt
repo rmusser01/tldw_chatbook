@@ -1,0 +1,33 @@
+ 1:  cafdb4f8bf =  1:  b3c17da6ae docs: align semantic index plan with merged workspace cache
+ 2:  42a75186a9 =  2:  25978f911c Add semantic cache foundation and bounded index allocation
+ 3:  439f905fd7 =  3:  41bd62554f Close semantic cache review gaps
+ 4:  7ba0029d49 =  4:  c14a79457b docs: close semantic cache foundation and start embedding admission
+ 5:  2160d5b31c =  5:  dd8596f09e TASK-36421 Issue project embedding scope and offline model loading
+ 6:  ef0af31c6c =  6:  82d1820daa TASK-36421 Retain failed project embedding closure
+ 7:  677ddb4760 !  7:  c90b8f0bfd Close reviewed embedding admission and activate semantic generations
+    @@ Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md: Primary p
+      
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: Serialize baseline reversals and shared scans. Private test profiles isolate sto
+    - **Incident.** PR #3190 was evicted from the merge queue after "required check failed twice". The Derived Artifacts gate's log says only "The required UI fast lane did not succeed", which reads like a red test in the PR. There was none. In both attempts, UI Fast Lane job 2 of 10 was cancelled at 97% with every test that ran passing. Its check-run annotation said "The job has exceeded the maximum execution time of 20m0s" (20m19s from start), and the gate job started only after that. The job held none of the PR's changed census entries, so the overrun was dev's own load, which TASK-35834's 13-shard deal later fixed. The day before, PR #3188's identical eviction had been filed as the gate cancelling in-flight shards (TASK-35920). That job's durations (20m01s-20m19s, all ending before the gate started) show the same cap.
+    - 
+    - **What to do.** Before reproducing a test, read the cancelled job's annotations (`gh api repos/<owner>/<repo>/check-runs/<job id>/annotations`) and compare its `started_at`/`completed_at` with the gate job's start. An attempt's annotations can later be missing; the durations still show the cap. A cap overrun is a shard-load question. Check whether the PR adds entries to that job (`scripts/check_ui_pr_gate_census.py --shard <i> <n>`), and replay its minutes (`scripts/ui_lane_shard_replay.py`). Do not treat it as a test to fix in the PR.
+    -+
+    -+
+    +@@ backlog/docs/lessons-testing-evidence.md: attributes they touch. Do not list them from the domain model. Read mutable
+    + inputs by value at read time, because a held reference compares equal to
+    + itself after an in-place write. Give each input a test that changes it alone
+    + and ticks through the real gate.
+     +## Retain parent and child runtime bootstrap for offline qualification
+     +
+     +**Incident (TASK-36421, 2026-10-23).** Cached MiniLM qualification repeatedly stopped before model assertions with missing `pywintypes`: adding shared packages to `PYTHONPATH` did not process their `.pth`, and parent-only `site.addsitedir` did not configure the private child. One attempt also selected the worktree venv instead of the main checkout shared site. The preserved fix1-offline-final-01/02/03 runs are setup failures; fix1-offline-final-04 and the reusable runner composition then passed with the same source/backend and offline cache.
+ 8:  805701f93a =  8:  7a6dc0cfc7 feat: build bounded project semantic generations
+ 9:  5ad64a28ac =  9:  ec72140e34 fix: retain and retire held project semantic work
+10:  286be157ae = 10:  b122b2544b fix: retain embedding record until eviction close succeeds
+11:  538faa103e = 11:  5967f338de Preflight semantic Ready before query model work and prove held query ownership
+12:  18aee620d5 = 12:  9a5f14abc5 Close reviewed semantic generations and activate consent qualification
+13:  6bda3c739a = 13:  d62afde1bd feat(project-index): add per-folder semantic consent and qualified contract lane
+14:  4940a66f37 = 14:  37651aa293 Fix semantic consent recovery and bound local embedding batches
+15:  e8a3f77171 = 15:  a6699366e5 Preserve original semantic QA receipt bytes
+16:  85f6c715d1 = 16:  a2b56b9877 Retain semantic review evidence and final qualification plan
