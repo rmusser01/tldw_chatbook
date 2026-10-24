@@ -125,13 +125,19 @@ async def _until_painted(host, screen, pilot, selector: str, needle: str, *, tim
 async def _clear_filter(screen, pilot) -> None:
     """Press Clear filter and wait for the unfiltered list to be back."""
     screen.query_one("#library-notes-filter-clear", Button).press()
-    await _until(
-        pilot,
-        lambda: screen._notes_state.filter == ""
-        and screen.query_one("#library-notes-filter", Input).value == ""
-        and bool(screen.query(".library-notes-tree-note-row")),
-        "the filter to clear and the list to return",
-    )
+    def _cleared() -> bool:
+        # Clear recomposes the canvas: for a frame the filter Input is not
+        # mounted. A missing node is "not yet", not an error (PR #3234 UI
+        # Fast Lane (7): NoMatches on a loaded runner).
+        inputs = screen.query("#library-notes-filter")
+        return (
+            screen._notes_state.filter == ""
+            and bool(inputs)
+            and inputs.first(Input).value == ""
+            and bool(screen.query(".library-notes-tree-note-row"))
+        )
+
+    await _until(pilot, _cleared, "the filter to clear and the list to return")
     await pilot.pause(0.1)
 
 
