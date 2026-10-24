@@ -264,7 +264,10 @@ _BUDGETS: dict[str, int] = {
     # `_library_ingest_submit_may_fire`, `_library_ingest_preflight_worker_
     # is_live`), a press on a current not-found verdict re-checks, and the
     # trigger normalises whitespace: 3164 -> 3242 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3242,
+    # 2026-10-23, TASK-34000.20 fix round 2 (same owner decision): the fire-time
+    # text check reads the live path Input instead of the form echo
+    # (`_library_ingest_submit_may_fire`): 3242 -> 3247 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3247,
     # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
     # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
     # stance of holding this row at 371. That stance was correct FOR A

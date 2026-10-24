@@ -1029,7 +1029,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: from the pre-flight worker into the apply, and the one-expansion-rule
     #: block in ``_resolve_ingest_source``: 37560 -> 37593 (measured). Methods
     #: unchanged at 1354.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37593, 1354),
+    #: 2026-10-23, TASK-34000.20 fix round 2 (same owner decision): ``on_screen_
+    #: suspend`` drops a waiting ingest Enter/Start (any suspend -- another
+    #: tab, a modal, the Browse picker -- is "not a yes"): 37593 -> 37600.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37600, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

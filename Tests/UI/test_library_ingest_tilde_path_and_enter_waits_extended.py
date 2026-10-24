@@ -176,9 +176,16 @@ async def _return_to_canvas(screen, pilot) -> None:
 async def test_start_while_checking_then_leaving_and_returning_imports_only_on_a_press(
     tmp_path, monkeypatch
 ):
-    """Fix round 1, C1 (a): Start while Checking…, Esc to the hub, the check
-    lands, return. A single Tab out of the field must import NOTHING (the
-    reviewer saw it import); the stuck "Checking…" must not leave Enter dead."""
+    """Fix round 1, C1 (a): Start while Checking…, Esc to the hub, return,
+    the check lands. A single Tab out of the field must import NOTHING (the
+    reviewer saw it import); the stuck "Checking…" must not leave Enter dead.
+
+    Fix round 2 (R2-2): focus sits on the Start BUTTON before the press and
+    stays there through Esc, so the path field never blurs and no blur
+    re-check can re-point the arm -- the only thing that can drop it is the
+    rail-row pause's own disarm. Mutation-checked: with that disarm replaced
+    by ``pass`` this arm fails at the Tab assertion.
+    """
     handbook = _home_with_fixture(tmp_path, monkeypatch)
     submitted: list = []
     toasts: list[str] = []
@@ -189,19 +196,24 @@ async def test_start_while_checking_then_leaving_and_returning_imports_only_on_a
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
         await _type_path(screen, pilot, EXISTING)
-        screen.query_one("#library-ingest-start", Button).press()
+        start = screen.query_one("#library-ingest-start", Button)
+        start.focus()
+        await pilot.pause()
+        assert screen.focused is start
+        start.press()
         await pilot.pause(0.2)
         assert submitted == []
+        assert screen._ingest_state.submit_armed_generation is not None
         await _leave_canvas_with_escape(screen, pilot)
-        gate.set()
-        await _no_submit_for(pilot, submitted, 1.0, "imported while another canvas showed")
         await _return_to_canvas(screen, pilot)
         assert screen._ingest_state.form.path == EXISTING, "the staged form was lost"
         assert screen._ingest_state.form.preflight_checking is False
+        gate.set()
+        await pilot.pause(0.5)
         screen.query_one("#library-ingest-path", Input).focus()
         await pilot.pause()
         await pilot.press("tab")
-        await _no_submit_for(pilot, submitted, 1.0, "a Tab out of the field imported")
+        await _no_submit_for(pilot, submitted, 1.5, "a Tab out of the field imported")
         assert toasts == []
         # Enter is not dead after the round trip.
         screen.query_one("#library-ingest-path", Input).focus()
@@ -349,3 +361,155 @@ async def test_enter_on_a_stale_not_found_verdict_rechecks_the_path(
         assert submitted[0]["source_path"] == str(created)
         assert PATH_PROBLEM_PREFIX not in _painted(host)
         assert toasts == []
+
+
+async def _arm_enter_under_held_check(screen, pilot, submitted) -> None:
+    await _type_path(screen, pilot, EXISTING)
+    await pilot.press("enter")
+    await pilot.pause(0.2)
+    assert submitted == []
+    assert screen._ingest_state.submit_armed_generation is not None
+
+
+async def _enter_imports_after(screen, pilot, submitted, handbook) -> None:
+    """Enter still works once the user is back on the canvas."""
+    screen.query_one("#library-ingest-path", Input).focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await _wait_for_condition(
+        pilot, lambda: submitted, timeout=10.0, message="Enter was dead afterwards"
+    )
+    assert len(submitted) == 1
+    assert submitted[0]["source_path"] == str(handbook)
+
+
+async def test_a_screen_suspend_and_resume_drops_a_waiting_submit(tmp_path, monkeypatch):
+    """Fix round 2, R2-1: another tab (``switch_screen``) suspends the Library
+    screen; the check landing AFTER resume must not import."""
+    handbook = _home_with_fixture(tmp_path, monkeypatch)
+    submitted: list = []
+    toasts: list[str] = []
+    gate = _gate_precheck(monkeypatch)
+    app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await _arm_enter_under_held_check(screen, pilot, submitted)
+        other = Screen()
+        host.install_screen(screen, name="library")
+        host.install_screen(other, name="other-tab")
+        host.switch_screen("other-tab")
+        await _wait_for_condition(
+            pilot, lambda: host.screen is other, timeout=5.0, message="tab not shown"
+        )
+        host.switch_screen("library")
+        await _wait_for_condition(
+            pilot, lambda: host.screen is screen, timeout=5.0, message="tab not resumed"
+        )
+        gate.set()
+        await _no_submit_for(pilot, submitted, 1.5, "imported after a suspend/resume")
+        assert toasts == []
+        await _enter_imports_after(screen, pilot, submitted, handbook)
+
+
+async def test_a_cancelled_browse_picker_drops_a_waiting_submit(tmp_path, monkeypatch):
+    """Fix round 2, R2-1: Browse… opened and CANCELLED (no path adopted) still
+    suspended the screen; the check landing afterwards must not import."""
+    handbook = _home_with_fixture(tmp_path, monkeypatch)
+    submitted: list = []
+    toasts: list[str] = []
+    gate = _gate_precheck(monkeypatch)
+    app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await _arm_enter_under_held_check(screen, pilot, submitted)
+        await pilot.click("#library-ingest-browse")
+        await _wait_for_condition(
+            pilot, lambda: host.screen is not screen, timeout=10.0, message="no picker"
+        )
+        host.screen.dismiss(None)
+        await _wait_for_condition(
+            pilot, lambda: host.screen is screen, timeout=10.0, message="picker stayed"
+        )
+        assert screen._ingest_state.form.path == EXISTING
+        gate.set()
+        await _no_submit_for(pilot, submitted, 1.5, "imported after a cancelled Browse…")
+        assert toasts == []
+        await _enter_imports_after(screen, pilot, submitted, handbook)
+
+
+async def test_a_modal_dismissed_before_the_check_lands_drops_a_waiting_submit(
+    tmp_path, monkeypatch
+):
+    """Fix round 2, R2-1: a modal pushed and popped while the check is still
+    running; the result lands on the uncovered screen and must not import."""
+    handbook = _home_with_fixture(tmp_path, monkeypatch)
+    submitted: list = []
+    toasts: list[str] = []
+    gate = _gate_precheck(monkeypatch)
+    app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await _arm_enter_under_held_check(screen, pilot, submitted)
+        cover = Screen()
+        host.push_screen(cover)
+        await _wait_for_condition(
+            pilot, lambda: host.screen is cover, timeout=5.0, message="cover not shown"
+        )
+        host.pop_screen()
+        await _wait_for_condition(
+            pilot, lambda: host.screen is screen, timeout=5.0, message="cover not popped"
+        )
+        gate.set()
+        await _no_submit_for(pilot, submitted, 1.5, "imported after a dismissed modal")
+        assert toasts == []
+        await _enter_imports_after(screen, pilot, submitted, handbook)
+
+
+async def test_a_result_landing_between_a_keystroke_and_its_handler_imports_nothing(
+    tmp_path, monkeypatch
+):
+    """Fix round 2, R2-3: the fire-time text check reads the LIVE Input. The
+    form echo lags the keystroke until ``Input.Changed`` is handled; a result
+    delivered in that gap must see the new text and disarm."""
+    from tldw_chatbook.Library.ingest_types import PreflightResult
+
+    handbook = _home_with_fixture(tmp_path, monkeypatch)
+    submitted: list = []
+    toasts: list[str] = []
+    gate = _gate_precheck(monkeypatch)
+    app, screen, host = _import_canvas(tmp_path, submitted, monkeypatch, toasts)
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await _arm_enter_under_held_check(screen, pilot, submitted)
+        generation = screen._ingest_state.preflight_generation
+        accepted = PreflightResult(
+            type_groups={"generic": [str(handbook)]},
+            warnings=[],
+            errors=[],
+            total_size=handbook.stat().st_size,
+            truncated=False,
+            total_files=1,
+        )
+        path_input = screen.query_one("#library-ingest-path", Input)
+        # The keystroke's Changed message is queued but NOT yet handled when
+        # the worker's result is applied -- no await in between.
+        path_input.value = MISSING
+        assert screen._ingest_state.form.path == EXISTING  # the echo lags
+        screen._apply_library_ingest_preflight_result(accepted, generation, EXISTING)
+        await _no_submit_for(
+            pilot, submitted, 1.0, "imported the OLD text while the field showed new text"
+        )
+        assert screen._ingest_state.submit_armed_generation is None
+        assert toasts == []
+        # Release the held worker thread before the app exits (its result is
+        # for a superseded generation and is dropped).
+        gate.set()
+        await pilot.pause(0.5)

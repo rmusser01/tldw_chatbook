@@ -9504,6 +9504,13 @@ class LibraryScreen(BaseAppScreen):
         if ingest_timer is not None:
             ingest_timer.stop()
             self._ingest_state.path_debounce_timer = None
+        # (TASK-34000.20 fix round 2, R2-1) An Enter/Start waiting on an
+        # ingest pre-check is dropped by ANY suspend -- another tab, a pushed
+        # modal, the Browse picker even when it is cancelled. A covering
+        # screen is a change of canvas, and changing canvases is "not a yes"
+        # (task-3314). The in-flight check itself is left alone, per the
+        # rule above: its result is fresher data at resume, nothing more.
+        self._ingest_controller._disarm_library_ingest_submit()
         # (wave-6 task 3) The prompts search-debounce timer moved to
         # ``_prompts_state`` for the same reason, and left the string loop
         # above for the same explicit block the ingest timer already uses.

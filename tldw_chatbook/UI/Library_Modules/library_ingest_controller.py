@@ -2227,10 +2227,15 @@ class LibraryIngestController:
                 return False
         except Exception:
             return False
-        return (
-            self._library_ingest_submit_armed_path
-            == self._library_ingest_form.path.strip()
-        )
+        # (fix round 2, R2-3) Read the LIVE Input, not the form echo: the
+        # echo updates only when the Changed handler runs, and a result
+        # arriving through ``call_from_thread`` between a keystroke and that
+        # handler would otherwise match text the field no longer shows.
+        try:
+            live_text = self.query_one("#library-ingest-path", Input).value
+        except (NoMatches, QueryError):
+            return False
+        return self._library_ingest_submit_armed_path == live_text.strip()
 
     @on(Button.Pressed, "#library-ingest-start")
     def handle_library_ingest_start(self, event: Button.Pressed) -> None:

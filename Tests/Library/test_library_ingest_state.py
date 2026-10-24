@@ -164,9 +164,11 @@ def test_a_path_problem_renders_exactly_one_sentence_and_no_gate_line() -> None:
     assert state.start_enabled is False
 
 
+#: The exact sentence ``ingest_preflight.analyze_path`` reports for a URL
+#: ``validate_url`` refuses (TASK-19556); no module constant exists for it.
 _URL_CREDENTIALS_ERROR = (
     "Invalid URL — check the address (it must be a plain http(s) link with "
-    "no embedded credentials)."
+    "no spaces or embedded credentials)."
 )
 
 
