@@ -29,6 +29,7 @@ def settings(destination="local-model-a"):
     )
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_semantic_consent_cas_preserves_keyword_scope_and_state(tmp_path):
     store = open_semantic_store(tmp_path)
     key = make_index_key(tmp_path)
@@ -95,6 +96,18 @@ def test_semantic_admission_requires_actual_current_native_lease(tmp_path):
             store.configure_semantic(
                 scope, settings(), enabled=True, expected_semantic_revision=0
             )
+    finally:
+        lease.close()
+        store.close_native()
+
+
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+def test_semantic_admission_accepts_actual_current_native_lease(tmp_path):
+    store = open_semantic_store(tmp_path)
+    key = make_index_key(tmp_path)
+    scope = store.load_status(key).scope
+    lease = BindingLifetime.acquire(store.db_path.parent.parent / key.lifetime_name)
+    try:
         store.bind_native_lifetime(lease)
         result = store.configure_semantic(
             scope, settings(), enabled=True, expected_semantic_revision=0
@@ -131,6 +144,7 @@ def test_semantic_status_is_read_only_and_imports_no_embedding_backend(tmp_path)
     store.close_native()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_full_revoke_disables_semantics_but_keyword_reconfigure_does_not(tmp_path):
     store = open_semantic_store(tmp_path)
     key = make_index_key(tmp_path)
@@ -245,6 +259,7 @@ def test_semantic_settings_refuse_credential_shapes_before_persistence(
         store.close_native()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_semantic_settings_accept_versioned_refs_and_changed_approval(tmp_path):
     store = open_semantic_store(tmp_path)
     key = make_index_key(tmp_path)
@@ -268,3 +283,48 @@ def test_semantic_settings_accept_versioned_refs_and_changed_approval(tmp_path):
         assert state.settings == approved
     finally:
         store.close_native()
+
+
+@pytest.mark.parametrize("mismatch", ["version", "source"])
+def test_native_positive_guard_skips_unqualified_runtime_but_keyword_stays_active(
+    tmp_path, request, monkeypatch, mismatch
+):
+    import sqlite3
+    from tldw_chatbook.Workspaces.project_index import allocation
+    from Tests.Workspaces.project_index_support import open_index_store
+
+    if mismatch == "version":
+        monkeypatch.setattr(sqlite3, "sqlite_version", "unqualified-test-runtime")
+    else:
+        monkeypatch.setattr(allocation, "_SOURCE_ID", "unqualified-test-source")
+    with pytest.raises(
+        pytest.skip.Exception,
+        match="native-positive project semantics require SQLite 3.49.1",
+    ):
+        request.getfixturevalue("qualified_project_semantic_sqlite")
+    store = open_index_store(tmp_path)
+    try:
+        key = make_index_key(tmp_path)
+        scope = store.configure(
+            key,
+            ProjectIndexPolicy((), ()),
+            enabled=True,
+            expected_scope=store.load_status(key).scope,
+        )
+        assert store.load_status(key).scope == scope
+    finally:
+        store.close_native()
+    native_root = tmp_path / "native-refusal"
+    native_root.mkdir()
+    native = open_semantic_store(native_root)
+    try:
+        native_key = make_index_key(native_root)
+        before = native.load_status(native_key)
+        with pytest.raises(ValueError, match="index_allocation_sqlite_unqualified"):
+            native.configure_semantic(
+                before.scope, settings(), enabled=True, expected_semantic_revision=0
+            )
+        assert native.load_semantic_state(before.scope).semantic_revision == 0
+        assert native.load_status(native_key) == before
+    finally:
+        native.close_native()

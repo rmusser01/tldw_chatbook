@@ -118,6 +118,7 @@ def test_project_missing_local_package_is_setup_required(monkeypatch):
     assert "private-path-leak" not in str(error.value)
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_issued_scope_uses_live_parent_and_rejects_copy_after_close(
     tmp_path, monkeypatch, request
@@ -273,6 +274,7 @@ async def test_issued_scope_uses_live_parent_and_rejects_copy_after_close(
     await service.aclose()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_issued_scope_sync_entry_and_stale_revision_refuse(
     tmp_path, monkeypatch, request
@@ -574,6 +576,7 @@ def test_selected_custom_cache_root_binds_actual_snapshot_and_settings(
     assert target.artifact_fingerprint != other_target.artifact_fingerprint
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_failed_project_factory_close_retains_real_parent_until_retry(
     tmp_path, monkeypatch, request
@@ -762,3 +765,156 @@ def test_library_wrapper_cannot_be_upgraded_by_rebind(monkeypatch):
     wrapper = embeddings_wrapper.EmbeddingsServiceWrapper(model_name="mock")
     with pytest.raises(PermissionError):
         wrapper.rebind_execution_scope(object())
+
+
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+@pytest.mark.parametrize("failed", [False, True])
+@private_profile_test
+async def test_peer_pending_close_does_not_poison_admitted_carrier_retirement(
+    tmp_path, request, monkeypatch, failed
+):
+    def run():
+        import threading
+        from types import SimpleNamespace
+        from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
+        from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
+        from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
+        from tldw_chatbook.RAG_Search.projection_scope import ProjectProjectionRequired
+        from tldw_chatbook.Embeddings import Embeddings_Lib as lib
+        from tldw_chatbook.Workspaces.project_index.semantic import (
+            _issue_project_projection_scope,
+            _settings_for_project_model,
+        )
+
+        root = tmp_path / "project"
+        root.mkdir()
+        chain = capture_directory_chain(root)
+        factory = _AdmittedStoreFactory()
+        key = ProjectIndexKey(
+            factory.identity,
+            "workspace",
+            "binding",
+            locator_fingerprint(root),
+            root_identity_fingerprint(chain),
+        )
+        authority = ProjectIndexAuthority(key, root, chain, (), 1)
+
+        @contextmanager
+        def fence(selected):
+            yield authority if selected == key else None
+
+        service = ProjectIndexService(
+            factory,
+            ProjectScanner(),
+            lambda selected: authority if selected == key else None,
+            fence,
+        )
+        rig = SimpleNamespace(key=key, service=service, close=service.aclose)
+        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+        scope = service.enable(
+            key,
+            ProjectIndexPolicy((), (".txt",)),
+            expected_scope=service.status(key).scope,
+        ).scope
+        candidate = _settings_for_project_model("openai-3-small")
+        selected = replace(
+            candidate,
+            approved_destination_fingerprint=candidate.destination_fingerprint,
+        )
+        with rig.service._store(rig.key) as store:
+            state = store.configure_semantic(
+                scope, selected, enabled=True, expected_semantic_revision=0
+            )
+        carrier = _issue_project_projection_scope(
+            rig.service, scope, selected, state.semantic_revision
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "_ensure_embeddings_imported", lambda: True
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "EmbeddingFactory", lib.EmbeddingFactory
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "EmbeddingConfigSchema", lib.EmbeddingConfigSchema
+        )
+        monkeypatch.setattr(lib, "_embeddings_rag_available", lambda: True)
+        wrapper = embeddings_wrapper.EmbeddingsServiceWrapper(
+            model_name=carrier.model_name,
+            api_key=carrier.api_key,
+            base_url=carrier.base_url,
+            execution_scope=carrier,
+        )
+        assert wrapper.factory.config.models["default"].allow_redirects is False
+        peer_ready, peer_go, peer_done, retry = (threading.Event() for _ in range(4))
+        errors, peer_owners = [], []
+
+        def peer():
+            admitted = _issue_project_projection_scope(
+                rig.service, scope, selected, state.semantic_revision
+            )
+            peer_owners.append(admitted._parent.operation)
+            peer_ready.set()
+            assert peer_go.wait(45)
+            try:
+                admitted.close()
+            except BaseException as error:
+                errors.append(error)
+                peer_done.set()
+                assert retry.wait(45)
+                admitted.close()
+            else:
+                peer_done.set()
+
+        thread = threading.Thread(target=peer)
+        thread.start()
+        assert peer_ready.wait(30)
+        attempts = []
+
+        def close_model():
+            attempts.append(threading.get_ident())
+            if len(attempts) == 1:
+                peer_go.set()
+                assert peer_done.wait(45)
+                # New model work remains denied during an ordinary slow close
+                # as well as after an actual failure.
+                with pytest.raises(
+                    ProjectProjectionRequired, match="project_embedding_close_pending"
+                ):
+                    _issue_project_projection_scope(
+                        rig.service, scope, selected, state.semantic_revision
+                    )
+                if failed:
+                    raise RuntimeError("synthetic-close-failure")
+
+        wrapper.factory._cache["default"] = {
+            "embed": lambda *a, **k: [[1.0, 0.0]],
+            "close": close_model,
+            "last": 0.0,
+            "refs": 0,
+        }
+        try:
+            if failed:
+                with pytest.raises(
+                    RuntimeError, match="project_embedding_close_failed"
+                ):
+                    wrapper.close()
+                assert rig.service.semantic_close_pending(rig.key)
+                with pytest.raises(ProjectProjectionRequired):
+                    carrier.close()
+                wrapper.close()
+            else:
+                wrapper.close()
+        finally:
+            retry.set()
+            thread.join(45)
+            assert not thread.is_alive()
+            if wrapper.factory is not None:
+                wrapper.close()
+            carrier.close()
+            asyncio.run(rig.close())
+        assert not errors, [str(error) for error in errors]
+        assert peer_owners[0].done.is_set() and not peer_owners[0].retirement_unproven
+        assert not rig.service._operations
+        assert attempts == [threading.get_ident()] * (2 if failed else 1)
+
+    await asyncio.to_thread(run)

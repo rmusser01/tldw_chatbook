@@ -660,6 +660,10 @@ PROJECT_INDEX_TARGETS = (
     "Tests/RAG/test_project_projection_scope.py::test_selected_keyless_compatible_endpoint_and_default_key_requirement",
     "Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model",
     "Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix",
+    "Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[disable]",
+    "Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[reconfigure]",
+    "Tests/RAG/test_project_projection_scope.py::test_peer_pending_close_does_not_poison_admitted_carrier_retirement",
+    "Tests/RAG/test_embeddings_lib_logging.py::test_openai_redirect_respects_project_destination_without_changing_library",
     "Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call",
 )
 

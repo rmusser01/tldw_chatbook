@@ -1,0 +1,7 @@
+# Final semantic review fix evidence
+
+This separate exact-byte group retains the one coordinated final fix wave. Read report.md for the five fixes, actual commands/results, original adverse attempts, source/native scope and limitations. originals.zip contains only the manifest's explicit task-private originals, including23/30-path pre/post snapshots, all new parent/child logs and XML, trust, source-resolution, static and native timing records. No model/database/profile payload is included.
+
+Final local Windows required lane:44 passed,0 skipped in314.19s. Final compatibility:26 passed,0 skipped in156.19s. Earlier RED/adverse attempts remain RED/adverse. The unchanged runtime is real Python3.12.10 with exactly qualified SQLite3.49.1/source/options and SentenceTransformers absent. This is not a hosted final-head CI or real-model/20k qualification at the fix head. Historical release evidence remains unchanged and retains its own source/latency attribution.
+
+The nested .gitattributes disables Git text normalization only here. manifest.json lists every ZIP member's original relative path, raw byte count and SHA256. The private retention helper verifies every actual staged/HEAD evidence blob and decoded ZIP member against both the manifest and original bytes, and checks all20 implementation/contract/doc index blobs. The live private report receives commit/HEAD-verification details after this precommit report snapshot.

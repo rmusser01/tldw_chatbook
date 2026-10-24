@@ -218,13 +218,14 @@ class ProjectIndexService:
         operation.retirement_unproven = True
         operation.retained.extend(owner for owner in owners if owner is not None)
 
-    def _require_projection_open(self, key: ProjectIndexKey) -> None:
+    def _require_projection_open(self, key: ProjectIndexKey, *, retiring=None) -> None:
         """Refuse new semantic use of a binding with unresolved model close."""
         with self._lock:
             pending = any(
                 selected == key
                 for operation in self._operations
-                for selected, _ in operation.projection_close_pending.values()
+                for selected, wrapper in operation.projection_close_pending.values()
+                if retiring is None or wrapper._projection_execution_scope is retiring
             )
         if pending:
             from tldw_chatbook.RAG_Search.projection_scope import (
@@ -234,7 +235,11 @@ class ProjectIndexService:
             raise ProjectProjectionRequired("project_embedding_close_pending")
 
     def _mark_projection_close_pending(
-        self, operation: _Operation, key: ProjectIndexKey, token: object, wrapper: object
+        self,
+        operation: _Operation,
+        key: ProjectIndexKey,
+        token: object,
+        wrapper: object,
     ) -> None:
         """Root the actual wrapper/factory under its accepted operation before close."""
         with self._lock:
@@ -284,16 +289,20 @@ class ProjectIndexService:
             return False
         with self._lock:
             return (
-                self._semantic_query is not None
-                and self._semantic_query.key == key
-                and self._semantic_query.close_pending
-            ) or any(
-                run.scope.key == key and run.close_pending
-                for run in self._semantic_runs.values()
-            ) or any(
-                selected == key
-                for operation in self._operations
-                for selected, _ in operation.projection_close_pending.values()
+                (
+                    self._semantic_query is not None
+                    and self._semantic_query.key == key
+                    and self._semantic_query.close_pending
+                )
+                or any(
+                    run.scope.key == key and run.close_pending
+                    for run in self._semantic_runs.values()
+                )
+                or any(
+                    selected == key
+                    for operation in self._operations
+                    for selected, _ in operation.projection_close_pending.values()
+                )
             )
 
     def _admission_closed(self):
@@ -797,6 +806,7 @@ class ProjectIndexService:
                     return unavailable
                 candidates = store.lexical_candidates(admitted, query, limit=100)
             semantic_status = "unavailable"
+            semantic_generation = None
             if semantic_query is not None:
                 semantic_state, artifact, vector = semantic_query
                 from . import semantic
@@ -805,14 +815,24 @@ class ProjectIndexService:
                     spec, destination = semantic._require_current_catalog(
                         semantic_state.settings
                     )
-                    if semantic._target(spec, destination).artifact_fingerprint == artifact:
-                        with store.sql_unit(), self._fence(authority.scope.key) as current:
+                    if (
+                        semantic._target(spec, destination).artifact_fingerprint
+                        == artifact
+                    ):
+                        with store.sql_unit(), self._fence(
+                            authority.scope.key
+                        ) as current:
                             if current == live:
                                 ranked = semantic.rank_semantic(
                                     store, admitted.scope, semantic_state, artifact,
                                     vector, admitted.exclusions,
                                 )
                                 if ranked is not None:
+                                    semantic_generation = (
+                                        store.semantic_ready_generation(
+                                            admitted.scope, semantic_state, artifact
+                                        )
+                                    )
                                     semantic_status = "ready"
                                     candidates = semantic.fuse_candidates(candidates, ranked)
                 except (ValueError, ImportError, OSError):
@@ -831,6 +851,13 @@ class ProjectIndexService:
                         or current_status.scope != status.scope
                         or current_status.state not in {"Ready", "Partial", "Building"}
                         or current_status.manifest_revision != status.manifest_revision
+                        or (
+                            semantic_generation is not None
+                            and store.semantic_ready_generation(
+                                admitted.scope, semantic_state, artifact
+                            )
+                            != semantic_generation
+                        )
                         or not _path_allowed(
                             candidate.relative_path, admitted.exclusions
                         )
@@ -890,6 +917,13 @@ class ProjectIndexService:
                     or final.scope != status.scope
                     or final.manifest_revision != status.manifest_revision
                     or final.state not in {"Ready", "Partial", "Building"}
+                    or (
+                        semantic_generation is not None
+                        and store.semantic_ready_generation(
+                            admitted.scope, semantic_state, artifact
+                        )
+                        != semantic_generation
+                    )
                 ):
                     return unavailable
                 result = ProjectSearchResult(
@@ -1133,15 +1167,21 @@ class ProjectIndexService:
 
             run.generation_id = self._retry_read(run.scope.key, claim)
             after = 0
-            source_limit = 128 if run.state.settings.provider_id == "huggingface" else 32
+            source_limit = (
+                128 if run.state.settings.provider_id == "huggingface" else 32
+            )
             while True:
                 def read_page():
                     with self._admitted(store, run.scope.key) as live:
                         if live != run.authority or run.stop.is_set():
                             raise ValueError("stale_semantic_page")
                         return store.semantic_source_page(
-                            run.scope, run.generation_id, run.job_id,
-                            after=after, limit=source_limit,
+                            run.scope,
+                            run.generation_id,
+                            run.job_id,
+                            after=after,
+                            limit=source_limit,
+                            exclusions=live.exclusions,
                         )
 
                 page = self._retry_read(run.scope.key, read_page)
@@ -1176,8 +1216,12 @@ class ProjectIndexService:
                                 live == run.authority
                                 and not run.stop.is_set()
                                 and store.semantic_append(
-                                    run.scope, run.generation_id, run.job_id,
-                                    page[first:end], encoded[first:end],
+                                    run.scope,
+                                    run.generation_id,
+                                    run.job_id,
+                                    page[first:end],
+                                    encoded[first:end],
+                                    exclusions=live.exclusions,
                                 )
                             )
                     if not self._retry_read(run.scope.key, append_page):
@@ -1231,7 +1275,10 @@ class ProjectIndexService:
         # selected config and complete artifact identity are checked again
         # after model retirement, outside the final finite SQL/fence unit.
         spec, destination = semantic._require_current_catalog(run.state.settings)
-        if semantic._target(spec, destination).artifact_fingerprint != carrier.artifact_fingerprint:
+        if (
+            semantic._target(spec, destination).artifact_fingerprint
+            != carrier.artifact_fingerprint
+        ):
             raise ValueError("semantic_artifact_changed")
 
         def publish():
@@ -1239,7 +1286,12 @@ class ProjectIndexService:
                 return (
                     live == run.authority
                     and not run.stop.is_set()
-                    and store.semantic_publish(run.scope, run.generation_id, run.job_id)
+                    and store.semantic_publish(
+                        run.scope,
+                        run.generation_id,
+                        run.job_id,
+                        exclusions=live.exclusions,
+                    )
                 )
 
         if not self._retry_read(run.scope.key, publish):
@@ -1261,19 +1313,25 @@ class ProjectIndexService:
                             if (
                                 isinstance(error, ValueError)
                                 and str(error) == "index_cache_limit"
-                            ) or (
-                                isinstance(error, sqlite3.OperationalError)
-                                and getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL
                             )
-                            else "interrupted" if run.stop.is_set()
-                            else "source_changed" if (
+                            or (
+                                isinstance(error, sqlite3.OperationalError)
+                                and getattr(error, "sqlite_errorcode", None)
+                                == sqlite3.SQLITE_FULL
+                            )
+                            else "interrupted"
+                            if run.stop.is_set()
+                            else "source_changed"
+                            if (
                                 isinstance(error, ValueError)
-                                and str(error) in {
+                                and str(error)
+                                in {
                                     "stale_semantic_page",
                                     "stale_semantic_checkpoint",
                                     "stale_semantic_publication",
                                 }
-                            ) else "provider_unavailable"
+                            )
+                            else "provider_unavailable"
                         )
                         def fail():
                             with self._admitted(store, run.scope.key) as live:
@@ -2135,9 +2193,15 @@ class ProjectIndexService:
         async def drain():
             _, semantic_runs, _, operations = await asyncio.to_thread(stop_and_snapshot)
             if (
-                self._semantic_query is not None and self._semantic_query.close_pending
-            ) or any(run.close_pending for run in semantic_runs) or any(
-                self._projection_close_pending(operation) for operation in operations
+                (
+                    self._semantic_query is not None
+                    and self._semantic_query.close_pending
+                )
+                or any(run.close_pending for run in semantic_runs)
+                or any(
+                    self._projection_close_pending(operation)
+                    for operation in operations
+                )
             ):
                 raise ProjectIndexRetirementUnproven("project_embedding_close_pending")
             if self._cleanup_thread is not None:
@@ -2145,9 +2209,13 @@ class ProjectIndexService:
             for operation in operations:
                 while not operation.done.is_set():
                     if (
-                        self._semantic_query is not None
-                        and self._semantic_query.close_pending
-                    ) or any(run.close_pending for run in semantic_runs) or self._projection_close_pending(operation):
+                        (
+                            self._semantic_query is not None
+                            and self._semantic_query.close_pending
+                        )
+                        or any(run.close_pending for run in semantic_runs)
+                        or self._projection_close_pending(operation)
+                    ):
                         raise ProjectIndexRetirementUnproven(
                             "project_embedding_close_pending"
                         )

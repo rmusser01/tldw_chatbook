@@ -205,3 +205,24 @@ ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-worksp
 Ruling: The new explicit OpenAI session callback makes both existing idle and LRU eviction paths part of deterministic project transport retirement. They currently pop a zero-refcount CacheRecord before close, losing the owned callback if close raises. Correct only those branches in Embeddings_Lib.py to invoke the existing callback before removing the exact record under the existing factory condition. A failed close propagates while the actual record/callback remains retained for the existing wrapper/factory close path; no replacement model is built and no new ownership framework is introduced. Successful eviction retains existing capacity, refcount and concurrency behavior. Project wrappers already prevent embedding reuse after close starts. Preserve failure evidence, test both idle and LRU actual callback failure/retention and successful physical close retry, and cover the directly affected factory concurrency contract. Do not repeat cached-model quality or held HTTP qualification when this isolated ordering delta does not reach those previously exercised paths.
 
 ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: retain the already-owned session across failure at both existing cache retirement entrances. Cost if wrong: safe failed embedding and retained resources until explicit existing close succeeds; never a lost native owner or false retirement.
+
+
+## Final semantic review correction contract
+
+ADR required: yes, amend existing ADR241.
+ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md.
+Reason: clarify existing eligible-source, exact provider destination, independent consent and physical-owner contracts; no schema, backend or dependency change.
+
+A Partial keyword cache may retain rows outside its current processing policy. Semantic source paging must apply the existing current policy and authoritative binding exclusions before reading text, using bounded keyset SQL. Append validation and final completeness count the same eligible set, with fresh service authority at each unit. Retained forbidden rows cannot reach a provider or prevent an otherwise complete eligible generation from becoming Ready.
+
+Project OpenAI-compatible transport refuses HTTP redirects, including 307/308, before any resend; the explicit project factory option is set only by the issued project wrapper. Default Library transport retains its existing behavior. A redirect refusal is an unavailable provider outcome, never new destination consent.
+
+New semantic work remains denied while any same-binding model close is pending. Already-admitted carriers retire independently: close verifies issued identity, live parent, original execution/thread, zero live children and only its own operation's pending model-close tokens. A peer's ordinary or failed close cannot poison physical retirement. Own failed close and unknown native closure remain retained.
+
+Semantic ranking captures its independently consented compatible Ready generation. Candidate and final disclosure fences revalidate the captured semantic revision/settings and that exact compatible generation. A mismatch returns unavailable without stale semantically selected hits. Keyword scope/manifest alone cannot attest semantic consent.
+
+Tests that perform native-positive semantic allocations explicitly require the production qualified SQLite source/version/options; unsupported runtimes skip only those positives with a precise reason. Portable keyword/refusal controls remain active. Required Windows preflight and positive assertions remain fail-closed.
+
+
+### Final semantic review regression coverage (Task36423)
+The existing approved Project index contracts job adds exactly four selectors: held public Disable, held public reconfiguration, the two peer-carrier slow/failed-close parameters, and the four real 307/308 project/Library transport parameters. Existing selected local128normal now also proves retained Partial forbidden text never reaches the provider; the settings file includes portable lease refusal and actual unsupported-runtime refusal controls. The target count changes12 to16 and measured case projection33 to44, with about91.3 seconds measured additional critical-node calls and a conservative284-second total including the extra portable lease case. Preserve the1200-second job cap, Python3.12.10 actual source/options assertions, dependencies, test timeout180,13 UI shards, required context and aggregation. Root recorded explicit GO before workflow edits. Native-positive tests alone may skip unsupported comprehensive runtimes; the required Windows preflight still fails closed and its selected positives must execute with zero skips. No new lane or optional ML dependency.

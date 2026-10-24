@@ -30,6 +30,7 @@ def test_rrf_deduplicates_metadata_before_live_validation():
     assert len(fused) == 3
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_rank_filters_forbidden_dominant_match_before_top_k(tmp_path):
     from tldw_chatbook.Workspaces.project_index.semantic import rank_semantic
 
@@ -116,9 +117,11 @@ def test_rank_filters_forbidden_dominant_match_before_top_k(tmp_path):
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+@pytest.mark.parametrize("mutation", [None, "disable", "reconfigure"])
 @private_profile_test
 async def test_service_search_fuses_synonym_hit_then_live_validates(
-    tmp_path, request, monkeypatch
+    tmp_path, request, monkeypatch, mutation
 ):
     from Tests.Workspaces.test_project_index_service import Rig
     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
@@ -222,7 +225,12 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
             store.close_native()
             lease.close()
 
+        entered, release = threading.Event(), threading.Event()
+
         def read(candidate):
+            if mutation is not None:
+                entered.set()
+                assert release.wait(45)
             data = file.read_text(encoding="utf-8")
             return FileCapture(
                 candidate.relative_path,
@@ -243,12 +251,42 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
             None,
             read,
         )
-        result = rig.service.search(authority, "hound")
-        assert [hit.relative_path for hit in result.hits] == ["dog.py"]
+        if mutation is None:
+            result = rig.service.search(authority, "hound")
+            assert [hit.relative_path for hit in result.hits] == ["dog.py"]
+        else:
+            task = asyncio.create_task(
+                asyncio.to_thread(rig.service.search, authority, "hound")
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 30)
+                before = rig.service.status(rig.key)
+                if mutation == "disable":
+                    await asyncio.to_thread(
+                        rig.service.disable_semantic,
+                        rig.key,
+                        expected_epoch=scope.epoch,
+                        expected_semantic_revision=state.semantic_revision,
+                    )
+                else:
+                    with rig.service._store(rig.key) as changed:
+                        changed.configure_semantic(
+                            scope,
+                            settings("new-destination"),
+                            enabled=True,
+                            expected_semantic_revision=state.semantic_revision,
+                        )
+                assert rig.service.status(rig.key) == before
+            finally:
+                release.set()
+                result = await task
+            assert result.status == "unavailable" and result.hits == ()
+            assert result.semantic_status != "ready"
     finally:
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_query_close_retry_keeps_keyword_available_and_exact_owner(
     tmp_path, request, monkeypatch
@@ -384,6 +422,7 @@ async def test_query_close_retry_keeps_keyword_available_and_exact_owner(
             rig.service.retry_semantic_close(rig.key)
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_incompatible_ready_artifact_skips_query_model(
     tmp_path, request, monkeypatch
@@ -574,6 +613,7 @@ async def test_incompatible_ready_artifact_skips_query_model(
         await service.aclose()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @pytest.mark.loopback_network
 @private_profile_test
 async def test_cancelled_query_tool_observers_keep_native_close_owner(

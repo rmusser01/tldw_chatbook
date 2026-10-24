@@ -135,7 +135,8 @@ def test_actual_factory_http_paths_hide_credentials(
         def close(self):
             self.close_count += 1
 
-        def post(self, url, *, json, timeout):
+        def post(self, url, *, json, timeout, allow_redirects=True):
+            assert allow_redirects is True
             attempts.append(url)
             outcome = outcomes[len(attempts) - 1]
             if outcome == "retry":
@@ -289,3 +290,73 @@ def test_factory_eviction_retains_failed_openai_session(monkeypatch, eviction):
         except RuntimeError:
             factory.close()  # Bounded cleanup of the deliberately failed fake.
     assert sessions[1].close_calls == 1
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("redirect", [307, 308])
+@pytest.mark.parametrize("project", [True, False])
+def test_openai_redirect_respects_project_destination_without_changing_library(
+    monkeypatch, redirect, project
+):
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    received = []
+
+    class Endpoint(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            received.append((self.path, json.loads(body)["input"]))
+            if self.path == "/v1/embeddings":
+                self.send_response(redirect)
+                self.send_header("Location", forbidden)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                data = json.dumps({"data": [{"embedding": [1.0, 0.0]}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        def log_message(self, *_):
+            pass
+
+    approved = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+    unapproved = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+    forbidden = f"http://127.0.0.1:{unapproved.server_port}/unapproved"
+    threads = [
+        threading.Thread(target=server.serve_forever)
+        for server in (approved, unapproved)
+    ]
+    for thread in threads:
+        thread.start()
+    monkeypatch.setattr(embeddings_lib, "_BACKOFF", (0,))
+    cfg = embeddings_lib.OpenAICfg(
+        provider="openai",
+        model_name_or_path="synthetic",
+        dimension=2,
+        base_url=f"http://127.0.0.1:{approved.server_port}/v1",
+        allow_redirects=not project,
+    )
+    embed, close = embeddings_lib._openai_embedder(cfg)
+    try:
+        if project:
+            with pytest.raises(embeddings_lib.requests.RequestException):
+                embed(["project-only-secret-sentinel"])
+            assert received == [("/v1/embeddings", ["project-only-secret-sentinel"])]
+        else:
+            assert embed(["library-control"], as_list=True) == [[1.0, 0.0]]
+            assert received == [
+                ("/v1/embeddings", ["library-control"]),
+                ("/unapproved", ["library-control"]),
+            ]
+    finally:
+        close()
+        for server in (approved, unapproved):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(5)
+            assert not thread.is_alive()

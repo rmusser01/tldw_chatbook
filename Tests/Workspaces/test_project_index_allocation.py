@@ -166,6 +166,7 @@ def test_preopen_refuses_windows_junction_namespace(tmp_path):
     assert not (outside / "workspace_project_index.db").exists()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_negative_scaled_allowance_refuses_without_clamping_or_writing(tmp_path):
     group = tmp_path / ("f" * 64)
     group.mkdir()
@@ -182,6 +183,7 @@ def test_negative_scaled_allowance_refuses_without_clamping_or_writing(tmp_path)
         assert path.read_bytes() == before
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_scaled_cap_reserves_other_namespace_and_every_old_page(tmp_path):
     group = tmp_path / ("f" * 64)
     group.mkdir()
@@ -587,6 +589,7 @@ async def test_keyword_lookup_during_real_scanner_wait_outside_sql(
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_group_semantic_peer_qualifies_keyword_target_before_native_open(
     tmp_path, monkeypatch
 ):
@@ -682,6 +685,7 @@ def test_missing_group_gate_with_existing_v4_peer_refuses_repeatedly(tmp_path):
         assert not second.exists()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_retained_generation_after_revoke_qualifies_peer_and_closes_probes(
     tmp_path, monkeypatch
 ):
@@ -869,6 +873,7 @@ def test_nested_other_store_write_refuses_before_peer_probe(tmp_path, monkeypatc
         second.close_native()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_disabled_settings_without_generations_keep_keyword_allowance(
     tmp_path, monkeypatch
 ):

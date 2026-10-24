@@ -27,6 +27,7 @@ from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 from Tests.private_profile import private_profile_test
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @pytest.mark.parametrize(
     "case",
     (
@@ -78,6 +79,7 @@ async def test_model_free_local_batch128_tail_and_native32_commits(
         async def create_embeddings_async(self, texts):
             started = time.perf_counter()
             batch_sizes.append(len(texts))
+            assert "retained-forbidden-provider-sentinel" not in texts
             vector = [1.0] * 16384 if case == "max_dimension" else [1.0, 0.0]
             vectors = [vector] * len(texts)
             if case == "wrong_count":
@@ -182,6 +184,30 @@ async def test_model_free_local_batch128_tail_and_native32_commits(
                         "INSERT INTO chunk_fts(rowid,path,text) VALUES(?,?,?)",
                         (chunk, "dog.py", "canine companion"),
                     )
+            if case == "normal":
+                from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+                rig.live = replace(
+                    rig.live, exclusions=(SensitiveExclusion("file", "private.py"),)
+                )
+                secret = "retained-forbidden-provider-sentinel"
+                with store.transaction() as conn:
+                    conn.execute(
+                        "INSERT INTO files VALUES(?,?,?,?,?,?)",
+                        (
+                            "private.py",
+                            "denied",
+                            123,
+                            len(secret),
+                            sha256(secret.encode()).hexdigest(),
+                            secret,
+                        ),
+                    )
+                    conn.execute(
+                        "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
+                        ("private.py", secret, 0, len(secret), 1, 1),
+                    )
+                    conn.execute("UPDATE control SET state='Partial'")
             state = store.configure_semantic(
                 status.scope, settings(), enabled=True, expected_semantic_revision=0
             )
@@ -299,6 +325,7 @@ def populated_store(tmp_path):
     return store, scope, semantic, lease
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_local_source_page_trims_before_loading_text_and_validates_limit(tmp_path):
     store, scope, state, lease = populated_store(tmp_path)
     try:
@@ -446,6 +473,7 @@ def start_held_semantic(rig, monkeypatch, started, release, *, close=None):
     return status, state, rig.service._semantic_runs[job]
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_retry(
     tmp_path, request, monkeypatch
@@ -524,6 +552,7 @@ async def test_clear_during_pending_semantic_close_revokes_without_waiting_for_r
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @pytest.mark.parametrize("change", ["detach", "exclusion", "settings"])
 @private_profile_test
 async def test_held_semantic_refuses_publication_after_binding_or_settings_change(
@@ -599,6 +628,7 @@ async def test_held_semantic_refuses_publication_after_binding_or_settings_chang
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path):
     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
 
@@ -670,6 +700,7 @@ def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path)
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_failed_first_generation_has_no_ready_projection(tmp_path):
     store, scope, state, lease = populated_store(tmp_path)
     try:
@@ -695,6 +726,7 @@ def test_failed_first_generation_has_no_ready_projection(tmp_path):
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_ready_zero_members_is_distinct_from_unavailable_semantics(tmp_path):
     from tldw_chatbook.Workspaces.project_index.semantic import rank_semantic
 
@@ -734,6 +766,7 @@ def test_ready_zero_members_is_distinct_from_unavailable_semantics(tmp_path):
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
     from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
@@ -820,6 +853,7 @@ def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
         second_lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_failed_rebuild_with_changed_artifact_cannot_project_prior_ready(tmp_path):
     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
 
@@ -858,6 +892,7 @@ def test_failed_rebuild_with_changed_artifact_cannot_project_prior_ready(tmp_pat
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
 
@@ -886,6 +921,7 @@ def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @pytest.mark.parametrize("mutation_point", ["between_pages", "final_cas"])
 def test_multipage_generation_refuses_changed_manifest_at_page_or_final_cas(
     tmp_path, mutation_point
@@ -956,6 +992,7 @@ def test_multipage_generation_refuses_changed_manifest_at_page_or_final_cas(
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_stale_semantic_failure_cannot_settle_new_claim_or_reconfigured_control(
     tmp_path,
 ):
@@ -992,6 +1029,7 @@ def test_stale_semantic_failure_cannot_settle_new_claim_or_reconfigured_control(
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_semantic_checkpoint_refuses_binding_allocation_quota(tmp_path, monkeypatch):
     from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
     from tldw_chatbook.Workspaces.project_index.service import binding_bytes
@@ -1028,6 +1066,7 @@ def test_semantic_checkpoint_refuses_binding_allocation_quota(tmp_path, monkeypa
         lease.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
     tmp_path, request, monkeypatch
@@ -1212,6 +1251,7 @@ async def test_service_builder_keeps_keyword_lookup_live_during_embedding_wait(
         await rig.close()
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_unknown_registry_retirement_roots_model_and_native_owners(
     tmp_path, request, monkeypatch
@@ -1317,6 +1357,7 @@ async def test_unknown_registry_retirement_roots_model_and_native_owners(
         pass
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_retired_semantic_error_drops_traceback_but_keeps_live_join_record(
     tmp_path, request, monkeypatch
@@ -1420,6 +1461,7 @@ def test_vector_codec_round_trips_finite_float32_and_refuses_corrupt_bytes():
         decode_vector(b"\x00\x00\xc0\x7f", 1)
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @private_profile_test
 async def test_actual_cached_local_model_builds_async_generation_offline(
     tmp_path, request, monkeypatch
@@ -1549,6 +1591,7 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
     await asyncio.to_thread(run)
 
 
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 @pytest.mark.loopback_network
 @private_profile_test
 async def test_actual_http_provider_wait_allows_keyword_lookup(
@@ -1807,3 +1850,104 @@ async def test_actual_http_provider_wait_allows_keyword_lookup(
         server.shutdown()
         server_thread.join(5)
         server.server_close()
+
+
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+@pytest.mark.parametrize("denied", ["prefix", "suffix", "exclusion"])
+def test_partial_retained_sources_filter_before_text_and_complete_eligible_set(
+    tmp_path, denied
+):
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+
+    store, scope, state, lease = populated_store(tmp_path)
+    try:
+        path = {
+            "prefix": "other/private.py",
+            "suffix": "src/private.txt",
+            "exclusion": "src/private.py",
+        }[denied]
+        secret = "retained-forbidden-provider-sentinel"
+        with store.transaction() as conn:
+            conn.execute(
+                "INSERT INTO files VALUES(?,?,?,?,?,?)",
+                (
+                    path,
+                    "denied",
+                    123,
+                    len(secret),
+                    sha256(secret.encode()).hexdigest(),
+                    secret,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO chunks(path,text,start_char,end_char,line_start,line_end) VALUES(?,?,?,?,?,?)",
+                (path, secret, 0, len(secret), 1, 1),
+            )
+        scope = store.configure(
+            scope.key,
+            ProjectIndexPolicy(("src",), (".py",)),
+            enabled=True,
+            expected_scope=scope,
+        )
+        with store.transaction() as conn:
+            conn.execute("UPDATE control SET state='Partial'")
+        state = store.configure_semantic(
+            scope,
+            settings(),
+            enabled=True,
+            expected_semantic_revision=state.semantic_revision,
+        )
+        floor = (
+            (SensitiveExclusion("file", "src/private.py"),)
+            if denied == "exclusion"
+            else ()
+        )
+        generation = store.semantic_claim(
+            scope,
+            state,
+            manifest_revision=store.load_status(scope.key).manifest_revision,
+            artifact_fingerprint=digest("artifact-a"),
+            claim_token="eligible",
+        )
+        # Pass the current authority exactly as the service does. Legacy callers
+        # remain valid, but project callers may never omit their live floor.
+        kwargs = {"exclusions": floor}
+        rows = store.semantic_source_page(
+            scope, generation, "eligible", after=0, **kwargs
+        )
+        assert [row.relative_path for row in rows] == ["src/dog.py"]
+        assert secret not in [row.text for row in rows]
+        assert store.semantic_append(
+            scope, generation, "eligible", rows, [encode_vector([1, 0])], **kwargs
+        )
+        assert (
+            store.semantic_source_page(
+                scope, generation, "eligible", after=rows[-1].chunk_id, **kwargs
+            )
+            == ()
+        )
+        if denied == "exclusion":
+            assert not store.semantic_publish(
+                scope, generation, "eligible", exclusions=()
+            )
+            # Equal counts cannot substitute one currently forbidden member
+            # for a different eligible source during final completeness.
+            swapped = (SensitiveExclusion("file", "src/dog.py"),)
+            assert not store.semantic_publish(
+                scope, generation, "eligible", exclusions=swapped
+            )
+        assert store.semantic_publish(scope, generation, "eligible", **kwargs)
+        assert store.load_semantic_state(scope).coverage == 1
+        store.revoke(scope.key, clear=False, expected_scope=scope)
+        assert not store.semantic_append(
+            scope, generation, "eligible", rows, [encode_vector([1, 0])], **kwargs
+        )
+        assert not store.semantic_publish(scope, generation, "eligible", **kwargs)
+        with pytest.raises(ValueError, match="stale_semantic_page"):
+            store.semantic_source_page(
+                scope, generation, "eligible", after=rows[-1].chunk_id, **kwargs
+            )
+    finally:
+        store.close_native()
+        lease.close()

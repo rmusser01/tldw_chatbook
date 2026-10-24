@@ -260,6 +260,8 @@ class HFModelCfg(BaseModel):
 
 
 class OpenAICfg(BaseModel):
+    # Finite project transport choice; never persist it as catalog identity.
+    allow_redirects: bool = Field(default=True, exclude=True)
     provider: Literal["openai"] = "openai"
     model_name_or_path: str = "text-embedding-3-small"
     api_key: Optional[str] = Field(default=None, repr=False)
@@ -599,8 +601,15 @@ def _openai_embedder(
             t0 = time.perf_counter()
             try:
                 resp = session.post(
-                    embeddings_endpoint, json=payload, timeout=30
+                    embeddings_endpoint,
+                    json=payload,
+                    timeout=30,
+                    allow_redirects=cfg.allow_redirects,
                 )  # CHANGED: Use dynamic endpoint
+                if not cfg.allow_redirects and 300 <= resp.status_code < 400:
+                    raise requests.RequestException(
+                        "embedding_provider_redirect_refused"
+                    )
                 resp.raise_for_status()
                 data = resp.json()["data"]
                 arr = np.asarray([d["embedding"] for d in data], dtype=np.float32)

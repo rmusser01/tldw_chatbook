@@ -985,16 +985,41 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             )
             return generation_id
 
+    @contextmanager
+    def _semantic_eligibility(self, conn, scope, exclusions):
+        """Use the same current source set for disclosure and completeness."""
+        row = self._current(conn, scope)
+        allowed = (
+            self._eligibility_predicate(
+                ProjectIndexPolicy(*json.loads(row["policy"])), exclusions
+            )
+            if row is not None
+            else lambda path: 0
+        )
+        conn.create_function("index_path_allowed", 1, allowed)
+        try:
+            yield
+        finally:
+            conn.create_function("index_path_allowed", 1, None)
+
     def semantic_source_page(
-        self, scope: ProjectIndexScope, generation_id: str, claim_token: str, *,
-        after: int, limit: int = 32,
+        self,
+        scope: ProjectIndexScope,
+        generation_id: str,
+        claim_token: str,
+        *,
+        after: int,
+        limit: int = 32,
+        exclusions=(),
     ) -> tuple[SemanticSourceChunk, ...]:
         """Materialize a validated bounded keyset page under 1 MiB source."""
         if type(after) is not int or after < 0:  # noqa: E721
             raise ValueError("invalid_semantic_cursor")
         if type(limit) is not int or not 1 <= limit <= 128:  # noqa: E721
             raise ValueError("invalid_semantic_source_limit")
-        with self.connection() as conn:
+        with self.connection() as conn, self._semantic_eligibility(
+            conn, scope, exclusions
+        ):
             generation = self._semantic_live(conn, scope, generation_id, claim_token)
             if generation is None or after != (generation["checkpoint_chunk_id"] or 0):
                 raise ValueError("stale_semantic_page")
@@ -1002,7 +1027,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "SELECT c.id,f.path,f.identity,f.content_sha256,c.line_start,c.line_end,"
                 "length(CAST(c.text AS BLOB)) AS byte_count "
                 "FROM chunks c JOIN files f ON f.path=c.path "
-                "WHERE c.id>? ORDER BY c.id LIMIT ?",
+                "WHERE c.id>? AND index_path_allowed(f.path)=1 ORDER BY c.id LIMIT ?",
                 (after, limit),
             ).fetchall()
             selected = []
@@ -1030,7 +1055,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     @_activated
     def semantic_append(
-        self, scope, generation_id, claim_token, rows, vectors
+        self, scope, generation_id, claim_token, rows, vectors, *, exclusions=()
     ) -> bool:
         """Checkpoint one bounded page only if every source revision still matches."""
         rows, vectors = tuple(rows), tuple(vectors)
@@ -1042,7 +1067,9 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             or any(type(vector) is not bytes for vector in vectors)  # noqa: E721
         ):
             raise ValueError("semantic_page_limit")
-        from tldw_chatbook.Workspaces.project_index.semantic_vectors import decode_vector
+        from tldw_chatbook.Workspaces.project_index.semantic_vectors import (
+            decode_vector,
+        )
 
         dimension = len(vectors[0]) // 4
         for vector in vectors:
@@ -1050,16 +1077,25 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         ids = [row.chunk_id for row in rows]
         if ids != sorted(set(ids)):
             raise ValueError("invalid_semantic_page")
-        with self.transaction(semantic=True) as conn:
+        with self.transaction(semantic=True) as conn, self._semantic_eligibility(
+            conn, scope, exclusions
+        ):
             generation = self._semantic_live(conn, scope, generation_id, claim_token)
             if generation is None or ids[0] <= (generation["checkpoint_chunk_id"] or 0):
                 return False
             if generation["dimension"] not in (0, dimension):
                 return False
+            expected = conn.execute(
+                "SELECT c.id FROM chunks c JOIN files f ON f.path=c.path "
+                "WHERE c.id>? AND index_path_allowed(f.path)=1 ORDER BY c.id LIMIT ?",
+                (generation["checkpoint_chunk_id"] or 0, len(rows)),
+            ).fetchall()
+            if ids != [item[0] for item in expected]:
+                return False
             for row in rows:
                 source = conn.execute(
                     "SELECT f.path,f.identity,f.content_sha256,c.line_start,c.line_end,c.text "
-                    "FROM chunks c JOIN files f ON f.path=c.path WHERE c.id=?",
+                    "FROM chunks c JOIN files f ON f.path=c.path WHERE c.id=? AND index_path_allowed(f.path)=1",
                     (row.chunk_id,),
                 ).fetchone()
                 if source is None or tuple(source) != (
@@ -1085,22 +1121,36 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             return True
 
     @_activated
-    def semantic_publish(self, scope, generation_id, claim_token) -> bool:
+    def semantic_publish(
+        self, scope, generation_id, claim_token, *, exclusions=()
+    ) -> bool:
         """Atomically point Ready at a complete immutable source snapshot."""
-        with self.transaction(semantic=True) as conn:
+        with self.transaction(semantic=True) as conn, self._semantic_eligibility(
+            conn, scope, exclusions
+        ):
             generation = self._semantic_live(conn, scope, generation_id, claim_token)
             if generation is None:
                 return False
-            count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-            if count != generation["chunk_count"]:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM chunks c JOIN files f ON f.path=c.path "
+                "WHERE index_path_allowed(f.path)=1"
+            ).fetchone()[0]
+            forbidden = conn.execute(
+                "SELECT 1 FROM semantic_members WHERE generation_id=? "
+                "AND index_path_allowed(relative_path)=0 LIMIT 1",
+                (generation_id,),
+            ).fetchone()
+            if count != generation["chunk_count"] or forbidden is not None:
                 return False
             conn.execute(
                 "UPDATE semantic_generations SET state='Ready',claim_token=NULL "
-                "WHERE generation_id=?", (generation_id,)
+                "WHERE generation_id=?",
+                (generation_id,),
             )
             conn.execute(
                 "UPDATE semantic_control SET state='Ready',reason=NULL,ready_generation_id=? "
-                "WHERE singleton=1", (generation_id,)
+                "WHERE singleton=1",
+                (generation_id,),
             )
             return True
 
@@ -1143,7 +1193,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             )
             conn.execute(
                 "UPDATE semantic_generations SET state='Error',claim_token=NULL "
-                "WHERE generation_id=?", (generation_id,)
+                "WHERE generation_id=?",
+                (generation_id,),
             )
             conn.execute(
                 "UPDATE semantic_control SET state=?,reason=? WHERE singleton=1",
@@ -1199,7 +1250,10 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         return generation
 
     def semantic_ready_generation(
-        self, scope: ProjectIndexScope, state: ProjectSemanticState, artifact_fingerprint: str
+        self,
+        scope: ProjectIndexScope,
+        state: ProjectSemanticState,
+        artifact_fingerprint: str,
     ) -> ProjectSemanticGeneration | None:
         """Project compatible Ready without invalidating on a later manifest alone."""
         with self.connection() as conn:
