@@ -1344,6 +1344,74 @@ class LibraryIngestFormState:
     preflight_checking: bool = False
 
 
+def build_ingest_options_snapshot(
+    form: LibraryIngestFormState,
+) -> dict[str, dict[str, Any]]:
+    """Capture the current per-type ingestion options as a snapshot.
+
+    Returns a shallow copy of ``form.type_options``,
+    with the top-level generic toggles (analyze, chunk, chunk_size)
+    merged into the ``generic`` group so the downstream pipeline has a
+    single canonical options map.
+
+    Args:
+        form: Current form echo; its option mappings remain unchanged.
+
+    Returns:
+        A group-keyed dict mapping type group ids (``generic``, ``pdf``,
+        ``audio_video``, ``ebook``) to their option name/value maps.
+    """
+    snapshot: dict[str, dict[str, Any]] = {
+        group: dict(opts) for group, opts in form.type_options.items()
+    }
+    generic = snapshot.setdefault("generic", {})
+    generic["analyze"] = form.analyze
+    generic["chunk"] = form.chunk
+    # Prefer the generic panel's chunk_size when the user has set one;
+    # otherwise fall back to the legacy top-level form field.
+    if "chunk_size" not in generic:
+        generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+    # (task-3301) The panel's number Inputs hand back display TEXT
+    # ("1000"); this snapshot is both what the job pipeline consumes
+    # and what gets persisted to config, so numbers are coerced to
+    # ints here, at the boundary, and never downstream. The values
+    # were already gate-validated (``collect_ingest_option_errors``
+    # blocks Start on a non-integer), so the clamp/fallback below is
+    # defensive, not a second validator.
+    generic["chunk_size"] = clamp_chunk_size(str(generic["chunk_size"]))
+    if "chunk_overlap" in generic:
+        try:
+            generic["chunk_overlap"] = max(
+                0, int(str(generic["chunk_overlap"]).strip())
+            )
+        except (TypeError, ValueError):
+            generic.pop("chunk_overlap")  # fall back to the schema default
+    # Preserve a complete generic form state in every job snapshot. The
+    # generic capability schema owns these defaults, including the
+    # server-only ``keep_original_file`` value; backend projection decides
+    # whether a snapshot value can reach a particular ingest path.
+    for capability_field in get_capabilities("generic").fields:
+        generic.setdefault(capability_field.name, capability_field.default)
+    # (task-3303 xhigh review round 2, F11) The ebook chunk-method is
+    # scheme IDENTITY, so every NEW snapshot must carry it explicitly
+    # even when untouched: the job-option builder treats an ABSENT
+    # value as "this snapshot predates the field" and falls back to
+    # the pre-branch sentences scheme for requeue parity. Without this
+    # seed a fresh untouched submission would be indistinguishable
+    # from a legacy job and lose the chapters default.
+    ebook = snapshot.setdefault("ebook", {})
+    if not str(ebook.get("chunk_method") or "").strip():
+        ebook["chunk_method"] = next(
+            (
+                capability_field.default
+                for capability_field in get_capabilities("ebook").fields
+                if capability_field.name == "chunk_method"
+            ),
+            "chapters",
+        )
+    return snapshot
+
+
 @dataclass(frozen=True)
 class IngestQueueRow:
     """One rendered row in the ingest canvas's job queue.

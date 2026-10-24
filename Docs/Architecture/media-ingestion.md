@@ -17,6 +17,8 @@ This document describes how source material becomes indexed media: source classi
 | `Library/transcription_readiness.py` | Selected local STT package/model checks before Library form submission; path-private package, model and VAD remedies |
 | `Widgets/NewIngest/` | The unified ingest UI (`UnifiedProcessor`, smart drop zone, processing dashboard) |
 
+The Library screen captures form options through `Library/library_ingest_state.py::build_ingest_options_snapshot`: copied group mappings, generic coercion/schema defaults and the fresh ebook chunk-method default. The screen retains submission, readiness and preference-persistence ownership.
+
 ## The two-phase design
 
 **Parsing never touches the database.** `parse_local_file_for_ingest` runs in a worker process with no DB handle and returns a picklable payload; `persist_parsed_media` is the **only DB writer** in the pipeline. A parse crash therefore cannot corrupt rows, and extraction backends (PDF, document, ebook, image/OCR libraries) are lazy-loaded per type inside the worker only.

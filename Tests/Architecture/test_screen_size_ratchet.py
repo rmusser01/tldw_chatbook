@@ -1023,7 +1023,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (+1), the ``_library_media_selected_backing_id`` docstring says the
     #: Reader target is the loaded item whatever the view. Methods 1354.
     # TASK-36454..36458: narrow save/install completion helpers reduce this owner.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37525, 1354),
+    # Auto-default integration: pure form-option snapshot now belongs to its state owner.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37493, 1354),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
