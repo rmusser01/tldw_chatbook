@@ -27,6 +27,7 @@ async def mounted_import(monkeypatch, tmp_path):
         def __init__(self):
             super().__init__()
             self.unified_mcp_service = ImportHubService()
+            self.unified_mcp_service.execution_log = None
             self.notices = []
 
         def compose(self):
@@ -157,6 +158,46 @@ async def test_pending_mcp_file_read_cannot_replace_reopened_panel(
             await host.workers.wait_for_complete()
             await pilot.pause()
             assert replacement.query_one(TextArea).text == "x"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retirement", ["hide", "replace"])
+@private_profile_test
+async def test_pending_mcp_file_read_rejects_direct_panel_retirement(
+    request, tmp_path, monkeypatch, retirement
+):
+    from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
+    from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+
+    selected = tmp_path / "selected.json"
+    selected.write_text(FILE_TEXT, encoding="utf-8")
+    async with mounted_import(monkeypatch, tmp_path) as (host, pilot, panel):
+        editor = panel.query_one(TextArea)
+        owner = host.query_one(MCPServersMode)
+        async with held_file_read(monkeypatch, selected) as (
+            entered,
+            release,
+            finished,
+        ):
+            await pick_file(host, pilot, selected)
+            await wait_for(entered.is_set)
+            if retirement == "hide":
+                await owner.hide_form()
+                assert not list(host.query(MCPImportPanel))
+            else:
+                await owner.show_import()
+                replacement = host.query_one(MCPImportPanel)
+                assert replacement is not panel
+                replacement.query_one(TextArea).focus()
+                await pilot.press("x")
+            assert not panel.is_attached
+            release.set()
+            await wait_for(finished.is_set)
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert editor.text == ""
+            if retirement == "replace":
+                assert replacement.query_one(TextArea).text == "x"
 
 
 @pytest.mark.asyncio

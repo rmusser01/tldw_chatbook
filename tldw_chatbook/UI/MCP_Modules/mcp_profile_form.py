@@ -445,7 +445,8 @@ class MCPImportPanel(Vertical):
 
         def receive(text: str) -> None:
             if (
-                self.is_mounted
+                self.is_attached
+                and not self._pruning
                 and request_revision == self._file_read_revision
                 and draft_revision == editor.draft_revision
             ):
