@@ -1,12 +1,12 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 584645,
+  "total": 583354,
   "per_source": {
     "screen_css_scoped.tcss": 12176,
     "screen_css_self.tcss": 2318,
-    "tldw_cli_modular.tcss": 418776,
-    "widget_defaults_scoped.tcss": 71066,
-    "widget_defaults_self.tcss": 80309
+    "tldw_cli_modular.tcss": 418440,
+    "widget_defaults_scoped.tcss": 70888,
+    "widget_defaults_self.tcss": 79532
   },
   "per_segment": {
     "screen_css_scoped.tcss::(header)": 455,
@@ -33,7 +33,7 @@
     "screen_css_self.tcss::TraceFiltersDialog (UI/Widgets/trace_filter_bar.py)": 256,
     "screen_css_self.tcss::VoiceBlendDialog (Widgets/voice_blend_dialog.py)": 123,
     "tldw_cli_modular.tcss::(header)": 377,
-    "tldw_cli_modular.tcss::components/_agentic_terminal.tcss": 44985,
+    "tldw_cli_modular.tcss::components/_agentic_terminal.tcss": 44649,
     "tldw_cli_modular.tcss::components/_buttons.tcss": 1615,
     "tldw_cli_modular.tcss::components/_change_review.tcss": 4141,
     "tldw_cli_modular.tcss::components/_dialogs.tcss": 5566,
@@ -143,7 +143,7 @@
     "widget_defaults_scoped.tcss::MainNavigationBar (UI/Navigation/main_navigation.py)": 2283,
     "widget_defaults_scoped.tcss::ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py)": 700,
     "widget_defaults_scoped.tcss::NotesRecoveryDialog (Widgets/Library/notes_recovery_dialog.py)": 478,
-    "widget_defaults_scoped.tcss::PersonasScreen (UI/Screens/personas_screen.py)": 2550,
+    "widget_defaults_scoped.tcss::PersonasScreen (UI/Screens/personas_screen.py)": 2372,
     "widget_defaults_scoped.tcss::ProjectInstructionNoticeModal (Widgets/Console/console_project_instructions.py)": 485,
     "widget_defaults_scoped.tcss::ProjectInstructionSetupModal (Widgets/Console/console_project_instructions.py)": 700,
     "widget_defaults_scoped.tcss::ProjectSkillsImportModal (Widgets/project_skills_import_modal.py)": 1015,
@@ -256,7 +256,7 @@
     "widget_defaults_self.tcss::PersonasDictionaryDetailWidget (Widgets/Persona_Widgets/personas_dictionary_detail.py)": 1190,
     "widget_defaults_self.tcss::PersonasDictionaryTryItWidget (Widgets/Persona_Widgets/personas_dictionary_tryit.py)": 844,
     "widget_defaults_self.tcss::PersonasInspectorPane (Widgets/Persona_Widgets/personas_inspector_pane.py)": 1654,
-    "widget_defaults_self.tcss::PersonasLibraryPane (Widgets/Persona_Widgets/personas_library_pane.py)": 1700,
+    "widget_defaults_self.tcss::PersonasLibraryPane (Widgets/Persona_Widgets/personas_library_pane.py)": 923,
     "widget_defaults_self.tcss::PersonasLoreDetailWidget (Widgets/Persona_Widgets/personas_lore_detail.py)": 703,
     "widget_defaults_self.tcss::PersonasLoreTryItWidget (Widgets/Persona_Widgets/personas_lore_tryit.py)": 831,
     "widget_defaults_self.tcss::PersonasPersonaVisualPackWidget (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py)": 1757,

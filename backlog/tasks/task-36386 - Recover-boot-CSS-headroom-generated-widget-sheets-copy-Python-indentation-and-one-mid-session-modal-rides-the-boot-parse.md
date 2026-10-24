@@ -47,7 +47,7 @@ Found by the review of TASK-35649 (PR #3217, 2026-10-22). Once TASK-35649 lands,
 
 ## Implementation Notes
 
-Recovered 22,670 B of boot-parsed CSS with no rendering change. Boot CSS went from 607,315 B to 584,645 B against the unchanged 608,090 B limit, so headroom rose from 775 B to 23,445 B.
+Recovered about 22.5 KB of boot-parsed CSS with no rendering change. Boot CSS went from 607,315 B to 584,645 B against the unchanged 608,090 B limit, so headroom rose from 775 B to 23,445 B. Re-measured after rebasing onto dev ae85e59e8f, where #3229 had already shed 1,447 B: 605,868 B to 583,354 B, a 22,514 B shed, with headroom rising from 2,222 B to 24,736 B.
 
 **(a) Dedent.** `widget_css.render_stylesheets` now applies `textwrap.dedent` to each block before isolating its variables and splitting it, so the CSS keeps only its own relative indentation. The same function also renders the two boot-parsed screen sheets, which get the same treatment.
 - Bytes: `widget_defaults_self` 90,763 -> 80,459 B, `widget_defaults_scoped` 81,460 -> 71,864 B, `screen_css_self` 2,458 -> 2,318 B, `screen_css_scoped` 13,852 -> 12,176 B, measured before (b) was applied. Line counts are unchanged.
@@ -72,7 +72,7 @@ Recovered 22,670 B of boot-parsed CSS with no rendering change. Boot CSS went fr
 - For the history dialog: a computed-style dump of every node (all `RulesMap` properties), at rest and with focus and hover on each of its six focusables, plus a screenshot per focus state.
 - Negative control: with the dialog's `CSS_PATH` emptied, all 30 history artifacts differed from base, so the harness sees the lazily loaded rules.
 
-**AC#4.** Re-measured at head: 584,645 / 608,090 B (screen_css_scoped 12,176; tldw_cli_modular 418,776; screen_css_self 2,318; widget_defaults_self 80,309; widget_defaults_scoped 71,066). ADR-097's tightening convention does not fire. The 22,670 B shed is under the 25,000 B standard slack, and 584,645 + 25,000 = 609,645 is above the limit, so "lowering" the constant would raise it. The limit stays at 608,090. This follows the ADR's TASK-23112 precedent, and the reasoning is recorded beside the constant. The CSS snapshot was refreshed with `scripts/update_boot_budget_snapshots.py --only css`, so the next breach diff names real growth rather than every dedented segment.
+**AC#4.** Re-measured at head after the rebase onto dev ae85e59e8f: 583,354 / 608,090 B (screen_css_scoped 12,176; tldw_cli_modular 418,440; screen_css_self 2,318; widget_defaults_self 79,532; widget_defaults_scoped 70,888); the snapshot was refreshed with `scripts/update_boot_budget_snapshots.py --only css`. ADR-097's tightening convention does not fire. The 22,514 B shed is under the 25,000 B standard slack, and 583,354 + 25,000 = 608,354 is above the limit, so "lowering" the constant would raise it. The limit stays at 608,090. This follows the ADR's TASK-23112 precedent, and the reasoning is recorded beside the constant. The CSS snapshot was refreshed with `scripts/update_boot_budget_snapshots.py --only css`, so the next breach diff names real growth rather than every dedented segment.
 
 **Tests** (`run.sh`, `-n 4`): css build integrity, widget-css consolidation, generated comments, design-token governance, the boot CSS budget and its ratchet messages, File Notes history and workspace, modal wide tier, CSS staleness manifest, adaptive pane shell, roleplay stylesheet: 649 passed, 18 failed.
 - Re-running just those 18 nodes with one command gave 15 failed on plain dev `52b3207ff1` and 14 failed at head. Every head failure also fails on dev.
