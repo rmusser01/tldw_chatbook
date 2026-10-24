@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-23 22:46
-updated_date: 2026-10-23 23:56
+updated_date: 2026-10-24 00:07
 labels:
 - follow-up
 - ci
@@ -62,14 +62,15 @@ The census has grown from 430 to 664 entries since TASK-35834 re-dealt it on 202
 
 The worst-case replay is now 17.2-17.3 pytest minutes on every shard, against 15.8-19.6 before. In the nine runs' own replays, the heaviest shard is 15.5-16.7 minutes, against 16.4-19.2.
 
-**Deviation: the Phase 7 block is re-dealt.** The brief preferred a tail-only deal. Replayed, the tail-only deal only reached 18.3: round-robin gives every shard an equal share of the tail, and each split selector costs at least one app boot (~15 s), so shards already at the average gain 1-2 minutes. The block's header already allows `--write` re-ordering, and TASK-35834 re-dealt the same block. The tail was not ordered by the stock `--tail --write`, which searches only the tail. Splitting four more heavy files did not help (18.2).
+**Deviation: the Phase 7 block is re-dealt.** A tail-only deal was planned first. Replayed, the tail-only deal only reached 18.3: round-robin gives every shard an equal share of the tail, and each split selector costs at least one app boot (~15 s), so shards already at the average gain 1-2 minutes. The block's header already allows `--write` re-ordering, and TASK-35834 re-dealt the same block. The tail was not ordered by the stock `--tail --write`, which searches only the tail. Splitting four more heavy files did not help (18.2).
 
 **AC#2 evidence.** `pytest --collect-only -q` of each of the 13 old and 13 new shard lists, through run.sh, collects 3,101 node ids each, with no id twice. The sorted sets are byte-identical (sha256 bbc5c49d...). The census checker resolves every new case id.
 
-**Guard.** The model-defaults split guard in Tests/CI is now `test_a_split_census_file_keeps_every_test_gated_once`, parametrized over the five split files. A top-level test function must be listed, or else all of its literal parametrize cases. The guard refuses a `Test*` class in a split file, whose methods it does not count, and names a selector listed twice. Red/green evidence:
+**Guard.** The model-defaults split guard in Tests/CI is now `test_a_split_census_file_keeps_every_test_gated_once`, parametrized over the five split files. A top-level test function must be listed, or else all of its literal parametrize cases. The guard refuses a `Test*` class in a split file, whose methods it does not count, and names a selector listed twice. It skips fixture-decorated functions, which pytest never collects: listing one would make pytest refuse its whole shard. Red/green evidence:
 - Red on the old census: 4 failed, 1 passed, on the "listed whole" assertion.
 - The review's control trees, rebuilt from this head: c0 (no change) passes. c1-c9 each fail on their own message: dropped function, duplicate function, duplicate case, new function, new case, new test class, function beside its cases, file whole again, bogus case id.
 - The new-class control (c6) passed under the previous guard at 23e53bc69e (5 passed) and fails now ("defines test classes").
+- Review round 2's controls: c10 (a `testing_` function) and c11 (a `Test*` helper class) fail. c12 (a `@pytest.fixture def testing_env`) failed with "is not in the census" before the fixture skip and passes after it.
 - Green on the new census.
 
 **AC#3 waits on three post-change PR runs.** The replayed worst case is about 19.2 minutes a job, under the 20-minute cap: 17.3 pytest minutes plus up to 2.0 of setup. No order does better at this shard count. Every entry at its slowest run sums to 223.6 pytest minutes, a floor of 17.2 a shard. That leaves no room for the 3 minutes a hung test's report needs. By the owner's ruling (2026-10-23), that headroom moved to TASK-36514, which adds shards and a full re-deal, and AC#3 here was amended to "no job reaches the cap".
