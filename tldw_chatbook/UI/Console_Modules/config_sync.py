@@ -258,10 +258,15 @@ def _held_for_durable_commit(screen: Any, *, poll: bool) -> bool:
     that lasts until the poll's next tick: explicit syncs started meanwhile
     leave their request (``_console_sync_requested``) for later, and that
     next tick skips and ends the hold. The tick after it runs and serves
-    what was held, two poll intervals at most after the first sync, while
-    the base's replay took one, so nothing is shown more than one poll
-    interval later than on the base. Each commit holds once; the hold ends
-    early if the commit does.
+    what was held, two poll intervals at most after the first sync. Against
+    the base that is one interval later where the base deferred to its
+    replay (0.83 replays per measured send window) and up to two where it
+    did not, since the base then rendered an explicit sync at once. Each
+    commit holds once; the hold ends early if the commit does.
+
+    The window is per store, and one store holds every Console session, so
+    a commit in one session holds one tick for all of them, a streaming one
+    included (once per commit, never two ticks in a row).
 
     Args:
         screen: The Console screen whose sync is starting.

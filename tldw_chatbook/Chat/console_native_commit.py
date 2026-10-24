@@ -154,7 +154,9 @@ def durable_commit_window(store: object) -> Iterator[None]:
     UI-loop work in that window lengthened it (warm sends reached the
     provider 31 ms later when the Console painted during it). The Console
     reads this window (``durable_commit_started_at``) to keep its syncs
-    quiet while it is open. Ends on success, failure and cancellation alike.
+    quiet while it is open. It is keyed by store, not session, so any
+    session's commit opens it for the whole Console. Ends on success,
+    failure and cancellation alike.
 
     Args:
         store: The Console store whose turn is being committed.
