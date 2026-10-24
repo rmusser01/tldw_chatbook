@@ -21,7 +21,7 @@ WORKFLOW = ".github/workflows/derived-artifacts.yml"
 ADR = "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md"
 _WORDS = (
     "zero one two three four five six seven eight nine ten eleven twelve"
-    " thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+    " thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one"
 ).split()
 
 #: (file, pattern whose one group is the stated number, what it counts).

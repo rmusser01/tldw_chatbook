@@ -219,13 +219,16 @@ class ProjectIndexService:
         operation.retained.extend(owner for owner in owners if owner is not None)
 
     def _require_projection_open(self, key: ProjectIndexKey, *, retiring=None) -> None:
-        """Refuse new semantic use of a binding with unresolved model close."""
+        """Fence new binding work and retirement of its actual pending parent."""
         with self._lock:
-            pending = any(
-                selected == key
-                for operation in self._operations
-                for selected, wrapper in operation.projection_close_pending.values()
-                if retiring is None or wrapper._projection_execution_scope is retiring
+            pending = (
+                bool(retiring._parent.operation.projection_close_pending)
+                if retiring is not None
+                else any(
+                    selected == key
+                    for operation in self._operations
+                    for selected, _ in operation.projection_close_pending.values()
+                )
             )
         if pending:
             from tldw_chatbook.RAG_Search.projection_scope import (

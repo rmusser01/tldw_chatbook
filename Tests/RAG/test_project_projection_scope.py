@@ -918,3 +918,203 @@ async def test_peer_pending_close_does_not_poison_admitted_carrier_retirement(
         assert attempts == [threading.get_ident()] * (2 if failed else 1)
 
     await asyncio.to_thread(run)
+
+
+@pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+@private_profile_test
+async def test_nested_pending_close_keeps_actual_shared_operation_and_keyword(
+    tmp_path, request, monkeypatch
+):
+    def run():
+        import threading
+        from tldw_chatbook.Embeddings import Embeddings_Lib as lib
+        from tldw_chatbook.RAG_Search.projection_scope import ProjectProjectionRequired
+        from tldw_chatbook.Workspaces.project_index.models import (
+            ProjectIndexSearchAuthority,
+        )
+        from tldw_chatbook.Workspaces.project_index.runtime import _AdmittedStoreFactory
+        from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
+        from tldw_chatbook.Workspaces.project_index.semantic import (
+            _issue_project_projection_scope,
+            _settings_for_project_model,
+        )
+        from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
+
+        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+        factory = _AdmittedStoreFactory()
+        authorities = {}
+        for name in ("outer", "other"):
+            root = tmp_path / name
+            root.mkdir()
+            (root / "keyword.txt").write_text(
+                "nested owner keyword evidence", encoding="utf-8"
+            )
+            chain = capture_directory_chain(root)
+            key = ProjectIndexKey(
+                factory.identity,
+                "workspace",
+                name,
+                locator_fingerprint(root),
+                root_identity_fingerprint(chain),
+            )
+            authorities[key] = ProjectIndexAuthority(key, root, chain, (), 1)
+        outer_key, other_key = authorities
+
+        @contextmanager
+        def fence(key):
+            yield authorities.get(key)
+
+        service = ProjectIndexService(factory, ProjectScanner(), authorities.get, fence)
+        selected = _settings_for_project_model("openai-3-small")
+        selected = replace(
+            selected, approved_destination_fingerprint=selected.destination_fingerprint
+        )
+        states = {}
+        for key in authorities:
+            enabled = service.enable(
+                key,
+                ProjectIndexPolicy((), (".txt",)),
+                expected_scope=service.status(key).scope,
+            )
+            job_id = service.refresh(
+                key,
+                expected_scope=enabled.scope,
+                expected_job_revision=enabled.job_revision,
+            )
+            job = service._runs[job_id]
+            job.supervisor.join(30)
+            assert not job.supervisor.is_alive() and job.native_retired
+            states[key] = service.enable_semantic(
+                key,
+                selected,
+                expected_epoch=enabled.scope.epoch,
+                expected_semantic_revision=0,
+            )
+        monkeypatch.setattr(
+            embeddings_wrapper, "_ensure_embeddings_imported", lambda: True
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "EmbeddingFactory", lib.EmbeddingFactory
+        )
+        monkeypatch.setattr(
+            embeddings_wrapper, "EmbeddingConfigSchema", lib.EmbeddingConfigSchema
+        )
+        monkeypatch.setattr(lib, "_embeddings_rag_available", lambda: True)
+        observations = []
+        try:
+            for nested_key in (outer_key, other_key):
+                outer = _issue_project_projection_scope(
+                    service,
+                    states[outer_key].scope,
+                    selected,
+                    states[outer_key].semantic_revision,
+                )
+                nested = _issue_project_projection_scope(
+                    service,
+                    states[nested_key].scope,
+                    selected,
+                    states[nested_key].semantic_revision,
+                )
+                operation = outer._parent.operation
+                assert operation is nested._parent.operation
+                wrapper = embeddings_wrapper.EmbeddingsServiceWrapper(
+                    model_name=nested.model_name,
+                    api_key=nested.api_key,
+                    base_url=nested.base_url,
+                    execution_scope=nested,
+                )
+                factory_record = wrapper.factory
+                attempts = []
+
+                def physical_close():
+                    attempts.append(threading.get_ident())
+                    if len(attempts) == 1:
+                        raise RuntimeError("synthetic-nested-close-failure")
+
+                factory_record._cache["default"] = {
+                    "embed": lambda *a, **k: [[1.0, 0.0]],
+                    "close": physical_close,
+                    "last": 0.0,
+                    "refs": 0,
+                }
+                try:
+                    with pytest.raises(
+                        RuntimeError, match="project_embedding_close_failed"
+                    ):
+                        wrapper.close()
+                    token_owner = next(
+                        iter(operation.projection_close_pending.values())
+                    )[1]
+                    assert token_owner is wrapper and wrapper.factory is factory_record
+                    live = authorities[outer_key]
+                    query = ProjectIndexSearchAuthority(
+                        states[outer_key].scope,
+                        live.root,
+                        live.chain,
+                        (),
+                        1,
+                        lambda: True,
+                        None,
+                        lambda candidate: service._scanner.capture_file(
+                            live, candidate.relative_path, stop=threading.Event()
+                        ),
+                    )
+                    found = service.search(query, "keyword")
+                    assert (
+                        found.status == "ready"
+                        and found.hits[0].excerpt == "nested owner keyword evidence"
+                    )
+                    refused = False
+                    try:
+                        outer.close()
+                    except ProjectProjectionRequired as error:
+                        assert str(error) == "project_embedding_close_pending"
+                        refused = True
+                    retained = (
+                        operation in service._operations
+                        and not operation.done.is_set()
+                        and not outer._parent.pin.closed
+                        and not nested._parent.pin.closed
+                    )
+                    observations.append((nested_key == outer_key, refused, retained))
+                    if refused:
+                        assert (
+                            retained
+                            and token_owner
+                            is next(iter(operation.projection_close_pending.values()))[
+                                1
+                            ]
+                        )
+                        wrapper.close()
+                        assert (
+                            wrapper.factory is None
+                            and not operation.projection_close_pending
+                        )
+                        nested.close()
+                        assert (
+                            operation in service._operations
+                            and not operation.done.is_set()
+                        )
+                        outer.close()
+                        assert (
+                            operation.done.is_set()
+                            and operation not in service._operations
+                        )
+                        assert nested._parent.pin.closed and outer._parent.pin.closed
+                finally:
+                    if not nested._closed:
+                        # RED-only cleanup of the actual factory/pin after the
+                        # defect has destroyed admission. Never recreate tokens,
+                        # carriers or the lost operation to make the check pass.
+                        factory_record.close()
+                        wrapper.factory = None
+                        nested._parent.stack.close()
+                    if not outer._closed:
+                        outer.close()
+                assert attempts == [threading.get_ident(), threading.get_ident()]
+        finally:
+            asyncio.run(service.aclose())
+        assert observations == [(True, True, True), (False, True, True)], observations
+        assert not service._operations
+
+    await asyncio.to_thread(run)

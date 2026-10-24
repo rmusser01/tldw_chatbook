@@ -454,3 +454,10 @@ New semantic work remains denied while any same-binding model close is pending. 
 Semantic ranking captures its independently consented compatible Ready generation. Candidate and final disclosure fences revalidate the captured semantic revision/settings and that exact compatible generation. A mismatch returns unavailable without stale semantically selected hits. Keyword scope/manifest alone cannot attest semantic consent.
 
 Tests that perform native-positive semantic allocations explicitly require the production qualified SQLite source/version/options; unsupported runtimes skip only those positives with a precise reason. Portable keyword/refusal controls remain active. Required Windows preflight and positive assertions remain fail-closed.
+
+
+### Pending nested-carrier operation ownership correction
+
+ADR required: yes, amend existing ADR241; ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: preserve the existing actual operation owner across nested issued carriers, without a new owner/schema/permission boundary.
+
+Nested registry scopes borrow the same physical operation. Carrier retirement therefore refuses while ANY actual wrapper token remains pending in that retiring parent operation, including a nested carrier for a different binding. A positive independent operation may still retire while another operation closes. New semantic admission retains its existing binding-key pending filter. Issued identity, original execution/thread, live parent and native-child checks remain mandatory; positive same-owner wrapper retry precedes both nested carrier and outer operation retirement. Add one real-issued/native/factory regression covering same-binding and different-binding nested owners, plus existing independent-peer/own-failure/native-child controls. The already-qualified441bb9 cached-model result remains historical for this guard delta; no model/20k replay is implied.

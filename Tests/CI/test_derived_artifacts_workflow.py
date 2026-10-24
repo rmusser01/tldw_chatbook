@@ -69,6 +69,7 @@ VERDICTS = {
     "architecture-guards": "Require successful Architecture guard contracts",
     "pr-fast-lane-arch": "Require successful PR fast lane (architecture-review tests)",
     "recovered-suites": "Require successful PR lane (recovered suites)",
+    "project-index-contract": "Require successful project index contracts",
 }
 
 
@@ -123,6 +124,7 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         "pr-fast-lane-arch",
         # Owner decision 2026-11-06: suites runnable again, in no PR lane before.
         "recovered-suites",
+        "project-index-contract",
         "derived-artifacts",
         "queue-tick",
     ]
