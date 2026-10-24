@@ -318,9 +318,10 @@ def run(argv=None) -> None:
     args = _parse_args(argv)
     scratch = Path(tempfile.mkdtemp(prefix="personas-qa-capture-"))
     _isolate_config(scratch)
+    # Before the chdir: a relative --out is relative to the caller's cwd.
+    out = _resolve_out(args, scratch)
     sys.path.insert(0, str(REPO_ROOT))
     os.chdir(REPO_ROOT)
-    out = _resolve_out(args, scratch)
     asyncio.run(main(out, scratch))
 
 
