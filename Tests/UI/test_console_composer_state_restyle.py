@@ -13,10 +13,14 @@ computes.
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 import pytest
 from textual.css.model import CombinatorType, SelectorType
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
+import tldw_chatbook
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -25,6 +29,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
+
+#: The built sheets (the app bundle and each lazy screen sheet).
+_CSS_DIR = Path(tldw_chatbook.__file__).resolve().parent / "css"
 
 
 def _spy_restyles(host, monkeypatch) -> list:
@@ -60,6 +67,16 @@ async def _mounted_composer(host, pilot) -> ConsoleComposerBar:
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
     return console.query_one("#console-native-composer", ConsoleComposerBar)
+
+
+async def _wait_until(pilot, condition, what: str, timeout: float = 10.0) -> None:
+    """Pump the app until ``condition()`` holds; fail after ``timeout`` seconds."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not condition():
+        if loop.time() >= deadline:
+            pytest.fail(f"Timed out after {timeout:.0f} s waiting for {what}")
+        await pilot.pause(0.02)
 
 
 @pytest.mark.asyncio
@@ -156,31 +173,37 @@ async def test_targeted_state_restyles_leave_the_styles_a_full_restyle_computes(
     host = _ready_host()
     async with host.run_test(size=(160, 45)) as pilot:
         composer = await _mounted_composer(host, pilot)
-        visible = composer.query_one("#console-command-visible-text", Static)
+        console = host.screen_stack[-1]
+        focused = "console-composer-focused"
 
         async def settle_and_compare(label: str) -> None:
             targeted = _composer_styles(composer)
             host.update_styles(composer)
             assert _composer_styles(composer) == targeted, label
 
+        def blurred() -> bool:
+            # The Console's activation focus restore (after refresh, and
+            # again on a 0.2 s timer) can hand focus back to the bar after a
+            # blur, so blur again until the bar stays unfocused.
+            if console.focused is composer:
+                composer.blur()
+            return not composer.has_class(focused)
+
+        # Each wait ends with its state in place; the loads and comparisons
+        # after it never yield to the loop, so no restore lands between them.
+        await _wait_until(pilot, blurred, "the composer to lose focus")
         composer.load_draft("Reply with the single word ok")
         await settle_and_compare("draft added")
         composer.load_draft("")
         await settle_and_compare("draft cleared")
-        # Let the startup focus restore finish first: on origin/dev it ran
-        # after an early focus() and left focus on the nav bar's Home button.
-        await pilot.pause(0.5)
-        visible.focus()
-        await pilot.pause(0.1)
-        assert composer.has_class("console-composer-focused")
+        # The bar is the focus target: its visible draft has can_focus off.
+        composer.focus()
+        await _wait_until(pilot, lambda: composer.has_class(focused), "focus")
         await settle_and_compare("focused")
         composer.load_draft("typed while focused")
         await settle_and_compare("draft added while focused")
-        composer.blur()
-        visible.blur()
-        await pilot.pause(0.1)
-        assert not composer.has_class("console-composer-focused")
-        await settle_and_compare("blurred")
+        await _wait_until(pilot, blurred, "the composer to lose focus")
+        await settle_and_compare("blurred with a draft")
 
 
 def _target_compound(selectors: list) -> list:
@@ -197,12 +220,25 @@ async def test_rules_keyed_on_state_classes_style_only_the_declared_nodes():
 
     Covers every rule the app loads, including composer states the mounted
     guard above does not reach. Fails with the rule's selector when CSS
-    starts styling another descendant from one of these classes.
+    starts styling another descendant from one of these classes, and with
+    the sheet's name when a built sheet that mentions them is not loaded
+    here (a lazy screen sheet this harness stopped loading).
     """
     host = _ready_host()
     async with host.run_test(size=(160, 45)) as pilot:
         await _mounted_composer(host, pilot)
         classes = set(ConsoleComposerBar.INTERACTION_CLASSES)
+        loaded = {Path(path).name for path, _ in host.stylesheet.source}
+        unchecked = sorted(
+            sheet.name
+            for sheet in _CSS_DIR.glob("*.tcss")
+            if sheet.name not in loaded
+            and any(name in sheet.read_text(encoding="utf-8") for name in classes)
+        )
+        assert not unchecked, (
+            "These built sheets mention the composer's state classes but this "
+            f"guard does not load them: {unchecked}"
+        )
         allowed_ids = {"console-native-composer"} | {
             selector.lstrip("#")
             for selector in ConsoleComposerBar.INTERACTION_STYLED_DESCENDANTS
@@ -265,6 +301,21 @@ async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
         store = console._console_chat_store
         # The durable acceptance's input CAS has already emptied the draft.
         monkeypatch.setattr(store, "session_draft", lambda _session_id: "")
+        # The screen's own action-row sync (its config-sync cadence) can land
+        # in the pause below and flip Send by itself, which would hide a
+        # projection that never synced the row at all; keep it out, so Send
+        # turns inactive only through the composer's own deferred sync.
+        monkeypatch.setattr(
+            console, "_sync_console_composer_action_state", lambda **_: None
+        )
+        own_syncs: list[str] = []
+        sync_current = composer._sync_current_action_state
+
+        def record_own_sync() -> None:
+            own_syncs.append(composer.draft_text())
+            sync_current()
+
+        monkeypatch.setattr(composer, "_sync_current_action_state", record_own_sync)
         applied = _spy_restyles(host, monkeypatch)
 
         console._project_console_received_input(session_id)
@@ -274,7 +325,12 @@ async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
         assert not any(node is send for node in applied), (
             "Send was restyled inside the acceptance projection"
         )
+        assert own_syncs == [], "The action row synced inside the projection"
         await pilot.pause()
+        assert own_syncs == [""], (
+            "The projection should sync the action row exactly once, after "
+            f"its step, from the cleared draft: {own_syncs!r}"
+        )
         assert send.disabled
         assert send.has_class("console-send-inactive")
         assert not send.has_class("console-send-ready")
