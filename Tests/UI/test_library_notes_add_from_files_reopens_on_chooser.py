@@ -238,7 +238,13 @@ async def test_add_from_files_reopens_on_the_chooser_after_activating_a_root(
                 folder=vaults[0],
                 from_chooser=False,
             )
-            assert "3 applied · listed under Receipts" in _painted_text(host)
+            # The receipt widget mounts before its line paints; on a loaded CI
+            # runner the paint lands a frame later (PR #3234 UI Fast Lane (2)).
+            await _wait_for_condition(
+                pilot,
+                lambda: "3 applied · listed under Receipts" in _painted_text(host),
+                message=lambda: f"receipt line never painted: {controller.snapshot.status_line}",
+            )
             assert database.count_notes() == 5
 
             # AC#1, first case: ‹ Notes, then Add from files… again.
@@ -256,11 +262,21 @@ async def test_add_from_files_reopens_on_the_chooser_after_activating_a_root(
                 folder=vaults[1],
                 from_chooser=True,
             )
-            assert "3 applied · listed under Receipts" in _painted_text(host)
+            # The receipt widget mounts before its line paints; on a loaded CI
+            # runner the paint lands a frame later (PR #3234 UI Fast Lane (2)).
+            await _wait_for_condition(
+                pilot,
+                lambda: "3 applied · listed under Receipts" in _painted_text(host),
+                message=lambda: f"receipt line never painted: {controller.snapshot.status_line}",
+            )
             assert database.count_notes() == 8
             manage = screen.query_one("#notes-sync-manage-roots", Button)
             assert str(manage.label) == "Manage sync folders"
-            assert "Manage sync folders" in _painted_widget_text(host, manage)
+            await _wait_for_condition(
+                pilot,
+                lambda: "Manage sync folders" in _painted_widget_text(host, manage),
+                message="the receipt bar never painted Manage sync folders",
+            )
             manage.press()
             await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
             assert screen._notes_state.view == "lasting_roots"
