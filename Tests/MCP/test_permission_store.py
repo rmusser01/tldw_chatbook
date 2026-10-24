@@ -1577,3 +1577,90 @@ def test_raw_getters_reject_duplicate_key_store_without_backup(tmp_path):
     assert store.get_global_default() == DEFAULT_GLOBAL
     assert path.read_text(encoding="utf-8") == dup
     assert not path.with_suffix(".json.bak").exists()
+
+
+def test_dismiss_suggestion_persists_tool_id_and_timestamp(tmp_path):
+    """TASK-18928: a dismissed suggestion is remembered by its stable
+    tool id and survives a store reload (not re-proposed)."""
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    store.dismiss_suggestion("local:docs", "search")
+
+    dismissals = store.list_suggestion_dismissals()
+    assert list(dismissals) == ["local:docs::search"]
+    assert isinstance(dismissals["local:docs::search"], str)
+    assert dismissals["local:docs::search"]
+
+    reloaded = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    assert reloaded.list_suggestion_dismissals() == dismissals
+
+    payload = json.loads((tmp_path / "mcp_permissions.json").read_text())
+    assert payload["suggestion_dismissals"] == dismissals
+
+
+def test_restore_and_clear_suggestion_dismissals(tmp_path):
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    store.dismiss_suggestion("local:docs", "search")
+    store.dismiss_suggestion("local:docs", "purge")
+
+    store.restore_suggestion("local:docs", "search")
+
+    assert list(store.list_suggestion_dismissals()) == ["local:docs::purge"]
+
+    store.clear_suggestion_dismissals()
+
+    assert store.list_suggestion_dismissals() == {}
+    payload = json.loads((tmp_path / "mcp_permissions.json").read_text())
+    # An empty dismissal set omits the key entirely (optional, like
+    # ``updated_at``), keeping hand-diffable files unchanged when unused.
+    assert "suggestion_dismissals" not in payload
+
+
+def test_dismissing_never_touches_permission_policy(tmp_path):
+    """Suggestions bookkeeping must not move standing policy (TASK-18928:
+    nothing about suggestions changes runtime approval behavior)."""
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    before = store.load()
+
+    store.dismiss_suggestion("local:docs", "search")
+
+    after = store.load()
+    assert after["profiles"] == before["profiles"]
+    assert after["kill_switch"] == before["kill_switch"]
+
+
+def test_load_coerces_invalid_suggestion_dismissals_without_resetting_policy(
+    tmp_path,
+):
+    """A hand-corrupted dismissal map is nuisance data, not policy: it is
+    dropped in place (the profiles coercion precedent) instead of
+    triggering the backup-and-reset corruption path."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kill_switch": False,
+                "profiles": {
+                    "default": {
+                        "global_default": "ask",
+                        "servers": {
+                            "local:docs": {
+                                "default": "ask",
+                                "tools": {"search": {"state": "deny"}},
+                            }
+                        },
+                    }
+                },
+                "suggestion_dismissals": {"local:docs::search": 5},
+            }
+        )
+    )
+
+    store = MCPPermissionStore(path)
+    payload = store.load()
+
+    assert payload["profiles"]["default"]["servers"]["local:docs"]["tools"][
+        "search"
+    ] == {"state": "deny"}
+    assert store.list_suggestion_dismissals() == {}

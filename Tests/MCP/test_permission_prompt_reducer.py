@@ -15,6 +15,7 @@ def _tool(
     *,
     executable: bool = True,
     stale: bool = False,
+    tags: tuple[str, ...] = (),
 ) -> HubTool:
     return HubTool(
         server_key=server_key,
@@ -23,7 +24,7 @@ def _tool(
         name=name,
         description=f"{name} description",
         input_schema={"type": "object"},
-        tags=(),
+        tags=tags,
         stale=stale,
         executable=executable,
     )
@@ -140,8 +141,7 @@ def test_excludes_non_agent_and_non_approved_decisions():
     records = [
         _record("local:docs", "search", "approved", initiator="test"),
         _record("local:docs", "search", "allowed"),
-        _record("local:docs", "search", "approved-session"),
-        _record("local:docs", "search", "approved-session"),
+        _record("local:docs", "search", "downgraded"),
         _record("local:docs", "search", "denied"),
         _record("local:docs", "search", "denied-timeout"),
     ]
@@ -152,6 +152,31 @@ def test_excludes_non_agent_and_non_approved_decisions():
     assert report.recommendations == []
     assert report.approval_records == 0
     assert ("local:docs", "search") not in report.excluded
+
+
+def test_counts_approved_session_decisions_as_human_approvals():
+    """TASK-18928: "Approve for session" is as explicit a human approval as
+    "Approve once" -- repeated session approvals must mine into suggestions
+    just like repeated once approvals (and the two mix into one count)."""
+    tool = _tool("local:docs", "search")
+    records = [
+        _record("local:docs", "search", "approved", ts="2026-08-01T20:00:00+00:00"),
+        _record("local:docs", "search", "approved-session", ts="2026-08-01T20:05:00+00:00"),
+        _record("local:docs", "other", "approved-session", ts="2026-08-01T20:06:00+00:00"),
+    ]
+    states = {
+        ("local:docs", "search"): _state("ask"),
+        ("local:docs", "other"): _state("ask"),
+    }
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert [
+        (r.server_key, r.tool_name, r.approved_count) for r in report.recommendations
+    ] == [("local:docs", "search", 2)]
+    assert report.approval_records == 3
+    # "other" saw one session approval only: below threshold, not promoted.
+    assert report.excluded[("local:docs", "other")] == "below-threshold"
 
 
 def test_excludes_missing_stale_or_unexecutable_live_tools():
@@ -282,3 +307,40 @@ def test_format_report_summarizes_all_exclusion_reasons():
         "permission state unavailable (1)",
     ):
         assert explanation in rendered
+
+
+def test_excludes_high_risk_tagged_tools_even_when_plainly_ask_gated():
+    """TASK-18928 AC#4: "never suggested" is a CLASS guarantee, not only the
+    rug-pull/downgrade flag. ``resolve_effective_state`` floors an
+    INHERITED allow to ask (risk_floored=True), but a high-risk-tagged tool
+    sitting at plain ask under the global default resolves
+    risk_floored=False -- the reducer must still refuse to suggest it,
+    because accepting would write exactly the tool-level allow the risk
+    floor deliberately spares that origin from."""
+    tool = _tool("local:docs", "write_file", tags=("mutates",))
+    records = [
+        _record("local:docs", "write_file", "approved"),
+        _record("local:docs", "write_file", "approved"),
+    ]
+    states = {("local:docs", "write_file"): _state("ask")}
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert report.recommendations == []
+    assert report.excluded[("local:docs", "write_file")] == "high-risk-floor"
+
+
+def test_excludes_always_ask_tools_by_identity():
+    """The code-owned ALWAYS_ASK set (floors even explicit allows) is shared
+    with the reducer: its members are never suggested either."""
+    tool = _tool("local:__local__", "character_save")
+    records = [
+        _record("local:__local__", "character_save", "approved"),
+        _record("local:__local__", "character_save", "approved"),
+    ]
+    states = {("local:__local__", "character_save"): _state("ask")}
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert report.recommendations == []
+    assert report.excluded[("local:__local__", "character_save")] == "high-risk-floor"

@@ -11,12 +11,20 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    ALWAYS_ASK_TOOLS,
+    HIGH_RISK_TAGS,
+    EffectiveToolState,
+)
 
 APPROVED_DECISION = "approved"
 AGENT_INITIATOR = "agent"
 DEFAULT_MIN_APPROVED_COUNT = 2
+#: TASK-18928: "Approve for session" is as explicit a human approval as
+#: "Approve once" -- both decision rows mine into the same approval count.
+COUNTED_APPROVAL_DECISIONS = frozenset({APPROVED_DECISION, APPROVED_SESSION_DECISION})
 
 _EXCLUSION_LABELS = {
     "below-threshold": "below threshold",
@@ -166,7 +174,7 @@ def build_permission_prompt_report(
     approval_records = 0
 
     for record in records:
-        if record.get("decision") != APPROVED_DECISION:
+        if record.get("decision") not in COUNTED_APPROVAL_DECISIONS:
             continue
         if record.get("initiator") != AGENT_INITIATOR:
             continue
@@ -210,7 +218,20 @@ def build_permission_prompt_report(
         if state.config_changed:
             excluded[key] = "definition-changed"
             continue
-        if state.risk_floored:
+        # TASK-18928 AC#4: "high-risk classes are never suggested" is a
+        # CLASS guarantee shared with the approval card's badge machinery,
+        # not only the resolved downgrade flag. ``risk_floored`` is set
+        # only when an inherited allow was floored back to ask; a
+        # high-risk-tagged tool sitting at plain ask under the global
+        # default carries risk_floored=False, so the tag set and the
+        # code-owned ALWAYS_ASK identities are checked directly against
+        # the SAME constants permission_store's resolution uses -- the
+        # reducer re-derives nothing, it cannot drift.
+        if (
+            state.risk_floored
+            or set(tool.tags) & HIGH_RISK_TAGS
+            or (tool.server_key, tool.name) in ALWAYS_ASK_TOOLS
+        ):
             excluded[key] = "high-risk-floor"
             continue
 
