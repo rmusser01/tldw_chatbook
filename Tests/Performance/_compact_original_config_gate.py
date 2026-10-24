@@ -13,6 +13,21 @@ from types import ModuleType
 from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 
 
+def _pinned(owner, name):
+    """Return ``owner.name`` statically; name both when the code moved it."""
+    try:
+        return inspect.getattr_static(owner, name)
+    except AttributeError:
+        if isinstance(owner, ModuleType):
+            where = owner.__name__
+        else:
+            where = f"{owner.__module__}.{owner.__qualname__}"
+        raise AssertionError(
+            f"compact gate pins {where}.{name}, which no longer exists there; "
+            "point the gate's attribute list at where the code moved it"
+        ) from None
+
+
 def coordinate_fixture_editor(source, selected, deadline):
     """Publish only the fixture comment under original finite config custody."""
     import hashlib
@@ -733,14 +748,14 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             (private_paths, "atomic_private_write_text"),
             (private_paths, "atomic_private_write_bytes"),
         ):
-            self.slots.append((owner, name, inspect.getattr_static(owner, name)))
+            self.slots.append((owner, name, _pinned(owner, name)))
         assert type(self.widget) is compact_model_bar.CompactModelBar
         assert (
             compact_model_bar.get_cli_providers_and_models
             is config.get_cli_providers_and_models
         )
         self.wrapper = config._load_settings_guarded
-        self.body = inspect.getattr_static(self.wrapper, "__wrapped__")
+        self.body = _pinned(self.wrapper, "__wrapped__")
         cells = dict(zip(self.wrapper.__code__.co_freevars, self.wrapper.__closure__))
         assert (
             cells["function"].cell_contents is self.body
@@ -751,7 +766,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             (compact_model_bar.CompactModelBar, "on_mount", "mount_code"),
             (config, "get_cli_providers_and_models", "reader_code"),
         ):
-            function = inspect.getattr_static(owner, name)
+            function = _pinned(owner, name)
             setattr(self, label, self._pin(function))
             if label == "mount_code":
                 self.mount_namespace = function.__globals__
@@ -774,7 +789,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             (self.participants, "operation"),
             (self.raw, "_scope"),
         ):
-            function = inspect.getattr_static(owner, name)
+            function = _pinned(owner, name)
             self._pin(function)
             self.slots.append((owner, name, function))
             if hasattr(function, "__wrapped__"):
@@ -832,7 +847,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
 
         self.widget_type = compact_model_bar.CompactModelBar
         self.message_pump_type = MessagePump
-        self.parent_descriptor = inspect.getattr_static(MessagePump, "_parent")
+        self.parent_descriptor = _pinned(MessagePump, "_parent")
         assert type(self.parent_descriptor) is property
         getter = self.parent_descriptor.fget
         self._pin(getter)
@@ -871,22 +886,22 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         ):
             if worker is None and name not in vars(compact_model_bar):
                 continue  # Baseline has no issued-worker eligibility route yet.
-            function = vars(compact_model_bar)[name]
+            function = _pinned(compact_model_bar, name)
             code = self._pin(function)
             self.slots.append((compact_model_bar, name, function))
             self.eligibility_codes[code] = role
             self.codes[code] = "original_compact_eligibility_" + role
             if role == "capture":
                 self.capture_code = code
-        sidebar = inspect.getattr_static(self.widget_type, "sync_from_sidebar")
+        sidebar = _pinned(self.widget_type, "sync_from_sidebar")
         self.sidebar_code = self._pin(sidebar)
         self.slots.append((self.widget_type, "sync_from_sidebar", sidebar))
         self.codes[self.sidebar_code] = "original_automatic_or_direct_sidebar_sync"
         self.codes[self.reader_code] = "original_public_reader"
         # Only already-loaded defining functions. No App/service imports and
         # no global exception/native-work event set.
-        operation = inspect.getattr_static(self.participants, "operation")
-        generator = inspect.getattr_static(operation, "__wrapped__")
+        operation = _pinned(self.participants, "operation")
+        generator = _pinned(operation, "__wrapped__")
         self.operation_stage_code = self._pin(generator)
         self.slots.append((operation, "__wrapped__", generator))
         self.lock_stage_lines = frozenset(
@@ -928,8 +943,8 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
 
         for module_name, class_name, names in (
             (
-                "tldw_chatbook.UI.Screens.chat_screen",
-                "ChatScreen",
+                "tldw_chatbook.UI.Console_Modules.context_spend",
+                "ConsoleContextSpendController",
                 (
                     "_build_console_settings_summary_state",
                     "_active_console_settings_context_estimate",
@@ -988,12 +1003,14 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             module = sys.modules.get(module_name)
             if type(module) is not ModuleType:
                 continue
-            owner = vars(module).get(class_name)
-            if not isinstance(owner, type):
-                continue
+            owner = _pinned(module, class_name)
+            assert isinstance(owner, type), (
+                f"compact gate pins {module_name}.{class_name} as a class; "
+                "point the gate's attribute list at where the code moved it"
+            )
             self.slots.append((module, class_name, owner))
             for name in names:
-                function = inspect.getattr_static(owner, name)
+                function = _pinned(owner, name)
                 code = self._pin(function)
                 self.slots.append((owner, name, function))
                 self.external_caller_sources[code] = (
@@ -1014,7 +1031,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             if type(module) is not ModuleType:
                 continue
             for name in names:
-                function = inspect.getattr_static(module, name)
+                function = _pinned(module, name)
                 code = self._pin(function)
                 self.slots.append((module, name, function))
                 self.external_caller_sources[code] = (
@@ -1040,7 +1057,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         )
         if type(presentation) is ModuleType:
             name = "provider_readiness_app_config"
-            function = inspect.getattr_static(presentation, name)
+            function = _pinned(presentation, name)
             code = self._pin(function)
             self.slots.append((presentation, name, function))
             self.external_caller_sources[code] = (

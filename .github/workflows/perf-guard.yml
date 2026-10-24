@@ -23,6 +23,8 @@ on:
       # Textual version) or a change to those tests must not merge without
       # this guard's verdict (Qodo finding on PR #1827).
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      # The speculative-voice gates the voice step below imports.
+      - 'Packaging/speculative_voice_*.py'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   push:
@@ -36,6 +38,8 @@ on:
       # Textual version) or a change to those tests must not merge without
       # this guard's verdict (Qodo finding on PR #1827).
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      # The speculative-voice gates the voice step below imports.
+      - 'Packaging/speculative_voice_*.py'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
@@ -107,6 +111,30 @@ jobs:
             Tests/Performance/test_textual_css_fastpath.py \
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_screen_preimport_payload_budget.py \
+            -v --timeout=300
+
+      # TASK-36390: these ran in no PR lane and went red on dev unseen. The
+      # tab-publication controls compile ChatScreen's own method bodies; the
+      # voice latency gate runs on a synthetic clock; the locator inventory
+      # pins the voice-pair reconciler's schema census. About 4 s together.
+      # The completed-pair history node is a strict xfail until TASK-36510:
+      # eight message-locator columns have no leading index, so promotion
+      # scans them. Its XPASS fails this step, so the fix removes the marker.
+      # Not here: the 14 compact-setup gate nodes. Their 100 ms loop probe
+      # fails while Console attach holds the UI thread 180-270 ms; they wait
+      # for TASK-36511 (owner ruling 2026-10-23: keep 100 ms, fix the attach).
+      - name: Run Console tab-publication and voice gates
+        run: |
+          pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
+            Tests/Performance/test_speculative_voice_latency.py \
+            -v --timeout=300
+
+      # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
+      # cost more in a long chat. Both are call counts, not wall clock.
+      - name: Run Console keystroke work census
+        run: |
+          pytest "Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_keystroke_work_does_not_scale_with_transcript_length" \
             -v --timeout=300
 
       # The Console storage-unit ratchet joined with TASK-33260 after review
