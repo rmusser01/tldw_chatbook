@@ -81,3 +81,19 @@ Apply/Remove to verify red prepared pixels and the original yellow still.
 actual App for mounted navigation and workers, while preserving the captured owner
 as the screen's application service source. Do not replace runtime ownership or
 recovery registries to make a UI test mount.
+
+## Retire mounted-fixture worker handles after app drain (TASK-36548, 2026-10-23)
+
+**Incident.** A 45-case import/generation/playback run passed but reported 215 extra
+file descriptors. An `lsof` probe of the generation test file identified 130 handles
+for the reused `personas_char_expression.db`/WAL/SHM files. Its `expr_db` fixture
+closed only the yielding thread's connection; legacy Personas workers had opened
+registered connections on executor threads. The new controller correctly preserved
+those borrowed handles during its own finite operations.
+
+**What to do.** After the mounted app and its callbacks drain, close the fixture's
+remaining native handles through its exact SQLite quiescence barrier. Assert the
+registered count reaches zero; do not clear ownership/recovery registries. Repeating
+29 new/affected mounted cases passed and the same `lsof` probe reported no fixture
+database handles at session finish. This changes test-owner teardown, not production
+worker admission or connection borrowing.

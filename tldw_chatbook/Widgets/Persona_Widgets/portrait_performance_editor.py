@@ -51,6 +51,7 @@ class PortraitPerformanceEditor(Vertical):
         self._busy = False
         self._allowed = False
         self.applied = False
+        self.sample_running = False
 
     def compose(self) -> ComposeResult:
         with Collapsible(title="Living portrait", collapsed=True):
@@ -100,6 +101,7 @@ class PortraitPerformanceEditor(Vertical):
                 [
                     ("Cycle six poses", "cycle"),
                     ("Idle + blink", "idle"),
+                    ("Speech sample", "speech"),
                     *[(r.replace("_", " "), r) for r in FRAME_ROLES],
                 ],
                 value="cycle",
@@ -116,6 +118,27 @@ class PortraitPerformanceEditor(Vertical):
                 yield Button(
                     "Cancel draft", id="portrait-performance-cancel", disabled=True
                 )
+            with Horizontal(classes="portrait-review-row"):
+                yield Button(
+                    "Generate 6 frames…",
+                    id="portrait-performance-generate",
+                    disabled=True,
+                )
+                yield Button(
+                    "Regenerate selected (1)…",
+                    id="portrait-performance-regenerate",
+                    disabled=True,
+                )
+                yield Button(
+                    "Play speech sample…",
+                    id="portrait-performance-sample",
+                    disabled=True,
+                )
+            yield Static(
+                "Generation sends the saved reference to your configured image-edit backend. Six requests per batch; one per selected retry. Review destination before sending.",
+                classes="portrait-review-copy",
+                markup=False,
+            )
             yield Static(
                 "Profile-local: full profile backups include performances. Character cards, Actor Packs, sync and server exports do not.",
                 classes="portrait-review-copy",
@@ -166,6 +189,13 @@ class PortraitPerformanceEditor(Vertical):
             )
             if action == "apply" and draft is not None:
                 button.disabled |= draft.staged_roles != FRAME_ROLES
+            if action == "sample":
+                button.label = (
+                    "Stop sample" if self.sample_running else "Play speech sample…"
+                )
+                button.disabled = not self.sample_running and (
+                    busy or draft is None or draft.staged_roles != FRAME_ROLES
+                )
             if action == "remove":
                 button.disabled |= not self.applied
             if action == "cancel":
@@ -173,6 +203,11 @@ class PortraitPerformanceEditor(Vertical):
         self.query_one("#portrait-performance-source", Input).disabled = (
             busy or draft is not None
         )
+        for selector in (
+            "#portrait-performance-role",
+            "#portrait-performance-preview-mode",
+        ):
+            self.query_one(selector, Select).disabled = busy
 
     def status(self, text: str) -> None:
         self.query_one("#portrait-performance-status", Static).update(text)
@@ -183,6 +218,7 @@ class PortraitPerformanceEditor(Vertical):
         is_current: Callable[[], bool],
         *,
         motion: bool = True,
+        read_speech: Callable | None = None,
     ) -> None:
         """Compare source and staged artwork with the Console's fitted renderer."""
         self._draft = draft
@@ -245,6 +281,7 @@ class PortraitPerformanceEditor(Vertical):
             mode="pixels",
             id="portrait-performance-staged",
             performance=record if motion else None,
+            read_speech=read_speech,
         )
         avatar.set_preview_mode(
             str(self.query_one("#portrait-performance-preview-mode", Select).value)

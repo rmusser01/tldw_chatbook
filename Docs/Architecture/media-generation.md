@@ -62,6 +62,28 @@ Both result and error callbacks carry the actual originating Worker. Immediately
 3. `run_generation` validates and dispatches to the adapter (HTTP poll APIs or a local subprocess).
 4. Artifacts persist: images → attachments + sidecar → inline card / variant set; videos → `VideoStore.save` → marker + metadata → card or tombstone.
 
+## Reviewed character performance generation
+
+The Personas Living portrait controller (`UI/Persona_Modules/portrait_performance.py`)
+uses the same configured-backend listing, capability resolver, request builder and
+`run_generation` choke point. The user confirms the sanitized provider destination,
+model/workflow and six edit requests (one for a selected retry). There is no alternate
+provider, text-only fallback or feature-level paid retry.
+
+One metadata-free frame-zero reference is extracted through the existing bounded
+image preparation path. Its file ID retains the captured original source digest,
+including when the source is animated. Closed mouth/blink prompts preserve framing,
+identity and background. Sequential results use the same still normalization and
+source-bound import draft. Invalid/uncertain slots leave successful predecessors
+available for review; source/profile/editor changes cancel remaining submissions and
+reject uncancellable late results. Only explicit Apply publishes to the local DB.
+
+An explicitly confirmed fixed-text TTS sample uses the selected local CharacterRef,
+effective destination fingerprint and `speak_guarded_utterance`. Its disposable
+presentation is read only by that draft's preview; no message or auto-speak preference
+is created. Cancel waits for the exact sample's Stop acknowledgement; screen retirement
+drains the owning task. Static/Reduce motion keeps manual still review available.
+
 ## Failure behaviors
 
 | Case | Behavior |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
 
 from .portrait_performance import (
     FRAME_ROLES,
@@ -13,6 +14,9 @@ from .portrait_performance import (
     PerformanceFrame,
     PerformanceSource,
 )
+
+if TYPE_CHECKING:
+    from ..Image_Generation.capabilities import ResolvedReferenceImage
 
 
 class PortraitPerformanceDraft:
@@ -72,3 +76,36 @@ class PortraitPerformanceDraft:
         self._cancelled = True
         self._frames.clear()
         self.source_bytes = b""
+
+
+def performance_reference(data: bytes, source_sha256: str) -> ResolvedReferenceImage:
+    """Extract one bounded metadata-free frame zero without changing source identity."""
+    from io import BytesIO
+    from math import isqrt
+
+    from ..Chat.character_expression_playback import prepare_expression
+    from ..Image_Generation.capabilities import ResolvedReferenceImage
+
+    if hashlib.sha256(data).hexdigest() != source_sha256:
+        raise ValueError("portrait_performance_source_changed")
+    prepared = prepare_expression(data, (isqrt(MAX_FRAME_PIXELS),) * 2, animate=False)
+    try:
+        image = prepared.frames[0]
+        image.info.clear()
+        with BytesIO() as output:
+            image.save(output, format="PNG")
+            content = output.getvalue()
+        if len(content) > MAX_FRAME_BYTES:
+            raise ValueError("portrait_performance_reference_bytes_exceeded")
+        return ResolvedReferenceImage(
+            file_id=source_sha256,
+            filename=None,
+            mime_type="image/png",
+            width=image.width,
+            height=image.height,
+            bytes_len=len(content),
+            content=content,
+            temp_path=None,
+        )
+    finally:
+        prepared.close()

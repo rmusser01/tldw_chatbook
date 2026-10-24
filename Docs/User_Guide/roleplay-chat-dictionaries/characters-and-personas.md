@@ -191,6 +191,27 @@ character, profile or source invalidates the draft. Reopen and Prepare to inspec
 the stored set. Performances stay in the local profile and its full backups;
 character cards, Actor Packs, sync and server exports do not carry them.
 
+### Editor — generate poses and hear a sample
+
+After preparing saved artwork, **Generate 6 frames…** offers six image-edit requests
+to your configured reference-image backend. The confirmation names the provider,
+model/workflow, destination and saved source. Charges may apply. Unsupported or
+unconfigured backends leave ready-made imports available; no other provider is tried.
+
+All requests use one still reference (frame zero for an animated portrait). Successful
+poses stay in the draft if another slot fails or its outcome is uncertain. Select a
+slot and **Regenerate selected (1)…** to submit exactly one explicit retry. An uncertain
+request may already have been charged. Nothing activates before **Apply performance**.
+Changing source/character/profile cancels remaining requests and discards late results.
+
+With six poses ready, **Play speech sample…** confirms the selected character's current
+voice destination and says: “Hello. This is a portrait preview. Notice the pauses.”
+The sample animates only this draft's preview and creates no chat message or automatic
+speech preference. **Stop sample**, Cancel or leaving the source stops only that
+sample. Missing TTS leaves imports, generation, offline review and Apply available.
+Static or Reduce motion suppresses automatic preview movement; individual poses can
+still be selected for review.
+
 ### Editor — saving and validation
 
 The footer lists problems under **"Validation errors:"** — **"name:

@@ -423,7 +423,7 @@ Mounted tests stage an unsaved replacement via `set_avatar_image` and assert pre
 
 ### Unit 7 — TASK-36548: reference generation and guarded sample speech
 
-**Files:** Modify `Character_Chat/expression_generation.py`, `UI/Screens/personas_screen.py`, `portrait_performance_editor.py`, `portrait_performance_authoring.py` only for draft state needed by these actions. Create `Tests/Character_Chat/test_portrait_performance_generation.py`, `Tests/UI/test_personas_portrait_performance_generate.py`; extend guarded speech tests from Unit 4.
+**Files:** Modify `Character_Chat/expression_generation.py`, `UI/Persona_Modules/portrait_performance.py`, `portrait_performance_editor.py`, `portrait_performance_authoring.py` only for draft state needed by these actions. Create `Tests/Character_Chat/test_portrait_performance_generation.py`, `Tests/UI/test_personas_portrait_performance_generate.py`; extend guarded speech tests from Unit 4.
 
 **Consumes:** Units 4/6 and existing `resolve_backend_reference_image_capability`, request builder/`run_generation`, output validation and `CharacterRef`/destination resolution.
 
@@ -435,9 +435,9 @@ async def _generate_portrait_performance_frames(self, roles: tuple[FrameRole, ..
 async def _preview_portrait_performance_speech(self) -> None: ...
 ```
 
-The latter two are PersonasScreen handlers; keep the worker loop there alongside existing authoring workers rather than creating another generation service/adapter. The inline view only requests these actions and presents their state.
+The existing PersonasScreen action route delegates both operations to its screen-owned focused portrait controller, extended in place after the import unit extracted that boundary. Keep the worker loop there alongside its source-bound authoring work, without another generation service/adapter or increased screen-size budget. The inline view only requests these actions and presents their state.
 
-- [ ] **1. Write red generation tests with fixed captured source and adapter calls.** Record role requests and stage results through the real screen worker. Mock only the external adapter and provide invalid/valid bytes as controls. Assert this behavior in the batch/selected regeneration case:
+- [x] **1. Write red generation tests with fixed captured source and adapter calls.** Record role requests and stage results through the real screen worker. Mock only the external adapter and provide invalid/valid bytes as controls. Assert this behavior in the batch/selected regeneration case:
 
 ```python
 assert requested_roles == list(FRAME_ROLES)
@@ -452,11 +452,11 @@ assert all(frame.png == before[frame.role] for frame in draft.frames() if frame.
 ```
 
 Use the Unit 6 mounted fixture and invoke the six-role worker before these assertions. Pin identity/background/framing directions for all roles, animated source frame-zero extraction retaining original digest, capability refusal, no alternate provider, a failed middle slot with other successes retained, uncertain outcome without retry, duplicate clicks, changed source/profile/editor and uncancellable late results. The invalid-frame control must fail normalization before staging.
-- [ ] **2. Run the new generation files red.** Missing TTS must leave generation/import/draft Apply usable; it is not a generation failure.
-- [ ] **3. Add closed role directions and sequential generation.** Extract one validated still reference from the captured asset; submit through the configured existing engine in workers. Revalidate authority before each admission and after results. Keep successful slots on failure, report the failed role, and offer only explicit selected retry. Display `Generate 6 frames`, one-request regeneration, source destination/provider/model and uncertainty without inventing a cost estimate.
-- [ ] **4. Add the explicit speech sample.** Use fixed sample copy `Hello. This is a portrait preview. Notice the pauses.` through `speak_guarded_utterance`, current selected-character voice resolution and existing destination checks. Pass an observer owned only by this draft. Do not insert messages, enable auto-speak or invoke speech on view open. Cancel/close/source switch cancels that task and waits for its exact-owner stop acknowledgement; late cleanup cannot stop a newer request.
-- [ ] **5. Run new pure/mounted generation tests and affected existing expression-generation/guarded speech cases green.** Test no TTS, destination refusal, preview failure, sample A superseded by B and B surviving A cleanup. Confirm generated and imported frames share exactly one normalization/Apply path.
-- [ ] **6. Commit.** Suggested message: `feat: generate portrait poses and preview owned character speech`. Update implemented image-generation and user guidance; record actual provider qualification separately in Unit 9.
+- [x] **2. Run the new generation files red.** Missing TTS must leave generation/import/draft Apply usable; it is not a generation failure.
+- [x] **3. Add closed role directions and sequential generation.** Extract one validated still reference from the captured asset; submit through the configured existing engine in workers. Revalidate authority before each admission and after results. Keep successful slots on failure, report the failed role, and offer only explicit selected retry. Display `Generate 6 frames`, one-request regeneration, source destination/provider/model and uncertainty without inventing a cost estimate.
+- [x] **4. Add the explicit speech sample.** Use fixed sample copy `Hello. This is a portrait preview. Notice the pauses.` through `speak_guarded_utterance`, current selected-character voice resolution and existing destination checks. Pass an observer owned only by this draft. Do not insert messages, enable auto-speak or invoke speech on view open. Cancel/close/source switch cancels that task and waits for its exact-owner stop acknowledgement; late cleanup cannot stop a newer request.
+- [x] **5. Run new pure/mounted generation tests and affected existing expression-generation/guarded speech cases green.** Test no TTS, destination refusal, preview failure, sample A superseded by B and B surviving A cleanup. Confirm generated and imported frames share exactly one normalization/Apply path.
+- [x] **6. Commit.** Suggested message: `feat: generate portrait poses and preview owned character speech`. Update implemented image-generation and user guidance; record actual provider qualification separately in Unit 9.
 
 ### Unit 8 — TASK-36549: stable radio frame and status
 

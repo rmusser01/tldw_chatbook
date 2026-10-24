@@ -357,9 +357,9 @@ class CharacterExpressionAvatar(Widget):
 
     def set_preview_mode(self, mode: FrameRole | str) -> None:
         """Select an offline pose/cycle/idle without creating a speech owner."""
-        if mode not in (*FRAME_ROLES, "cycle", "idle"):
+        if mode not in (*FRAME_ROLES, "cycle", "idle", "speech"):
             raise ValueError("portrait_performance_preview_mode_invalid")
-        self._preview_mode = mode
+        self._preview_mode = None if mode == "speech" else mode
         if isinstance(self._prepared, PreparedPerformance):
             motion = self._prepared.motion
             self._performance_clock = PortraitPerformanceClock(
