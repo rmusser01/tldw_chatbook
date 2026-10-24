@@ -43,10 +43,12 @@ from Tests.UI.roleplay_frame_harness import (
     volume_db_path,
     wait_until,
 )
+from tldw_chatbook.Character_Chat import Character_Chat_Lib
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
+    PersonasLibraryPane,
     RoleplayItemList,
 )
 
@@ -1346,7 +1348,7 @@ async def test_quitting_from_roleplay_runs_the_leave_hook_on_unmount(
             await pilot.press("end")
             await wait_until(pilot, reading.is_set, what="the window read")
             assert _window_workers(app)
-            generation = screen._character_page_generation
+            generation = screen._window_state.generation
             assert len(screen._marked_rows) == 3
     finally:
         gate.set()
@@ -1354,7 +1356,7 @@ async def test_quitting_from_roleplay_runs_the_leave_hook_on_unmount(
     # The pane and its list are pruned before the screen's own unmount, so
     # the screen's mark set is what the hook clears here.
     assert screen._marked_rows == ()
-    assert screen._character_page_generation == generation + 1
+    assert screen._window_state.generation == generation + 1
     assert _window_workers(app) == []
 
 
@@ -1733,3 +1735,558 @@ async def test_a_server_list_without_a_total_counts_its_windows(mock_app_instanc
         item_list.set_active(visible_item_ids(screen)[-1])
         await settle(pilot)
         assert str(pane.border_subtitle) == "#150 of 150"
+
+
+# ---- The window state's one owner and its edge cases (TASK-33910.34) ----
+#
+# Each case below is new with B2a (dev's paged list had no windows) and is
+# fixed by TASK-33910.34, which gives the list's window state one owner
+# (``frame_state.ListWindowState``).
+
+
+def _listed(db, *, order_by: str = "name_asc", query: str | None = None) -> list[str]:
+    """Every option id one sort and search lists, in the list's order."""
+    search = personas_screen_module.quote_fts5_prefix(query) if query else None
+    rows = Character_Chat_Lib.get_character_page_for_ui(
+        db, limit=100_000, offset=0, order_by=order_by, search_term=search, tag=None
+    )
+    return [f"character:{row['id']}" for row in rows]
+
+
+def _hold_the_sorts_first_window(
+    monkeypatch,
+) -> tuple[threading.Event, threading.Event]:
+    """Hold the ``modified_desc`` reload's first read until the gate opens."""
+    gate, blocked = threading.Event(), threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("order_by") == "modified_desc" and kwargs.get("offset") == 0:
+            blocked.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+    return gate, blocked
+
+
+async def _open_past_row_200(screen, db, offset: int = 300) -> str:
+    """Open the character at name row ``offset`` as a restore does: a load-through."""
+    target = db.list_character_cards_page(limit=1, offset=offset)[0]
+    screen._pending_restore = {
+        "kind": "character",
+        "id": str(target["id"]),
+        "name": target["name"],
+        "preview": None,
+    }
+    await screen._apply_pending_restore()
+    return f"character:{target['id']}"
+
+
+@pytest.mark.parametrize("newer", [None, "home"])
+async def test_end_asked_for_during_a_reload_replays_only_if_no_cursor_move_came_after(
+    mock_app_instance, volume_348, monkeypatch, newer
+):
+    """AC#2: End while a sort reloads is asked again once the sorted list
+    lands, unless the user moved the cursor after it (Home here). B2a
+    replayed it regardless: End then Home still loaded every row and left
+    the cursor on the last one."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        gate, blocked = _hold_the_sorts_first_window(monkeypatch)
+        screen.state.sort_key = "modified_desc"
+        reload = asyncio.create_task(screen._reload_character_page())
+        try:
+            await wait_until(pilot, blocked.is_set, what="the sort's first window")
+            item_list.focus()
+            await pilot.press("end")
+            if newer == "home":
+                await pilot.press("home")
+            await _pause_without_settling(pilot)
+        finally:
+            gate.set()
+        await reload
+        expected = _listed(volume_348, order_by="modified_desc")
+        if newer is None:
+            await wait_until(
+                pilot,
+                lambda: (
+                    list(visible_item_ids(screen)) == expected
+                    and highlighted_item_id(screen) == expected[-1]
+                ),
+                what="End, asked again on the sorted list",
+            )
+            return
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        assert list(visible_item_ids(screen)) == expected[:200]
+        assert highlighted_item_id(screen) != expected[-1]
+
+
+@pytest.mark.parametrize("newer", [None, "selection"])
+async def test_a_load_through_asked_for_during_a_reload_replays_only_if_no_selection_came_after(
+    mock_app_instance, volume_348, monkeypatch, newer
+):
+    """AC#2: a load-through (a restore of a row past the loaded end) while a
+    sort reloads is asked again once the sorted list lands, unless the user
+    opened another row after it. B2a replayed it regardless, so the row the
+    user opened lost the loaded marker and the cursor to the restored one."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        gate, blocked = _hold_the_sorts_first_window(monkeypatch)
+        screen.state.sort_key = "modified_desc"
+        reload = asyncio.create_task(screen._reload_character_page())
+        try:
+            await wait_until(pilot, blocked.is_set, what="the sort's first window")
+            target = await _open_past_row_200(screen, volume_348)
+            assert target not in visible_item_ids(screen)
+            if newer == "selection":
+                chosen = visible_item_ids(screen)[10]
+                await select_roleplay_item(pilot, screen, chosen)
+                await wait_until(
+                    pilot,
+                    lambda: item_list.active_id == chosen,
+                    what="the newer selection",
+                )
+        finally:
+            gate.set()
+        await reload
+        if newer is None:
+            await wait_until(
+                pilot,
+                lambda: (
+                    item_list.active_id == target
+                    and highlighted_item_id(screen) == target
+                ),
+                what="the load-through, asked again on the sorted list",
+            )
+            return
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        assert item_list.active_id == chosen
+        assert highlighted_item_id(screen) != target
+
+
+async def test_end_pressed_during_the_search_debounce_lands_on_the_new_lists_last_row(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """AC#3: End while a search waits out its debounce. B2a deferred End
+    under the fence taken before the search's reload bumped the generation,
+    so the landed list never matched it and End was dropped. The debounce
+    is long here and fired by hand (its own callback), so End is certain to
+    land inside it."""
+    monkeypatch.setattr(
+        personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        screen.query_one("#personas-library-search", Input).value = "Seeded"
+        await wait_until(
+            pilot,
+            lambda: screen.state.search_query == "Seeded",
+            what="the keystroke",
+        )
+        item_list.focus()
+        await pilot.press("end")
+        await _pause_without_settling(pilot)
+        assert screen._search_debounce_timer is not None
+        assert len(visible_item_ids(screen)) == 200
+        screen._cancel_search_debounce()
+        screen._start_debounced_search_render(query="Seeded", mode="characters")
+        expected = _listed(volume_348, order_by=screen.state.sort_key, query="Seeded")
+        assert len(expected) > 200
+        await wait_until(
+            pilot,
+            lambda: (
+                list(visible_item_ids(screen)) == expected
+                and highlighted_item_id(screen) == expected[-1]
+            ),
+            what="End on the searched list's last row",
+        )
+
+
+async def test_enter_after_end_during_the_search_debounce_lands_on_the_first_match(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """End during the debounce is owed to the searched list (AC#3), and Enter
+    in the search box after it is a newer cursor move (AC#2): the searched
+    list lands with the cursor on its first match and End is not asked
+    again. Dev dropped End here anyway (AC#3's defect), so this is green on
+    dev; it pins that AC#3's fix leaves Enter in charge."""
+    monkeypatch.setattr(
+        personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        search = screen.query_one("#personas-library-search", Input)
+        search.value = "Seeded"
+        await wait_until(
+            pilot,
+            lambda: screen.state.search_query == "Seeded",
+            what="the keystroke",
+        )
+        item_list.focus()
+        await pilot.press("end")
+        await _pause_without_settling(pilot)
+        assert screen._search_debounce_timer is not None
+        search.focus()
+        await pilot.press("enter")
+        expected = _listed(volume_348, order_by=screen.state.sort_key, query="Seeded")
+        await wait_until(
+            pilot,
+            lambda: list(visible_item_ids(screen)) == expected[:200],
+            what="the searched list",
+        )
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        await settle(pilot)
+        assert list(visible_item_ids(screen)) == expected[:200]
+        assert highlighted_item_id(screen) == expected[0]
+        assert screen.focused is item_list
+
+
+async def test_an_end_still_reading_yields_to_a_newer_cursor_move(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """End reads every window, then moves the cursor to the last row; Home
+    pressed while it reads wins, and the rows still load. B2a moved the
+    cursor to the last row regardless (the same rule as AC#2's, for a read
+    no reload deferred)."""
+    gate, reading = threading.Event(), threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("offset") and not gate.is_set():
+            reading.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+        item_list.focus()
+        await select_roleplay_item(pilot, screen, index=5, load=False)
+        try:
+            await pilot.press("end")
+            await wait_until(pilot, reading.is_set, what="End's read")
+            await pilot.press("home")
+        finally:
+            gate.set()
+        expected = _db_ids(volume_348)
+        await wait_until(
+            pilot,
+            lambda: list(visible_item_ids(screen)) == expected,
+            what="every row, loaded by End",
+        )
+        await settle(pilot)
+        assert highlighted_item_id(screen) == expected[0]
+
+
+@pytest.mark.parametrize("move", ["end", "load_through"])
+async def test_a_move_whose_append_a_write_reload_cancels_completes_on_the_reloaded_list(
+    mock_app_instance, volume_348, monkeypatch, move
+):
+    """AC#4: a write (a card saved elsewhere) reloads the list from its anchor
+    while End's or a load-through's append is still reading, and the reload
+    cancels that append (one exclusive worker group). B2a lost the move:
+    the list stayed at its first 200 rows."""
+    gate, reading = threading.Event(), threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("offset") and not gate.is_set():
+            reading.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+        try:
+            if move == "end":
+                item_list.focus()
+                await pilot.press("end")
+            else:
+                target = await _open_past_row_200(screen, volume_348)
+            await wait_until(pilot, reading.is_set, what="the append's read")
+            await screen.refresh_character_library_list(None)
+        finally:
+            gate.set()
+        expected = _db_ids(volume_348)
+        if move == "end":
+            await wait_until(
+                pilot,
+                lambda: (
+                    list(visible_item_ids(screen)) == expected
+                    and highlighted_item_id(screen) == expected[-1]
+                ),
+                what="End, completed on the reloaded list",
+            )
+        else:
+            await wait_until(
+                pilot,
+                lambda: (
+                    item_list.active_id == target
+                    and highlighted_item_id(screen) == target
+                ),
+                what="the load-through, completed on the reloaded list",
+            )
+        ids = list(visible_item_ids(screen))
+        assert ids == expected[: len(ids)]
+
+
+async def test_a_load_through_a_newer_list_cancelled_never_moves_the_cursor_later(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """AC#5: a search starts a newer list while a load-through is still
+    reading. B2a kept the row waiting, so when the user later moved far
+    enough down the searched list for a window to bring that row in, the
+    cursor jumped to it (B2a's final review fixed the kind-switch case)."""
+    gate, reading = threading.Event(), threading.Event()
+    original = personas_screen_module.get_character_page_for_ui
+
+    def gated(db, **kwargs):
+        if kwargs.get("offset") and not kwargs.get("search_term") and not gate.is_set():
+            reading.set()
+            gate.wait(10)
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", gated)
+        try:
+            target = await _open_past_row_200(screen, volume_348)
+            await wait_until(pilot, reading.is_set, what="the load-through's read")
+            screen.state.search_query = "Seeded"
+            await screen._reload_character_page()
+        finally:
+            gate.set()
+        await settle(pilot)
+        searched = _listed(volume_348, query="Seeded")
+        assert list(visible_item_ids(screen)) == searched[:200]
+        assert target in searched[200:]
+        item_list.focus()
+        item_list.highlighted = 195
+        await wait_until(
+            pilot,
+            lambda: target in visible_item_ids(screen),
+            what="the later window holding the cancelled load-through's row",
+        )
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        assert highlighted_item_id(screen) == searched[195]
+
+
+async def test_a_window_asked_for_before_a_server_reloads_blank_never_cancels_that_reload(
+    mock_app_instance,
+):
+    """AC#6: a server reload first blanks the list. B2a took the blank for the
+    new list's rows, so a near-end request queued before the blank and
+    handled after it started an offset-0 append, and that cancelled the
+    reload (one exclusive worker group): the reload's anchor restore, its
+    selection mark and a deferred End were lost."""
+    records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 151)]
+    offsets: list[int] = []
+    hold, holding = asyncio.Event(), asyncio.Event()
+    armed = False
+
+    async def list_characters(*, mode, limit, offset):
+        offsets.append(offset)
+        if armed and not hold.is_set():
+            holding.set()
+            await hold.wait()
+        return [dict(record) for record in records[offset : offset + limit]]
+
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_characters=list_characters,
+        search_characters=AsyncMock(return_value=[]),
+        get_character=AsyncMock(return_value=dict(records[0])),
+    )
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) == 100,
+            what="the first server window",
+        )
+        item_list = screen.query_one(RoleplayItemList)
+        cursor = visible_item_ids(screen)[50]
+        await select_roleplay_item(pilot, screen, cursor, load=False)
+        await settle(pilot)
+        armed = True
+        offsets.clear()
+        write = asyncio.create_task(screen.refresh_character_library_list(None))
+        try:
+            await wait_until(pilot, holding.is_set, what="the reload's read")
+            assert visible_item_ids(screen) == ()
+            item_list.post_message(
+                RoleplayItemList.WindowWanted(item_list, reason="near_end")
+            )
+            await _pause_without_settling(pilot)
+        finally:
+            hold.set()
+        await write
+        await settle(pilot)
+        assert offsets == [0]
+        assert len(visible_item_ids(screen)) == 100
+        assert highlighted_item_id(screen) == cursor
+
+
+async def test_a_leave_during_the_search_debounce_stops_it_and_the_return_loads_through(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """AC#7, the real suspend path: Roleplay left by ``switch_screen`` while
+    its search waits out the debounce. B2a left the timer running, so the
+    search read the database while Roleplay was away. Now the leave stops
+    the timer, and the return reloads the searched list, which then loads
+    through (End reaches its last row)."""
+    monkeypatch.setattr(personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 1.0)
+    reads: list[object] = []
+    original = personas_screen_module.get_character_page_for_ui
+
+    def counted(db, **kwargs):
+        reads.append(kwargs.get("search_term"))
+        return original(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        monkeypatch.setattr(
+            personas_screen_module, "get_character_page_for_ui", counted
+        )
+        screen.query_one("#personas-library-search", Input).value = "Seeded"
+        await wait_until(
+            pilot,
+            lambda: screen.state.search_query == "Seeded",
+            what="the keystroke",
+        )
+        assert screen._search_debounce_timer is not None
+        await app.switch_screen("elsewhere")
+        await settle(pilot)
+        assert screen not in app.screen_stack and screen.is_attached
+        assert screen._search_debounce_timer is None
+        away = len(reads)
+        await pilot.pause(1.5)  # past the debounce: a live timer would have read
+        assert len(reads) == away
+        await app.switch_screen("roleplay")
+        await settle(pilot)
+        expected = _listed(volume_348, order_by=screen.state.sort_key, query="Seeded")
+        assert list(visible_item_ids(screen)) == expected[:200]
+        item_list.focus()
+        await pilot.press("end")
+        await wait_until(
+            pilot,
+            lambda: (
+                list(visible_item_ids(screen)) == expected
+                and highlighted_item_id(screen) == expected[-1]
+            ),
+            what="End loading through after the return",
+        )
+
+
+async def test_a_leave_inside_a_replaces_paint_reloads_on_the_return(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """AC#7, the real suspend path: Roleplay left while a replace paints its
+    rows (the paint awaits the pane's status line). B2a counted those rows
+    as landed, so the return reloaded nothing, and the paint the leave
+    cancelled never said rows lay past the new list's end: End stopped at
+    row 200 for good. Now the return reloads the list, and End loads
+    through."""
+    painting, release = asyncio.Event(), asyncio.Event()
+    armed = False
+    sync_status = PersonasLibraryPane._sync_status
+
+    async def held(self, status):
+        nonlocal armed
+        if armed:
+            armed = False
+            painting.set()
+            await release.wait()
+        await sync_status(self, status)
+
+    monkeypatch.setattr(PersonasLibraryPane, "_sync_status", held)
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        screen.state.search_query = "Character 03"
+        await screen._reload_character_page()
+        await settle(pilot)
+        assert len(visible_item_ids(screen)) == 48 and not item_list.more_available
+        armed = True
+        screen.state.search_query = ""
+        reload = asyncio.create_task(screen._reload_character_page())
+        try:
+            await wait_until(pilot, painting.is_set, what="the replace's paint")
+            await app.switch_screen("elsewhere")
+            await settle(pilot)
+            assert screen not in app.screen_stack
+        finally:
+            release.set()
+        await asyncio.gather(reload, return_exceptions=True)
+        await app.switch_screen("roleplay")
+        await settle(pilot)
+        item_list.focus()
+        await pilot.press("end")
+        expected = _db_ids(volume_348)
+        await wait_until(
+            pilot,
+            lambda: (
+                list(visible_item_ids(screen)) == expected
+                and highlighted_item_id(screen) == expected[-1]
+            ),
+            what="End loading through after the return",
+        )
+
+
+async def test_the_screen_and_its_list_share_one_window_state(
+    mock_app_instance, volume_348
+):
+    """AC#1: one owner for the window state, shared by the screen and the list."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        window = screen._window_state
+        assert isinstance(window, frame_state.ListWindowState)
+        assert item_list.window_state is window
+        assert item_list.more_available is window.more_available is True
+        assert window.rows_current(screen._list_fence())

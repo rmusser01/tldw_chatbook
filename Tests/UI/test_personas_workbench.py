@@ -10114,7 +10114,7 @@ class TestServerCharacterSourceIsolation:
             screen.state.tag_filter = "new-tag"
         else:
             # A newer reload bumps the list generation (spec 1.5.6 fence).
-            screen._character_page_generation += 1
+            screen._window_state.reload_started()
         release.set()
         await load
 

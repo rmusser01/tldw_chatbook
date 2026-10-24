@@ -116,7 +116,10 @@ pane and **✓** a marked item (">" and "[x]" with ASCII glyphs on).
 
 There are no pages. The list scrolls through the whole library and loads
 200 more rows as you near the end; **End** jumps to the last item and loads
-the rest on the way. Personas lists every persona, not only the newest 100.
+the rest on the way, also when pressed while a search, sort or tag is still
+loading its list. Moving the cursor or opening another item while those
+rows load keeps the cursor where you put it. Personas lists every persona,
+not only the newest 100.
 
 Highlighting a row doesn't open it: press **Enter** or click. With the list
 focused, **Space** turns the highlighted lore book or dictionary on or off
