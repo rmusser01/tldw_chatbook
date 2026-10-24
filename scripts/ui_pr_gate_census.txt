@@ -1052,3 +1052,23 @@ Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_onl
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[retry-edited-correct]
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_retained_create_next_explicit_save_updates_same_owner_and_row
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[ordinary-multi-question]
+
+# TASK-36382: five files no lane ran had gone red on dev unseen (deleted sheets
+# and classes, stale tokens, a stale fake, a race-prone wait). Ordered for a
+# 664-entry census ahead of it so the two heaviest (Evals skill eval ~27-38 s,
+# the modal reverse sweep ~27-50 s) land on lightly loaded shards and the
+# sub-second nodes on the near-cap ones; any tail append ahead of this block
+# shifts every position, so re-check `--shard` after each rebase.
+# test_modal_wide_tier.py runs by node: the whole file took 66 s serially,
+# over the 60 s per-file rule. Its static contracts are all in (the
+# last two, the renamed-modal-id guard and the block check, run under 1 s);
+# its 40 mounted spot-geometry cases and the toggle MRO check stay out.
+Tests/UI/test_non_obscuring_focus_contract.py
+Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered
+Tests/UI/test_modal_wide_tier.py::test_wide_tier_block_exists_in_source_module
+Tests/UI/test_css_staleness_manifest.py
+Tests/UI/test_modal_wide_tier.py::test_every_registered_anchor_has_a_wide_tier_rule
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+Tests/UI/test_evals_skill_eval_screen.py
+Tests/UI/test_modal_wide_tier.py::test_every_anchor_targets_real_code
+Tests/UI/test_llamacpp_setup_refresh_gate.py

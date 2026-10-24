@@ -10,6 +10,24 @@ decays into folklore, and folklore gets ignored. If you add one, bring the incid
 
 ---
 
+## A widget `query_one` can find has not necessarily composed its own children
+
+**TASK-36382, 2026-10-23.** `test_unfed_remount_restores_depth_and_running_state`
+waited until `screen.query(SkillEvalPanel)` was truthy, then called
+`set_options([])` on the panel's generator `Select`. Waiting for the `Select`
+itself instead was not enough: under four concurrent loops (load ~50) it still
+raised `NoMatches: 'SelectOverlay' on SetSelect(id='skill-eval-generator')`.
+Textual registers a mounted widget in the DOM first and composes its children
+later, in that widget's own message loop (`MessagePump._pre_process` dispatches
+`Compose`, then `Mount`), so each nesting level has its own window. Waiting for
+`select.is_mounted` (set after its `Mount`, which needs the composed children)
+made 32 of 32 concurrent runs pass. A second error in the same failure,
+`NoMatches '#label'` from `Select._on_mount`, came from app shutdown after the
+test body had raised; it was not a separate product bug.
+
+When a test calls a method that reaches into a widget's children, wait for
+that widget's `is_mounted`, not for a query to find it or its container.
+
 ## Metadata mount echoes can cancel the worker that requested a recompose
 
 **TASK-32755.1, 2026-10-21.** Adding an off-thread transcription readiness
