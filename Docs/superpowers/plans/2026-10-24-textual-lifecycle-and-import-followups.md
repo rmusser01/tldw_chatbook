@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Workers for operations >100ms; do not join processing threads on the UI loop.
+- Workers for new operations >100ms; foreground-view retirement must not join processing threads on the UI loop. Preserve the existing explicit Stop completion contract; its pre-existing blocking-latency debt is owned by TASK-33284.
 - Preserve the existing service, persistence, consent, recovery and file-validation boundaries.
 - Screens must not bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) or shadow the globals ctrl+p/ctrl+q/f1/f6.
 - Read backlog/docs/design-language.md and backlog/docs/component-patterns.md before changing UI owners; use existing token-backed components. No stylesheet change is planned.
@@ -72,11 +72,11 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 **Interfaces:** Consumes existing file_operation, read_sample_file, canonical session edits and recovery. Produces no shared/public API; applicability stays with the screen/sample owner.
 **ADR required:** no. **ADR path:** existing 118 and 033. **Reason:** existing sample/recovery ownership, unchanged validation.
 
-- [ ] Write real mounted sample-file/excerpt reads with accepted keyboard input witnessed in editor and session before release; test later text, clear, replacement intent, untouched load and read failure. An untouched load publishes selected file content and provenance; later input stays exact.
-- [ ] Run and retain product RED evidence. Build a bounded host or settle existing owners so fixture teardown is independently attributable; do not hide native-worker uncertainty.
-- [ ] Fence publication of an older read against current sample intent, including changes while earlier screen messages wait. Retain existing file-size/UTF-8 errors and recovery contracts.
-- [ ] Run new controls and relevant existing file/excerpt/recovery tests; inspect child JUnit and Ruff/format checks.
-- [ ] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
+- [x] Write real mounted sample-file/excerpt reads with accepted keyboard input witnessed in editor and session before release; test later text, clear, replacement intent, untouched load and read failure. An untouched load publishes selected file content and provenance; later input stays exact.
+- [x] Run and retain product RED evidence. Build a bounded host or settle existing owners so fixture teardown is independently attributable; do not hide native-worker uncertainty.
+- [x] Fence publication of an older read against current sample intent, including changes while earlier screen messages wait. Retain existing file-size/UTF-8 errors and recovery contracts.
+- [x] Run new controls and relevant existing file/excerpt/recovery tests; inspect child JUnit and Ruff/format checks.
+- [x] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
 
 ## Task 4: TASK-36696 — preserve MCP import drafts
 

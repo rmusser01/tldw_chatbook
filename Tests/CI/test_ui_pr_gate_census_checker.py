@@ -498,6 +498,7 @@ def test_dead_defines_test_is_gone():
 #: counts top-level functions only, so it refuses a test class in a split file
 #: rather than let the class's methods go unlisted.
 SPLIT_CENSUS_FILES = (
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py",
     "Tests/UI/test_dictation_button_delivery.py",
     "Tests/UI/test_dictation_view_retirement.py",
     "Tests/UI/test_settings_model_defaults_rows.py",

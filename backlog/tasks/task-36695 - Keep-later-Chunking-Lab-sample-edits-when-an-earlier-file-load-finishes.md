@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 19:18
+updated_date: 2026-10-24 19:41
 ---
 
 ## Description
@@ -42,10 +42,10 @@ Reason: Routine publication applicability repair within the existing Chunking La
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An older sample file or explicit-excerpt completion does not replace later accepted sample edits, including clearing the field; live text and canonical sample remain coherent.
-- [ ] #2 An untouched, still-applicable load publishes the selected text and truthful source provenance normally.
-- [ ] #3 Replacement sample intent and read failure preserve the current authored state, recovery ownership and existing file-size/UTF-8 validation.
-- [ ] #4 Targeted mounted controls witness real accepted keyboard input and canonical state before releasing actual asynchronous file-read publication, with ordinary-load and later-edit cases.
+- [x] #1 An older sample file or explicit-excerpt completion does not replace later accepted sample edits, including clearing the field; live text and canonical sample remain coherent.
+- [x] #2 An untouched, still-applicable load publishes the selected text and truthful source provenance normally.
+- [x] #3 Replacement sample intent and read failure preserve the current authored state, recovery ownership and existing file-size/UTF-8 validation.
+- [x] #4 Targeted mounted controls witness real accepted keyboard input and canonical state before releasing actual asynchronous file-read publication, with ordinary-load and later-edit cases.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,13 @@ ADR required: no. ADR paths: [ADR-118](../decisions/118-chunking-lab-local-execu
 5. Obtain task-scoped Superpowers requesting-code-review, register every new regression in the required UI census, update architecture evidence and implementation notes. Overall hosted PR qualification follows all six tasks.
 Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task3).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Sample file and explicit-excerpt reads now carry screen/session/sample/editor applicability through the existing canonical edit queue. Synchronous TextArea Changed accounting protects keys accepted before parent delivery, and guards before and after transition computation prevent obsolete text from entering canonical state or Undo. Untouched content/provenance and existing validation/recovery remain unchanged.
+
+Verification: all20 new mounted regressions passed with20 clean private children; six strengthened validation/SQLite reopen cases and three unchanged legacy UI bodies also passed with clean children. Root verified actual XMLs and final hashes. All20 exact selectors are registered in the required UI gate (floor810); eight split-census checks and census validation pass. Superpowers task review approved with no Critical/Important findings. Final hosted qualification remains pending. The original legacy batch is not green (profile-fixture setup drift and two Windows-overlong IDs); diagnostic67 parser/recovery checks passed, with eight original UI setup errors. Existing E721 exact-type check and dependency warnings remain attributed, without guard changes or broad suite claims.
+
+ADR required: no; existing ADR-118 and ADR-033 govern unchanged canonical ownership, file validation and recovery. Updated Docs/Architecture/rag.md, UI census/ratchet and the implementation plan. Source/tests: UI/Screens/chunking_lab_screen.py, UI/Chunking_Lab_Modules/sample_region.py and Tests/UI/test_chunking_lab_sample_import_drafts.py.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

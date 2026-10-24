@@ -1,7 +1,7 @@
 ---
 id: TASK-36696
 title: Keep pending MCP file reads from replacing newer import drafts
-status: To Do
+status: In Progress
 created_date: 2026-10-24 17:34
 labels:
 - textual-patterns
@@ -9,6 +9,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
+assignee:
+- '@codex'
+updated_date: 2026-10-24 19:41
 ---
 
 ## Description
@@ -44,3 +47,15 @@ Reason: Routine stale UI publication repair within existing import-panel/workben
 - [ ] #3 Cancel, replacement or reopening invalidates the old panel read so it cannot publish into a new import panel.
 - [ ] #4 Mounted checks cover the actual picker callback and filesystem await with same-panel, replacement and ordinary controls.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. ADR paths: [ADR-033](../decisions/033-application-session-state-ownership.md) and [ADR-240](../decisions/240-mcp-destination-retirement-tools-hub-in-settings.md). Reason: originating-panel/file-read applicability within existing Settings ownership and validation.
+1. Add actual Import/From file/picker callback and threaded filesystem controls for untouched success, later typing, clearing back to initial empty, newer selection and Cancel/reopen replacement, including input accepted before parent Changed delivery.
+2. Retain product RED, then capture originating panel and draft/request authority at actual file selection; recheck at publication and invalidate canceled/replaced panels. Preserve raw invalid text and existing path/size/UTF-8 validation.
+3. Keep workbench growth neutral/reducing where feasible; new draft accounting belongs to the existing panel owner. Existing TASK-36161 owns the inherited6954-line workbench versus6760 budget; do not raise budget, duplicate that work or weaken guards.
+4. Run new and directly relevant existing import/file-picker controls, inspect private-child XML and focused Ruff/format/size checks. No full suite; report inherited failures.
+5. Obtain task-scoped Superpowers requesting-code-review, register every new regression in required CI, update architecture/notes and existing ADR links. Final hosted qualification follows all six tasks.
+Master plan: Docs/superpowers/plans/2026-10-24-textual-lifecycle-and-import-followups.md (Task4).
+<!-- SECTION:PLAN:END -->
