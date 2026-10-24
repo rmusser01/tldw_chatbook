@@ -6,7 +6,6 @@ import csv
 import io
 import json
 import re
-from datetime import date, datetime
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -621,8 +620,32 @@ def split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
             return None, text
         if not isinstance(metadata, Mapping):
             return None, text
+        metadata = _with_raw_scalar_title(metadata, block)
         return metadata, "\n".join(lines[index + 1 :]).lstrip("\n")
     return None, text
+
+
+def _with_raw_scalar_title(metadata: Mapping[Any, Any], block: str) -> Mapping[Any, Any]:
+    """Give ``title`` back the text the author wrote when YAML typed it.
+
+    YAML 1.1 reads ``title: 3.10`` as 3.1, ``12:30`` as 750 (base 60), ``0755``
+    as 493 and ``2026-10-24`` as a date. A title is a name, so when the typed
+    value is not a string the block is re-read with ``yaml.BaseLoader`` (every
+    scalar a string) and that key's raw text is used (TASK-34000.31 fix round
+    2, R2-4). A list or a mapping stays what it is and is reported instead.
+    """
+    value = metadata.get("title")
+    if value is None or isinstance(value, str):
+        return metadata
+    try:
+        raw = yaml.load(block, Loader=yaml.BaseLoader)
+    except (yaml.YAMLError, RecursionError, ValueError, TypeError):
+        return metadata
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("title"), str):
+        return metadata
+    patched = dict(metadata)
+    patched["title"] = raw["title"]
+    return patched
 
 
 _split_frontmatter = split_frontmatter
@@ -632,15 +655,13 @@ _split_frontmatter = split_frontmatter
 def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
     """Return the frontmatter title, unless it is blank or a placeholder.
 
-    A number or a date the YAML reader typed (``title: 2026``) is the text the
-    author wrote, so it is used as ``str(value)`` (TASK-34000.31 fix round 1);
-    a bool, a list or a mapping is not a title and is reported instead.
+    ``split_frontmatter`` already restored a typed scalar (``title: 2026``,
+    ``12:30``) to the text the author wrote; a list or a mapping is not a title
+    and is reported instead.
     """
     if metadata is None:
         return None
     value = metadata.get("title")
-    if isinstance(value, (int, float, date, datetime)) and not isinstance(value, bool):
-        value = str(value)
     if not isinstance(value, str):
         return None
     title = value.strip()
@@ -665,10 +686,9 @@ def _is_own_export_block(metadata: Mapping[Any, Any]) -> bool:
     block holding anything else -- a user's ``Summary:``, a ``Yes:`` key the
     YAML reader typed as ``True`` -- stays in the note exactly as written.
     """
-    return all(
-        isinstance(key, str) and key.strip().casefold() in _STRIPPABLE_OUTSIDE_A_VAULT
-        for key in metadata
-    )
+    # Exact match, the way the readers match (``title``, never ``Title``):
+    # a key the readers would not read is a key the user would lose.
+    return all(key in _STRIPPABLE_OUTSIDE_A_VAULT for key in metadata)
 
 
 def _unimported_frontmatter_keys(
@@ -684,6 +704,12 @@ def _unimported_frontmatter_keys(
     entries, or not readable as keywords -- named with its reason. Nothing a
     stripped block held disappears silently (TASK-34000.31 fix round 1).
 
+    The app's own provenance keys (``date``, ``id``, ...) are left out ONLY
+    when the whole block has the shape of the app's own export; beside a
+    ``mood:`` a ``date:`` is the user's Obsidian property and is reported like
+    any other (fix round 2, R2-3). Keyword reports come first and are never
+    cut by the cap -- they are the only sign the keywords were lost (R2-5).
+
     Args:
         metadata: One parsed frontmatter mapping, or None when there was none.
         bounds: The import bounds the keywords are checked against; None skips
@@ -694,6 +720,7 @@ def _unimported_frontmatter_keys(
     """
     if metadata is None:
         return ()
+    own_export = _is_own_export_block(metadata)
     names: list[str] = []
     for key in metadata:
         if not isinstance(key, str):
@@ -704,34 +731,34 @@ def _unimported_frontmatter_keys(
         name = key.strip()
         if not name:
             continue
-        folded = name.casefold()
-        if folded == "title":
-            if _frontmatter_title({"title": metadata[key]}) is None and metadata[key] is not None:
+        if key == "title":
+            if metadata[key] is not None and _frontmatter_title(metadata) is None:
                 names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
             continue
-        if folded in _IMPORTED_FRONTMATTER_KEYS or folded in _OWN_EXPORT_KEYS:
+        if key in _FRONTMATTER_KEYS or (own_export and key in _OWN_EXPORT_KEYS):
             continue
         names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
-    if bounds is not None:
-        names.extend(_unkept_keyword_reports(metadata, bounds))
-    return tuple(dict.fromkeys(names))[:_MAX_REPORTED_FRONTMATTER_KEYS]
+    reports = _unkept_keyword_reports(metadata, bounds) if bounds is not None else []
+    capped = tuple(dict.fromkeys(names))[: max(0, _MAX_REPORTED_FRONTMATTER_KEYS - len(reports))]
+    return tuple(dict.fromkeys([*reports, *capped]))
 
 
 def _unkept_keyword_reports(metadata: Mapping[Any, Any], bounds: ImportBounds) -> list[str]:
     """Name each keyword property ``_frontmatter_keywords`` had to leave out."""
     reports: list[str] = []
-    total = 0
     for key in _FRONTMATTER_KEYS:
         if key not in metadata or metadata[key] is None:
             continue
         try:
-            total += len(_keywords(metadata[key], bounds))
+            _keywords(metadata[key], bounds)
         except _ParseFailure as error:
             if error.reason_code == "too_many_keywords":
                 reports.append(f"{key} (more than {bounds.max_keywords_per_note})")
             else:
                 reports.append(f"{key} (not readable as keywords)")
-    if total > bounds.max_keywords_per_note:
+    # The combined cap is applied to the DEDUPLICATED list (R2-6): 60 tags
+    # repeated as 60 keywords are 60 keywords, all kept.
+    if len(_collect_frontmatter_keywords(metadata, bounds)) > bounds.max_keywords_per_note:
         reports.append(f"keywords (more than {bounds.max_keywords_per_note} in total)")
     return reports
 
@@ -751,6 +778,13 @@ def _frontmatter_keywords(
     """
     if metadata is None:
         return ()
+    return tuple(_collect_frontmatter_keywords(metadata, bounds)[: bounds.max_keywords_per_note])
+
+
+def _collect_frontmatter_keywords(
+    metadata: Mapping[Any, Any], bounds: ImportBounds
+) -> list[str]:
+    """The deduplicated keyword list before the per-note cap (shared by the report)."""
     keywords: list[str] = []
     seen: set[str] = set()
     for key in _FRONTMATTER_KEYS:
@@ -769,7 +803,7 @@ def _frontmatter_keywords(
                 continue
             seen.add(keyword.casefold())
             keywords.append(keyword)
-    return tuple(keywords[: bounds.max_keywords_per_note])
+    return keywords
 
 
 def _wikilinks(text: str) -> tuple[str, ...]:
