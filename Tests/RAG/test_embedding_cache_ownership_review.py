@@ -32,7 +32,8 @@ def test_same_openai_model_at_different_endpoints_does_not_reuse_vectors(
 ):
     calls = []
 
-    def respond(session, url, *, json, timeout):
+    def respond(session, url, *, json, timeout, allow_redirects):
+        assert allow_redirects is True
         calls.append(url)
         response = requests.Response()
         response.status_code = 200
