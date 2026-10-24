@@ -1220,7 +1220,18 @@ With it on:
   whole file, in which case the note keeps it and still takes its title and
   keywords from it. Any other property in that block (`mood`, `status`,
   `rating`) is not imported, and the review row says which ones ("… · not
-  imported: status"), so nothing disappears silently.
+  imported: status"), so nothing disappears silently — that includes a key
+  YAML does not read as text (`Yes:` is reported as `True`), a `title` that is
+  not text, and a `tags` list the import could not keep ("tags (more than
+  100)"). A `title` that is a number or a date (`title: 2026`) is used as
+  written.
+- Outside a vault — a picked file, a plain folder, or the toggle off — the
+  block is read and removed only when every key in it is one of the above
+  (`title`, `tags`, `keywords`, `aliases`) or one Chatbook's own exports write
+  (`date`, `note_id`, `id`, `created_at`, `updated_at`): that is how a note
+  you exported with **Export Markdown** or in a bundle comes back as it left.
+  Any other block — your own `Summary:` or `Decision:` properties — stays in
+  the note body exactly as written, and nothing is dropped.
 - An embed — `![[diagram.png]]`, or `![[Another note]]` — is not a link and is
   never rewritten: Chatbook has nowhere to render the embedded file, so the
   note keeps the `![[…]]` exactly as you wrote it and Preview prints it as
@@ -1250,7 +1261,9 @@ once instead. Nothing already synced changes when it comes back on —
 the pass only ever leaves files the sync has never taken alone.
 
 Turn the toggle off to import the vault exactly as any other folder — every
-directory walked, frontmatter left in the body, links left as text. The config
+directory walked, frontmatter left in the body (unless the block is one of
+Chatbook's own exports — `title`, `tags`, `date`, `note_id` — which is read and
+removed as with the toggle on), links left as text. The config
 files inside are then listed one by one, still as **Skipped** ("Not a note file
 (app configuration).") rather than as failures. One rule
 applies either way: a title that is only a template placeholder, such as a
@@ -1344,7 +1357,7 @@ the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
 **Obsidian vault** toggle is on, and an empty or whitespace-only file
 whatever the toggle says. (Keep a folder synced does not remember the toggle
 across a restart — see "Obsidian vaults" above.) Both read the frontmatter, so `title` becomes the
-note's title and `tags`/`aliases` become its keywords. A synced note bounds
+note's title and `tags` (or `keywords`) and `aliases` become its keywords. A synced note bounds
 both: a tag or alias longer than 256 characters is dropped (half an alternate
 name is a name nothing has, and the note keeps its other keywords), while a
 `title:` longer than 4,096 characters is cut to the first 4,096 (a title is
