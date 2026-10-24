@@ -12,14 +12,22 @@ from Tests.ProductionApp.test_backup_restore_end_to_end import (
 _SEED = r"""
  from io import BytesIO
  from PIL import Image
- from tldw_chatbook.Character_Chat.portrait_performance import FRAME_ROLES,capture_performance_source,normalize_performance_frames
+ from dataclasses import asdict
+ from tldw_chatbook.Character_Chat.portrait_performance import capture_performance_source
+ from tldw_chatbook.Character_Chat.portrait_compositing import PixelRect,PortraitCompositionRecipe,prepared_base_pixel_sha256,compose_component,assemble_components
  with Image.new('RGB',(16,16),'red') as image,BytesIO() as output:
   image.save(output,format='PNG');portrait=output.getvalue()
  character=app.chachanotes_db.add_character_card({'name':'Restored radio','image':portrait})
  source,_=capture_performance_source(app.chachanotes_db,character_id=character,requested_state='idle')
- frames=normalize_performance_frames({role:portrait for role in FRAME_ROLES})
- revision=app.chachanotes_db.apply_character_portrait_performance(source,frames,expected_revision=0)
- portrait_evidence={'character':character,'revision':revision,'source':source.source_sha256,'frames':[frame.sha256 for frame in frames],'portrait':hashlib.sha256(portrait).hexdigest(),'authority':app.chachanotes_db.get_local_authority_id()}
+ recipe=PortraitCompositionRecipe(1,16,16,prepared_base_pixel_sha256(portrait),PixelRect(0,0,4,4),PixelRect(10,0,4,4),PixelRect(4,9,7,6),True)
+ regions_revision=app.chachanotes_db.save_character_portrait_regions(source,recipe,expected_revision=0)
+ components={}
+ for role,color in [('eyelids','green'),('small','blue'),('open','white')]:
+  with Image.new('RGB',(16,16),color) as image,BytesIO() as output:
+   image.save(output,format='PNG');components[role]=compose_component(portrait,recipe,role,output.getvalue())
+ frames=assemble_components(portrait,recipe,components)
+ revision=app.chachanotes_db.apply_character_portrait_performance(source,frames,expected_revision=0,composition_recipe=recipe,expected_regions_revision=regions_revision)
+ portrait_evidence={'character':character,'revision':revision,'source':source.source_sha256,'frames':[frame.sha256 for frame in frames],'portrait':hashlib.sha256(portrait).hexdigest(),'authority':app.chachanotes_db.get_local_authority_id(),'recipe':asdict(recipe),'regions_revision':regions_revision}
 """
 _CHECK = r"""
    import hashlib
@@ -30,6 +38,22 @@ _CHECK = r"""
    assert [frame.sha256 for frame in record.frames]==evidence['frames']
    assert hashlib.sha256(app.chachanotes_db.get_character_card_by_id(evidence['character'])['image']).hexdigest()==evidence['portrait']
    assert app.chachanotes_db.get_local_authority_id()==evidence['authority']
+   from dataclasses import asdict
+   from io import BytesIO
+   from PIL import Image
+   from tldw_chatbook.Character_Chat.portrait_compositing import recover_components,compose_component,assemble_components
+   settings=app.chachanotes_db.get_character_portrait_regions(character_id=evidence['character'],expression_key='neutral')
+   assert settings.revision==evidence['regions_revision'] and asdict(settings.recipe)==evidence['recipe']
+   assert record.composition_recipe==settings.recipe
+   base=app.chachanotes_db.get_character_card_by_id(evidence['character'])['image']
+   components=recover_components(base,settings.recipe,record.frames)
+   with Image.new('RGB',(16,16),'yellow') as image,BytesIO() as output:
+    image.save(output,format='PNG');components['small']=compose_component(base,settings.recipe,'small',output.getvalue())
+   edited=assemble_components(base,settings.recipe,components)
+   revision=app.chachanotes_db.apply_character_portrait_performance(record.source,edited,expected_revision=record.revision,composition_recipe=settings.recipe,expected_regions_revision=settings.revision)
+   assert revision==record.revision+1
+   current=app.chachanotes_db.get_character_portrait_performance(character_id=evidence['character'],expression_key='neutral')
+   assert current.frames!=record.frames and recover_components(base,settings.recipe,current.frames)
    # The UUID is durable; exact DB-object scope still rejects a retired owner.
    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen

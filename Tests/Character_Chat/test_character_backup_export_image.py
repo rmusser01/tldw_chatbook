@@ -21,14 +21,14 @@ import json
 
 import pytest
 
+from tldw_chatbook.Backup_Recovery.settings_backup_helpers import (
+    serialize_character_cards_for_backup,
+)
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     import_and_save_character_from_file,
     import_character_card_from_json_string,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Backup_Recovery.settings_backup_helpers import (
-    serialize_character_cards_for_backup,
-)
 
 pytestmark = pytest.mark.integration
 
@@ -135,15 +135,14 @@ def test_parse_path_accepts_image_base64_key_directly():
 
 
 def test_local_performance_does_not_change_character_json_backup(db_instance):
-    from Tests.Character_Chat.test_portrait_performance import png
+    from Tests.Character_Chat.test_portrait_compositing import core, scene
     from tldw_chatbook.Character_Chat.portrait_performance import (
-        FRAME_ROLES,
         capture_performance_source,
-        normalize_performance_frames,
     )
 
+    base, recipe, components = scene()
     character_id = db_instance.add_character_card(
-        {"name": "Local radio", "image": png()}
+        {"name": "Local radio", "image": base}
     )
     before = serialize_character_cards_for_backup(
         db_instance.list_character_cards(include_image=True)
@@ -151,11 +150,17 @@ def test_local_performance_does_not_change_character_json_backup(db_instance):
     source, _ = capture_performance_source(
         db_instance, character_id=character_id, requested_state="idle"
     )
+    regions_revision = db_instance.save_character_portrait_regions(
+        source, recipe, expected_revision=0
+    )
     db_instance.apply_character_portrait_performance(
         source,
-        normalize_performance_frames({role: png("blue") for role in FRAME_ROLES}),
+        core().assemble_components(base, recipe, components),
         expected_revision=0,
+        composition_recipe=recipe,
+        expected_regions_revision=regions_revision,
     )
+
     assert (
         serialize_character_cards_for_backup(
             db_instance.list_character_cards(include_image=True)

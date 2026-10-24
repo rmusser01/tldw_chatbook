@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.Character_Chat.visual_identity import VisualIdentityResolution
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+    from .portrait_compositing import PortraitCompositionRecipe
+
 FrameRole = Literal["rest", "small", "open", "blink_rest", "blink_small", "blink_open"]
 FRAME_ROLES: tuple[FrameRole, ...] = (
     "rest",
@@ -61,6 +63,7 @@ class PortraitPerformanceRecord:
     revision: int
     active: bool
     frames: tuple[PerformanceFrame, ...] = field(repr=False)
+    composition_recipe: PortraitCompositionRecipe | None = None
 
 
 class PerformanceConflict(ValueError):

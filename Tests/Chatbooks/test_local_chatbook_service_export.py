@@ -85,26 +85,30 @@ def test_character_chatbook_omits_profile_local_performance(tmp_path):
     import json
     import zipfile
 
-    from Tests.Character_Chat.test_portrait_performance import png
+    from Tests.Character_Chat.test_portrait_compositing import core, scene
     from tldw_chatbook.Character_Chat.portrait_performance import (
-        FRAME_ROLES,
         capture_performance_source,
-        normalize_performance_frames,
     )
     from tldw_chatbook.Chatbooks.chatbook_models import ContentType
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+    base, recipe, components = scene()
     database = CharactersRAGDB(tmp_path / "characters.db", "radio-export")
     try:
-        cid = database.add_character_card({"name": "Local radio", "image": png()})
+        cid = database.add_character_card({"name": "Local radio", "image": base})
         source, _ = capture_performance_source(
             database, character_id=cid, requested_state="idle"
         )
-        frames = normalize_performance_frames(
-            {role: png("blue") for role in FRAME_ROLES}
+        revision = database.save_character_portrait_regions(
+            source, recipe, expected_revision=0
         )
+        frames = core().assemble_components(base, recipe, components)
         database.apply_character_portrait_performance(
-            source, frames, expected_revision=0
+            source,
+            frames,
+            expected_revision=0,
+            composition_recipe=recipe,
+            expected_regions_revision=revision,
         )
         service = LocalChatbookService({"ChaChaNotes": str(database.db_path)})
         output = tmp_path / "radio.zip"
@@ -126,7 +130,9 @@ def test_character_chatbook_omits_profile_local_performance(tmp_path):
             )
             assert payload["name"] == "Local radio"
             assert "performance" not in json.dumps(payload)
+            assert "base_pixel_sha256" not in json.dumps(payload)
+            assert "neutral_base_confirmed" not in json.dumps(payload)
             assert all(frame.sha256 not in json.dumps(payload) for frame in frames)
-        assert database.get_character_card_by_id(cid)["image"] == png()
+        assert database.get_character_card_by_id(cid)["image"] == base
     finally:
         database.close()

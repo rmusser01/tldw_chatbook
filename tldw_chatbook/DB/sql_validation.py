@@ -83,6 +83,7 @@ VALID_TABLES = {
         "character_expression_images",
         "character_portrait_performances",
         "character_portrait_performance_frames",
+        "character_portrait_regions",
         "chat_dictionaries",
         "collection_keywords",
         "conversation_dictionaries",

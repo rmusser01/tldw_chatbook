@@ -73,9 +73,9 @@ region revision, finished components and currently available frames. Draft repla
 is authoritative, not a merge; a new rest-only candidate cannot inherit old slots.
 Composed publication requires all three components and six roles. Successful manual
 imports switch to ordinary six-role readiness; failed edits preserve lineage.
-These core contracts are implemented in TASK-36551. Region persistence, selection UI
-and the three-request provider workflow remain follow-up work at this checkpoint;
-existing generation still uses its original six-request path until that integration.
+These core contracts and the settings repository are implemented in TASK-36551/36552.
+The selection UI and three-request provider workflow remain follow-up work at this
+checkpoint; existing generation still uses its original six-request path until integration.
 
 
 `Character_Chat/portrait_performance.py` normalizes six aligned still poses
@@ -94,7 +94,22 @@ leaves the old record available for explicit revision-checked replacement; consu
 must match its source before rendering it. Soft deletion preserves rows, while
 permanent character deletion cascades through the parent and frames.
 
-These attachments are profile-local (ADR-242). Native full-profile SQLite backup
+Schema 83 (ADR-243) adds `character_portrait_regions`, one source-bound recipe per
+character/expression, and nullable `composition_recipe_json` on the performance parent.
+`DB/portrait_region_settings.py` validates bounded canonical recipe JSON and prepared
+RGBA identity, independently saves regions under source/settings CAS, and atomically
+publishes optional provenance with six validated poses under both revisions. Idempotent
+current-revision Save leaves region and performance revisions unchanged. Manual Apply
+and Remove clear applied provenance; Remove retains regions. Valid unchanged stored
+roles are decoded/content-checked and retained byte-for-byte under publication CAS.
+New roles still pass the existing normalization contract. Unknown/invalid applied
+recipes read as absent, leaving ordinary six-frame artwork usable; component recovery
+requires the compositor's complete pixel invariant check. No raw provider edit or
+finished-component sidecar is stored. Regions follow character soft-delete/restore and
+permanent-delete cascades. The installed recovery catalog retains historical schemas
+and has the fixed v82→v83 step; native full-profile restore preserves both contracts.
+
+These attachments are profile-local (ADR-242/243). Native full-profile SQLite backup
 and recovery schema admission include them; original artwork, character cards,
 Actor Packs, Chatbooks and sync formats are unchanged. See [ADR-242](../../backlog/decisions/242-console-radio-portrait-performance.md).
 

@@ -66,12 +66,16 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Character_Chat.portrait_compositing import (
+        PortraitCompositionRecipe,
+    )
     from tldw_chatbook.Character_Chat.portrait_performance import (
         PerformanceFrame,
         PerformanceSource,
         PortraitPerformanceRecord,
     )
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.portrait_region_settings import PortraitRegionSettings
     from tldw_chatbook.Library.library_artifacts_state import (
         ArtifactKey,
         ArtifactOrderKey,
@@ -84,7 +88,6 @@ if TYPE_CHECKING:
         ChatSyncDeleteIntentRecord,
         ChatSyncIntentRecord,
     )
-
 from loguru import logger
 
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
@@ -814,7 +817,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 83  # ADR-242 local portrait performance attachments.
+    _CURRENT_SCHEMA_VERSION = 84  # ADR-243 source-bound portrait regions and provenance.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8117,6 +8120,30 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v83_to_v84(self, conn: sqlite3.Connection) -> None:
+        """Install independent source-bound regions and optional applied provenance."""
+        self._require_migration_entry_version(conn, 83, "V83→V84")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v83_to_v84_portrait_regions.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V83→V84"
+                )
+                changed = cursor.execute(
+                    "UPDATE db_schema_version SET version=84 WHERE schema_name=? AND version=83",
+                    (self._SCHEMA_NAME,),
+                )
+                if changed.rowcount != 1:
+                    raise SchemaError("V83→V84 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
+            raise SchemaError(
+                f"Migration V83→V84 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v82_to_v83(self, conn: sqlite3.Connection) -> None:
         """Install source-bound local portrait sets without sync triggers."""
         self._require_migration_entry_version(conn, 82, "V82→V83")
@@ -8558,6 +8585,7 @@ DELETE FROM keywords
                     79: self._migrate_from_v79_to_v80,
                     80: self._migrate_from_v80_to_v81,
                     81: self._migrate_from_v81_to_v82,
+                    82: self._migrate_from_v82_to_v83,
                 }
 
                 if current_db_version == 0:
@@ -9258,92 +9286,48 @@ DELETE FROM keywords
             )
             raise
 
+    def get_character_portrait_regions(
+        self, *, character_id: int, expression_key: str
+    ) -> "PortraitRegionSettings | None":
+        """Read independent settings, including stale source identity for re-selection."""
+        from .portrait_region_settings import get_regions
+
+        return get_regions(
+            self, character_id=character_id, expression_key=expression_key
+        )
+
+    def save_character_portrait_regions(
+        self,
+        source: "PerformanceSource",
+        recipe: "PortraitCompositionRecipe",
+        *,
+        expected_revision: int,
+    ) -> int:
+        """Save confirmed source-pixel regions without changing active poses."""
+        from .portrait_region_settings import save_regions
+
+        return save_regions(self, source, recipe, expected_revision=expected_revision)
+
     def apply_character_portrait_performance(
         self,
         source: "PerformanceSource",
         frames: tuple["PerformanceFrame", ...],
         *,
         expected_revision: int,
+        composition_recipe: "PortraitCompositionRecipe | None" = None,
+        expected_regions_revision: int | None = None,
     ) -> int:
-        """Atomically replace six validated poses for the exact persisted source.
+        """Atomically replace six poses, fencing optional composition provenance."""
+        from .portrait_region_settings import apply_performance
 
-        Raises:
-            ValueError: For malformed frames or revision values.
-            PerformanceConflict: If the source, owner or revision changed.
-        """
-        from tldw_chatbook.Character_Chat.portrait_performance import (
-            FRAME_ROLES,
-            PerformanceConflict,
-            PerformanceFrame,
-            _performance_write,
-            _preflight_source,
-            _source_stamp,
-            normalize_performance_frames,
+        return apply_performance(
+            self,
+            source,
+            frames,
+            expected_revision=expected_revision,
+            composition_recipe=composition_recipe,
+            expected_regions_revision=expected_regions_revision,
         )
-
-        if type(expected_revision) is not int or expected_revision < 0:
-            raise ValueError("portrait_performance_revision_invalid")
-        stamp = _preflight_source(self, source)
-        if (
-            not isinstance(frames, tuple)
-            or len(frames) != 6
-            or any(
-                not isinstance(frame, PerformanceFrame) or frame.role not in FRAME_ROLES
-                for frame in frames
-            )
-            or {frame.role for frame in frames} != set(FRAME_ROLES)
-        ):
-            raise ValueError("portrait_performance_requires_six_roles")
-        normalized = normalize_performance_frames(
-            {frame.role: frame.png for frame in frames}
-        )
-        if normalized != tuple(
-            sorted(frames, key=lambda frame: FRAME_ROLES.index(frame.role))
-        ):
-            raise ValueError("portrait_performance_frame_metadata_invalid")
-        with _performance_write(self) as cursor:
-            if _source_stamp(self, source) != stamp:
-                raise PerformanceConflict("portrait_performance_source_changed")
-            row = cursor.execute(
-                "SELECT id, revision FROM character_portrait_performances WHERE character_id=? AND expression_key=?",
-                (source.character_id, source.expression_key),
-            ).fetchone()
-            actual = 0 if row is None else row[1]
-            if actual != expected_revision:
-                raise PerformanceConflict("portrait_performance_revision_changed")
-            revision = actual + 1
-            cursor.execute(
-                """INSERT INTO character_portrait_performances
-                   (character_id, expression_key, source_sha256, source_kind, source_ref_json, revision, active)
-                   VALUES (?, ?, ?, ?, ?, ?, 1)
-                   ON CONFLICT(character_id, expression_key) DO UPDATE SET
-                   source_sha256=excluded.source_sha256, source_kind=excluded.source_kind,
-                   source_ref_json=excluded.source_ref_json, revision=excluded.revision, active=1""",
-                (
-                    source.character_id,
-                    source.expression_key,
-                    source.source_sha256,
-                    source.source_kind,
-                    json.dumps(source.source_ref),
-                    revision,
-                ),
-            )
-            parent_id = cursor.execute(
-                "SELECT id FROM character_portrait_performances WHERE character_id=? AND expression_key=?",
-                (source.character_id, source.expression_key),
-            ).fetchone()[0]
-            cursor.execute(
-                "DELETE FROM character_portrait_performance_frames WHERE performance_id=?",
-                (parent_id,),
-            )
-            cursor.executemany(
-                "INSERT INTO character_portrait_performance_frames (performance_id,role,png,width,height,sha256) VALUES (?,?,?,?,?,?)",
-                [
-                    (parent_id, f.role, f.png, f.width, f.height, f.sha256)
-                    for f in normalized
-                ],
-            )
-        return revision
 
     def get_character_portrait_performance(
         self,
@@ -9358,6 +9342,8 @@ DELETE FROM keywords
             PerformanceSource,
             PortraitPerformanceRecord,
         )
+
+        from .portrait_region_settings import optional_recipe
 
         with self.transaction() as cursor:
             row = cursor.execute(
@@ -9388,6 +9374,7 @@ DELETE FROM keywords
                         key=lambda frame: FRAME_ROLES.index(frame.role),
                     )
                 ),
+                optional_recipe(row["composition_recipe_json"]),
             )
 
     def remove_character_portrait_performance(
@@ -9424,7 +9411,7 @@ DELETE FROM keywords
                 (row[0],),
             )
             cursor.execute(
-                "UPDATE character_portrait_performances SET active=0,revision=? WHERE id=?",
+                "UPDATE character_portrait_performances SET active=0,revision=?,composition_recipe_json=NULL WHERE id=?",
                 (actual + 1, row[0]),
             )
         return actual + 1
