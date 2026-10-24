@@ -4574,3 +4574,19 @@ def test_discovery_signature_tracks_syncable_entries_only(
 
     (root / "other.md").write_text("other", encoding="utf-8")
     assert signature(discover_import_sources((root,), bounds)) != base
+
+
+@pytest.mark.parametrize("raw", ["3.10", "12:30", "0755", "2026-10-24"])
+def test_lifted_title_keeps_a_scalar_exactly_as_written(raw: str) -> None:
+    """TASK-34000.31 fix round 2 (R2-4): YAML 1.1 types ``3.10`` as 3.1,
+    ``12:30`` as 750 and ``0755`` as 493; a synced note's title is the text
+    the author wrote, through the same reader Import once uses."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Notes.notes_sync_runtime import _lifted_note_metadata
+
+    file = SimpleNamespace(text=f"---\ntitle: {raw}\ntags: [a]\n---\n\nBody.\n")
+    title, keywords = _lifted_note_metadata(file, "Daily/x.md", obsidian=True)
+    assert title == raw
+    assert keywords == ("a",)
+

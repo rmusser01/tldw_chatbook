@@ -1257,13 +1257,13 @@ def _obsidian_reason(state: NoteImportWorkflowSnapshot) -> str:
             "Obsidian vault: skips .obsidian, .trash and Templates, takes titles "
             "and tags from frontmatter, and links [[notes]] imported together."
         )
-    # TASK-34000.31 fix round 1: with the toggle off a block is read and
-    # removed only when it is one of Chatbook's own exports (title, tags,
-    # date, note_id and the bundle stamps); anything else stays in the body.
+    # TASK-34000.31 fix rounds 1-2: with the toggle off a block is read and
+    # removed only when every property is one Chatbook reads (title, tags,
+    # keywords, aliases) or writes (date, id, ...); anything else stays whole.
     return (
         "Obsidian vault off: imports every folder, keeps frontmatter in the note "
-        "body unless it is one of Chatbook's own exports, and leaves [[links]] "
-        "as text."
+        "body unless every property is one Chatbook reads (title, tags, aliases) "
+        "or writes (date, id), and leaves [[links]] as text."
     )
 
 
