@@ -59,9 +59,6 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
 )
-from tldw_chatbook.Widgets.Library.library_note_link_picker import (
-    LibraryNoteLinkPicker,
-)
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
@@ -3466,7 +3463,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # of ``#library-note-editor-region``: that region is hidden while
         # Preview shows, and the Preview's Enter lists several links through
         # this same overlay (follow mode). Hidden in code until the
-        # controller shows it.
+        # controller shows it. Imported here, not at module level
+        # (ADR-097): the screen pre-import pass loads this canvas, and the
+        # picker is first needed when an editor composes.
+        from tldw_chatbook.Widgets.Library.library_note_link_picker import (
+            LibraryNoteLinkPicker,
+        )
+
         yield root(
             LibraryNoteLinkPicker(
                 id="library-note-link-picker", classes="library-note-link-picker"
@@ -4490,6 +4493,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         round 3, R3-4: it is anchored to the Preview region, which a resize
         moves). Decorated, like ``_note_chrome_follows_width`` beside it: the
         pane's own ``on_resize`` keeps running."""
+        from tldw_chatbook.Widgets.Library.library_note_link_picker import (
+            LibraryNoteLinkPicker,
+        )
+
         try:
             picker = self.query_one("#library-note-link-picker", LibraryNoteLinkPicker)
         except NoMatches:
