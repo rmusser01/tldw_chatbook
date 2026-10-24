@@ -1,0 +1,117 @@
+{
+  "real_image_adapter": false,
+  "provider": "gemini",
+  "source_sha256": "68eb562430b8508f014985a342ffc9f43e30a0f13577658c86260df838785d6c",
+  "disclosures": [
+    "Send 3 image-edit requests to gemini / installed-fixture (https://generativelanguage.googleapis.com). Use saved character 4, expression neutral, with one identical prepared reference. A fresh batch clears all disposable frames and components before the first request. Charges may apply. Uncertain requests are never retried automatically; review before Apply.",
+    "Send 1 image-edit requests to gemini / installed-fixture (https://generativelanguage.googleapis.com). Use saved character 4, expression neutral, with one identical prepared reference. Replace only the selected component and dependent eye/mouth pairs. Charges may apply. Uncertain requests are never retried automatically; review before Apply.",
+    "Send 1 image-edit requests to gemini / installed-fixture (https://generativelanguage.googleapis.com). Use saved character 4, expression neutral, with one identical prepared reference. Replace only the selected component and dependent eye/mouth pairs. Charges may apply. Uncertain requests are never retried automatically; review before Apply.",
+    "Send 3 image-edit requests to gemini / installed-fixture (https://generativelanguage.googleapis.com). Use saved character 4, expression neutral, with one identical prepared reference. A fresh batch clears all disposable frames and components before the first request. Charges may apply. Uncertain requests are never retried automatically; review before Apply.",
+    "Send 1 image-edit requests to gemini / installed-fixture (https://generativelanguage.googleapis.com). Use saved character 4, expression neutral, with one identical prepared reference. Replace only the selected component and dependent eye/mouth pairs. Charges may apply. Uncertain requests are never retried automatically; review before Apply.",
+    "Send 1 image-edit requests to gemini / installed-fixture (https://generativelanguage.googleapis.com). Use saved character 4, expression neutral, with one identical prepared reference. Replace only the selected component and dependent eye/mouth pairs. Charges may apply. Uncertain requests are never retried automatically; review before Apply.",
+    "Send the fixed preview text to OpenAI (https://api.openai.com) using this character's voice. Charges may apply. This sample creates no message or automatic speech preference."
+  ],
+  "pair_views": [
+    {
+      "region": "overview",
+      "crop": null,
+      "sha256": "7c191dd08c9999a6a646736f362439a05cb2c90b124c28597c2ffb5af263a6c7"
+    },
+    {
+      "region": "left_eye",
+      "crop": [
+        5,
+        4,
+        13,
+        11
+      ],
+      "sha256": "77105af8984bcfabf37a67625d39b9b315400b7bdcb890b4c4cb336659766503"
+    },
+    {
+      "region": "right_eye",
+      "crop": [
+        20,
+        4,
+        28,
+        11
+      ],
+      "sha256": "77105af8984bcfabf37a67625d39b9b315400b7bdcb890b4c4cb336659766503"
+    },
+    {
+      "region": "mouth",
+      "crop": [
+        9,
+        18,
+        23,
+        28
+      ],
+      "sha256": "74721dd56add6de615565ea8b266aa2941ebb7a30f9913b8c675a9d812b6d2c2"
+    }
+  ],
+  "fresh_failure_preserved_active": true,
+  "failed_retry_preserved_candidate": true,
+  "offline_roles": [
+    "blink_open",
+    "blink_rest",
+    "blink_small",
+    "open",
+    "rest",
+    "small"
+  ],
+  "guarded_sample_pcm_driven": true,
+  "console_pcm_driven": true,
+  "reopened_exact_frames": true,
+  "frames": [
+    "a206d2c1a7cca3d2603cb431b3626e5c2842cfda3a1f5f03cfd4790d1c1177bb",
+    "4504de2fb62b2beb8a0c07e62592ab23a23671647b887bd16a93f890f786efe9",
+    "cc2031d438d7132c90fbc3a4df2f2a5a317ce6023ce93095423ad65ba03e2662",
+    "49642331988cf1a48a1b9737103f60d5c7f1af8375f2618419433d003e22dc58",
+    "fe2401a92c591f893c1411c2b5cfa2d889e649e2cd9a5a146cedd5c87a612190",
+    "fb74a21f345203407413f9c6711c8eee6cda559ba08840ca0cd27b19205ef51e"
+  ],
+  "base_pixel_sha256": "0d1dd674195309cf3ec073c96a18dae54cb0973cda5df66a113f7cad55b3c449",
+  "region_revision": 1,
+  "image_calls": 10,
+  "image_results": [
+    {
+      "index": 0,
+      "sha256": "2862fb05eeceabfa91387b67826bab1ec3e4f64f5969e574fbaca0ca321565d5",
+      "bytes": 117
+    },
+    {
+      "index": 1,
+      "sha256": "ad5d27234182a4099dd48f35102ddb680006b261cff1ae3a4eb6c8c6cd211e88",
+      "bytes": 116
+    },
+    {
+      "index": 2,
+      "sha256": "112a4db77adc9d197f1bdd86672c56aaaf9cc1f640a4268993d1baeed1dfb5b5",
+      "bytes": 116
+    },
+    {
+      "index": 3,
+      "sha256": "a188dba3333f3a4c7820d92490064a5f65f59abc62ac728b500d1645a4384d07",
+      "bytes": 116
+    },
+    {
+      "index": 4,
+      "sha256": "010d697a6ad89ca72eec20d65532a706753955f29a0c82bc3f6315cd06083c99",
+      "bytes": 116
+    },
+    {
+      "index": 5,
+      "sha256": "6dfa0c2e2961c60ffb95a81017cff68c6df2eae46d1c6bdc6b68af0c68816bf4",
+      "bytes": 116
+    },
+    {
+      "index": 7,
+      "sha256": "daaab1843ee2bb48c81a128be9b4a9ff4ab378d192a7a259720457f7eab2abcb",
+      "bytes": 116
+    },
+    {
+      "index": 8,
+      "sha256": "06a284bfe1072c23a1d2673c6379c3ad3549dac244da734aee3de07aa45702be",
+      "bytes": 115
+    }
+  ]
+}

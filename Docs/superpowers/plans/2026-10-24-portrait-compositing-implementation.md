@@ -1,6 +1,6 @@
 # Portrait Component Compositing Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Retain the user's inline execution preference; self-review each atomic task before starting the next. This update authorizes planning, not implementation.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Retain the user's inline execution preference; self-review each atomic task before starting the next. The user authorized inline implementation beginning with TASK-36551 on 2026-10-24.
 
 **Goal:** Generate three expression edits and assemble six exact eye/mouth pairs on one prepared portrait, with reusable manually selected regions.
 
@@ -414,7 +414,7 @@ captures/raw-raster evidence under `qa/portrait-compositing/2026-10-24/`.
 
 **Consumes:** Units 1–4 as installed application behavior. **Produces:** Reviewed end-to-end evidence and an honest completion/coverage record.
 
-- [ ] **1. Add the installed/private-profile journey red.** Reuse the actual TldwCli production-entry bootstrap, network guard and native restore harness from TASK-36550. Through visible editor actions mark/save regions, generate, retry small mouth and eyelids, open the actual Review pairs modal, inspect overview and unresampled eye/mouth crops for all six, Apply, navigate Console and reopen. A separately generated QA image cannot replace this viewer path. The deterministic normal-CI adapter remains fake only at the external call boundary. Assertions bind real saved state and pixels:
+- [x] **1. Add the installed/private-profile journey red.** Reuse the actual TldwCli production-entry bootstrap, network guard and native restore harness from TASK-36550. Through visible editor actions mark/save regions, generate, retry small mouth and eyelids, open the actual Review pairs modal, inspect overview and unresampled eye/mouth crops for all six, Apply, navigate Console and reopen. A separately generated QA image cannot replace this viewer path. The deterministic normal-CI adapter remains fake only at the external call boundary. Assertions bind real saved state and pixels:
 
 ```python
 assert reopened_regions.recipe == selected_recipe
@@ -427,22 +427,31 @@ assert review_crop_pixels == original_frame_crop_pixels
 ```
 
 Use canonical character-context navigation and hydrated visible-avatar barriers. Do not call avatar ticks, fabricate speech snapshots or bypass ownership/recovery to make the journey pass.
-- [ ] **2. Verify native backup/restore through another edit.** After full-profile backup/restore, fresh app open must preload the same regions, recover exact components and permit a one-request mouth retry. Confirm old source/session ownership cannot publish, old frame bytes persist until explicit Apply, and ordinary exports/sync remain unchanged. Use a real migrated DB and preserve original artwork. Reencode the prepared reference with different PNG compression while keeping source bytes/pixels fixed; restored settings revision and component retry eligibility must remain unchanged. Then alter one actual RGBA byte as the rejection control.
+- [x] **2. Verify native backup/restore through another edit.** After full-profile backup/restore, fresh app open must preload the same regions, recover exact components and permit a one-request mouth retry. Confirm old source/session ownership cannot publish, old frame bytes persist until explicit Apply, and ordinary exports/sync remain unchanged. Use a real migrated DB and preserve original artwork. Reencode the prepared reference with different PNG compression while keeping source bytes/pixels fixed; restored settings revision and component retry eligibility must remain unchanged. Then alter one actual RGBA byte as the rejection control.
 - [ ] **3. Qualify one real configured reference-image adapter separately.** In an isolated profile, record destination/model, three actual requests, returned hashes, selected retry requests, saved regions/base and corrected full-resolution 2×3 matrix. Open the actual pair viewer, inspect original-frame detail crops, alignment/edges/lighting and actual Console-size output. Also run a fresh-batch failure from a prior complete set in the deterministic installed journey to prove no stale draft role can satisfy Apply; prior active DB frames remain intact. Use existing offline cycle/idle and guarded speech sample for the final set; no new audio subsystem requires recalibrating unchanged DAC timing. Historical external ChatGPT patches can qualify composition/import but cannot count as this in-app adapter evidence. If no reachable configured backend exists, retain this AC as open and report the exact missing evidence; do not add a provider or silently substitute a service.
-- [ ] **4. Run the affected gate.** New compositor/region/repository/migration/request/UI/installed/restore/export cases, SQL allowlist and migration-package guards, token/component/CSS checks for touched UI, Ruff/format and `git diff --check`. Use `-q -o addopts='' -p no:cacheprovider --tb=short --show-capture=no` and an owned private `--basetemp`. Attribute baseline failures to the same pre-change source; no full sweep unless explicitly requested. Record commands, exit results, source/runtime identities and hash-checked assets.
-- [ ] **5. Self-review and commit only proved completion.** Match every AC to evidence; keep unavailable live backend/terminal/device coverage explicit. Update user/Architecture docs and the final review, task notes and plan checkboxes. Add an incident-backed lesson only if new general knowledge emerged. Mark Done only when all AC and DoD are met, then commit `test: qualify composited portrait generation and reusable regions`.
+- [x] **4. Run the affected gate.** New compositor/region/repository/migration/request/UI/installed/restore/export cases, SQL allowlist and migration-package guards, token/component/CSS checks for touched UI, Ruff/format and `git diff --check`. Use `-q -o addopts='' -p no:cacheprovider --tb=short --show-capture=no` and an owned private `--basetemp`. Attribute baseline failures to the same pre-change source; no full sweep unless explicitly requested. Record commands, exit results, source/runtime identities and hash-checked assets.
+- [x] **5. Self-review and commit only proved completion.** Match every AC to evidence; keep unavailable live backend/terminal/device coverage explicit. Update user/Architecture docs and the final review, task notes and plan checkboxes. Add an incident-backed lesson only if new general knowledge emerged. Mark Done only when all AC and DoD are met, then commit `test: qualify composited portrait generation and reusable regions`.
+
+**Execution checkpoint (2026-10-24):** Installed authoring/pair-viewer/Console,
+native F9 restore through another confirmed component retry, equivalent-encoding and
+changed-source/pixel controls pass. Qualification and final self-review are recorded in
+[the task review](../reviews/2026-10-24-task-36555-review.md) and
+[qualification evidence](../qa/portrait-compositing/2026-10-24/qualification.md).
+Step 3 and TASK-36555 AC5 remain open: the configured default/only enabled backend is
+SwarmUI, unsupported by the reference-image path. Zero live requests/fallbacks. The
+other implemented checks are committed independently; TASK-36555 stays In Progress.
 
 ## Review checklist and handoff
 
-- [ ] Core pixel oracle covers alpha/outside/pair invariants, globally retouched edits and PNG-encoding-independent base identity.
-- [ ] Recipe save and performance Apply have separate revisions; both are fenced for composited publication.
-- [ ] Applied recipe snapshot is independent of future settings; recovery never blends finished planes again.
-- [ ] Fresh batches authoritatively replace frames/components; composed readiness requires all three current components, and failed retries preserve their prior snapshot.
-- [ ] Partial candidates, manual imports and dependent-group retries have explicit transitions.
-- [ ] TASK-36554 delivers the actual raw-frame pair viewer; TASK-36555 opens it and verifies native crop pixels, memory bounds and stale rejection.
-- [ ] Exact source coordinates survive view transforms; region selection is possible with keyboard and graphics fallback.
-- [ ] Neutral-base restriction, three-call consent and real-provider qualification limits are visible.
-- [ ] Migration/restore/edit/export boundaries and original source preservation have executable tests.
-- [ ] Every To Do task has outcome AC, only existing lower-numbered dependencies, linked ADR/spec/plan and no premature notes/checkmarks.
+- [x] Core pixel oracle covers alpha/outside/pair invariants, globally retouched edits and PNG-encoding-independent base identity.
+- [x] Recipe save and performance Apply have separate revisions; both are fenced for composited publication.
+- [x] Applied recipe snapshot is independent of future settings; recovery never blends finished planes again.
+- [x] Fresh batches authoritatively replace frames/components; composed readiness requires all three current components, and failed retries preserve their prior snapshot.
+- [x] Partial candidates, manual imports and dependent-group retries have explicit transitions.
+- [x] TASK-36554 delivers the actual raw-frame pair viewer; TASK-36555 opens it and verifies native crop pixels, memory bounds and stale rejection.
+- [x] Exact source coordinates survive view transforms; region selection is possible with keyboard and graphics fallback.
+- [x] Neutral-base restriction, three-call consent and real-provider qualification limits are visible.
+- [x] Migration/restore/edit/export boundaries and original source preservation have executable tests.
+- [x] Every To Do task has outcome AC, only existing lower-numbered dependencies, linked ADR/spec/plan and no premature notes/checkmarks.
 
-Planning self-review is documented separately; these boxes track implementation evidence. Product implementation has not started. The previously selected execution style remains inline, sequential and reviewed per task; wait for the user to start execution rather than reopen an execution-mode choice or create chats/subagents.
+Planning self-review is documented separately; these boxes track the implemented contracts, not unavailable live-provider quality. TASK-36551–36554 are Done after sequential inline self-review. TASK-36555 retains its explicit live-adapter acceptance criterion and In Progress status; all other available qualification work is complete. No chats/subagents were created.

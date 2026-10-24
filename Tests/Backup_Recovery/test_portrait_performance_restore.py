@@ -46,14 +46,73 @@ _CHECK = r"""
    assert settings.revision==evidence['regions_revision'] and asdict(settings.recipe)==evidence['recipe']
    assert record.composition_recipe==settings.recipe
    base=app.chachanotes_db.get_character_card_by_id(evidence['character'])['image']
-   components=recover_components(base,settings.recipe,record.frames)
-   with Image.new('RGB',(16,16),'yellow') as image,BytesIO() as output:
-    image.save(output,format='PNG');components['small']=compose_component(base,settings.recipe,'small',output.getvalue())
-   edited=assemble_components(base,settings.recipe,components)
-   revision=app.chachanotes_db.apply_character_portrait_performance(record.source,edited,expected_revision=record.revision,composition_recipe=settings.recipe,expected_regions_revision=settings.revision)
-   assert revision==record.revision+1
+   from dataclasses import replace
+   from textual.widgets import Button
+   from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+   from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+   from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import EditCharacterRequested
+   from tldw_chatbook.Widgets.Persona_Widgets.portrait_performance_editor import CharacterPerformanceRequested
+   from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+   from Tests.ProductionApp.portrait_qualification_helpers import QualificationImages
+   from tldw_chatbook.UI.Persona_Modules import portrait_regions
+   images=QualificationImages();images.install()
+   async def ready(predicate):
+    async with asyncio.timeout(20):
+     while not predicate():await asyncio.sleep(.02)
+   app.post_message(NavigateToScreen('ccp'));await ready(lambda:isinstance(app.screen,PersonasScreen))
+   personas=app.screen
+   await pilot.pause();await ready(lambda:bool(personas.query('PersonasPreviewPane')))
+   await personas._select_character(str(evidence['character']),'Restored radio')
+   personas.post_message(EditCharacterRequested(str(evidence['character'])))
+   await ready(lambda:personas._edit_mode=='edit' and personas._character_editor_is_active());await pilot.pause()
+   controller=personas._portrait_performance()
+   original_reference=portrait_regions.performance_reference
+   def reencoded(raw,digest):
+    reference=original_reference(raw,digest)
+    with Image.open(BytesIO(reference.content)) as image,BytesIO() as output:
+     image.save(output,format='PNG',compress_level=0)
+     encoded=output.getvalue()
+    assert encoded!=reference.content
+    return replace(reference,content=encoded)
+   portrait_regions.performance_reference=reencoded
+   assert await controller.handle(CharacterPerformanceRequested('prepare'))
+   assert controller._regions.revision==settings.revision and controller._regions.recipe==settings.recipe
+   assert controller.draft.composition and controller.draft.frames()==record.frames
+   before=controller.draft.frames()
+   retry=personas.run_worker(controller.handle(CharacterPerformanceRequested('regenerate',component='small')))
+   await ready(lambda:isinstance(app.screen,ConfirmationDialog))
+   app.screen.query_one('#confirm-button',Button).focus();await pilot.press('enter')
+   assert await retry.wait()
+   assert len(images.calls)==1 and controller.draft.can_apply
+   assert all(old.png==new.png for old,new in zip(before,controller.draft.frames()) if old.role not in {'small','blink_small'})
+   assert app.chachanotes_db.get_character_portrait_performance(character_id=evidence['character'],expression_key='neutral')==record
+   assert await controller.handle(CharacterPerformanceRequested('apply'))
    current=app.chachanotes_db.get_character_portrait_performance(character_id=evidence['character'],expression_key='neutral')
-   assert current.frames!=record.frames and recover_components(base,settings.recipe,current.frames)
+   assert current.revision==record.revision+1 and current.composition_recipe==settings.recipe
+   assert recover_components(controller._reference.content,settings.recipe,current.frames)
+   def changed_pixel(raw,digest):
+    reference=reencoded(raw,digest)
+    with Image.open(BytesIO(reference.content)) as image,BytesIO() as output:
+     r,g,b,a=image.getpixel((0,0));image.putpixel((0,0),(r^1,g,b,a));image.save(output,format='PNG');encoded=output.getvalue()
+    return replace(reference,content=encoded)
+   portrait_regions.performance_reference=changed_pixel
+   controller.discard();assert await controller.handle(CharacterPerformanceRequested('prepare'))
+   assert controller._regions is None and controller.draft.composition is None
+   assert not await controller.handle(CharacterPerformanceRequested('regenerate',component='small'))
+   assert len(images.calls)==1
+   portrait_regions.performance_reference=original_reference
+   with Image.open(BytesIO(base)) as image,BytesIO() as output:
+    image.save(output,format='PNG',compress_level=0);new_source=output.getvalue()
+   card=app.chachanotes_db.get_character_card_by_id(evidence['character'])
+   assert app.chachanotes_db.update_character_card(evidence['character'],{'image':new_source},card['version'])
+   controller.discard();assert await controller.handle(CharacterPerformanceRequested('prepare'))
+   assert controller._regions is None and not controller.draft.can_apply
+   card=app.chachanotes_db.get_character_card_by_id(evidence['character'])
+   assert app.chachanotes_db.update_character_card(evidence['character'],{'image':base},card['version'])
+   controller.discard();assert await controller.handle(CharacterPerformanceRequested('prepare'))
+   assert controller.draft.composition and controller._regions.revision==settings.revision
+   assert app.chachanotes_db.get_character_card_by_id(evidence['character'])['image']==base
+   (fixture/'portrait-restored-edit.json').write_text(json.dumps({'native_restore':True,'one_request_retry':len(images.calls),'equivalent_encoding_reused':True,'pixel_change_rejected':True,'source_change_rejected':True,'original_restored':True,'region_revision':settings.revision,'performance_revision':current.revision,'frames':[f.sha256 for f in current.frames]}))
    # The UUID is durable; exact DB-object scope still rejects a retired owner.
    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -64,7 +123,10 @@ _CHECK = r"""
     while not isinstance(app.screen,ChatScreen):await asyncio.sleep(.02)
    await pilot.pause()
    chat=app.screen
-   await chat._character._apply_console_character_choice_async(ConsoleCharacterChoice(evidence['character'],'Restored radio','new'))
+   from tldw_chatbook.Character_Chat.character_conversation_navigation import ResolvedLocalCharacterKey
+   from tldw_chatbook.UI.Console_Modules.wiring import _start_character_context_chat
+   key=ResolvedLocalCharacterKey(app.chachanotes_db.get_local_authority_id(),evidence['character'])
+   await _start_character_context_chat(chat,key,app.chachanotes_db,'Restored radio',lambda:app.chachanotes_db is personas.app_instance.chachanotes_db)
    store=chat._console_chat_store
    retired=SpeechPresentation(SpeechPresentationOwner('retired',object(),store.active_session_id,store.active_session_epoch(),evidence['character'],None,None))
    chat._message.bind_speech_presentation(retired,lambda:True)
@@ -96,3 +158,12 @@ def test_native_full_profile_preserves_six_frames_on_fresh_open(
     _run_f9_journey(
         tmp_path, False, False, False, native_package, flow=flow, open_child=child
     )
+    import json
+    import os
+    from pathlib import Path
+
+    report = (tmp_path / "portrait-restored-edit.json").read_text()
+    assert json.loads(report)["one_request_retry"] == 1
+    destination = os.environ.get("TLDW_PORTRAIT_RESTORE_EVIDENCE")
+    if destination:
+        Path(destination).write_text(report)
