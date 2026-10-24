@@ -9,6 +9,7 @@ contracts live in ``test_roleplay_item_list_app.py``.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -646,6 +647,137 @@ def test_a_fence_differs_when_any_field_differs():
         assert changed != fence
 
 
+# ---- The window state's one owner (TASK-33910.34) ----
+
+
+def _fence(query: str = "", generation: int = 1) -> frame_state.ListFence:
+    return frame_state.ListFence(
+        "characters", query, "name_asc", None, "local", None, generation
+    )
+
+
+def test_same_list_ignores_only_the_generation():
+    assert frame_state.same_list(_fence(generation=1), _fence(generation=9))
+    assert not frame_state.same_list(_fence("a"), _fence("b"))
+
+
+def test_a_leave_keeps_landed_rows_usable_and_forgets_the_owed_move():
+    window = frame_state.ListWindowState()
+    window.landing(_fence(generation=0))
+    window.want("end", read=True)
+    window.leave(_fence(generation=0))
+    assert window.generation == 1
+    assert window.rows_current(_fence(generation=1))
+    assert window.intent is None and not window.requested
+    assert window.returned() is False
+
+
+@pytest.mark.parametrize("stage", ["reading", "painting"])
+def test_a_leave_before_a_replace_has_landed_and_painted_reloads_on_the_return(
+    stage,
+):
+    window = frame_state.ListWindowState()
+    window.landing(_fence(generation=0))
+    if stage == "reading":
+        window.reload_started()
+        window.leave(_fence(generation=1))
+    else:
+        with window.painting():
+            window.leave(_fence(generation=0))
+    assert window.returned() is True
+    assert window.returned() is False
+
+
+def test_a_landing_drops_a_move_owed_on_another_list_and_replays_one_owed_on_its_own():
+    window = frame_state.ListWindowState()
+    window.landing(_fence("old", 1))
+    window.asked_for(window.want("end", read=True), _fence("old", 1))
+    window.landing(_fence("new", 2))
+    assert window.intent is None
+    owed = window.want("id", "character:7", read=True)
+    window.asked_for(owed, _fence("new", 3))
+    window.landing(_fence("new", 4))
+    assert window.take_replay(_fence("new", 4)) is owed
+    assert window.intent is None
+
+
+def test_a_move_the_screen_has_not_seen_or_that_read_nothing_is_never_replayed():
+    window = frame_state.ListWindowState()
+    unseen = window.want("end", read=True)
+    window.landing(_fence())
+    assert window.take_replay(_fence()) is None and window.intent is unseen
+    no_read = window.want("id", "character:7", read=False)
+    window.asked_for(no_read, _fence())
+    assert window.take_replay(_fence()) is None and window.intent is no_read
+
+
+def test_a_newer_move_forgets_the_owed_one_and_a_late_request_finds_none():
+    window = frame_state.ListWindowState()
+    stale = window.want("end", read=True)
+    window.user_moved()
+    window.asked_for(stale, _fence())
+    assert window.intent is None and stale.fence is None
+    assert window.take_end() is False
+
+
+def test_the_owed_row_is_met_once_it_arrives():
+    window = frame_state.ListWindowState()
+    window.want("id", "character:300", read=True)
+    assert window.arrived({"character:1"}) is None
+    assert window.arrived({"character:300"}) == "character:300"
+    assert window.intent is None
+
+
+def test_a_failed_read_answers_the_request_and_drops_only_a_move_that_read():
+    """Fix round 1 (review finding 1): a failed read owes no move any more, and
+    the list may ask again; a move that asked for no read (a row waiting for a
+    later list) stays."""
+    window = frame_state.ListWindowState()
+    window.asked_for(window.want("end", read=True), _fence())
+    window.read_failed()
+    assert window.intent is None and not window.requested
+    waiting = window.want("id", "character:7", read=False)
+    window.ask()
+    window.read_failed()
+    assert window.intent is waiting and not window.requested
+
+
+def test_a_blank_and_a_kind_switch_leave_no_rows_to_append_to():
+    window = frame_state.ListWindowState()
+    window.landing(_fence())
+    window.forget_rows()
+    assert not window.rows_current(_fence())
+    window.landing(_fence())
+    window.set_more(True)
+    window.want("end", read=True)
+    window.kind_switched()
+    assert window.rows_fence is None and window.intent is None
+    assert not window.more_available and not window.requested
+
+
+def test_the_window_state_has_no_second_copy_in_the_list_or_the_screen():
+    """AC#1: the five fields B2a split between the list and the screen, the
+    reload-on-return flag and the page generation live only in
+    ``ListWindowState`` (a name is matched whole, so ``_apply_pending_active``
+    is not ``_pending_active``)."""
+    names = (
+        "_more_available",
+        "_window_requested",
+        "_pending_active",
+        "_character_rows_fence",
+        "_deferred_window_wanted",
+        "_reload_on_return",
+        "_character_page_generation",
+    )
+    for module in (pane_module, personas_screen_module):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for name in names:
+            assert not re.search(rf"(?<![A-Za-z0-9_]){name}(?![A-Za-z0-9_])", source), (
+                module.__name__,
+                name,
+            )
+
+
 # ==== The pane half (B2a plan Task 3): RoleplayItemList on a styled host ====
 #
 # The host composes the pane alone (no PersonasScreen, so no bootstrap
@@ -984,6 +1116,56 @@ async def test_a_kind_switch_forgets_the_window_state():
         item_list.append_rows(_rows(201, 348))
         await pilot.pause()
         assert highlighted_item_id(pilot.app.screen) != "character:300"
+
+
+@pytest.mark.parametrize(
+    "move",
+    ["home", "up", "down", "pageup", "pagedown", "mark", "selection", "enter"],
+)
+async def test_a_newer_cursor_move_or_selection_forgets_an_owed_end(move):
+    """AC#2: End past the loaded rows owes the user the last row; each newer
+    cursor move or selection takes that back (``enter`` is Enter in the
+    search box, which puts the cursor on the first match)."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 200), total=348)
+        item_list.set_more_available(True)
+        item_list.focus()
+        await select_roleplay_item(pilot, pilot.app.screen, "character:5", load=False)
+        await pilot.press("end")
+        await pilot.pause()
+        assert item_list.window_state.intent is not None
+        if move == "mark":
+            await click_mark_column(pilot, pilot.app.screen, "character:5")
+        elif move == "selection":
+            pane.mark_active_row("character", "50")
+        elif move == "enter":
+            pane.focus_first_result()
+        else:
+            await pilot.press(move)
+        await pilot.pause()
+        assert item_list.window_state.intent is None
+
+
+async def test_a_re_mark_of_the_open_row_keeps_an_owed_end_and_enter_on_it_does_not():
+    """Fix round 1 (review finding 2): the screen re-marks the open row after a
+    background refresh (a Console save of the open card). That is no user
+    move, so End stays owed; Enter on that same row is one."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 200), total=348)
+        item_list.set_more_available(True)
+        item_list.focus()
+        pane.mark_active_row("character", "5")
+        await pilot.pause()
+        await pilot.press("end")
+        await pilot.pause()
+        owed = item_list.window_state.intent
+        assert owed is not None and owed.reason == "end"
+        pane.mark_active_row("character", "5")
+        assert item_list.window_state.intent is owed
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pilot.app.selected[-1:] == ["5"]
+        assert item_list.window_state.intent is None
 
 
 async def test_prompts_are_rebuilt_once_per_settled_width_and_only_where_changed(

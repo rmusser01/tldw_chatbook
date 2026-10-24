@@ -1420,7 +1420,6 @@ class PersonasScreen(BaseAppScreen):
         # count for the active (search, tag) filter, cached under
         # ``_count_cache_key`` so page-nav/sort reuse it and only a filter
         # change recomputes it.
-        self._character_page_generation: int = 0
         self._characters: list[dict] = []
         self._selected_server_character: tuple[str, dict] | None = None
         self._character_total: int = 0
@@ -1431,17 +1430,11 @@ class PersonasScreen(BaseAppScreen):
         self._character_unfiltered_total: int | None = None
         # The last character reload failed: the title reads "(?)" (spec 1.4.2).
         self._character_list_failed: bool = False
-        # The fence of the list the loaded rows (``_characters`` and the items
-        # list) belong to, set by every replace: an append extends only that
-        # list (spec 1.5.6 "Window fence").
-        self._character_rows_fence: frame_state.ListFence | None = None
-        # An End or a load-through asked for while a newer list was still
-        # loading, with that list's fence; replayed once that list lands.
-        self._deferred_window_wanted: (
-            tuple[frame_state.ListFence, str, str | None] | None
-        ) = None
-        # A leave cancelled a replace; the return reloads the list from its anchor.
-        self._reload_on_return: bool = False
+        # The items list's window state, shared with the list (TASK-33910.34):
+        # the page generation, the fence of the list the loaded rows belong
+        # to, rows past the loaded end, the owed End or load-through and the
+        # reload a leave leaves for the return (spec 1.5.6).
+        self._window_state = frame_state.ListWindowState()
         self._count_cache_key: tuple | None = None
         self._character_tags: list[str] = []
         self._profiles: list[dict] = []
@@ -1628,6 +1621,7 @@ class PersonasScreen(BaseAppScreen):
                 yield library_handle
 
                 library_pane = PersonasLibraryPane(
+                    window_state=self._window_state,
                     id="personas-library-pane",
                     classes="destination-workbench-pane",
                 )
@@ -2290,7 +2284,7 @@ class PersonasScreen(BaseAppScreen):
             return
         await self._drain_actor_pack_creation()
         self._advance_persona_buddy_session()
-        self._character_page_generation += 1
+        self._window_state.reload_started()
         active_mode = self.state.active_mode
         self.runtime_backend = normalized
         self._selected_server_character = None
@@ -2317,6 +2311,7 @@ class PersonasScreen(BaseAppScreen):
                     [],
                     total=0,
                     more=False,
+                    blank=True,
                 )
             await self._apply_mode(active_mode)
             self._sync_title_and_console_actions()
@@ -2359,24 +2354,18 @@ class PersonasScreen(BaseAppScreen):
     def _end_visit(self) -> None:
         """The visit-lifecycle leave hook (spec 4.11), with B2a's first duties.
 
-        Clears the marks of every kind (they are never saved, R16) and
-        cancels the window worker; the generation bump fences a window whose
-        read is still running in its thread. Runs on unmount and on a
-        suspend that leaves Roleplay, and is safe to run twice. Later slices
-        extend it: B5b-2 closes More actions, B7 ends the work session and
-        flushes the pane preferences.
+        Clears the marks of every kind (they are never saved, R16), cancels
+        the window worker and stops the search debounce. The window state's
+        leave fences a window whose read is still running in its thread and
+        forgets the owed End or load-through; a list whose replace had not
+        landed and painted reloads on the return (TASK-33910.34). Runs on
+        unmount and on a suspend that leaves Roleplay, and is safe to run
+        twice. Later slices extend it: B5b-2 closes More actions, B7 ends the
+        work session and flushes the pane preferences.
         """
-        rows_current = self._character_rows_fence == self._list_fence()
-        self._character_page_generation += 1
+        self._window_state.leave(self._list_fence())
         self.workers.cancel_group(self, _LIST_WINDOW_GROUP)
-        if rows_current:
-            # The loaded rows still belong to this query, sort and tag: the
-            # bump only fences reads still in flight.
-            self._character_rows_fence = self._list_fence()
-            self._deferred_window_wanted = None
-        else:
-            # A replace was cancelled by the leave: reload on return.
-            self._reload_on_return = True
+        self._cancel_search_debounce()
         self._marked_rows = ()
         try:
             library = self.query_one(PersonasLibraryPane)
@@ -2391,9 +2380,8 @@ class PersonasScreen(BaseAppScreen):
         the flag. No ``super()``: the dispatcher calls every handler along the
         MRO (TASK-31418).
         """
-        if not self._reload_on_return:
+        if not self._window_state.returned():
             return
-        self._reload_on_return = False
         if self.state.active_mode == "characters" and self.is_attached:
             await self.refresh_character_library_list(None)
 
@@ -2562,12 +2550,18 @@ class PersonasScreen(BaseAppScreen):
             tag=self.state.tag_filter,
             runtime_source=self.state.runtime_source,
             server_id=self._active_server_target() if server else None,
-            generation=self._character_page_generation,
+            generation=self._window_state.generation,
         )
 
     def _list_fence_is_current(self, fence: frame_state.ListFence) -> bool:
         """Whether a window's fence still matches the live list."""
         return fence == self._list_fence()
+
+    def _window_read_failed(self, fence: frame_state.ListFence) -> None:
+        """A window read failed or could not start: End or a load-through it
+        was for is owed no more, and the list may ask again (TASK-33910.34)."""
+        if self._list_fence_is_current(fence):
+            self._window_state.read_failed()
 
     def _character_title(self) -> str:
         """The items pane's border title for characters (spec 1.5.1, 1.4.2)."""
@@ -3791,18 +3785,16 @@ class PersonasScreen(BaseAppScreen):
         if message.reason == "id" and kind != "character":
             return
         fence = self._list_fence()
-        if fence != self._character_rows_fence:
+        window = self._window_state
+        # End or a load-through belongs to the list the user waits for.
+        window.asked_for(message.intent, fence)
+        if not window.rows_current(fence):
             # A newer list (a sort, search, tag, source or write reload) has
-            # not landed, so the loaded rows are not its rows: an append would
-            # lay its rows onto them, and starting it would cancel that reload
-            # (one exclusive group). End and a load-through are asked again
-            # once the reload lands; a near-end move asks again by itself.
-            if message.reason != "near_end":
-                self._deferred_window_wanted = (
-                    fence,
-                    message.reason,
-                    message.target_id,
-                )
+            # not landed and painted, so the loaded rows are not its rows: an
+            # append would lay its rows onto them, and starting it would
+            # cancel that reload (one exclusive group). End and a load-through
+            # are asked again once a reload of that list lands; a near-end
+            # move asks again by itself.
             return
         self._start_list_window(
             frame_state.ListWindowRequest(
@@ -3857,6 +3849,7 @@ class PersonasScreen(BaseAppScreen):
             return
         db = self._character_db()
         if db is None:
+            self._window_read_failed(fence)
             return
         term = fence.query.strip()
         search = quote_fts5_prefix(term) if term else None
@@ -3916,6 +3909,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._list_fence_is_current(fence):
                 return
             logger.opt(exception=True).warning("Character window load failed.")
+            self._window_read_failed(fence)
             if request.replace:
                 # A failed reload shows no rows of an older sort, tag or source.
                 await self._apply_character_window(
@@ -3944,8 +3938,11 @@ class PersonasScreen(BaseAppScreen):
         """
         fence = request.fence
         if request.replace:
-            await self._apply_character_window(request, [], total=0, more=False)
+            await self._apply_character_window(
+                request, [], total=0, more=False, blank=True
+            )
         if fence.server_id is None:
+            self._window_read_failed(fence)
             return
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         query = fence.query
@@ -3953,6 +3950,7 @@ class PersonasScreen(BaseAppScreen):
             service, "search_characters" if query else "list_characters", None
         )
         if not callable(load):
+            self._window_read_failed(fence)
             return
         size = _SERVER_CHARACTER_SEARCH_MAX_RESULTS
         records: list[dict] = []
@@ -3991,6 +3989,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._list_fence_is_current(fence):
                 return
             logger.warning("Server character page load failed.")
+            self._window_read_failed(fence)
             if request.replace:
                 await self._apply_character_window(
                     request, [], total=0, more=False, failed=True
@@ -4021,15 +4020,19 @@ class PersonasScreen(BaseAppScreen):
         total_known: bool = True,
         cache_key: tuple | None = None,
         failed: bool = False,
+        blank: bool = False,
     ) -> None:
         """Commit one fenced character window to the screen and the list (spec 1.5.6).
 
         A replace calls ``set_options`` once (through ``update_rows``) and
         restores the cursor and top row by id; an append calls ``add_options``
         once with the ids not yet listed. Screen state is committed before the
-        pane is looked up, so a screen without its pane still records it.
+        pane is looked up, so a screen without its pane still records it. A
+        ``blank`` replace empties the list before a reload reads; the empty
+        list is no list's rows yet, so no append extends it (TASK-33910.34).
         """
         fence = request.fence
+        window = self._window_state
         async with self._render_lock:
             if not self._list_fence_is_current(fence):
                 return
@@ -4039,9 +4042,12 @@ class PersonasScreen(BaseAppScreen):
                 self._character_total = total
                 self._character_total_known = total_known
                 self._character_list_failed = failed
-                self._character_rows_fence = fence
+                if blank:
+                    window.forget_rows()
+                else:
+                    window.landing(fence)
             else:
-                other_list = fence != self._character_rows_fence
+                other_list = fence != window.rows_fence
                 if other_list or request.offset != len(self._characters):
                     # The loaded rows belong to another list, or another
                     # window landed first: an append never extends them.
@@ -4061,17 +4067,18 @@ class PersonasScreen(BaseAppScreen):
                 fence.query or fence.tag
             )
             if request.replace:
-                await library.update_rows(
-                    rows,
-                    total=(self._character_unfiltered_total or total)
-                    if filtered
-                    else total,
-                    noun="characters",
-                    filtered=filtered,
-                    matched=total,
-                    title=self._character_title(),
-                    anchor=request.anchor,
-                )
+                with window.painting():
+                    await library.update_rows(
+                        rows,
+                        total=(self._character_unfiltered_total or total)
+                        if filtered
+                        else total,
+                        noun="characters",
+                        filtered=filtered,
+                        matched=total,
+                        title=self._character_title(),
+                        anchor=request.anchor,
+                    )
                 if not self._list_fence_is_current(fence):
                     # The fence moved while the rows painted (a mode, query,
                     # sort, tag or source change): the screen keeps none of
@@ -4080,7 +4087,7 @@ class PersonasScreen(BaseAppScreen):
                     self._count_cache_key = None
                     self._characters = []
                     self._character_total = 0
-                    self._character_rows_fence = None
+                    window.forget_rows()
                     self._update_purpose_line()
                     return
             else:
@@ -4108,18 +4115,16 @@ class PersonasScreen(BaseAppScreen):
                     move_cursor=request.anchor is None,
                     load_through=False,
                 )
-            if request.to_end:
+            if request.to_end and window.take_end():
                 library.item_list.move_to_end()
-            deferred = self._deferred_window_wanted
-            if request.replace and deferred is not None and (records or more):
-                # End or a load-through asked for while this list loaded:
-                # replay it on the landed list (an older list's is dropped).
-                self._deferred_window_wanted = None
-                asked_for, reason, target_id = deferred
-                if asked_for == fence and reason == "end":
-                    library.item_list.action_last()
-                elif asked_for == fence and target_id is not None:
-                    library.item_list.set_active(target_id)
+            replay = (
+                window.take_replay(fence) if request.replace and not blank else None
+            )
+            if replay is not None:
+                # End or a load-through this list's reload deferred or
+                # cancelled, with no newer cursor move or selection since:
+                # ask for it again on the landed list (TASK-33910.34).
+                library.item_list.ask_again(replay)
 
     async def _reload_character_page(
         self, *, anchor: frame_state.ListAnchor | None = None
@@ -4130,7 +4135,7 @@ class PersonasScreen(BaseAppScreen):
         anchor and reads one window. A write passes the list's anchor, so the
         run loads through every row that was loaded before applying once.
         """
-        self._character_page_generation += 1
+        self._window_state.reload_started()
         await self._run_list_window(
             frame_state.ListWindowRequest(
                 fence=self._list_fence(), offset=0, replace=True, anchor=anchor

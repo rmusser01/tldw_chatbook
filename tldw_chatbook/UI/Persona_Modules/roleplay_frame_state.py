@@ -15,8 +15,9 @@ way into a markup-on surface: the shared header's status chip gets
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -929,3 +930,187 @@ class ListWindowRequest:
     anchor: ListAnchor | None = None
     target_id: str | None = None
     to_end: bool = False
+
+
+def same_list(first: ListFence, second: ListFence) -> bool:
+    """Whether two fences name the same list (mode, query, sort, tag, source), any generation."""
+    return replace(first, generation=second.generation) == second
+
+
+@dataclass(eq=False)
+class WindowIntent:
+    """A cursor move the items list owes the user once rows arrive (spec 1.5.6).
+
+    ``reason`` is ``"end"`` (End past the loaded rows) or ``"id"`` (a row to
+    load, select or restore; ``target_id`` is its option id). Enter's "land on
+    the first match" (TASK-33910.35) is meant to be one more reason here.
+    ``read`` says a window was asked for it; ``fence`` is the list it belongs
+    to, set when the screen sees that request (None until then).
+    """
+
+    reason: str
+    target_id: str | None = None
+    read: bool = False
+    fence: ListFence | None = None
+
+
+class ListWindowState:
+    """The items list's window state, with one owner (TASK-33910.34).
+
+    The screen creates it and its items list shares it, so every reset is a
+    transition here: a reload (``reload_started``, then ``landing``), a kind
+    switch, a leave and the return. Plain state: no Textual, no I/O.
+
+    Attributes:
+        generation: Bumped by every reload and leave. It is part of each
+            fence, so a read still in flight is dropped when it lands.
+        rows_fence: The list the loaded rows belong to (None: no list's).
+        more_available: Rows past the loaded end exist.
+        requested: A window is asked for and not answered yet (the latch
+            that asks once per approach to the loaded end).
+        intent: The cursor move owed to the user, if any.
+        reload_on_return: A leave found the list's rows not landed; the
+            return reloads it.
+    """
+
+    def __init__(self) -> None:
+        self.generation = 0
+        self.rows_fence: ListFence | None = None
+        self.more_available = False
+        self.requested = False
+        self.intent: WindowIntent | None = None
+        self.reload_on_return = False
+        self._painting = False
+
+    # ---- the rows ----
+
+    def reload_started(self) -> None:
+        """A reload (or a source change) starts: reads in flight are fenced out."""
+        self.generation += 1
+
+    def rows_current(self, live: ListFence) -> bool:
+        """Whether the loaded rows are ``live``'s list, painted: only then may an append extend them."""
+        return self.rows_fence == live and not self._painting
+
+    def landing(self, fence: ListFence) -> None:
+        """A replace's rows are ``fence``'s list's rows now.
+
+        A move owed on another list (another sort, search, tag or source) is
+        dropped before they paint, so it never moves the cursor on this one;
+        one owed on this list stays for ``take_replay``.
+        """
+        self.rows_fence = fence
+        owed = self.intent.fence if self.intent is not None else None
+        if owed is not None and not same_list(owed, fence):
+            self.intent = None
+
+    @contextmanager
+    def painting(self) -> Iterator[None]:
+        """While a replace paints, its rows are not current (a leave reloads on the return)."""
+        self._painting = True
+        try:
+            yield
+        finally:
+            self._painting = False
+
+    def forget_rows(self) -> None:
+        """The loaded rows are no list's (a server reload's blank, or a paint the fence outran)."""
+        self.rows_fence = None
+
+    def set_more(self, more: bool) -> None:
+        """Whether rows past the loaded end exist; the asked-for window is answered."""
+        self.more_available = more
+        self.requested = False
+
+    def answered(self) -> None:
+        """An appended window answered the request."""
+        self.requested = False
+
+    def read_failed(self) -> None:
+        """A window read failed or could not start: the request is answered,
+        and an End or a load-through that asked for a read is owed no more."""
+        self.requested = False
+        if self.intent is not None and self.intent.read:
+            self.intent = None
+
+    def kind_switched(self) -> None:
+        """A new kind starts with no window state (B2a's final review, I1)."""
+        self.rows_fence = None
+        self.more_available = False
+        self.requested = False
+        self.intent = None
+
+    # ---- the owed cursor move ----
+
+    def ask(self) -> None:
+        """One window is asked for (the cursor or scroll neared the loaded end)."""
+        self.requested = True
+
+    def want(
+        self, reason: str, target_id: str | None = None, *, read: bool
+    ) -> WindowIntent:
+        """Owe the user a move (End or a load-through); ``read`` asks for a window too."""
+        self.intent = WindowIntent(reason, target_id, read)
+        if read:
+            self.requested = True
+        return self.intent
+
+    def asked_for(self, intent: WindowIntent | None, fence: ListFence) -> None:
+        """The screen saw ``intent``'s request: it belongs to the list the user waits for."""
+        if intent is not None and intent is self.intent:
+            intent.fence = fence
+
+    def user_moved(self) -> None:
+        """A newer cursor move or selection: the owed move is no longer wanted."""
+        self.intent = None
+
+    def arrived(self, loaded: Collection[str]) -> str | None:
+        """The owed row's option id once it is loaded (the move is then met)."""
+        intent = self.intent
+        if intent is None or intent.reason != "id" or intent.target_id not in loaded:
+            return None
+        self.intent = None
+        return intent.target_id
+
+    def take_end(self) -> bool:
+        """Whether End's load-through still owes the move to the last row (it is then met)."""
+        if self.intent is None or self.intent.reason != "end":
+            return False
+        self.intent = None
+        return True
+
+    def take_replay(self, fence: ListFence) -> WindowIntent | None:
+        """The move to ask for again once a replace of its list has landed.
+
+        End or a load-through whose read that reload deferred or cancelled. A
+        move with no read, or whose request the screen has not seen yet, stays.
+        """
+        intent = self.intent
+        if intent is None or not intent.read or intent.fence is None:
+            return None
+        if not same_list(intent.fence, fence):
+            return None
+        self.intent = None
+        return intent
+
+    # ---- the visit ----
+
+    def leave(self, live: ListFence) -> None:
+        """The visit ends (spec 4.11): fence reads in flight, forget the owed move.
+
+        Rows that were ``live``'s list, painted, stay usable after the return;
+        otherwise (a replace was reading or painting) the return reloads.
+        """
+        current = self.rows_current(live)
+        self.generation += 1
+        if current:
+            self.rows_fence = replace(live, generation=self.generation)
+        else:
+            self.reload_on_return = True
+        self.intent = None
+        self.requested = False
+
+    def returned(self) -> bool:
+        """The visit resumed: whether the list reloads (answered once)."""
+        reload, self.reload_on_return = self.reload_on_return, False
+        return reload

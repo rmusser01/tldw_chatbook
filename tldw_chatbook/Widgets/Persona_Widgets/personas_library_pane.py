@@ -106,8 +106,9 @@ class RoleplayItemList(OptionList):
     """The line-based Roleplay items list (spec 1.5, D14 = A).
 
     Owns the rows (``LibraryRow`` per option id), their prompts, the loaded
-    row, the marks per kind and the window requests; the pane and the screen
-    decide what rows to show.
+    row and the marks per kind; the pane and the screen decide what rows to
+    show. The window state (rows past the loaded end, the asked-for window,
+    the owed cursor move) lives in a ``ListWindowState`` the screen shares.
     """
 
     BINDINGS = [
@@ -122,6 +123,7 @@ class RoleplayItemList(OptionList):
         ``reason`` is ``"near_end"`` (the cursor or scroll came within a screen
         of the loaded end), ``"end"`` (End past the loaded rows) or ``"id"``
         (a row to load, select or restore is not loaded yet; ``target_id``).
+        ``intent`` is the cursor move End or a load-through owes the user.
         """
 
         def __init__(
@@ -130,13 +132,17 @@ class RoleplayItemList(OptionList):
             *,
             reason: str,
             target_id: str | None = None,
+            intent: frame_state.WindowIntent | None = None,
         ) -> None:
             super().__init__()
             self.item_list = item_list
             self.reason = reason
             self.target_id = target_id
+            self.intent = intent
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self, *, window_state: frame_state.ListWindowState | None = None, **kwargs
+    ) -> None:
         super().__init__(markup=False, **kwargs)
         self.add_class("roleplay-items-list")
         self._rows: dict[str, LibraryRow] = {}
@@ -145,11 +151,11 @@ class RoleplayItemList(OptionList):
         self._kind = "character"
         self._kind_total = 0
         self._active_id: str | None = None
-        self._pending_active: str | None = None
         self._density = 1
         self._width = frame_state.UNMEASURED_WIDTH
-        self._more_available = False
-        self._window_requested = False
+        self._window = (
+            window_state if window_state is not None else frame_state.ListWindowState()
+        )
         self._width_check_scheduled = False
         self._tooltip_key: tuple[str, ...] | None = None
 
@@ -173,7 +179,12 @@ class RoleplayItemList(OptionList):
     @property
     def more_available(self) -> bool:
         """Whether rows past the loaded end exist."""
-        return self._more_available
+        return self._window.more_available
+
+    @property
+    def window_state(self) -> frame_state.ListWindowState:
+        """The window state this list shares with its screen (TASK-33910.34)."""
+        return self._window
 
     def row(self, option_id: str) -> LibraryRow | None:
         """The loaded row for ``option_id``."""
@@ -206,14 +217,12 @@ class RoleplayItemList(OptionList):
         """Switch the kind the list shows; marks of other kinds are kept.
 
         A new kind starts with no window state: rows past the loaded end, an
-        asked-for window and a row waiting to load belong to the old kind's
+        asked-for window and an owed cursor move belong to the old kind's
         list (B2a's final review, I1: End did nothing in Lore books after a
         partial Characters window).
         """
         if kind != self._kind:
-            self._more_available = False
-            self._window_requested = False
-            self._pending_active = None
+            self._window.kind_switched()
         self._kind = kind
 
     def _measured_width(self) -> int | None:
@@ -301,7 +310,7 @@ class RoleplayItemList(OptionList):
                     for option_id in new_ids
                 ]
             )
-        self._window_requested = False
+        self._window.answered()
         self._apply_pending_active()
         self._position_changed()
         return dropped
@@ -377,31 +386,46 @@ class RoleplayItemList(OptionList):
                 is marked when a later window brings it, never fetched.
 
         Returns:
-            False when the row is not loaded yet: with ``load_through`` it is
-            kept as pending, and a window is requested if rows past the loaded
-            end exist.
+            False when the row is not loaded yet: with ``load_through`` the
+            list owes the user the move to it, and a window is requested if
+            rows past the loaded end exist (also for the open row marked
+            again, as on dev). A selection of another loaded row replaces any
+            owed move; the screen marking the loaded open row again (a
+            background refresh) leaves it.
         """
         previous, self._active_id = self._active_id, option_id
         if previous != option_id:
             self._refresh_rows([x for x in (previous, option_id) if x is not None])
         self._position_changed()
         if option_id is None or option_id in self._rows:
-            self._pending_active = None
+            if load_through and previous != option_id:
+                self._window.user_moved()
             if option_id is not None and move_cursor:
                 self.highlighted = self.get_option_index(option_id)
             return True
-        if not load_through:
-            return False
-        self._pending_active = option_id
-        if self._more_available:
-            self._request_window("id", option_id)
+        if load_through:
+            self._owe_row(option_id)
         return False
 
+    def _owe_row(self, option_id: str) -> None:
+        read = self._window.more_available
+        intent = self._window.want("id", option_id, read=read)
+        if read:
+            self._request_window("id", option_id, intent)
+
+    def ask_again(self, intent: frame_state.WindowIntent) -> None:
+        """Ask again for an owed move a reload deferred or cancelled (once that list lands)."""
+        if intent.reason == "end":
+            self.action_last()
+        elif intent.target_id in self._rows:
+            self.set_active(intent.target_id)
+        elif intent.target_id is not None:
+            self._owe_row(intent.target_id)
+
     def _apply_pending_active(self) -> None:
-        pending = self._pending_active
-        if pending is not None and pending in self._rows:
-            self._pending_active = None
-            self.set_active(pending)
+        arrived = self._window.arrived(self._rows)
+        if arrived is not None:
+            self.set_active(arrived)
 
     def highlight(self, option_id: str) -> bool:
         """Move only the cursor to ``option_id`` (False when it is not loaded)."""
@@ -423,25 +447,28 @@ class RoleplayItemList(OptionList):
 
     def set_more_available(self, more: bool) -> None:
         """Whether rows past the loaded end exist (set by the screen after each window)."""
-        self._more_available = more
-        self._window_requested = False
+        self._window.set_more(more)
 
-    def reset_window_request(self) -> None:
-        """Forget a window request whose read was cancelled (the visit ended)."""
-        self._window_requested = False
-
-    def _request_window(self, reason: str, target_id: str | None = None) -> None:
-        self._window_requested = True
-        self.post_message(self.WindowWanted(self, reason=reason, target_id=target_id))
+    def _request_window(
+        self,
+        reason: str,
+        target_id: str | None = None,
+        intent: frame_state.WindowIntent | None = None,
+    ) -> None:
+        self.post_message(
+            self.WindowWanted(self, reason=reason, target_id=target_id, intent=intent)
+        )
 
     def _check_near_end(self) -> None:
-        if not self._more_available or self._window_requested or not self.option_count:
+        window = self._window
+        if not window.more_available or window.requested or not self.option_count:
             return
         lines = max(1, self._density)
         page = max(1, self.scrollable_content_region.height // lines)
         bottom = int(self.scroll_y) // lines + page
         cursor = self.highlighted if self.highlighted is not None else 0
         if self.option_count - max(bottom, cursor) <= page:
+            window.ask()
             self._request_window("near_end")
 
     def watch_highlighted(self, highlighted: int | None) -> None:
@@ -454,10 +481,38 @@ class RoleplayItemList(OptionList):
 
     def action_last(self) -> None:
         """End: load every remaining window first when rows are not all loaded."""
-        if self._more_available:
-            self._request_window("end")
+        if self._window.more_available:
+            self._request_window("end", None, self._window.want("end", read=True))
             return
+        self._window.user_moved()
         super().action_last()
+
+    # A cursor key, or Enter on a row, is a newer move: an End or a
+    # load-through still owed is not wanted any more (TASK-33910.34).
+
+    def action_select(self) -> None:
+        self._window.user_moved()
+        super().action_select()
+
+    def action_first(self) -> None:
+        self._window.user_moved()
+        super().action_first()
+
+    def action_cursor_up(self) -> None:
+        self._window.user_moved()
+        super().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self._window.user_moved()
+        super().action_cursor_down()
+
+    def action_page_up(self) -> None:
+        self._window.user_moved()
+        super().action_page_up()
+
+    def action_page_down(self) -> None:
+        self._window.user_moved()
+        super().action_page_down()
 
     # ---- width (spec 1.5.6 "Many rows loaded") ----
 
@@ -539,6 +594,7 @@ class RoleplayItemList(OptionList):
         # The meta can be a frame stale after set_options shrank the list.
         if index is None or offset is None or not 0 <= index < self.option_count:
             return
+        self._window.user_moved()  # the click moves the cursor
         if offset.x not in frame_state.gutter_mark_columns():
             return
         event.prevent_default()
@@ -642,8 +698,11 @@ class PersonasLibraryPane(Vertical):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self, *, window_state: frame_state.ListWindowState | None = None, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
+        self._window_state = window_state
         self._import_visible: bool = True
         self._sort_visible: bool = True
         self._status_key: tuple[str, str] | None = None
@@ -796,7 +855,9 @@ class PersonasLibraryPane(Vertical):
         status = Vertical(id="personas-library-status")
         status.display = False
         yield status
-        yield RoleplayItemList(id="personas-library-rows")
+        yield RoleplayItemList(
+            id="personas-library-rows", window_state=self._window_state
+        )
         marks = Horizontal(id="personas-library-marks")
         marks.display = False
         with marks:
@@ -1076,6 +1137,7 @@ class PersonasLibraryPane(Vertical):
         """Into the list with the cursor on the first row (Enter in the search box)."""
         item_list = self.item_list
         item_list.focus()
+        item_list.window_state.user_moved()
         if item_list.option_count:
             item_list.highlighted = 0
 
@@ -1109,7 +1171,6 @@ class PersonasLibraryPane(Vertical):
 
     def end_visit(self) -> None:
         """The visit ended (spec 4.11 leave hook): every kind's marks go."""
-        self.item_list.reset_window_request()
         if self.item_list.clear_all_marks():
             self.marks_changed()
 
