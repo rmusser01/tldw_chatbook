@@ -21680,3 +21680,10 @@ attributes they touch. Do not list them from the domain model. Read mutable
 inputs by value at read time, because a held reference compares equal to
 itself after an in-place write. Give each input a test that changes it alone
 and ticks through the real gate.
+
+
+## Census prose can be a machine-readable contract
+
+**Incident (PR #3228, 2026-10-23).** The seventeen-shard follow-up passed 140 targeted CI checks, then a historical-header wording cleanup removed the `the 92` suffix in `ui_pr_gate_census.txt`. The existing replay-boundary test parses that suffix; independent review reproduced its failure although every selector and Python AST was unchanged. Restoring the parseable header and rerunning the affected modules repaired the regression before publication.
+
+**What to do.** Search readers before editing census headers or other structured comments. A prior test receipt does not qualify a later prose edit when tests or scripts parse that prose; rerun those consumers after the final edit.

@@ -294,8 +294,9 @@ Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_abou
 # At that step the Phase 7 block was rebalanced from two green CI runs; its
 # first entry and every entry outside that block kept their relative order.
 # All 415 prior selections remained covered; 430 entries retained every case.
-# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign)
-# introduced 92 entries, since spread across this census by capacity replays.
+# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 92
+# entries introduced here retain this parseable replay boundary. Their
+# membership/order has since been rebalanced across the census.
 # All current entries are dealt round-robin over 17 shards; see
 # scripts/ui_lane_shard_replay.py and check_ui_pr_gate_census.py.
 # Each keeps the comment that names what it pins, which the replay's --write
