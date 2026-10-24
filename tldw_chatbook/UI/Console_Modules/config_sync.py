@@ -3,6 +3,7 @@
 Also decides how often the 0.2 s poll pays for it (TASK-33620.15.1).
 """
 
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, nullcontext
@@ -186,6 +187,8 @@ class _Cadence:
         self.owed = False  # A poll tick skipped since the last projection.
         self.published = 0  # Snapshot publications handed to the poll (an input).
         self.waiting_since: float | None = None  # First request left to the poll.
+        self.commit_synced: float | None = None  # The commit a sync already ran in.
+        self.commit_holding = False  # Syncs wait until the poll's next tick.
 
 
 def _cadence(screen: Any) -> _Cadence:
@@ -203,12 +206,17 @@ async def run_periodic_console_sync(
 
     Args:
         sync: Starts the poll's sync (the screen's ``sync_poll_display_ui``).
-        *args: Passed to ``sync``.
+        *args: Passed to ``sync``; the first is the Console screen (or
+            ``sync`` is a method bound to it).
 
     Returns:
         Whatever the sync returned (False: a deferred display, which the
-        poll leaves to its replay).
+        poll leaves to its replay). False, with no sync, for a tick that
+        waits out a send's durable commit (``_held_for_durable_commit``).
     """
+    screen = args[0] if args else getattr(sync, "__self__", None)
+    if screen is not None and _held_for_durable_commit(screen, poll=True):
+        return False
     token = _POLL_TICK.set(True)
     try:
         return await sync(*args)
@@ -216,7 +224,68 @@ async def run_periodic_console_sync(
         _POLL_TICK.reset(token)
 
 
-def begin_console_sync(screen: Any) -> None:
+def _durable_commit_since(screen: Any) -> float | None:
+    """When the screen's store began the durable commit now in flight, if any.
+
+    Only while the run poll ticks: a sync held for the commit is served by
+    a later poll tick, so with no poll nothing is held. Read without an
+    import: the commit's window lives in ``console_native_commit``, and a
+    process that never loaded it has never committed.
+    """
+    if getattr(screen, "_console_transcript_sync_timer", None) is None:
+        return None
+    commits = sys.modules.get("tldw_chatbook.Chat.console_native_commit")
+    if commits is None:
+        return None
+    return commits.durable_commit_started_at(getattr(screen, "_console_chat_store", None))
+
+
+def _held_for_durable_commit(screen: Any, *, poll: bool) -> bool:
+    """Whether a whole sync waits out the send's durable commit now in flight.
+
+    TASK-33620.15.4 (measured live 2026-10-23, 30 sends per arm): a send's
+    durable turn commit runs on a worker thread for 140-180 ms while the
+    send waits on it, and UI-loop work in that window lengthens it. On the
+    base build the poll's first tick in the commit deferred to a whole-sync
+    replay 0.2 s later, and every sync until that replay returned at once:
+    the loop stayed quiet for the rest of the commit by accident. Without
+    that deferral, the first tick's re-armed sync and the next tick painted
+    inside the commit, which then took 218 ms instead of 180 ms, and warm
+    sends reached the provider a median 31 ms later.
+
+    So, while the run poll ticks and a commit is in flight, the commit's
+    first whole sync runs (as the base's first tick did) and opens a hold
+    that lasts until the poll's next tick: explicit syncs started meanwhile
+    leave their request (``_console_sync_requested``) for later, and that
+    next tick skips and ends the hold. The tick after it runs and serves
+    what was held, two poll intervals at most after the first sync, while
+    the base's replay took one, so nothing is shown more than one poll
+    interval later than on the base. Each commit holds once; the hold ends
+    early if the commit does.
+
+    Args:
+        screen: The Console screen whose sync is starting.
+        poll: The run poll's own tick (else an explicit sync).
+
+    Returns:
+        True when this sync waits for a later tick.
+    """
+    cadence = _cadence(screen)
+    since = _durable_commit_since(screen)
+    if since is None:
+        cadence.commit_synced, cadence.commit_holding = None, False
+        return False
+    if cadence.commit_synced != since:  # The commit's first sync runs.
+        cadence.commit_synced, cadence.commit_holding = since, True
+        return False
+    if not cadence.commit_holding:
+        return False
+    if poll:
+        cadence.commit_holding = False  # This tick skips; the next one runs.
+    return True
+
+
+def begin_console_sync(screen: Any) -> bool:
     """Classify a sync at its entry; every sync but the poll's asks to project.
 
     Called before the sync's first await, so the poll's mark is consumed by
@@ -225,6 +294,12 @@ def begin_console_sync(screen: Any) -> None:
 
     Args:
         screen: The Console screen whose sync is starting.
+
+    Returns:
+        True when an explicit sync waits for a later poll tick because a
+        send's durable commit is in flight (``_held_for_durable_commit``);
+        the caller records the request and returns. The poll's own tick was
+        decided before its sync started.
     """
     poll = _POLL_TICK.get()
     if poll:
@@ -232,6 +307,7 @@ def begin_console_sync(screen: Any) -> None:
     else:
         _cadence(screen).requested += 1
     _POLL_SYNC.set(poll)
+    return not poll and _held_for_durable_commit(screen, poll=False)
 
 
 def warm_run_presentation(screen: Any) -> None:
