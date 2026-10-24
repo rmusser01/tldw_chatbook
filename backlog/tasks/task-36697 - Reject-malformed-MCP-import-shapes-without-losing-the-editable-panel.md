@@ -1,7 +1,7 @@
 ---
 id: TASK-36697
 title: Reject malformed MCP import shapes without losing the editable panel
-status: In Progress
+status: Done
 created_date: 2026-10-24 17:34
 labels:
 - textual-patterns
@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 20:16
+updated_date: 2026-10-24 21:44
 ---
 
 ## Description
@@ -68,4 +68,7 @@ The shared MCP JSON parser now rejects malformed non-null args/env containers wi
 Verification:64 targeted parser/security/mounted cases passed, including20 new parser cases and4 real panel recovery variants. Parent and all4 private-child XMLs have zero failures/errors/skips; root and reviewer inspected actual reports. Real installed LifecycleMixin keepalive semantics were retained in a bounded native App host. Full-app exploratory RED is qualified separately; three unchanged legacy Preview bodies also passed in an untracked private-profile diagnostic. No full suite. Ruff passes; parser formatter delta is identical to inherited deferred-import wrapping debt. Dependency warnings remain attributed.
 
 Superpowers task review approved with no blocking findings. All4 exact UI cases are registered (floor829), parser module added to PR Fast Lane and exact target contract; two focused gate checks and census validation pass. Final hosted qualification remains pending. ADR required:no; ADR-161/240 apply to existing validation/recovery ownership. Updated Docs/Architecture/mcp-hub.md. Source/tests: MCP/mcp_import.py, Tests/MCP/test_mcp_import_shapes.py and Tests/UI/test_mcp_import_validation_recovery.py.
+Hosted qualification complete for PR #3243, code head087a75bab335485b2058f9a010c6f872c57ebc9b: https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324399 (all25jobs success) and https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324401 (Perf Guard success). Actual completed job logs prove all81 new UI selectors and20 parser cases executed, with17 successful UI shards and maximum986s, below1020s planning target/1200s cap. Pinned Canvas and all actual repository source guards pass on the hosted runner. No allowance, timeout, shard count or original census entry changed.
+
+Superpowers requesting-code-review approved each task, the whole branch, and the single final fix re-review; M1/M2 are addressed with no remaining Critical/Important/Minor finding. All remote comment/review/thread pages were checked: no actionable finding or unresolved thread. All four acceptance criteria, implementation plan/notes, existing ADR links and relevant architecture/QA/incident documentation are complete. Native legacy/profile/Windows/static/size qualifications remain disclosed in Docs/superpowers/qa/2026-10-24-textual-followups-36693-36698.md; no full local suite or unrelated debt closure is claimed. This CLI closeout and verification-doc commit contains metadata only; its final PR head will receive fresh hosted CI before delivery.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

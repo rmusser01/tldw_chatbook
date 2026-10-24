@@ -1,7 +1,7 @@
 ---
 id: TASK-36694
 title: Handle each Speech Recognition button activation once
-status: In Progress
+status: Done
 created_date: 2026-10-24 17:33
 labels:
 - textual-patterns
@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 19:18
+updated_date: 2026-10-24 21:43
 ---
 
 ## Description
@@ -67,4 +67,7 @@ Handled Speech Recognition Button.Pressed messages now stop at the child after t
 Verification: 13 new mounted mouse/Enter/Space, Pause/Resume, Clear, actual clipboard/export/Troubleshoot and same-event routing cases plus 6 neighboring capture controls passed (19 parent cases and 19 clean private children, zero failures/errors/skips). Source hashes, Ruff/format/whitespace and complete split-census coverage were verified. All13 new cases are registered on the required UI gate; overall hosted PR qualification remains pending. Superpowers task review approved, with no blocking findings. No full local suite or real microphone/model/network/OS clipboard certification.
 
 ADR required: no; [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) and [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md) govern existing ownership and focused controls. Updated Docs/Architecture/speech.md and the UI census/ratchet. Source/tests: UI/Dictation_Window_Improved.py and Tests/UI/test_dictation_button_delivery.py.
+Hosted qualification complete for PR #3243, code head087a75bab335485b2058f9a010c6f872c57ebc9b: https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324399 (all25jobs success) and https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324401 (Perf Guard success). Actual completed job logs prove all81 new UI selectors and20 parser cases executed, with17 successful UI shards and maximum986s, below1020s planning target/1200s cap. Pinned Canvas and all actual repository source guards pass on the hosted runner. No allowance, timeout, shard count or original census entry changed.
+
+Superpowers requesting-code-review approved each task, the whole branch, and the single final fix re-review; M1/M2 are addressed with no remaining Critical/Important/Minor finding. All remote comment/review/thread pages were checked: no actionable finding or unresolved thread. All four acceptance criteria, implementation plan/notes, existing ADR links and relevant architecture/QA/incident documentation are complete. Native legacy/profile/Windows/static/size qualifications remain disclosed in Docs/superpowers/qa/2026-10-24-textual-followups-36693-36698.md; no full local suite or unrelated debt closure is claimed. This CLI closeout and verification-doc commit contains metadata only; its final PR head will receive fresh hosted CI before delivery.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

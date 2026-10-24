@@ -1,7 +1,7 @@
 ---
 id: TASK-36698
 title: Ignore superseded Image Gen demo worker results and errors
-status: In Progress
+status: Done
 created_date: 2026-10-24 17:34
 labels:
 - textual-patterns
@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 20:59
+updated_date: 2026-10-24 21:45
 ---
 
 ## Description
@@ -69,4 +69,7 @@ Verification:10 new real palette/Generate/worker/provider/decode controls plus2 
 
 Superpowers task review approved with no blocking findings. All10 new exact cases are registered in required UI gate (floor839). Overall hosted qualification remains pending. ADR required:no; existing ADR-176/033 preserve demo/media-core ownership. Updated Docs/Architecture/media-generation.md and implementation plan. Source/tests:UI/Screens/image_gen_demo_screen.py and Tests/UI/test_image_gen_demo_request_lifetime.py. Existing dependency warnings and direct legacy profile fixture limitation remain explicit.
 Final whole-branch review follow-up: native removal marks the screen pruning before attachment loss or Worker cancellation. The shared publication guard now rejects that interval. Two actual palette/Generate/provider/Worker/native-Unmount controls reproduce unwanted success/error status writes before the guard and pass afterward; no application crash is claimed. Final selected run has 6 parent passes and 6 clean private children, zero failures/errors/skips (72.279s), including both ordinary serial outcomes and two unrelated Chunking positive controls. This task now contributes 12 exact UI cases; overall census floor843 with 81 new UI and20 parser cases. The four final review regressions are registered without shard/timeout/allowance changes. One scoped final re-review and hosted qualification remain pending.
+Hosted qualification complete for PR #3243, code head087a75bab335485b2058f9a010c6f872c57ebc9b: https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324399 (all25jobs success) and https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324401 (Perf Guard success). Actual completed job logs prove all81 new UI selectors and20 parser cases executed, with17 successful UI shards and maximum986s, below1020s planning target/1200s cap. Pinned Canvas and all actual repository source guards pass on the hosted runner. No allowance, timeout, shard count or original census entry changed.
+
+Superpowers requesting-code-review approved each task, the whole branch, and the single final fix re-review; M1/M2 are addressed with no remaining Critical/Important/Minor finding. All remote comment/review/thread pages were checked: no actionable finding or unresolved thread. All four acceptance criteria, implementation plan/notes, existing ADR links and relevant architecture/QA/incident documentation are complete. Native legacy/profile/Windows/static/size qualifications remain disclosed in Docs/superpowers/qa/2026-10-24-textual-followups-36693-36698.md; no full local suite or unrelated debt closure is claimed. This CLI closeout and verification-doc commit contains metadata only; its final PR head will receive fresh hosted CI before delivery.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

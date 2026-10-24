@@ -1,7 +1,7 @@
 ---
 id: TASK-36693
 title: Retire Speech Recognition capture when its foreground view closes
-status: In Progress
+status: Done
 created_date: 2026-10-24 17:33
 labels:
 - textual-patterns
@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 18:56
+updated_date: 2026-10-24 21:43
 ---
 
 ## Description
@@ -77,4 +77,7 @@ Foreground Speech Recognition now retires its owned lazy service before settings
 Verification: mounted private-profile recorder/real-processor RED/GREEN controls; final 14-case module passed, then the 8 affected Stop/retirement cases passed after the two-line paused-Stop correction (zero child failures, errors or skips). Scoped Ruff/format/whitespace checks passed. All 15 regression cases are registered individually in the required UI census; census and 17-shard contracts pass. Full local suite not run. One existing settings-debounce timing test fails with the original unmount too; its dirty-flag poll reads before its off-loop writer finishes, independently attributed in the implementation report. No physical microphone/model/network certification is claimed.
 
 ADR required: no; existing [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md) and [ADR-033](../decisions/033-application-session-state-ownership.md) preserve the service/widget ownership boundary. Updated Docs/Architecture/speech.md and the UI census/coverage ratchet. Source/tests: UI/Dictation_Window_Improved.py and Tests/UI/test_dictation_view_retirement.py. Superpowers review I1 concurrency and paused-Stop follow-up addressed; task-scoped final re-review approved all findings; overall hosted PR qualification remains pending.
+Hosted qualification complete for PR #3243, code head087a75bab335485b2058f9a010c6f872c57ebc9b: https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324399 (all25jobs success) and https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324401 (Perf Guard success). Actual completed job logs prove all81 new UI selectors and20 parser cases executed, with17 successful UI shards and maximum986s, below1020s planning target/1200s cap. Pinned Canvas and all actual repository source guards pass on the hosted runner. No allowance, timeout, shard count or original census entry changed.
+
+Superpowers requesting-code-review approved each task, the whole branch, and the single final fix re-review; M1/M2 are addressed with no remaining Critical/Important/Minor finding. All remote comment/review/thread pages were checked: no actionable finding or unresolved thread. All four acceptance criteria, implementation plan/notes, existing ADR links and relevant architecture/QA/incident documentation are complete. Native legacy/profile/Windows/static/size qualifications remain disclosed in Docs/superpowers/qa/2026-10-24-textual-followups-36693-36698.md; no full local suite or unrelated debt closure is claimed. This CLI closeout and verification-doc commit contains metadata only; its final PR head will receive fresh hosted CI before delivery.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

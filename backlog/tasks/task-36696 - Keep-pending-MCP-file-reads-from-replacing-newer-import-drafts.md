@@ -1,7 +1,7 @@
 ---
 id: TASK-36696
 title: Keep pending MCP file reads from replacing newer import drafts
-status: In Progress
+status: Done
 created_date: 2026-10-24 17:34
 labels:
 - textual-patterns
@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 20:01
+updated_date: 2026-10-24 21:44
 ---
 
 ## Description
@@ -68,4 +68,7 @@ The actual file-picker callback now captures its originating import panel and dr
 Verification:13 initial mounted cases and4 existing picker/validation tests passed. Review found sticky is_mounted allowed direct retirement to raise NoMatches; both real hide/replace paths reproduced RED, then2new cases plus untouched/Cancel controls passed with4 clean private children. Root verified actual XMLs and final hashes. Superpowers scoped re-review approved. All15 new cases are gated exactly once (floor825); split completeness and census checks pass. Final hosted qualification remains pending. Original profile-form legacy tests have28 setup errors; inherited lint/format and size debt is explicitly retained. Workbench shrank6954 to6951 against6760 budget; TASK-36161 owns that existing red. No budget, allowance, fixture or security guard was weakened.
 
 ADR required: no; existing ADR-033/240 preserve ownership. Updated Docs/Architecture/mcp-hub.md and lessons-testing-evidence.md with the actual sticky-mounted incident. Source/tests: UI/MCP_Modules/mcp_workbench.py, mcp_profile_form.py, test_mcp_import_pending_file_drafts.py and one existing picker harness. No full local suite.
+Hosted qualification complete for PR #3243, code head087a75bab335485b2058f9a010c6f872c57ebc9b: https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324399 (all25jobs success) and https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324401 (Perf Guard success). Actual completed job logs prove all81 new UI selectors and20 parser cases executed, with17 successful UI shards and maximum986s, below1020s planning target/1200s cap. Pinned Canvas and all actual repository source guards pass on the hosted runner. No allowance, timeout, shard count or original census entry changed.
+
+Superpowers requesting-code-review approved each task, the whole branch, and the single final fix re-review; M1/M2 are addressed with no remaining Critical/Important/Minor finding. All remote comment/review/thread pages were checked: no actionable finding or unresolved thread. All four acceptance criteria, implementation plan/notes, existing ADR links and relevant architecture/QA/incident documentation are complete. Native legacy/profile/Windows/static/size qualifications remain disclosed in Docs/superpowers/qa/2026-10-24-textual-followups-36693-36698.md; no full local suite or unrelated debt closure is claimed. This CLI closeout and verification-doc commit contains metadata only; its final PR head will receive fresh hosted CI before delivery.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

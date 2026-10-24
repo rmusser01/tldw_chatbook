@@ -39,9 +39,9 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 
 - [x] Register all new tests on the real hosted gates, preserving existing selectors, 17 UI shards and existing timeouts/safety allowances. Use measured durations to place additions; root alone edits census/contracts.
 - [x] Run combined targeted UI/parser/CI/token/size checks appropriate to modified owners, plus actual required source guards. Attribute any native-platform limitations explicitly.
-- [ ] Complete per-task AC/notes/ADR checks and status via Backlog CLI only after evidence and reviews satisfy them; update relevant architecture/QA documentation.
-- [ ] Obtain a fresh whole-branch Superpowers review, fix actionable findings, push and create/attach the PR against dev.
-- [ ] Inspect all current-head CI and complete remote feedback/thread pages, address failures/findings and repeat affected checks until the delivered head is green and feedback is handled.
+- [x] Complete per-task AC/notes/ADR checks and status via Backlog CLI only after evidence and reviews satisfy them; update relevant architecture/QA documentation.
+- [x] Obtain a fresh whole-branch Superpowers review, fix actionable findings, push and create/attach the PR against dev.
+- [x] Inspect all current-head CI and complete remote feedback/thread pages, address failures/findings and repeat affected checks until the delivered head is green and feedback is handled.
 ## Task 1: TASK-36693 — retire foreground Speech capture
 
 **Files:** Modify tldw_chatbook/UI/Dictation_Window_Improved.py; inspect tldw_chatbook/UI/STTS_Window.py and Audio/dictation_service_lazy.py; create Tests/UI/test_dictation_view_retirement.py.
@@ -113,3 +113,5 @@ Reason: Bounded bug fixes directly preserve existing owners/contracts. Re-evalua
 - [x] Check cancellation and current-request authority at UI publication for both success and error; retain off-thread decode and existing status behavior.
 - [x] Run new and existing demo controls, palette reachability check and focused Ruff/format checks.
 - [x] Self-review, commit this task's source/tests and obtain a task-scoped Superpowers review.
+
+Hosted code qualification: head `087a75bab335485b2058f9a010c6f872c57ebc9b`, Derived Artifacts run40132324399 (all 25 jobs success) and Perf run40132324401 success. All 81 new UI cases and 20 parser cases executed; 17 UI shards, maximum986s. The final metadata-only task closeout commit is checked again before delivery; current results are linked from PR#3243.

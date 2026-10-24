@@ -1,7 +1,7 @@
 ---
 id: TASK-36695
 title: Keep later Chunking Lab sample edits when an earlier file load finishes
-status: In Progress
+status: Done
 created_date: 2026-10-24 17:33
 labels:
 - textual-patterns
@@ -11,7 +11,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 20:59
+updated_date: 2026-10-24 21:43
 ---
 
 ## Description
@@ -69,4 +69,7 @@ Verification: all20 new mounted regressions passed with20 clean private children
 
 ADR required: no; existing ADR-118 and ADR-033 govern unchanged canonical ownership, file validation and recovery. Updated Docs/Architecture/rag.md, UI census/ratchet and the implementation plan. Source/tests: UI/Screens/chunking_lab_screen.py, UI/Chunking_Lab_Modules/sample_region.py and Tests/UI/test_chunking_lab_sample_import_drafts.py.
 Final whole-branch review follow-up: two additional file/excerpt controls hold the actual read while a valid Maximum size recipe edit is accepted canonically. The selected sample still loads with exact provenance and the complete recipe draft remains intact. No Chunking source change was needed. Together with two native Image Gen pruning regressions and two serial controls, the focused final-fix run has 6 parent passes and 6 clean private children, zero failures/errors/skips (72.279s). This task now contributes 22 exact UI cases to the overall floor843; original20-case evidence remains separately recorded. One scoped final re-review and hosted qualification remain pending.
+Hosted qualification complete for PR #3243, code head087a75bab335485b2058f9a010c6f872c57ebc9b: https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324399 (all25jobs success) and https://github.com/rmusser01/tldw_chatbook/actions/runs/40132324401 (Perf Guard success). Actual completed job logs prove all81 new UI selectors and20 parser cases executed, with17 successful UI shards and maximum986s, below1020s planning target/1200s cap. Pinned Canvas and all actual repository source guards pass on the hosted runner. No allowance, timeout, shard count or original census entry changed.
+
+Superpowers requesting-code-review approved each task, the whole branch, and the single final fix re-review; M1/M2 are addressed with no remaining Critical/Important/Minor finding. All remote comment/review/thread pages were checked: no actionable finding or unresolved thread. All four acceptance criteria, implementation plan/notes, existing ADR links and relevant architecture/QA/incident documentation are complete. Native legacy/profile/Windows/static/size qualifications remain disclosed in Docs/superpowers/qa/2026-10-24-textual-followups-36693-36698.md; no full local suite or unrelated debt closure is claimed. This CLI closeout and verification-doc commit contains metadata only; its final PR head will receive fresh hosted CI before delivery.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
