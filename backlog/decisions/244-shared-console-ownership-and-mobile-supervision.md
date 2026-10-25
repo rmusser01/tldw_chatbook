@@ -4,6 +4,7 @@ Status: Accepted 2026-10-25 (design only; written review and corrections complet
 Date: 2026-10-25
 Related Task: [TASK-36728](../tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Spec: [Shared Console ownership and mobile supervision](../../Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md)
+Plan: [Shared Console mobile supervision implementation](../../Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md)
 Supersedes: [ADR-234](234-served-mobile-companion-surface.md), its separate mobile execution/storage contract
 Amends: [ADR-236](236-served-desktop-approval-relay.md), its mounted-card, browser-lifetime and Canvas-coupled relay contract
 Implementation: Not started; existing production behavior remains until verified cutover

@@ -4,6 +4,7 @@ Date: 2026-10-25
 Status: Reviewed and accepted 2026-10-25; review corrections verified; implementation has not started
 Task: [TASK-36728](../../../backlog/tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Decision: [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
+Implementation plan: [Shared Console mobile supervision](../plans/2026-10-25-shared-console-mobile-supervision-implementation.md)
 
 ```text
 ADR required: yes
@@ -520,6 +521,7 @@ initial source-backed corrections and the subsequent projection-overflow correct
 Each correction has matching verification scenarios above. Self-review and
 independent review found no remaining issues in the projection-overflow correction;
 genuine owner loss retains its shutdown boundary.
-Next, use the writing-plans skill to produce the implementation plan and atomic
-Backlog tasks. No production code, real user-data migration, provider call or
-runtime qualification is part of this design-writing task.
+The linked implementation plan maps this specification to 11 atomic Backlog tasks
+with native interfaces, targeted checks and delivery gates. Product implementation
+has not started. No production code, real user-data migration, provider call or
+runtime qualification is part of this design/planning work.
