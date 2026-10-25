@@ -13834,7 +13834,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         items = pane.displayed_items()
         if not items:
             return
-        current = self._selected_content_item
+        # Navigation follows the latest intent while its body is still loading.
+        current = pane.selected_item or self._selected_content_item
         current_id = current.get("id") if current else None
         index: int | None = None
         if current_id is not None:
@@ -14139,7 +14140,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         items = pane.displayed_items()
         if not items:
             return
-        current = self._selected_content_item
+        # Navigation follows the latest intent while its body is still loading.
+        current = pane.selected_item or self._selected_content_item
         current_id = current.get("id") if current else None
         start = -1
         if current_id is not None:

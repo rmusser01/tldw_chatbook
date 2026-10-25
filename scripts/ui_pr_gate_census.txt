@@ -1328,3 +1328,8 @@ Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_c
 Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-section-away-back]
 Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-unmount]
 Tests/UI/test_watchlists_reader_responsiveness.py::test_current_body_failure_reports_and_later_selection_can_retry
+
+# TASK-36900 review: pending-selection j/k/space controls; preserve prior slots.
+Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[j]
+Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[k]
+Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[space]

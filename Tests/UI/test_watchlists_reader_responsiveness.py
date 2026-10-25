@@ -362,3 +362,34 @@ async def test_current_body_failure_reports_and_later_selection_can_retry(
         await _until(lambda: state.screen._selected_content_item is state.old_item)
         assert state.content.item["content"] == "Body B"
         assert len(notices) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["j", "k", "space"])
+@private_profile_test
+async def test_keyboard_navigation_follows_pending_selection(
+    request, tmp_path, monkeypatch, key
+):
+    async with _reader(monkeypatch, cancellation_survives=True) as state:
+        if key != "space":
+            state.screen.set_focus(None)
+        await state.pilot.press("space" if key == "space" else "j")
+        await _until(state.entered.is_set)
+        assert state.pane.selected_item is state.old_item
+        assert state.screen._selected_content_item is state.pane.items[0]
+        await state.pilot.press(key)
+        expected = state.pane.items[0 if key == "k" else 2]
+        assert (
+            state.pane.selected_item is expected
+        ), "navigation used published A, not pending B"
+        await _until(lambda: state.content.item is expected)
+        assert not state.release.is_set()
+        assert state.content.item["content"] == ("Body A" if key == "k" else "Body C")
+        state.release.set()
+        await _until(state.finished.is_set)
+        await _settle_held_workers(state)
+        await state.pilot.pause()
+        assert state.content.item is expected
+        assert state.old_item.get("content") is None
+        assert state.db.get_item_status(state.ids[1]) == "new"
+        assert all(title != "Article B" for title, _ in state.publications)

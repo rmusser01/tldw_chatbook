@@ -1,7 +1,7 @@
 ---
 id: TASK-36900
 title: Keep Watchlists navigation responsive during article body reads
-status: In Progress
+status: Done
 created_date: 2026-10-25 19:33
 labels:
 - textual
@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3247.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 20:14
+updated_date: 2026-10-25 21:05
 ---
 
 ## Description
@@ -44,10 +44,10 @@ Reason: A contained message-handler/worker correction retaining existing screen 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A later enabled article selection can reach its current reader while an older article body read remains held, without waiting for release of the obsolete read.
-- [ ] #2 Enabled Watchlists section navigation completes while an earlier article body read remains held.
-- [ ] #3 Late success or failure from superseded, departed-view, changed-backend/query/page or detached detail work cannot replace the current reader or mark an obsolete selection read through stale publication authority.
-- [ ] #4 Narrow list projections, shared row identity and one hydrated reader publication remain intact; mounted ordinary, overlapping, out-of-order, failure and teardown regressions pass with no background exceptions and all controlled holds released.
+- [x] #1 A later enabled article selection can reach its current reader while an older article body read remains held, without waiting for release of the obsolete read.
+- [x] #2 Enabled Watchlists section navigation completes while an earlier article body read remains held.
+- [x] #3 Late success or failure from superseded, departed-view, changed-backend/query/page or detached detail work cannot replace the current reader or mark an obsolete selection read through stale publication authority.
+- [x] #4 Narrow list projections, shared row identity and one hydrated reader publication remain intact; mounted ordinary, overlapping, out-of-order, failure and teardown regressions pass with no background exceptions and all controlled holds released.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,3 +61,9 @@ ADR required: no
 ADR path: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/042-watchlists-reader-first-ia.md
 Reason: bounded direct correction under existing ownership; no new service/storage contract.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Moved article hydration into a named/exclusive screen-owned wc_item_detail worker so ItemSelected releases the screen queue. Selection/snapshot/page/backend/section/attachment authority guards hydration, errors, publication and mark-read after arrival; narrow list projections and one shared-row publication remain intact. j/k/space now follow the pending list selection. Added 18 mounted production-screen/private SQLite regressions and adjusted two old pagination completion waits. Complete final Reader file: 18 passed, all 18 private child reports independently clean. Fresh Superpowers review found one Important keyboard-anchor issue; all three Pilot regressions failed before its two-line repair and passed in the full final file. Scoped lint/format and CI contracts152/152 pass; 26 new UI selectors collect, prior867 slots unchanged, floor893. Three existing E721s and local legacy setup/baseline failures are explicitly qualified in Docs/superpowers/qa/2026-10-25-textual-quiz-and-reader-lifetimes.md. Updated Docs/Architecture/subscriptions-watchlists.md. ADR required: no; direct implementation of existing ADR-011/033/042. Plan: Docs/superpowers/plans/2026-10-25-quiz-start-and-reader-lifetimes.md. No service/storage/dependency change, full-suite or physical-terminal claim.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

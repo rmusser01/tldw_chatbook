@@ -64,6 +64,8 @@ retire the draft, while a rejected empty Name leaves it open. Only explicit Save
 uses the existing rule mutation path; list refresh and section navigation never
 save a draft.
 
+Reader j/k and next-unread navigation use the article list selection intent while a detail read is pending; article publication and read-status mutation still wait for the current hydrated result. The displayed page bounds navigation, including list boundaries.
+
 ## Boundaries
 
 - Scheduling owns **when**; `LocalWatchlistsService` owns **what a run is**; `SubscriptionsDB` owns all durable state — handlers are stateless apart from the briefing handler's in-flight task set.

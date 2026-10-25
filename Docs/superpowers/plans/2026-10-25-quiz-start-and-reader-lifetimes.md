@@ -56,6 +56,12 @@ Reason: direct bounded corrections under existing screen/runtime/snapshot owners
 
 - [x] Register new/extended cases in the required UI lane using the existing selector/census conventions; preserve shard count and budgets.
 - [x] Run targeted integration tests and governance/static checks, inspect private child XML independently.
-- [ ] Commit implementation; request one fresh whole-branch Superpowers review with task/plan/evidence and Review Focus.
-- [ ] Address Important/Critical findings with RED -> GREEN tests, revalidate targeted gates; mark task criteria/status Done via CLI only after definition of done is met.
+- [x] Commit implementation; request one fresh whole-branch Superpowers review with task/plan/evidence and Review Focus.
+- [x] Address Important/Critical findings with RED -> GREEN tests, revalidate targeted gates; mark task criteria/status Done via CLI only after definition of done is met.
 - [ ] Push, create PR against dev, attach it to this chat, inspect current-head CI execution/review threads and fix actionable feedback until checks finish.
+
+## Qualification
+
+Fresh whole-branch Superpowers review found one Important pending-selection keyboard issue, no Critical/Minor issues. Three Pilot cases failed before the two-anchor repair, then passed in the complete final Reader18/18 run. Study61/61 and CI contracts152/152 passed; all45 private Study/Reader child reports independently clean. Legacy neighbor setup adaptations and matched baseline failures are explicitly qualified in Docs/superpowers/qa/2026-10-25-textual-quiz-and-reader-lifetimes.md. No full-suite or live-server claim.
+
+Publication and hosted CI/review completion are recorded on the PR, avoiding an evidence-only commit that would invalidate the tested head. The remaining checkbox names that external follow-up.

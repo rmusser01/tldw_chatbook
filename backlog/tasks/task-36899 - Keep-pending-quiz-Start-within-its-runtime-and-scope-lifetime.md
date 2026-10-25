@@ -1,7 +1,7 @@
 ---
 id: TASK-36899
 title: Keep pending quiz Start within its runtime and scope lifetime
-status: In Progress
+status: Done
 created_date: 2026-10-25 19:32
 labels:
 - textual
@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3247.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 20:13
+updated_date: 2026-10-25 21:00
 ---
 
 ## Description
@@ -44,10 +44,10 @@ Reason: A bounded publication correction under existing domain-screen and runtim
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A Start completion from a runtime or Study scope that has since been reset cannot replace the current attempt, question, status or answer draft, or expose an old attempt for Submit through the new backend.
-- [ ] #2 Changing away and back before completion does not revive an obsolete Start; existing protection for removed/replaced quiz panels and shared duplicate admission remains effective.
-- [ ] #3 Ordinary same-context Start/Submit and failure recovery remain usable, and any already-created remote attempt is described truthfully without claiming cancellation rolled it back.
-- [ ] #4 Mounted production-owner regressions with held responses cover runtime change, scope change and away/back transitions, including the real local SQLite submission boundary; ordinary completion and retry controls pass without background exceptions.
+- [x] #1 A Start completion from a runtime or Study scope that has since been reset cannot replace the current attempt, question, status or answer draft, or expose an old attempt for Submit through the new backend.
+- [x] #2 Changing away and back before completion does not revive an obsolete Start; existing protection for removed/replaced quiz panels and shared duplicate admission remains effective.
+- [x] #3 Ordinary same-context Start/Submit and failure recovery remain usable, and any already-created remote attempt is described truthfully without claiming cancellation rolled it back.
+- [x] #4 Mounted production-owner regressions with held responses cover runtime change, scope change and away/back transitions, including the real local SQLite submission boundary; ordinary completion and retry controls pass without background exceptions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,3 +61,9 @@ ADR required: no
 ADR path: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md
 Reason: bounded direct correction under existing ownership; no new service/storage contract.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Implemented controller context generations with captured runtime and scope arguments, retaining shared Start admission and removed-panel protection. Obsolete success cannot adopt an attempt or erase a current draft; notices truthfully identify an already-created attempt in the previous Study context. Added eight mounted reset/error cases and updated Docs/Architecture/study.md. Qualified targeted Study run: 61 passed, including 27 independently inspected clean private UI reports; unchanged server from_config test used the supported invocation-only bootstrap_profile marker. Scoped Ruff/format and markup census pass. Fresh Superpowers whole-branch review found no Study issue; Reader feedback is handled within its separate task. ADR required: no; direct implementation of backlog/decisions/011-chatbook-workbench-ui-system.md and 033-application-session-state-ownership.md. Implementation plan: Docs/superpowers/plans/2026-10-25-quiz-start-and-reader-lifetimes.md. No live-server, full-app binding-replacement or full-suite claim.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

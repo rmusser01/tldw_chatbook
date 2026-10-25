@@ -1,0 +1,292 @@
+{
+  "recorded_utc": "2026-10-25T21:04:29.732557+00:00",
+  "base": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+  "source_sha256_canonical_git_lf": {
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": "8f172eac87f97e58e0aa8280eea4e5193d997e45554fd37f1fc23117ccbcdc44",
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": "4b09683110b4527a19cac18ad8cd3f64638af282b99b2b0c6c40437540aa7a87",
+    "Tests/UI/test_study_quiz_start_responsiveness.py": "f862884c9aed4101b88093bb14ba97fecc2e00e320d09ce0444c274322630616",
+    "Tests/UI/test_watchlists_reader_responsiveness.py": "5be3a4b2e7bd6c44fa418afb72c5f44af20c4e3cdf1d8a942686d2ea2d3ad104",
+    "Tests/Watchlists/test_watchlists_pagination.py": "a62a951e41fb72a4b47d03db0d9537d21ff0a88d8a4b3f376495574b97a1e3e6",
+    "scripts/ui_pr_gate_census.txt": "28fe8d872714dfde00c71ea41193991cc717e6c035a1715bbe4b838766540b24",
+    "scripts/check_ui_pr_gate_census.py": "c16f2188a3d033432b713fe9640effb8c577ed2468789358142e05a16c21a6ab"
+  },
+  "runs": [
+    {
+      "run": "study/green-study-qualified",
+      "counts": {
+        "tests": 61,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 290.472,
+      "selectors": [
+        "Tests/UI/test_study_quiz_start_responsiveness.py",
+        "Tests/UI/test_study_quiz_attempt_retry.py",
+        "Tests/Study_Interop/test_quiz_scope_service.py",
+        "Tests/Study_Interop/test_local_quiz_service.py",
+        "Tests/Study_Interop/test_server_quiz_service.py"
+      ],
+      "xml_sha256": "c70ccd59d206d69602d6856198341fbf45dd5d24b9e7e1a2ab0dcbf7c423d405",
+      "private_child_reports": 27,
+      "private_child_counts": {
+        "tests": 27,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/review-reader-complete",
+      "counts": {
+        "tests": 18,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 565.156,
+      "selectors": [
+        "Tests/UI/test_watchlists_reader_responsiveness.py"
+      ],
+      "xml_sha256": "882d4557e0afae9dcaee9210f2ab0244295ca054084bd3a76100b5d18453d107",
+      "private_child_reports": 18,
+      "private_child_counts": {
+        "tests": 18,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "integration/ci-contracts-final",
+      "counts": {
+        "tests": 152,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 59.537,
+      "selectors": [
+        "Tests/CI/test_ui_pr_gate_census_checker.py",
+        "Tests/CI/test_derived_artifacts_workflow.py",
+        "Tests/CI/test_ui_lane_shard_replay.py",
+        "Tests/CI/test_ui_lane_shard_count_statements.py"
+      ],
+      "xml_sha256": "d72692641f91ab017184d79be5cb920217cdcdd91d5fcb8b71176405cade5ff6",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/green-neighbors-ready",
+      "counts": {
+        "tests": 53,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 111.027,
+      "selectors": [
+        "Tests/Watchlists/test_watchlists_pagination.py::test_selection_records_committed_query_while_detail_fetch_is_pending",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_detail_result_cannot_select_from_replaced_snapshot",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_atomic_scope_keeps_committed_reader_until_first_page_mounts",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_pending_scope_failure_retains_committed_scope_and_names_both",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_same_query_pane_rebuild_uses_cache_and_preserves_selected_article",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_previous_and_cached_forward_present_without_io",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_one_mutation_path_patches_every_cached_projection_without_query",
+        "Tests/UI/test_watchlists_content_pane.py::test_a_persisted_body_reaches_the_reader_end_to_end",
+        "Tests/Watchlists/test_reader_item_snapshot.py",
+        "Tests/Library/test_reader_item_snapshot_sharing.py",
+        "Tests/DB/test_subscriptions_db_watchlists_reader_snapshot.py"
+      ],
+      "xml_sha256": "10dcdb1532dbb579a3091de5ef5b9540d56a3dfe196fa819bcab3a4508e90d65",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/current-two-owners-settled",
+      "counts": {
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 30.83,
+      "selectors": [
+        "Tests/Watchlists/test_watchlists_pagination.py::test_atomic_scope_keeps_committed_reader_until_first_page_mounts",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_pending_scope_failure_retains_committed_scope_and_names_both"
+      ],
+      "xml_sha256": "4d75b6b6aa34d196f3d2f8de1f7fff82d8ac64f117ae6e77274a43fcc137c5d2",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/baseline79-two-owners-settled",
+      "counts": {
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 31.183,
+      "selectors": [
+        "Tests/Watchlists/test_watchlists_pagination.py::test_atomic_scope_keeps_committed_reader_until_first_page_mounts",
+        "Tests/Watchlists/test_watchlists_pagination.py::test_pending_scope_failure_retains_committed_scope_and_names_both"
+      ],
+      "xml_sha256": "76fcc38b955111a108549b9fee79e2a0cb470e627e2c178b74450d2844ea9d8f",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/review-keyboard-red",
+      "counts": {
+        "tests": 3,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 91.569,
+      "selectors": [
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection"
+      ],
+      "xml_sha256": "8455e5f498e19ca50e65daa3119415e367db2eaa4e433397447d3f728d82dfab",
+      "private_child_reports": 3,
+      "private_child_counts": {
+        "tests": 3,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/guard-removal-controls",
+      "counts": {
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 66.997,
+      "selectors": [
+        "Tests/UI/test_watchlists_reader_responsiveness.py"
+      ],
+      "xml_sha256": "8f90d25d5b2b0a3f1087b868700c2b8a6d0705434a1254a8f51f46fefc8df99e",
+      "private_child_reports": 2,
+      "private_child_counts": {
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/review-keyboard-neighbors",
+      "counts": {
+        "tests": 4,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failures": [
+        {
+          "name": "test_j_and_k_move_to_the_next_and_previous_item_and_update_the_reader",
+          "message": "textual.css.query.NoMatches: No nodes match '#content-body' on ContentPane(id='watchlists-content-pane')"
+        },
+        {
+          "name": "test_typing_j_in_the_search_input_does_not_navigate",
+          "message": "TypeError: 'NoneType' object is not subscriptable"
+        },
+        {
+          "name": "test_space_opens_next_unread",
+          "message": "AssertionError: precondition: all three listed\nassert 0 == 3\n +  where 0 = len([])\n +    where [] = displayed_items()\n +      where displayed_items = ArticleListPane(id='watchlists-items-pane', classes='h-fill').displayed_items"
+        }
+      ],
+      "qualification": "Fixed-delay/cold startup controls; not counted as a clean suite."
+    },
+    {
+      "run": "watchlists/baseline79-review-keyboard-neighbors",
+      "counts": {
+        "tests": 4,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failures": [
+        {
+          "name": "test_j_and_k_move_to_the_next_and_previous_item_and_update_the_reader",
+          "message": "textual.css.query.NoMatches: No nodes match '#content-body' on ContentPane(id='watchlists-content-pane')"
+        },
+        {
+          "name": "test_typing_j_in_the_search_input_does_not_navigate",
+          "message": "TypeError: 'NoneType' object is not subscriptable"
+        },
+        {
+          "name": "test_space_opens_next_unread",
+          "message": "AssertionError: precondition: all three listed\nassert 0 == 3\n +  where 0 = len([])\n +    where [] = displayed_items()\n +      where displayed_items = ArticleListPane(id='watchlists-items-pane', classes='h-fill').displayed_items"
+        }
+      ],
+      "qualification": "Fixed-delay/cold startup controls; not counted as a clean suite."
+    }
+  ],
+  "census": {
+    "unchanged_prefix": 867,
+    "new_exact_collected": 26,
+    "new_selectors": [
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-local-shell]",
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-local-inner]",
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[workspace-B-shell]",
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[workspace-B-inner]",
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-away-back-shell]",
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-away-back-inner]",
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_failed_start_reports_the_previous_context_and_allows_retry[runtime-local]",
+      "Tests/UI/test_study_quiz_start_responsiveness.py::test_failed_start_reports_the_previous_context_and_allows_retry[runtime-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_ordinary_reader_publishes_one_hydrated_shared_row",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_newer_selection_reads_before_older_body_finishes[late-success]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_newer_selection_reads_before_older_body_finishes[late-failure]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_enabled_section_navigation_runs_during_body_read",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-query-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-page-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-backend-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-section-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-unmount]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-query-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-page-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-backend-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-section-away-back]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-unmount]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_current_body_failure_reports_and_later_selection_can_retry",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[j]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[k]",
+      "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[space]"
+    ],
+    "floor": 893,
+    "shards": 17,
+    "timeout_minutes": 20
+  },
+  "limits": [
+    "Targeted tests only, not a full suite.",
+    "Study uses controlled API clients and actual scope/local SQLite services; not a live server or full TldwCli policy/binding journey.",
+    "Reader uses a production destination and private file-backed SQLite with a held body boundary; not a claim about ordinary SQLite latency.",
+    "Legacy local invocation-only profile/readiness adaptations and fixed-delay failures are separately qualified in the QA document.",
+    "Hosted CI and current-head review qualification are recorded on the PR after publication."
+  ]
+}
