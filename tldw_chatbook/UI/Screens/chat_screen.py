@@ -11384,13 +11384,16 @@ class ChatScreen(BaseAppScreen):
         """Build a disposable avatar from the controller's immutable spec.
 
         Widget-owned animation; cached static images and a missing-art fallback.
-        Renderer and fit failures must not escape into Console sync.
+        Source geometry is validated; renderer failures use the still fallback.
 
         Args:
             spec: Current source, optional performance and speech reader.
             box: Target cell box measured by the rail.
             prerendered: Off-thread raster, reused only when its image, fitted
                 box and colour mode still match the live request.
+
+        Returns:
+            The fitted portrait widget, or its still/missing-art fallback.
         """
         if spec and spec.get("animation_bytes") and box != (0, 0):
             from types import SimpleNamespace

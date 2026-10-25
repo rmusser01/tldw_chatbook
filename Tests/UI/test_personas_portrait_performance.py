@@ -453,9 +453,7 @@ async def test_external_card_change_preserves_only_current_portrait_draft(
     await Pilot(app).pause()
     record = db.get_character_card_by_id(character_id)
     update = (
-        {"image": png("blue")}
-        if artwork_changed
-        else {"description": "External text"}
+        {"image": png("blue")} if artwork_changed else {"description": "External text"}
     )
     assert db.update_character_card(character_id, update, record["version"])
     await screen._on_character_card_changed(CharacterCardChanged(character_id))
