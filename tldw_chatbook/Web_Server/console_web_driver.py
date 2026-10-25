@@ -31,6 +31,9 @@ class ConsoleWebDriver(WebDriver):
     def reattach(self, width: int, height: int, generation: str) -> None:
         """Restore modes and repaint after resize, then publish matching readiness."""
         self._attachment_generation = generation
+        # Seed the current generation before scheduling; ordinary resize metadata
+        # can then replace these dimensions while the begin callback is pending.
+        self._size = width, height
 
         def ready() -> None:
             if self._attachment_generation == generation:
@@ -63,8 +66,7 @@ class ConsoleWebDriver(WebDriver):
             self._enable_bracketed_paste()
             self._request_terminal_sync_mode_support()
             self.flush()
-            self._size = width, height
-            size = Size(width, height)
+            size = Size(*self._size)
             await self._app._on_resize(events.Resize(size, size))
             # Flush Textual's resize debounce before scheduling the paint boundary.
             self._app._check_resize()

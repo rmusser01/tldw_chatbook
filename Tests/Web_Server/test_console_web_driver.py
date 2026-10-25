@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
 from tldw_chatbook.Web_Server.console_web_driver import ConsoleWebDriver
 
 
@@ -94,3 +96,45 @@ def test_resize_during_partial_console_mount_does_not_consume_width_band():
         screen, Resize(Size(80, 24), Size(80, 24))
     )
     assert screen._last_console_workspace_width_band is None
+
+
+@pytest.mark.parametrize("replace_pending", [False, True])
+async def test_newer_resize_survives_pending_reattach_begin(replace_pending):
+    callbacks, posted, metadata, applied_sizes = [], [], [], []
+    app = SimpleNamespace(
+        call_after_refresh=callbacks.append,
+        post_message=posted.append,
+        _on_resize=AsyncMock(
+            side_effect=lambda event: applied_sizes.append(event.size)
+        ),
+        _check_resize=lambda: None,
+        screen=SimpleNamespace(
+            refresh=lambda **kwargs: None,
+            _compositor=SimpleNamespace(render_update=lambda **kwargs: None),
+        ),
+        _background_screens=[],
+        _display=lambda *args: None,
+    )
+    driver = object.__new__(ConsoleWebDriver)
+    driver._app = app
+    driver.write = lambda _: None
+    driver.write_meta = lambda data: metadata.append((data, applied_sizes[-1]))
+    driver.reattach(80, 24, "first")
+    generation = "first"
+    if replace_pending:
+        driver.reattach(100, 30, "second")
+        generation = "second"
+    # Exercise the installed driver's ordinary resize path, then apply its
+    # posted App event before the pending reattach callback is dispatched.
+    driver.on_meta("resize", {"width": 120, "height": 40})
+    await app._on_resize(posted.pop())
+    while callbacks:
+        result = callbacks.pop(0)()
+        if result is not None:
+            await result
+    assert driver._size == (120, 40)
+    assert applied_sizes == [(120, 40), (120, 40)]
+    assert metadata == [
+        ({"type": "console_attachment_begin", "generation": generation}, (120, 40)),
+        ({"type": "console_attachment_ready", "generation": generation}, (120, 40)),
+    ]
