@@ -16,7 +16,7 @@
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 
-**Status:** Implementation in progress. Task 1 passed independent review; its targeted evidence and inherited-check limits are recorded in TASK-36759. Tasks 2–11 remain pending. Planning validation alone is not runtime evidence.
+**Status:** Implementation in progress. Tasks 1–2 passed independent review; targeted evidence and inherited-check limits are recorded in TASK-36759/36760. Tasks 3–11 remain pending. Planning validation alone is not runtime evidence.
 
 ```text
 ADR required: no
@@ -200,7 +200,7 @@ class ConsoleTarget(ConsoleHostIdentity):
     round_id: str | None = None
 ```
 
-- [ ] **Step 1: Add a bounded-overflow test with no subscriber.** The new buffer's reset marker must survive trimming and clear only on a current snapshot acknowledgement.
+- [x] **Step 1: Add a bounded-overflow test with no subscriber.** The new buffer's reset marker must survive trimming and clear only on a current snapshot acknowledgement.
 
 ```python
 def test_unread_projection_overflow_requires_snapshot_not_disconnect():
@@ -217,8 +217,8 @@ def test_unread_projection_overflow_requires_snapshot_not_disconnect():
     assert not current.reset_required
 ```
 
-- [ ] **Step 2: Run RED and add the transport integration cases.** Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_events.py -q`. Extend the existing broker/client loopback fixture with >64 child projection events before any mobile service exists, Canvas-disabled startup, mobile disabled, a paused subscriber and forged/old protocol envelopes. Assert the same authenticated connection survives projection overflow and command responses are still correlated.
-- [ ] **Step 3: Implement the bounded projection branch.** Retain a sequence counter and sticky reset marker in `ConsoleEventBuffer`; the buffer never owns native outcomes. In the broker, route only replaceable Console projection events into this bounded path. On overflow, coalesce/drop projection history and mark reset; do not raise `event_backpressure` for that projection loss. Continue resolving response frames directly through the existing pending map. Preserve authenticated connection failure on malformed messages or revoked child authority.
+- [x] **Step 2: Run RED and add the transport integration cases.** Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_events.py -q`. Extend the existing broker/client loopback fixture with >64 child projection events before any mobile service exists, Canvas-disabled startup, mobile disabled, a paused subscriber and forged/old protocol envelopes. Assert the same authenticated connection survives projection overflow and command responses are still correlated.
+- [x] **Step 3: Implement the bounded projection branch.** Retain a sequence counter and sticky reset marker in `ConsoleEventBuffer`; the buffer never owns native outcomes. In the broker, route only replaceable Console projection events into this bounded path. On overflow, coalesce/drop projection history and mark reset; do not raise `event_backpressure` for that projection loss. Continue resolving response frames directly through the existing pending map. Preserve authenticated connection failure on malformed messages or revoked child authority.
 
 ```python
 # In the dedicated Console projection-event branch:
@@ -228,8 +228,8 @@ host_events.note_changed(sequence)
 ```
 
 Add `note_changed(sequence: int) -> None` as the buffer's bounded wake signal: one set Event, no per-event task or unbounded queue. Existing Canvas events retain their feature semantics; if sharing a bounded carrier with Console projections, its overflow must also use a reset rather than destroying runtime control.
-- [ ] **Step 4: Move drain lifetime to child registration.** Register the lifecycle drainer before starting child publication. It drains without waiting on phone sockets and outlives every browser subscription. Replace `MobileChatService.attach_relay`'s exclusive lazy broker drain with observation of the lifecycle-owned projection state; keep its existing API behavior until Task 9 retires the engine. Consumers of a lost projection show reset/unavailable state until native refresh, never stale approval authority. Keep the runtime broker alive when Canvas is disabled; revoke only Canvas capabilities/routes. Keep parent/child launch secrets out of representations and wire projections. Actual control-channel loss remains observable for Task 3's shutdown path, rather than being hidden by a fake reconnect success.
-- [ ] **Step 5: Verify and commit.** Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_events.py Tests/Canvas/test_control_protocol.py Tests/Web_Server/test_served_relay_publisher.py Tests/Web_Server/test_web_auth_integration.py -q`. Verify bounded memory/reset state under overflow and current-child-only response routing. Apply scoped static checks and commit `fix: decouple Console control from projection subscribers` with explicit paths.
+- [x] **Step 4: Move drain lifetime to child registration.** Register the lifecycle drainer before starting child publication. It drains without waiting on phone sockets and outlives every browser subscription. Replace `MobileChatService.attach_relay`'s exclusive lazy broker drain with observation of the lifecycle-owned projection state; keep its existing API behavior until Task 9 retires the engine. Consumers of a lost projection show reset/unavailable state until native refresh, never stale approval authority. Keep the runtime broker alive when Canvas is disabled; revoke only Canvas capabilities/routes. Keep parent/child launch secrets out of representations and wire projections. Actual control-channel loss remains observable for Task 3's shutdown path, rather than being hidden by a fake reconnect success.
+- [x] **Step 5: Verify and commit.** Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_events.py Tests/Canvas/test_control_protocol.py Tests/Web_Server/test_served_relay_publisher.py Tests/Web_Server/test_web_auth_integration.py -q`. Verify bounded memory/reset state under overflow and current-child-only response routing. Apply scoped static checks and commit `fix: decouple Console control from projection subscribers` with explicit paths.
 
 ### Task 3: Retained child hosts and terminal reattachment — TASK-36761
 
