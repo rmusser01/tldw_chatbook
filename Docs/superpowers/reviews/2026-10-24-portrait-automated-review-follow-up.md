@@ -91,3 +91,7 @@ apply. External persisted changes must retire source-bound portrait drafts under
 ADR-242/243 even when ordinary card edits are retained; retaining that draft would
 violate its authority fence. Remaining TTS/geometry suggestions are still being
 verified; no blanket acceptance of conditional findings is claimed.
+
+### Guarded legacy speech delivery and cleanup
+
+The hosted review confirmed that guarded hands-free legacy artifacts were cached under a lifecycle owner but cleaned under the legacy None owner. The same lifecycle on a completion with no replay file incorrectly terminated the presentation before playback. Direct legacy utterances now retain validation through generation and revalidate after delivery, while their cache and completion use the legacy ownership contract. Three regressions failed before the fix (presentation, cleanup, supersession) and pass afterward; the utterance and streaming playback modules pass 58 tests. Full-file Ruff reports existing baseline violations; changed lines are checked separately.

@@ -2521,7 +2521,7 @@ class TTSEventHandler:
             await self._cache_audio_file(
                 normalized_message_id,
                 artifact_path,
-                playback_lifecycle,
+                playback_lifecycle if on_finished is None else None,
             )
 
             await self._post_tts_message(
@@ -2550,7 +2550,9 @@ class TTSEventHandler:
                     # legacy-path utterance, confirmed by the reviewer's
                     # probe.
                     audio_file=artifact_path if on_finished is None else None,
-                    playback_lifecycle=playback_lifecycle,
+                    playback_lifecycle=(
+                        playback_lifecycle if on_finished is None else None
+                    ),
                     presentation=presentation,
                 )
             )
@@ -2563,6 +2565,16 @@ class TTSEventHandler:
                 )
                 artifact_path = None
             if on_finished is not None:
+                if (
+                    playback_lifecycle is not None
+                    and not playback_lifecycle.is_current()
+                ):
+                    await self._discard_tts_artifact(
+                        normalized_message_id, artifact_path
+                    )
+                    artifact_path = None
+                    outcome_code = "superseded"
+                    return
                 # Task-4: a hands-free utterance has no per-message widget
                 # for the app's own `TTSCompleteEvent` handler to route an
                 # auto-play through (see `_play_utterance_legacy_artifact`'s
