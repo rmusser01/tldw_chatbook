@@ -103,6 +103,7 @@ class _ScriptedShellServer(
         )
         await websocket.prepare(request)
         self.ws_opens += 1
+        self.sockets.append(websocket)
         # >10 bytes so the patched first-byte/after-write hooks fire.
         await websocket.send_bytes(b"\x1b[2J\x1b[H" + b"#" * 40)
         async for message in websocket:
@@ -113,7 +114,9 @@ class _ScriptedShellServer(
             except ValueError:
                 continue
             kind = envelope[0] if isinstance(envelope, list) else None
-            if kind == "resize":
+            if kind == "stdin":
+                self.inputs.append(envelope[1])
+            elif kind == "resize":
                 self.resizes.append(envelope[1])
             elif kind == "ping":
                 await websocket.send_json(["pong", envelope[1]])
@@ -161,6 +164,8 @@ def _make_scripted_server(statics_path: str, port: int) -> _ScriptedShellServer:
 
     server._served_canvas_gateway = _GatewayStub()
     server.ws_opens = 0
+    server.sockets = []
+    server.inputs = []
     server.resizes = []
     server.session_requests = []
     #: Optional async hook executed instead of the default 404 for each
@@ -319,5 +324,37 @@ async def test_served_shell_ignores_late_ready_after_canvas_disable():
         assert state["terminalOnly"] is True
         # The poll really stopped: only the two scripted requests happened.
         assert len(context.server.session_requests) == 2
+    finally:
+        await context.stop()
+
+
+@pytest.mark.timeout(120)
+async def test_terminal_input_waits_for_matching_render_ready():
+    from playwright.async_api import expect
+
+    context = _ScriptedContext()
+    await context.start()
+    try:
+        page, server = context.page, context.server
+        textarea = page.locator("#terminal .xterm-helper-textarea")
+        await textarea.focus()
+        await textarea.press_sequentially("blocked")
+        await asyncio.sleep(0.1)
+        assert server.inputs == []
+        socket = server.sockets[0]
+        await socket.send_json(["console_attachment_begin", {"generation": "current"}])
+        await socket.send_json(["console_attachment_ready", {"generation": "stale"}])
+        await textarea.press_sequentially("still blocked")
+        await asyncio.sleep(0.1)
+        assert server.inputs == []
+        await expect(page.locator("#terminal")).to_have_attribute("aria-busy", "true")
+        await socket.send_json(["console_attachment_ready", {"generation": "current"}])
+        await expect(page.locator("#terminal")).to_have_attribute("aria-busy", "false")
+        await textarea.press_sequentially("accepted")
+        for _ in range(50):
+            if "".join(server.inputs) == "accepted":
+                break
+            await asyncio.sleep(0.02)
+        assert "".join(server.inputs) == "accepted"
     finally:
         await context.stop()

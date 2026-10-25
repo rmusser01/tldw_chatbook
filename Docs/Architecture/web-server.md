@@ -17,7 +17,7 @@ Entry points: `tldw-serve`, `tldw-cli --serve`, `python -m tldw_chatbook.app --s
 
 ## Routes served
 
-`/auth/login` (+ one-use 60 s bootstrap), `/` (the owned shell, no-store), `/ws` (websocket, protocol `chatbook-v1` + a `csrf.<token>` subprotocol; one browser session ↔ exactly one AppService child), `/canvas/api/session` (bounded child-owned canvas state), `/download/{key}`, the auth-bridge shim, the two immutable shell assets, the patched `textual.js` (content-fingerprinted URL, 1 h public cache), textual-serve statics, and — only when Canvas is enabled — the canvas static route plus everything under `/canvas/gateway-<uuid>/…`, each request fenced to the exact outer browser session. Request bodies are capped (`client_max_size` 16 KiB; login POST 4 KiB).
+`/auth/login` (+ one-use 60 s bootstrap), `/` (the owned shell, no-store), `/ws` (websocket, protocol `chatbook-v1` + a `csrf.<token>` subprotocol; one replaceable terminal attachment to the retained profile AppService child), `/canvas/api/session` (bounded child-owned canvas state), `/download/{key}`, the auth-bridge shim, the two immutable shell assets, the patched `textual.js` (content-fingerprinted URL, 1 h public cache), textual-serve statics, and — only when Canvas is enabled — the canvas static route plus everything under `/canvas/gateway-<uuid>/…`, each request fenced to the exact outer browser session. Request bodies are capped (`client_max_size` 16 KiB; login POST 4 KiB).
 
 ## Auth and bind policy (fail-closed)
 
@@ -68,7 +68,7 @@ legacy mobile engine temporarily acquires the same kind of lease for its existin
 run-store path; its idle shutdown releases the lease only after controller/fleet retirement;
 bounded teardown retains that lease until process exit when
 physical retirement cannot be proven. Shared canonical storage/routing cutover
-is subsequent work; this foundation does not yet change served attachments.
+is backed by the retained-host lifecycle described below.
 
 ## Independent served control and bounded projections (ADR-244, Task 2)
 
@@ -141,3 +141,43 @@ publisher, auth, Canvas kill-switch and mobile relay tests retain their native
 security assertions. The auth module and config-reading kill-switch node use the
 documented `bootstrap_profile` marker so guarded config keeps its admitted private
 source; test DB/session stores remain temporary.
+
+
+## Retained Console host and terminal attachment (TASK-36761, ADR-244)
+
+`Web_Server/served_console_hosts.py` owns one shielded child start per server-admitted
+run-store identity. Browser disconnect, takeover, revocation and output pressure
+only detach that terminal generation. The child keeps running and draining output;
+its bounded terminal queue (64 frames / 1 MiB) never waits on a browser socket.
+Independent phone observers discover the retained child even with no terminal.
+Canvas capabilities remain scoped to the exact attached browser; takeover revokes
+the old binding rather than transferring its preview capabilities.
+
+`ConsoleWebDriver` uses the installed WebDriver metadata seam. A reattach request
+runs on the App thread, emits a generation-tagged begin boundary, restores terminal
+modes, applies dimensions and forces a full compositor render before matching
+ready. It never restarts the input thread or repeats startup framing. The parent
+drops output before begin; both parent and browser refuse input before ready.
+`served_shell.js` does not queue or replay disconnected input. The driver touches
+Textual's internal resize/compositor methods; focused driver and actual-App browser
+tests qualify this seam against the supported Textual version.
+
+Shutdown closes host admission and drains lifecycle-owned retirement tasks even
+if an observer is cancelled. The service uses its own process group for bounded
+TERM/KILL escalation and waits for actual process exit. A closed host can be
+replaced only after its process reports a return code; a timeout cannot prove
+owner death. The child separately watches genuine private-control loss, closes
+native admission/wakes, invokes native runtime disposal and exits. Disabling Canvas
+alone preserves control and terminal work.
+
+Host `reserve_saved_conversation` and `register_saved_conversation` deduplicate
+native session identity and concurrent hydration. These are the Task3 seam; Task9
+wires remote create/open and native save/hydration callbacks. Ordinary terminal
+persistence/hydration remains native. Remote saved-open is not qualified here.
+
+Evidence lives in `Tests/Web_Server/test_served_console_hosts.py`,
+`test_console_web_driver.py`, `test_served_shell_browser.py` and focused
+`Tests/Canvas/browser/test_canvas_served_flow.py` cases. Actual App tests use the
+normal runtime/admission/persistence with a deterministic provider. Passive xterm
+public-buffer observation verifies rendered output without changing the renderer;
+child receipts verify one input thread, resize, mouse and multiline paste.

@@ -1,7 +1,7 @@
 ---
 id: TASK-36761
 title: Retain served Console hosts and safely reattach terminal browsers
-status: To Do
+status: In Progress
 created_date: 2026-10-25 17:39
 dependencies:
 - TASK-36759
@@ -16,6 +16,7 @@ documentation:
 - Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md
 - Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+updated_date: 2026-10-25 20:47
 ---
 
 ## Description
@@ -32,10 +33,24 @@ Keep accepted Console work alive across browser and VPN disconnects and reconnec
 - [ ] #4 Reattachment restores terminal modes and a full render at the new dimensions, including mouse, multiline paste and resize, without restarting the input thread or agent; detached output stays drained and bounded.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Direct implementation of the accepted retained-host, attachment and physical lifecycle boundaries.
+
+1. Add failing retained-host/current-attachment and driver-handshake tests against the installed Textual serve seams.
+2. Retain one serialized AppService per admitted canonical identity, continuously drain bounded output, and generation-fence terminal input/resize/detach and saved-conversation reservations.
+3. Add the repo-owned driver render handshake, restore application modes/full repaint without restarting input, and route actual parent/control loss through bounded native teardown with the existing execution fence.
+4. Exercise actual App child/browser retention, takeover/revocation, click/paste/resize and shutdown. Resolve the reproduced left-rail initialization crash narrowly if it blocks required qualification.
+5. Run the plan's targeted connected tests and scoped static/format checks, update living docs, commit explicit changes, then obtain independent spec and quality review before completion.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Implemented retained per-storage Console hosts, bounded replaceable terminal attachments and a generation-tagged full-render handshake. Browser disconnect/takeover/revocation preserves native work; genuine control loss and server shutdown retain ownership through physical retirement. Added host reserve/register seam; remote saved-open/save integration remains Task9 per controller ruling. Fixed the reproduced partial-mount Console rail resize crash. Targeted actual-App Chromium checks cover one process/input thread, in-flight work across detach, transcript, mouse/paste/resize, takeover/revocation, TLS/proxy Canvas isolation and physical exit. ADR-244 applied; living architecture and verification lesson updated. Scoped default Ruff adds zero diagnostics versus exact BASE; formatting ratchet passes. Detailed report: .superpowers/sdd/2026-10-25-shared-console-mobile-supervision-implementation/task-3-report.md. Independent review pending; status and AC intentionally unchanged.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

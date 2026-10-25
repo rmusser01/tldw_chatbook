@@ -4137,3 +4137,20 @@ child cannot inherit the real one. Afterwards, diff the real user data dir
 by mtime to confirm nothing leaked.
 
 PR3141 connected recovery qualification also exposed two false test waits: waiting on all App workers raised WorkerCancelled for normal exclusive console-sync replacement, and matching a child Static title returned while its recovery-card ancestor was still hidden. Wait on the actual recovery worker and the card display predicate, retaining the original10s/4s bounds and all provider/persistence/screenshot assertions; the corrected three-action journey passed31.80s.
+
+### Served reconnect needs renderer and native receipts (TASK-36761, 2026-10-25)
+
+The actual-App retained-terminal probe emitted over 91 KiB of terminal output
+while the `.xterm-rows` DOM text remained empty: the installed renderer uses a
+canvas. Observe xterm's public active buffer through a passive harness reference,
+and combine it with native receipts for input-thread identity, dimensions and
+input effects. Do not swap the production renderer to make a DOM assertion pass.
+The same probe found xterm normalizes multiline paste separators to carriage
+returns; compare logical lines, then wait for the native composer event to settle
+before asserting the next key's effect. An F11 receipt can precede asynchronous
+paste/selection settlement even though both inputs arrived correctly.
+
+A bootstrap-profile browser fixture also inherited a collection-owned XDG data
+root; its receipt path was therefore different from the test's `tmp_path`.
+An explicit child test-data-root variable fixed artifact placement while keeping
+the admitted bootstrap config and real native stores/permission paths intact.

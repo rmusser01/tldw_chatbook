@@ -26,6 +26,45 @@
       (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
   }
 
+  // Each page gets its own readiness fence; reconnect never replays input.
+  const Socket = window.WebSocket;
+  function AttachmentSocket(url, protocols) {
+    const socket = protocols === undefined ? new Socket(url) : new Socket(url, protocols);
+    if (new URL(url, location.href).pathname !== "/ws") return socket;
+    let generation = null;
+    let ready = false;
+    terminal.setAttribute("aria-busy", "true");
+    const send = socket.send.bind(socket);
+    socket.send = (data) => {
+      if (!ready && typeof data === "string") {
+        let frame;
+        try { frame = JSON.parse(data); } catch (_) { return; }
+        if (["stdin", "focus", "blur"].includes(frame[0])) return;
+      }
+      send(data);
+    };
+    socket.addEventListener("message", (event) => {
+      if (typeof event.data !== "string") return;
+      let frame;
+      try { frame = JSON.parse(event.data); } catch (_) { return; }
+      if (frame[0] === "console_attachment_begin") {
+        generation = frame[1].generation;
+        ready = false;
+      } else if (frame[0] === "console_attachment_ready" && generation === frame[1].generation) {
+        ready = true;
+        terminal.setAttribute("aria-busy", "false");
+      }
+    });
+    socket.addEventListener("close", () => {
+      ready = false;
+      terminal.setAttribute("aria-busy", "true");
+    });
+    return socket;
+  }
+  Object.setPrototypeOf(AttachmentSocket, Socket);
+  AttachmentSocket.prototype = Socket.prototype;
+  window.WebSocket = AttachmentSocket;
+
   function setStatus(message) {
     if (state.textContent !== message) state.textContent = message;
   }

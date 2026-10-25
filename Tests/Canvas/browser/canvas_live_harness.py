@@ -753,6 +753,7 @@ async def _construct_live_served_stack(
     child_temp.mkdir(parents=True, exist_ok=True)
     rollback.callback(shutil.rmtree, tmp_path / "test_data")
     monkeypatch.setenv("TMPDIR", str(child_temp))
+    monkeypatch.setenv("TLDW_CANVAS_TEST_DATA_ROOT", str(tmp_path / "test_data"))
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     port = reserve_loopback_port()
     rollback.callback((tmp_path / "served-cert.pem").unlink, missing_ok=True)
@@ -777,6 +778,16 @@ async def _construct_live_served_stack(
         trusted_proxy_addresses=["127.0.0.1"] if trusted_proxy else [],
     )
     server.command = f"exec {sys.executable} -u -m {child_module}"
+    original_bundle = server._patched_textual_js
+
+    def observed_bundle():
+        source = original_bundle()
+        hook = "this.terminal.open(e)"
+        assert source.count(hook) == 1
+        # Passive access to xterm's public buffer; retain the actual GPU renderer.
+        return source.replace(hook, hook + ",e.__terminalForTest=this.terminal", 1)
+
+    server._patched_textual_js = observed_bundle
     app = await server._make_app()
     services: list[object] = []
     service_class = server._chatbook_app_service_class
@@ -911,4 +922,19 @@ async def _construct_live_served_stack(
         proxy_runner,
         proxy_session,
         proxy_counts,
+    )
+
+
+async def wait_for_terminal_text(page, text: str, *, timeout: int = 15000) -> None:
+    """Inspect xterm's rendered buffer without replacing its Canvas/WebGL renderer."""
+    await page.wait_for_function(
+        """text => {
+            const terminal = document.querySelector('#terminal')?.__terminalForTest;
+            if (!terminal) return false;
+            const buffer = terminal.buffer.active;
+            return Array.from({length: buffer.length}, (_, i) =>
+                buffer.getLine(i)?.translateToString() || '').join('\\n').includes(text);
+        }""",
+        arg=text,
+        timeout=timeout,
     )

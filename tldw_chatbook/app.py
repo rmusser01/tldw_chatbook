@@ -1043,6 +1043,14 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
+    def get_driver_class(self):
+        """Use the retained-terminal driver only for a served child."""
+        if os.environ.get("CHATBOOK_SERVED_CHILD") == "1":
+            from .Web_Server.console_web_driver import ConsoleWebDriver
+
+            return ConsoleWebDriver
+        return super().get_driver_class()
+
     def __init__(self):
         # Track startup timing
         self._startup_start_time = time.perf_counter()

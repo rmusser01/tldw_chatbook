@@ -16,6 +16,8 @@ admit_startup()
 
 import asyncio
 import html
+import json
+import os
 import signal
 import ssl
 import sys
@@ -789,6 +791,9 @@ class ChatbookWebServerMixin:
         self._canvas_disabled_latched = not self._canvas_policy.enabled
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._served_browser_children: dict[str, str] = {}
+        from .served_console_hosts import ServedConsoleHosts
+
+        self._served_console_hosts = ServedConsoleHosts(self._create_console_host)
         self._canvas_profile_snapshot = (
             canvas_profile_snapshot
             or load_application_profile_snapshot(loader=load_profile_snapshot)
@@ -1600,7 +1605,14 @@ class ChatbookWebServerMixin:
         if broker is None:
             return
         children = self._served_browser_children
-        service.attach_relay(broker, child_ids=lambda: list(children.values()))
+        service.attach_relay(
+            broker,
+            child_ids=lambda: list(
+                dict.fromkeys(
+                    (*self._served_console_hosts.child_ids(), *children.values())
+                )
+            ),
+        )
 
     async def on_startup(self, app) -> None:
         """Start the private loopback control broker before children spawn."""
@@ -1625,6 +1637,13 @@ class ChatbookWebServerMixin:
                 await policy_task
             except asyncio.CancelledError:
                 pass
+        hosts = getattr(self, "_served_console_hosts", None)
+        retirement_error = None
+        if hosts is not None:
+            try:
+                await hosts.aclose()
+            except Exception as exc:  # noqa: BLE001 - finish teardown, then re-raise
+                retirement_error = exc
         broker = getattr(self, "_canvas_control_broker", None)
         if broker is not None:
             await broker.aclose()
@@ -1641,6 +1660,8 @@ class ChatbookWebServerMixin:
             self._mobile_service = None
         self._web_auth.revoke_all()
         await super().on_shutdown(app)
+        if retirement_error is not None:
+            raise retirement_error
 
     def _canvas_enabled(self) -> bool:
         """Read the global kill switch while honoring the restart latch."""
@@ -1869,75 +1890,139 @@ class ChatbookWebServerMixin:
             }
         return web.json_response(state, headers={"Cache-Control": "no-store"})
 
-    async def handle_websocket(self, request):
-        """Bind one browser websocket to exactly one authenticated child."""
+    def _create_console_host(self, _storage_identity: str):
+        from .served_console_hosts import ServedConsoleHost
 
-        from aiohttp import web
-
-        websocket = web.WebSocketResponse(
-            heartbeat=15,
-            protocols=(WEBSOCKET_PROTOCOL,),
-        )
-        width = _web_dimension(request.query.get("width"), 80)
-        height = _web_dimension(request.query.get("height"), 24)
-        app_service = None
-        try:
-            await websocket.prepare(request)
-            session = request.get("chatbook_browser_session")
-            unregister_channel = (
-                self._web_auth.register_channel(
-                    session,
-                    lambda: asyncio.create_task(websocket.close(code=4001)),
-                )
-                if session is not None
-                else (lambda: None)
-            )
-            expiry_task = (
-                asyncio.create_task(self._expire_websocket_session(session))
-                if session is not None
-                else None
-            )
-            app_service_class = getattr(self, "_chatbook_app_service_class", None)
-            broker = getattr(self, "_canvas_control_broker", None)
-            if app_service_class is None:
-                raise RuntimeError("served terminal app service is unavailable")
-            app_service = app_service_class(
+        service_class = self._chatbook_app_service_class
+        if service_class is None:
+            raise RuntimeError("served terminal app service is unavailable")
+        return ServedConsoleHost(
+            lambda **callbacks: service_class(
                 self.command,
-                write_bytes=websocket.send_bytes,
-                write_str=websocket.send_str,
-                close=websocket.close,
+                **callbacks,
                 download_manager=self.download_manager,
                 debug=self.debug,
-                canvas_control_broker=broker,
+                canvas_control_broker=self._canvas_control_broker,
             )
-            child_id = app_service.app_service_id
-            if session is not None:
-                self.bind_served_browser(session.session_id, child_id)
-            await app_service.start(width, height)
-            try:
-                await self._process_authenticated_messages(
-                    websocket, app_service, session
-                )
-            finally:
-                await app_service.stop()
+        )
+
+    async def _process_attached_terminal(self, request, websocket, attachment) -> None:
+        """Keep socket writes outside the child's continuously draining callback."""
+        from .served_console_hosts import StaleTerminalAttachment
+
+        session = request.get("chatbook_browser_session")
+
+        async def output() -> None:
+            while True:
+                kind, data = await attachment.receive()
+                if kind == "bytes":
+                    await websocket.send_bytes(data)
+                else:
+                    await websocket.send_str(data)
+
+        async def input_messages() -> None:
+            from aiohttp import WSMsgType
+
+            async for message in websocket:
+                if message.type != WSMsgType.TEXT:
+                    continue
+                if session.revoked:
+                    return
+                self._web_auth.touch_session(session)
+                envelope = message.json()
+                if not isinstance(envelope, list) or not 1 <= len(envelope) <= 2:
+                    continue
+                kind = envelope[0]
+                data = envelope[1] if len(envelope) == 2 else None
+                try:
+                    if kind == "stdin" and isinstance(data, str):
+                        await attachment.send_bytes(data.encode("utf-8"))
+                    elif kind == "resize" and isinstance(data, dict):
+                        await attachment.resize(
+                            _web_dimension(data.get("width"), 80),
+                            _web_dimension(data.get("height"), 24),
+                        )
+                    elif kind == "ping":
+                        await websocket.send_json(["pong", data])
+                    elif kind in {"blur", "focus"}:
+                        await attachment.send_meta({"type": kind})
+                except StaleTerminalAttachment:
+                    if attachment.closed.is_set():
+                        return
+
+        tasks = [
+            asyncio.create_task(output()),
+            asyncio.create_task(input_messages()),
+            asyncio.create_task(attachment.closed.wait()),
+        ]
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await websocket.close()
+
+    async def handle_websocket(self, request):
+        """Attach one authenticated terminal to the retained profile child."""
+        from aiohttp import web
+
+        from tldw_chatbook.config import get_chachanotes_db_path
+
+        websocket = web.WebSocketResponse(heartbeat=15, protocols=(WEBSOCKET_PROTOCOL,))
+        session = request.get("chatbook_browser_session")
+        if session is None:
+            raise web.HTTPUnauthorized()
+        attachment = None
+        host = None
+        expiry_task = None
+        unregister_channel = lambda: None
+        try:
+            await websocket.prepare(request)
+            unregister_channel = self._web_auth.register_channel(
+                session, lambda: asyncio.create_task(websocket.close(code=4001))
+            )
+            expiry_task = asyncio.create_task(self._expire_websocket_session(session))
+            # Server-admitted configuration only; browser parameters never select storage.
+            storage_identity = str(get_chachanotes_db_path().parent / "agent_runs.db")
+            host = await self._served_console_hosts.get_or_start(storage_identity)
+            if session.revoked or websocket.closed:
+                return websocket
+            attachment = await host.attach_terminal(
+                session.session_id,
+                _web_dimension(request.query.get("width"), 80),
+                _web_dimension(request.query.get("height"), 24),
+            )
+            if session.revoked or websocket.closed:
+                await attachment.detach()
+                return websocket
+            for browser_id, child_id in tuple(self._served_browser_children.items()):
+                if child_id == host.service.app_service_id:
+                    self.unbind_served_browser(browser_id, child_id)
+            self.bind_served_browser(session.session_id, host.service.app_service_id)
+            await self._process_attached_terminal(request, websocket, attachment)
         except asyncio.CancelledError:
             await websocket.close()
-        except Exception as error:  # noqa: BLE001 - websocket boundary stays alive
-            # No traceback here: the spawn frame holds the per-child secret.
+            raise
+        except Exception as error:  # noqa: BLE001 - bounded websocket failure, no spawn secrets
             logger.error("Served terminal session failed type={}", type(error).__name__)
         finally:
-            expiry = locals().get("expiry_task")
-            if expiry is not None:
-                expiry.cancel()
-            unregister = locals().get("unregister_channel")
-            if unregister is not None:
-                unregister()
-            if app_service is not None:
-                session = locals().get("session")
-                child_id = getattr(app_service, "app_service_id", None)
-                if session is not None and isinstance(child_id, str):
-                    self.unbind_served_browser(session.session_id, child_id)
-                await app_service.stop()
+            if expiry_task is not None:
+                expiry_task.cancel()
+                await asyncio.gather(expiry_task, return_exceptions=True)
+            unregister_channel()
+            if attachment is not None:
+                if (
+                    host.current_attachment is attachment
+                    or host.current_attachment is None
+                ):
+                    self.unbind_served_browser(
+                        session.session_id, host.service.app_service_id
+                    )
+                await attachment.detach()
+            await websocket.close()
         return websocket
 
     @property
@@ -2125,7 +2210,7 @@ def _web_dimension(value: object, default: int) -> int:
 
 
 def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
-    """Extend only textual-serve's documented child-environment build seam."""
+    """Adapt textual-serve child metadata, environment and physical retirement."""
 
     class ChatbookAppService(textual_app_service_class):
         def __init__(self, *args, canvas_control_broker, **kwargs):
@@ -2139,6 +2224,9 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
             environment.update(self._canvas_control_environment)
             # Launch identity survives disabled or unavailable Canvas transport.
             environment["CHATBOOK_SERVED_CHILD"] = "1"
+            environment["TEXTUAL_DRIVER"] = (
+                "tldw_chatbook.Web_Server.console_web_driver:ConsoleWebDriver"
+            )
             return environment
 
         async def start(self, width: int, height: int) -> None:
@@ -2154,17 +2242,77 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
                 raise
             self._canvas_control_started = self._canvas_control_broker is not None
 
-        async def stop(self) -> None:
+        async def on_meta(self, data: bytes) -> None:
+            metadata = json.loads(data)
+            if metadata.get("type") in {
+                "console_attachment_begin",
+                "console_attachment_ready",
+            }:
+                await self.remote_write_str(json.dumps([metadata["type"], metadata]))
+                return
+            await super().on_meta(data)
+
+        async def run(self) -> None:
             try:
-                await super().stop()
+                await super().run()
             finally:
-                if self._canvas_control_started:
-                    self._canvas_control_started = False
-                    if self._canvas_control_broker is not None:
-                        await self._canvas_control_broker.revoke_child(
-                            self.app_service_id
-                        )
-                self._canvas_control_environment.clear()
+                await self.remote_close()
+
+        async def _open_app_process(self, width: int = 80, height: int = 24):
+            self._process = process = await asyncio.create_subprocess_shell(
+                self.command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._build_environment(width, height),
+                start_new_session=True,
+            )
+            self._stdin = process.stdin
+            return process
+
+        async def stop(self) -> None:
+            retirement = getattr(self, "_retirement_task", None)
+            if retirement is None:
+                retirement = self._retirement_task = asyncio.create_task(self._retire())
+            await asyncio.shield(retirement)
+
+        async def _retire(self) -> None:
+            stopping = asyncio.create_task(super().stop())
+            process = getattr(self, "_process", None)
+            try:
+                await asyncio.wait_for(asyncio.shield(stopping), 5)
+                if process is not None:
+                    await asyncio.wait_for(process.wait(), 2)
+            except TimeoutError:
+                if process is None:
+                    raise
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    if process.returncode is not None:
+                        break
+                    try:
+                        os.killpg(process.pid, sig)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        await asyncio.wait_for(process.wait(), 2)
+                        break
+                    except TimeoutError:
+                        if sig == signal.SIGKILL:
+                            raise
+            finally:
+                # Only physical exit permits cancelling a lagging pipe observer.
+                # Otherwise keep draining; the live child still owns its lease.
+                self._stop_observer = stopping
+                if not stopping.done() and (
+                    process is None or process.returncode is not None
+                ):
+                    stopping.cancel()
+                    await asyncio.gather(stopping, return_exceptions=True)
+            if self._canvas_control_started:
+                self._canvas_control_started = False
+                if self._canvas_control_broker is not None:
+                    await self._canvas_control_broker.revoke_child(self.app_service_id)
+            self._canvas_control_environment.clear()
 
     ChatbookAppService.__name__ = "ChatbookAppService"
     return ChatbookAppService

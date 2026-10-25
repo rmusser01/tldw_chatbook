@@ -19,7 +19,13 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
     # `getattr`: the start/stop pair is driven on partially-specified
     # app doubles in tests (see test_canvas_control_spawn).
     publisher = getattr(self, "served_relay_publisher", None)
-    if client is None or self._served_canvas_control_start_task is not None:
+    if self._served_canvas_control_start_task is not None:
+        return
+    if client is None:
+        if getattr(self, "_served_canvas_mode", False):
+            self._served_control_lifetime_task = app_globals["asyncio"].create_task(
+                _retire_after_control_loss(self), name="served-control-unavailable"
+            )
         return
     task = app_globals["asyncio"].create_task(
         client.start(), name="start_served_canvas_control"
@@ -33,6 +39,9 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
             completed.result()
             if publisher is not None:
                 publisher.attach(run_state_source=self._served_relay_run_states)
+            self._served_control_lifetime_task = app_globals["asyncio"].create_task(
+                _watch_served_control(self), name="served-control-lifetime"
+            )
         except app_globals["asyncio"].CancelledError:
             pass
         except Exception as error:  # noqa: BLE001 -- preserve optional transport recovery
@@ -40,8 +49,40 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
                 "Served Canvas control unavailable type={} code=connection_failed",
                 type(error).__name__,
             )
+            self._served_control_lifetime_task = app_globals["asyncio"].create_task(
+                _retire_after_control_loss(self), name="served-control-refused"
+            )
 
     task.add_done_callback(observe)
+
+
+async def _retire_after_control_loss(self: Any) -> None:
+    """Close native admission and retain execution ownership through retirement."""
+    self._shutting_down = True
+    self._close_boot_worker_gate("served control lost")
+    runtime = getattr(self, "console_runtime", None)
+    if runtime is not None:
+        view = getattr(runtime, "view", None)
+        if view is not None:
+            view._console_chat_tearing_down = True
+        # dispose closes admission/automatic wakes before its first physical drain.
+        await runtime.dispose()
+    await self._shutdown_console_runtime()
+    self.exit()
+
+
+async def _watch_served_control(self: Any) -> None:
+    from .Canvas.control_protocol import ControlProtocolError
+
+    while True:
+        try:
+            await self.served_canvas_control.wait_disconnected(timeout=60)
+        except ControlProtocolError as error:
+            if error.code == "connection_deadline_exceeded":
+                continue
+            raise
+        await _retire_after_control_loss(self)
+        return
 
 
 async def _handle_served_control_request(self: Any, request: Any) -> Any:
@@ -121,6 +162,11 @@ async def _stop_served_canvas_control(
 ) -> None:
     """Close the private child channel without affecting terminal exit."""
 
+    lifetime = getattr(self, "_served_control_lifetime_task", None)
+    self._served_control_lifetime_task = None
+    if lifetime is not None and not lifetime.done():
+        lifetime.cancel()
+        await app_globals["asyncio"].gather(lifetime, return_exceptions=True)
     task = self._served_canvas_control_start_task
     self._served_canvas_control_start_task = None
     if task is not None and not task.done():

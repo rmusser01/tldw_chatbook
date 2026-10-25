@@ -142,17 +142,41 @@ class _ScriptedCanvasGateway:
         self._canvas_id: str | None = None
         self._revision_id: str | None = None
         self._call_count_path = (
-            Path(os.environ["XDG_DATA_HOME"]) / "canvas-live-gateway-calls"
+            Path(
+                os.environ.get(
+                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"]
+                )
+            )
+            / "canvas-live-gateway-calls"
         )
         self._tool_status_path = (
-            Path(os.environ["XDG_DATA_HOME"]) / "canvas-live-tool-status"
+            Path(
+                os.environ.get(
+                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"]
+                )
+            )
+            / "canvas-live-tool-status"
         )
         self._disclosure_path = (
-            Path(os.environ["XDG_DATA_HOME"]) / "canvas-live-tool-disclosure"
+            Path(
+                os.environ.get(
+                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"]
+                )
+            )
+            / "canvas-live-tool-disclosure"
         )
         _publish_counter(self._call_count_path, 0)
         self._tool_status_path.write_text("pending", encoding="ascii")
         self._disclosure_path.write_text("pending", encoding="ascii")
+
+    def cached_context_window(self, settings):
+        """Use the same offline fallback as the existing native stream fixtures."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
+    async def resolve_context_window(self, settings):
+        return self.cached_context_window(settings)
 
     async def resolve_for_send(self, selection):
         resolution = SimpleNamespace(
@@ -232,6 +256,9 @@ class _ScriptedCanvasGateway:
     async def stream_chat(self, _resolution, messages, **_kwargs):
         self.calls += 1
         _publish_counter(self._call_count_path, self.calls)
+        pause = os.environ.get("TLDW_RETAINED_CONSOLE_PAUSE")
+        while self.calls == 1 and pause and not Path(pause).exists():
+            await asyncio.sleep(0.02)
         system_prompt = self._system_prompt(messages)
         if self._run_phase in {"initial", "update_initial"}:
             self._discovery = "use find_tools, then load_tools" in system_prompt
@@ -382,7 +409,9 @@ def main() -> None:
         connect = sqlite3.connect
         rows = []
         diagnostic_lock = threading.Lock()
-        owned_root = Path(os.environ["XDG_DATA_HOME"]).resolve()
+        owned_root = Path(
+            os.environ.get("TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"])
+        ).resolve()
 
         def observed_connect(database, *args, **kwargs):
             value = os.fspath(database)
@@ -456,7 +485,9 @@ def main() -> None:
     database = None
     try:
         app = _build_test_app(configured_default="chat")
-        data_root = Path(os.environ["XDG_DATA_HOME"])
+        data_root = Path(
+            os.environ.get("TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"])
+        )
         data_root.mkdir(parents=True, exist_ok=True)
         database = CharactersRAGDB(
             data_root / "canvas-live-chatbook.sqlite", "canvas-live-chatbook"
@@ -574,6 +605,31 @@ def main() -> None:
                     is not None,
                     "enabled": app.screen._console_runtime()._canvas_enabled(),
                     "control": app.served_canvas_control is not None,
+                },
+            )
+            import threading
+
+            composer = app.screen.query_one("#console-native-composer")
+            region = composer.query_one("#console-command-visible-text").region
+            _publish_owner_receipt(
+                data_root / "canvas-live-terminal-state",
+                {
+                    "pid": os.getpid(),
+                    "input_thread": app._driver._key_thread.ident,
+                    "input_threads": sum(
+                        t.name == "textual-input" for t in threading.enumerate()
+                    ),
+                    "width": app.size.width,
+                    "height": app.size.height,
+                    "composer_region": [
+                        region.x,
+                        region.y,
+                        region.width,
+                        region.height,
+                    ],
+                    "draft": composer.draft_text(),
+                    "focused_id": app.focused.id if app.focused else None,
+                    "mouse": list(app.mouse_position),
                 },
             )
             focused = app.focused

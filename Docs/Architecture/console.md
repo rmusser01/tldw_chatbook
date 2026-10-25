@@ -136,3 +136,21 @@ Disposal releases it only after the runtime drains, change-review publisher and
 cleanup prove retirement. Bounded or failed cleanup retains the owner until
 process exit; cancelling a waiter or losing a parent is never takeover authority.
 See [ADR-244](../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md).
+
+
+## Served lifecycle ownership (TASK-36761, ADR-244)
+
+Served mode selects `Web_Server/console_web_driver.py` through `TldwCli` only for
+`CHATBOOK_SERVED_CHILD`. The App, ConsoleRuntime, native stores and execution-owner
+lease survive terminal disconnect/replacement; a generation-fenced full repaint
+restores the terminal without another input thread. Parent host ownership and the
+saved-conversation reservation seam are documented in [web-server.md](web-server.md).
+Task9 connects remote saved-open/save callbacks; terminal native hydration and
+persistence retain their existing paths.
+
+`app_served.py` watches the child control connection independently of Canvas
+exposure. Genuine parent/control loss closes boot admission and automatic wakes,
+marks the Console as tearing down, awaits the existing runtime disposal/shutdown,
+and exits. Runtime physical cleanup retains the lease on failure or cancellation;
+the parent only permits a new host after observing actual process exit. Browser
+revocation and Canvas disable do not enter this native shutdown path.
