@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import AgentDefinition, definition_from_row
 from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
 from tldw_chatbook.DB.AgentRuns_DB import (
@@ -21,7 +22,7 @@ from tldw_chatbook.Tools.raw_cli_executor import (
 
 @pytest.fixture()
 def db(tmp_path):
-    database = AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    database = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="test")
     try:
         yield database
     finally:
@@ -683,7 +684,7 @@ def test_opening_legacy_v1_db_migrates_column_and_create_run_works(request, tmp_
         raw.close()
     assert "assistant_message_id" not in cols
 
-    migrated = AgentRunsDB(legacy_path, client_id="test")
+    migrated = owned_agent_runs_db(legacy_path, client_id="test")
     request.addfinalizer(migrated.close)
     run_id = migrated.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="y"
@@ -693,7 +694,7 @@ def test_opening_legacy_v1_db_migrates_column_and_create_run_works(request, tmp_
 
 def test_reopening_same_file_twice_is_idempotent(request, tmp_path):
     path = tmp_path / "agent_runs.db"
-    first = AgentRunsDB(path, client_id="test")
+    first = owned_agent_runs_db(path, client_id="test")
     request.addfinalizer(first.close)
     first.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="a"
@@ -701,7 +702,7 @@ def test_reopening_same_file_twice_is_idempotent(request, tmp_path):
 
     # Re-opening must not raise (guarded ALTER is a no-op once the column
     # already exists) and the second instance must still work correctly.
-    second = AgentRunsDB(path, client_id="test")
+    second = owned_agent_runs_db(path, client_id="test")
     request.addfinalizer(second.close)
     run_id = second.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="b"
@@ -718,7 +719,7 @@ def test_reopening_same_file_twice_is_idempotent(request, tmp_path):
 
 def test_orphaned_running_runs_reconciled_on_open(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
-    db1 = AgentRunsDB(db_path)
+    db1 = owned_agent_runs_db(db_path)
     request.addfinalizer(db1.close)
     r_run1 = db1.create_run(conversation_id="c1", agent_kind="primary")
     r_run2 = db1.create_run(conversation_id="c2", agent_kind="primary")
@@ -731,7 +732,7 @@ def test_orphaned_running_runs_reconciled_on_open(request, tmp_path):
     # registered (AgentRunsDB._swept_paths.clear() would be an
     # order-dependent test hazard).
     AgentRunsDB._swept_paths.discard(db1.db_path_str)
-    db2 = AgentRunsDB(db_path)
+    db2 = owned_agent_runs_db(db_path)
     request.addfinalizer(db2.close)
 
     run1 = db2.get_run(r_run1)
@@ -746,14 +747,14 @@ def test_orphaned_running_runs_reconciled_on_open(request, tmp_path):
 
 def test_reconcile_preserves_existing_result(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
-    db1 = AgentRunsDB(db_path)
+    db1 = owned_agent_runs_db(db_path)
     request.addfinalizer(db1.close)
     rid = db1.create_run(conversation_id="c", agent_kind="primary")
     db1.set_status(rid, "running", result="partial output")  # running WITH a result
     # Simulate a fresh process opening the same file (scoped to this
     # test's own path -- see the discard() comment above).
     AgentRunsDB._swept_paths.discard(db1.db_path_str)
-    db2 = AgentRunsDB(db_path)
+    db2 = owned_agent_runs_db(db_path)
     request.addfinalizer(db2.close)
     row = db2.get_run(rid)
     assert row["status"] == "error"
@@ -766,7 +767,7 @@ def test_reconcile_preserves_existing_result(request, tmp_path):
 
 def test_reconcile_orphaned_run_publishes_failed_fleet_receipt(tmp_path):
     db_path = tmp_path / "orphan-receipt.db"
-    setup = AgentRunsDB(db_path)
+    setup = owned_agent_runs_db(db_path)
     run_id = setup.create_run(
         conversation_id="conversation-orphan",
         agent_kind="subagent",
@@ -776,7 +777,7 @@ def test_reconcile_orphaned_run_publishes_failed_fleet_receipt(tmp_path):
     setup.close()
     AgentRunsDB._swept_paths.discard(str(db_path))
 
-    reopened = AgentRunsDB(db_path)
+    reopened = owned_agent_runs_db(db_path)
 
     assert reopened.get_run(run_id)["status"] == "error"
     receipts = reopened.list_unseen_console_activity()
@@ -791,7 +792,7 @@ def test_reconcile_orphaned_run_publishes_failed_fleet_receipt(tmp_path):
 
 def test_reconcile_receipt_failure_rolls_back_orphan_repair(tmp_path, monkeypatch):
     db_path = tmp_path / "orphan-receipt-atomic.db"
-    setup = AgentRunsDB(db_path)
+    setup = owned_agent_runs_db(db_path)
     run_id = setup.create_run(
         conversation_id="conversation-atomic",
         agent_kind="primary",
@@ -807,7 +808,7 @@ def test_reconcile_receipt_failure_rolls_back_orphan_repair(tmp_path, monkeypatc
     monkeypatch.setattr(
         AgentRunsDB, "_publish_console_activity_in_transaction", fail_receipt
     )
-    degraded = AgentRunsDB(db_path)
+    degraded = owned_agent_runs_db(db_path)
 
     assert degraded.get_run(run_id)["status"] == "running"
     assert degraded.get_run(run_id)["steps"] == []
@@ -823,7 +824,7 @@ def test_reconcile_receipt_failure_rolls_back_orphan_repair(tmp_path, monkeypatc
 
 def test_reconcile_local_commands_without_agent_lifecycle_diagnostics(tmp_path):
     db_path = tmp_path / "local-command-reconcile.db"
-    setup = AgentRunsDB(db_path)
+    setup = owned_agent_runs_db(db_path)
     completed_id = setup.create_run(
         conversation_id="c",
         agent_kind="local_command",
@@ -846,7 +847,7 @@ def test_reconcile_local_commands_without_agent_lifecycle_diagnostics(tmp_path):
     setup.close()
     AgentRunsDB._swept_paths.discard(str(db_path))
 
-    reopened = AgentRunsDB(db_path)
+    reopened = owned_agent_runs_db(db_path)
 
     completed = reopened.get_run(completed_id)
     running = reopened.get_run(running_id)
@@ -866,7 +867,7 @@ def test_reconcile_local_commands_without_agent_lifecycle_diagnostics(tmp_path):
 def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(
     tmp_path, monkeypatch
 ):
-    db = AgentRunsDB(tmp_path / "atomic-terminal.db")
+    db = owned_agent_runs_db(tmp_path / "atomic-terminal.db")
     run_id = db.create_run(conversation_id="c", agent_kind="primary")
     step = {
         "index": 10_000_010,
@@ -941,7 +942,7 @@ def test_terminal_status_result_and_lifecycle_are_first_writer_wins(db):
 
 def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
     db_path = tmp_path / "split-terminal.db"
-    setup = AgentRunsDB(db_path)
+    setup = owned_agent_runs_db(db_path)
     run_id = setup.create_run(conversation_id="c", agent_kind="primary")
     setup.insert_steps_at_indices(
         run_id,
@@ -962,7 +963,7 @@ def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
     setup.close()
     AgentRunsDB._swept_paths.discard(str(db_path))
 
-    reopened = AgentRunsDB(db_path)
+    reopened = owned_agent_runs_db(db_path)
     row = reopened.get_run(run_id)
     assert row["status"] == "done"
     assert row["result"] == "legacy answer"
@@ -975,11 +976,11 @@ def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
 
 def test_reconcile_idempotent_same_process(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
-    db1 = AgentRunsDB(db_path)
+    db1 = owned_agent_runs_db(db_path)
     request.addfinalizer(db1.close)
     db1.create_run(conversation_id="c", agent_kind="primary")
     # second open in the SAME process (guard already set by db1) is a no-op
-    reopened = AgentRunsDB(db_path)
+    reopened = owned_agent_runs_db(db_path)
     request.addfinalizer(reopened.close)
     assert reopened.reconcile_orphaned_runs() == 0
 
@@ -1002,7 +1003,7 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
 
     # Seed a file with an orphaned 'running' row, as a prior process would
     # have left the table before crashing again.
-    setup = AgentRunsDB(db_path)
+    setup = owned_agent_runs_db(db_path)
     request.addfinalizer(setup.close)
     rid = setup.create_run(conversation_id="c", agent_kind="primary")
     path_str = setup.db_path_str
@@ -1025,7 +1026,7 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
     # Construction must not raise (reconcile is best-effort in __init__),
     # but the failed sweep must leave the path unregistered and the row
     # untouched.
-    db2 = AgentRunsDB(db_path)
+    db2 = owned_agent_runs_db(db_path)
     request.addfinalizer(db2.close)
     assert path_str not in AgentRunsDB._swept_paths
     assert db2.get_run(rid)["status"] == "running"
@@ -1038,7 +1039,7 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
 
 
 def test_file_db_uses_wal_and_busy_timeout(request, tmp_path):
-    db = AgentRunsDB(tmp_path / "agent_runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.db")
     request.addfinalizer(db.close)
     with db.connection() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
@@ -1059,7 +1060,7 @@ def test_memory_db_skips_wal(
 def test_latest_primary_run_targets_newest_primary_only(request, tmp_path):
     """Qodo (PR #872): the Stop-path lookup must be a single bounded query,
     and interleaved newer SUBAGENT runs must not hide the newest primary."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     request.addfinalizer(db.close)
 
     old_primary = db.create_run(conversation_id="c1", agent_kind="primary", task="a")
@@ -1256,11 +1257,11 @@ def test_enabled_only_filter(db):
 
 def test_definitions_survive_reopen_and_migration_is_idempotent(request, tmp_path):
     path = tmp_path / "agent_runs.db"
-    first = AgentRunsDB(path, client_id="test")
+    first = owned_agent_runs_db(path, client_id="test")
     request.addfinalizer(first.close)
     first.create_agent_definition(_defn())
     first.close()
-    second = AgentRunsDB(path, client_id="test")  # re-runs _initialize_schema
+    second = owned_agent_runs_db(path, client_id="test")  # re-runs _initialize_schema
     request.addfinalizer(second.close)
     assert [r["name"] for r in second.list_agent_definitions()] == ["researcher"]
     with second.connection() as conn:
@@ -1273,7 +1274,7 @@ def test_definitions_survive_reopen_and_migration_is_idempotent(request, tmp_pat
 
 def _seed_v18_definitions(path):
     """Build the complete production schema, seed prior data, then restore v18."""
-    database = AgentRunsDB(path, client_id="build-v18-predecessor")
+    database = owned_agent_runs_db(path, client_id="build-v18-predecessor")
     try:
         live_id = database.create_agent_definition(_defn(name="live-agent"))
         disabled_id = database.create_agent_definition(
@@ -1351,7 +1352,7 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
     path = tmp_path / "definitions-v18.db"
     live_id, disabled_id, deleted_id, before = _seed_v18_definitions(path)
 
-    first = AgentRunsDB(path, client_id="upgrade-v18")
+    first = owned_agent_runs_db(path, client_id="upgrade-v18")
     try:
         with first.connection() as conn:
             after = _snapshot_v18_data(conn)
@@ -1426,7 +1427,7 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
         first.close()
 
     for client_id in ("reopen-once", "reopen-twice"):
-        reopened = AgentRunsDB(path, client_id=client_id)
+        reopened = owned_agent_runs_db(path, client_id=client_id)
         try:
             assert reopened.get_agent_definition(live_id)["max_wall_seconds"] is None
             assert reopened.get_agent_definition(capped_id) == expected_capped
@@ -1445,7 +1446,7 @@ def test_v18_upgrade_is_guarded_when_definition_cap_column_already_exists(tmp_pa
     finally:
         conn.close()
 
-    database = AgentRunsDB(path, client_id="guarded-v18")
+    database = owned_agent_runs_db(path, client_id="guarded-v18")
     try:
         with database.connection() as conn:
             columns = [
@@ -1527,7 +1528,7 @@ def test_agent_runs_columns_backfilled_on_old_file(request, tmp_path):
     )
     conn.commit()
     conn.close()
-    db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    db = owned_agent_runs_db(path, client_id="test")  # open runs the ALTER guards
     request.addfinalizer(db.close)
     with db.connection() as conn:
         columns = {
@@ -1605,7 +1606,7 @@ def test_schema_version_constant_agrees_with_the_version_table(request, tmp_path
     constant CLAUDE.md points every schema change at must agree with the
     highest version a freshly created database actually records -- and
     this test fails if the two ever diverge again."""
-    db = AgentRunsDB(tmp_path / "fresh.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "fresh.db", client_id="test")
     request.addfinalizer(db.close)
     with db.connection() as conn:
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
@@ -1630,7 +1631,7 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(request, tmp_path)
         raw.close()
     assert "resumed_from_run_id" not in cols
 
-    first = AgentRunsDB(path, client_id="test")
+    first = owned_agent_runs_db(path, client_id="test")
     request.addfinalizer(first.close)
     run_id = first.create_run(
         conversation_id="c",
@@ -1646,7 +1647,7 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(request, tmp_path)
     assert 11 in versions
 
     # Open TWICE (the plan's wording): the guarded ALTER must be a no-op.
-    second = AgentRunsDB(path, client_id="test")
+    second = owned_agent_runs_db(path, client_id="test")
     request.addfinalizer(second.close)
     second_id = second.create_run(conversation_id="c", agent_kind="subagent", task="t2")
     assert second.get_run(second_id)["resumed_from_run_id"] is None
@@ -1701,7 +1702,7 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
     conn.close()
     assert "spawn_event_id" not in columns_before
 
-    first = AgentRunsDB(path, client_id="migrate-v14")
+    first = owned_agent_runs_db(path, client_id="migrate-v14")
     with first.connection() as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
@@ -1717,13 +1718,13 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
     assert first.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
     first.close()
 
-    second = AgentRunsDB(path, client_id="reopen-v14")
+    second = owned_agent_runs_db(path, client_id="reopen-v14")
     assert second.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
     second.close()
 
 
 def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
-    database = AgentRunsDB(tmp_path / "fresh-v15.db", client_id="receipt-shape")
+    database = owned_agent_runs_db(tmp_path / "fresh-v15.db", client_id="receipt-shape")
 
     with database.connection() as conn:
         columns = {
@@ -1767,7 +1768,7 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
 
 
 def test_unseen_console_activity_query_uses_stats_free_keyset_index(tmp_path):
-    database = AgentRunsDB(tmp_path / "receipt-plan.db", client_id="receipt-plan")
+    database = owned_agent_runs_db(tmp_path / "receipt-plan.db", client_id="receipt-plan")
 
     with database.connection() as conn:
         assert (
@@ -1794,7 +1795,7 @@ def test_unseen_console_activity_query_uses_stats_free_keyset_index(tmp_path):
 
 def test_pre_v15_receipt_migration_preserves_definitions_and_change_notes(tmp_path):
     path = tmp_path / "pre-v15.db"
-    setup = AgentRunsDB(path, client_id="seed-v14")
+    setup = owned_agent_runs_db(path, client_id="seed-v14")
     definition_id = setup.create_agent_definition(_defn())
     run_id = setup.create_run(conversation_id="conv-v14", agent_kind="primary")
     setup.set_status(run_id, "done", result="preserved")
@@ -1822,14 +1823,14 @@ def test_pre_v15_receipt_migration_preserves_definitions_and_change_notes(tmp_pa
     )
     raw.close()
 
-    migrated = AgentRunsDB(path, client_id="migrate-v15")
+    migrated = owned_agent_runs_db(path, client_id="migrate-v15")
     assert migrated.get_agent_definition(definition_id)["name"] == "researcher"
     assert migrated.notes_for_run(run_id)[0]["id"] == note_id
     assert migrated.get_run(run_id)["result"] == "preserved"
     assert migrated.receipt_capability_available is True
     migrated.close()
 
-    reopened = AgentRunsDB(path, client_id="reopen-v15")
+    reopened = owned_agent_runs_db(path, client_id="reopen-v15")
     assert reopened.get_agent_definition(definition_id)["name"] == "researcher"
     assert reopened.notes_for_run(run_id)[0]["note"] == "Keep this note"
     reopened.close()
@@ -1840,7 +1841,7 @@ def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
         def _create_console_activity_receipts_schema(self, conn):
             raise sqlite3.OperationalError("injected receipt DDL failure")
 
-    database = ReceiptDDLFailureDB(
+    database = owned_agent_runs_db(_db_class=ReceiptDDLFailureDB, db_path=
         tmp_path / "receipt-degraded.db", client_id="receipt-degraded"
     )
 
@@ -2033,7 +2034,7 @@ def test_receipt_operations_raise_focused_error_when_capability_is_unavailable(
         def _create_console_activity_receipts_schema(self, conn):
             raise sqlite3.OperationalError("injected receipt DDL failure")
 
-    database = ReceiptDDLFailureDB(tmp_path / "receipt-operation-degraded.db")
+    database = owned_agent_runs_db(_db_class=ReceiptDDLFailureDB, db_path=tmp_path / "receipt-operation-degraded.db")
 
     with pytest.raises(ConsoleActivityReceiptsUnavailable):
         database.list_unseen_console_activity()
@@ -2176,7 +2177,7 @@ def test_pre_v21_db_gains_v21_columns_on_open(tmp_path):
     finally:
         conn.close()
 
-    db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    db = owned_agent_runs_db(path, client_id="test")  # open runs the ALTER guards
     with db.connection() as conn:
         run_cols = {
             row[1] for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
@@ -2214,7 +2215,7 @@ def test_pre_v21_db_gains_v21_columns_on_open(tmp_path):
 
 def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_path):
     path = tmp_path / "routing-v20.db"
-    database = AgentRunsDB(path)
+    database = owned_agent_runs_db(path)
     definition_id = database.create_agent_definition(_defn(max_wall_seconds=12.5))
     run_id = database.create_run(conversation_id="c", agent_kind="primary")
     with database.connection() as conn:
@@ -2234,7 +2235,7 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
         ).fetchone()[0]
     database.close()
     for _ in range(2):
-        database = AgentRunsDB(path)
+        database = owned_agent_runs_db(path)
         try:
             assert (
                 database.get_agent_definition(definition_id)["max_wall_seconds"] == 12.5

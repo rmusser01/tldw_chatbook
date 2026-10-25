@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.DB.test_agent_runs_db import _LEGACY_PRE_V11_DDL
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def test_legacy_usage_stays_unknown_across_migration_and_reopen(tmp_path):
@@ -20,7 +20,7 @@ def test_legacy_usage_stays_unknown_across_migration_and_reopen(tmp_path):
             "VALUES ('old', 'c', 'subagent', 'done', '2026-01-01', '2026-01-01')"
         )
     for _ in range(2):
-        db = AgentRunsDB(path, client_id="budget")
+        db = owned_agent_runs_db(path, client_id="budget")
         assert db.get_run("old")["budget_tokens"] is None
         with db.connection() as conn:
             assert (
@@ -32,7 +32,7 @@ def test_legacy_usage_stays_unknown_across_migration_and_reopen(tmp_path):
 
 @pytest.fixture
 def db(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db", client_id="budget")
+    database = owned_agent_runs_db(tmp_path / "runs.db", client_id="budget")
     try:
         yield database
     finally:
@@ -78,7 +78,7 @@ def test_chain_survives_reopen_and_excludes_sibling_forks(db):
     _run(db, 900, parent=root)
     path = db.db_path_str
     db.close()
-    reopened = AgentRunsDB(path, client_id="reopen")
+    reopened = owned_agent_runs_db(path, client_id="reopen")
     try:
         assert reopened.continuation_budget("c", selected) == {
             "budget_tokens": 150,

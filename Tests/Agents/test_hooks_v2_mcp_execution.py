@@ -7,6 +7,8 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 from Tests.Agents.test_mcp_tool_provider import (
@@ -914,7 +916,6 @@ async def test_admitted_agent_service_uses_same_mcp_hook_executor_and_parent_con
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
     from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     async with controlled_stdio_client(tmp_path) as client:
         normal_service = await controlled_service(tmp_path, client)
@@ -963,7 +964,7 @@ async def test_admitted_agent_service_uses_same_mcp_hook_executor_and_parent_con
         )
         owner = HookBudgetOwner()
         engine = HookEngine(handlers, lambda *_: True, owner)
-        db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="h6-actual")
+        db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="h6-actual")
         chat = ScriptedChat([fence("calculator", {"expression": "6*7"}), "done"])
         service = AgentService(
             db,

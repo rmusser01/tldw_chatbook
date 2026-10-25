@@ -36,6 +36,9 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import provider_resolution
+from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Agents.agent_models import (
     RUN_ERROR,
     STEP_ERROR,
@@ -53,9 +56,6 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-from Tests.UI.test_destination_shells import _build_test_app
-from Tests.console_provider_doubles import provider_resolution
 
 
 def _fence(name, args):
@@ -208,7 +208,7 @@ async def test_agent_marker_anchoring_across_two_sibling_branches_on_resume(tmp_
     # Agent work crosses thread boundaries; a named SQLite database keeps the
     # schema visible to every connection, unlike per-connection ``:memory:``.
     db = CharactersRAGDB(tmp_path / "chat.db", "test_client")
-    agent_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    agent_db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     try:
         scripts = [
             [_fence("calculator", {"expression": "6*7"})],  # R1 turn 1: tool fence
@@ -309,7 +309,7 @@ async def test_legacy_null_anchor_run_places_via_ordinal_fallback_on_resume(tmp_
     after the fact.
     """
     db = CharactersRAGDB(":memory:", "test_client")
-    agent_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    agent_db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
         gateway = _Gateway([["a plain answer."]])
@@ -375,7 +375,7 @@ async def test_retry_supersedes_prior_run_dropping_its_resume_markers(tmp_path):
     ``resume_marker_messages`` entirely.
     """
     db = CharactersRAGDB(":memory:", "test_client")
-    agent_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    agent_db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     try:
         scripts = [
             [_fence("calculator", {"expression": "1*1"})],  # R1 turn 1: tool fence

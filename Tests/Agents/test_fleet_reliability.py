@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
 from Tests.Agents.test_fleet_steering_mailbox import STEER_CFG, fence, make_deps
 from tldw_chatbook.Agents.agent_models import ModelTurn
 from tldw_chatbook.Agents.agent_runtime import run_agent_loop
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def test_mailbox_refuses_entry_33_without_losing_fifo_and_drain_frees_room():
@@ -66,7 +66,7 @@ def test_uncopyable_transcript_refuses_retention_without_claiming_steering():
 
 
 def test_service_reports_a_full_live_mailbox_without_calling_it_finished(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="review")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="review")
     holder = {}
 
     def send():

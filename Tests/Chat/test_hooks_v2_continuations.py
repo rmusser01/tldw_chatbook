@@ -1,5 +1,7 @@
 """Bounded Stop admission through the existing queue owner."""
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 
 def test_user_work_and_chain_cap_prevent_continuation():
     from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationPolicy
@@ -109,9 +111,8 @@ async def test_actual_settled_agent_budget_is_retained(
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
     from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "budget.db", client_id="h5")
+    db = owned_agent_runs_db(tmp_path / "budget.db", client_id="h5")
     engine = HookEngine((), lambda *_: True, HookBudgetOwner())
     lifecycle = HookSessionLifecycle(engine, "session")
     engine.lifecycle_owner = lifecycle
@@ -632,7 +633,6 @@ async def test_actual_agent_remaining_budget_controls_real_scheduler(
     from dataclasses import replace
 
     from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_inline_service
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     case = stop_case
     engine = case.install(
@@ -648,7 +648,7 @@ async def test_actual_agent_remaining_budget_controls_real_scheduler(
             return results[0]
 
         case.coordinator.schedule_continuation = simultaneous
-    db = AgentRunsDB(tmp_path / "real-agent-budget.db", client_id="h5")
+    db = owned_agent_runs_db(tmp_path / "real-agent-budget.db", client_id="h5")
     service, _ = make_inline_service(db, ["done"] * 5, monkeypatch)
     calls = []
 

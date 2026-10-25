@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     AgentConfig,
@@ -24,8 +25,6 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
 )
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 
 SCHEMA = ToolSchema(
     id="builtin:one",
@@ -338,7 +337,7 @@ def test_raised_review_hook_still_runs_dispatch_gate_before_fail_open_dispatch()
 def test_agent_lessons_guidance_recomputes_from_each_effective_schema_set(
     tmp_path,
 ):
-    db = AgentRunsDB(tmp_path / "guidance-runs.db", client_id="guidance")
+    db = owned_agent_runs_db(tmp_path / "guidance-runs.db", client_id="guidance")
     calls: list[dict] = []
 
     def chat(**kwargs):

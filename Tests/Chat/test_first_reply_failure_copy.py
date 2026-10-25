@@ -16,6 +16,7 @@ import json
 import pytest
 import requests
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -238,7 +239,6 @@ def test_agent_service_persists_the_whole_404_fix_in_its_error_step(
     from tldw_chatbook.Agents.agent_models import AgentConfig, RUN_ERROR, STEP_ERROR
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     exc = _raised_from_http(
         ChatProviderError(
@@ -259,7 +259,7 @@ def test_agent_service_persists_the_whole_404_fix_in_its_error_step(
     def failing_model_call(**_kwargs):
         raise RuntimeError(copy)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     service = AgentService(
         db=db, registry=ToolCatalogRegistry(), chat_call=failing_model_call
     )

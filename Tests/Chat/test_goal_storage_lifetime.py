@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_goal_cli_verification import (
     test_two_increment_real_cli_repairs_file_with_model_visible_evidence as run_cli,
 )
@@ -173,7 +174,7 @@ async def test_operation_keeps_memory_and_unrelated_borrowers(stores, tmp_path):
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     memory = AgentRunsDB(":memory:")
-    foreign = AgentRunsDB(tmp_path / "foreign.db")
+    foreign = owned_agent_runs_db(tmp_path / "foreign.db")
     try:
         with memory.connection() as memory_conn, foreign.transaction() as foreign_conn:
             foreign_conn.execute("CREATE TABLE held(value INTEGER)")

@@ -6,8 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_goal_models import request
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def store(db):
@@ -16,7 +16,7 @@ def store(db):
 
 def test_repeated_launch_and_reopen_preserve_one_allowance_and_private_report(tmp_path):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     first = store(db).create(request(), launch_id="start-1")
     again = store(db).create(request(), launch_id="start-1")
     assert (again.id, again.chain_id, again.conversation_id) == (
@@ -32,7 +32,7 @@ def test_repeated_launch_and_reopen_preserve_one_allowance_and_private_report(tm
             ("report", first.id, '{"summary":"retained private result"}'),
         )
     db.close()
-    reopened = AgentRunsDB(path)
+    reopened = owned_agent_runs_db(path)
     result = store(reopened).get(first.id)
     assert result.request.criteria == "Validation exits zero"
     assert result.chain_id == first.chain_id
@@ -45,7 +45,7 @@ def test_repeated_launch_and_reopen_preserve_one_allowance_and_private_report(tm
 
 
 def test_chain_failure_rolls_back_both_launch_writes(tmp_path, monkeypatch):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     ledger = db.automatic_work
     original = getattr(ledger, "_create_chain", None)
     assert original is not None, "chain allocation needs a connection-taking helper"
@@ -68,10 +68,10 @@ def test_chain_failure_rolls_back_both_launch_writes(tmp_path, monkeypatch):
 
 def test_concurrent_launches_and_stale_revision_cannot_fork_identity(tmp_path):
     path = tmp_path / "runs.db"
-    AgentRunsDB(path).close()
+    owned_agent_runs_db(path).close()
 
     def launch(_):
-        db = AgentRunsDB(path)
+        db = owned_agent_runs_db(path)
         try:
             return store(db).create(request(), launch_id="start")
         finally:
@@ -80,7 +80,7 @@ def test_concurrent_launches_and_stale_revision_cannot_fork_identity(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         first, again = pool.map(launch, range(2))
     assert first.id == again.id
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     saved = store(db).set_provisioning(first, status="ready")
     assert saved.revision == first.revision + 1
     with pytest.raises(ValueError, match="revision_conflict"):
@@ -97,7 +97,7 @@ def test_concurrent_launches_and_stale_revision_cannot_fork_identity(tmp_path):
 
 @pytest.mark.parametrize("state", ["prepared", "accepted", "uncertain"])
 def test_payload_removal_refuses_unsettled_allowance_descendant(tmp_path, state):
-    db = AgentRunsDB(tmp_path / "descendant.db")
+    db = owned_agent_runs_db(tmp_path / "descendant.db")
     try:
         goal = db.goal_runs.create(request(), launch_id="root")
         goal = db.goal_runs.set_provisioning(goal, status="ready")

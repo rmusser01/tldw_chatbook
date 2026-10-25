@@ -13,10 +13,15 @@ approval-gated through the shared review hook.
 
 import dataclasses
 import json
-
-import pytest
 from contextlib import contextmanager
 
+import pytest
+
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.test_agent_service import FleetChat
+from Tests.Chat.test_console_agent_bridge import (
+    _retire_original_run_databases,  # noqa: F401 - exact constructor-owner fixture
+)
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     SPAWN_TOOL_NAME,
@@ -42,12 +47,6 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     _non_colliding_skill_entries,
 )
 from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.Chat.test_console_agent_bridge import (
-    _retire_original_run_databases,  # noqa: F401 - exact constructor-owner fixture
-)
-
-from Tests.Agents.test_agent_service import FleetChat
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 
@@ -360,7 +359,7 @@ def test_skill_run_child_still_approval_gated(tmp_path):
         },
     )
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        db=owned_agent_runs_db(tmp_path / "runs.db", client_id="t"),
         registry=registry,
         chat_call=chat,
         skill_runner=runner,

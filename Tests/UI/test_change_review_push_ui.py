@@ -46,7 +46,7 @@ from textual.widgets import Button, Select, Static
 import tldw_chatbook.config as config_module
 import tldw_chatbook.UI.Screens.change_review_screen as change_review_module
 import tldw_chatbook.Workspaces.git_workspace as git_workspace_module
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.UI.Screens.change_review_screen import (
     COMMIT_RUN_ACTIVE_REFUSAL,
     CURRENT_MODE_SENTINEL,
@@ -318,7 +318,7 @@ def _static_text(screen, selector: str) -> str:
 
 
 def _make_provider(tmp_path, conversation_id, **kwargs):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     return (
         AgentRunsChangeReviewProvider(

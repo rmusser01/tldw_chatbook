@@ -6,6 +6,7 @@ import threading
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_child_run_scope_ordering import _survivor_bridge
 from Tests.Chat.test_console_agent_bridge import _fence, _join_fleet_threads, _run
 from Tests.Chat.test_console_agent_swap import (
@@ -139,11 +140,10 @@ async def test_manual_chain_uses_persisted_conversation_identity(tmp_path):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     chacha = CharactersRAGDB(tmp_path / "conversations.sqlite", client_id="test")
-    db = AgentRunsDB(tmp_path / "runs.sqlite")
+    db = owned_agent_runs_db(tmp_path / "runs.sqlite")
     store = ConsoleChatStore(persistence=ChatPersistenceService(chacha))
     gateway = _Gateway([["reply"]])
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -313,9 +313,8 @@ def test_native_automatic_context_requires_exact_accepted_kind_and_owner(
     from Tests.DB.test_automatic_wake_attempts import claim, survivor
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
     from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "authority.sqlite")
+    db = owned_agent_runs_db(tmp_path / "authority.sqlite")
     try:
         root, source = source_run(db)
         if kind == "chat_start":

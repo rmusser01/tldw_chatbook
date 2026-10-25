@@ -2,15 +2,17 @@
 """Service tests: scripted chat_call (no network) + real AgentRunsDB."""
 
 import asyncio
+import contextlib
 import dataclasses
 import hashlib
-import contextlib
 import json
 import threading
 import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import join_fleet_children
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     FIND_TOOLS_NAME,
@@ -25,32 +27,15 @@ from tldw_chatbook.Agents.agent_models import (
     AgentDefinition,
     ContinuationEventContext,
     RunBudget,
-    ToolCatalogEntry,
     ToolBatchReady,
+    ToolCatalogEntry,
     ToolLoadSelection,
     ToolResult,
     ToolSchema,
     definition_fingerprint,
 )
-from tldw_chatbook.Chat.provider_continuation import (
-    ContinuationCall,
-    ContinuationRestoreTarget,
-    ContinuationRound,
-    ProviderContinuationCheckpoint,
-)
-from tldw_chatbook.Agents.project_instruction_runtime import (
-    PROJECT_INSTRUCTION_ROW_KEY,
-    InstructionActivationLedger,
-    InstructionDeliveryReceipt,
-    InstructionPreparation,
-)
-from tldw_chatbook.Agents.project_instruction_resolver import (
-    InstructionChainDelivery,
-    InstructionOutcome,
-    InstructionSnapshot,
-    InstructionSource,
-    StartupInstructionCandidate,
-)
+from tldw_chatbook.Agents.agent_presets import CRITIC_PRESET, RESEARCHER_PRESET
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
@@ -64,20 +49,34 @@ from tldw_chatbook.Agents.canvas_tool_provider import (
     CANVAS_TOOL_NAMES,
     CanvasToolProvider,
 )
-from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
-from tldw_chatbook.Agents.agent_presets import CRITIC_PRESET, RESEARCHER_PRESET
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionChainDelivery,
+    InstructionOutcome,
+    InstructionSnapshot,
+    InstructionSource,
+    StartupInstructionCandidate,
+)
+from tldw_chatbook.Agents.project_instruction_runtime import (
+    PROJECT_INSTRUCTION_ROW_KEY,
+    InstructionActivationLedger,
+    InstructionDeliveryReceipt,
+    InstructionPreparation,
+)
 from tldw_chatbook.Agents.tool_catalog import (
-    BuiltinToolProvider,
     FIND_TOOLS_SCHEMA,
     LOAD_TOOLS_SCHEMA,
+    BuiltinToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Canvas.models import CanvasScope
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRestoreTarget,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+)
 from tldw_chatbook.Chat.trajectory import derive_trajectory
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-from Tests.Agents.conftest import join_fleet_children
 
 # Every real-config test keeps the same explicitly selected private source.
 pytestmark = pytest.mark.bootstrap_profile
@@ -298,7 +297,7 @@ class FleetChat:
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 def make_service(db, replies):
@@ -2048,7 +2047,7 @@ def test_supersede_marks_old_tree_before_new_run(db, monkeypatch):
     ]
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="supersede-reload")
+    reopened = owned_agent_runs_db(path, client_id="supersede-reload")
     runs = reopened.list_runs("c", include_superseded=True)
     records = [
         record
@@ -2116,7 +2115,7 @@ def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_relo
     assert outcome.status == RUN_DONE
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="lifecycle-failure-reload")
+    reopened = owned_agent_runs_db(path, client_id="lifecycle-failure-reload")
     row = reopened.get_run(run_id)
     assert row["status"] == RUN_DONE
     steps = row["steps"]
@@ -2189,7 +2188,7 @@ def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="owner-seq-race-reload")
+    reopened = owned_agent_runs_db(path, client_id="owner-seq-race-reload")
     row = reopened.get_run(run_id)
     owner_sequences = [
         step["owner_seq"] for step in row["steps"] if step["owner_seq"] is not None
@@ -2255,7 +2254,7 @@ def test_transient_control_capture_recovery_has_unique_owner_sequence(db, monkey
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="control-capture-owner-seq-reload")
+    reopened = owned_agent_runs_db(path, client_id="control-capture-owner-seq-reload")
     row = reopened.get_run(run_id)
     original = next(step for step in row["steps"] if step["kind"] == "tool_call")
     diagnostic = next(
@@ -2322,7 +2321,7 @@ def test_project_instruction_service_error_has_durable_causal_identity(db, monke
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="project-error-reload")
+    reopened = owned_agent_runs_db(path, client_id="project-error-reload")
     row = reopened.get_run(run_id)
     steps = row["steps"]
     records = [
@@ -2394,7 +2393,7 @@ def test_service_error_capture_recovers_once_before_failed_lifecycle(db, monkeyp
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="error-recovery-reload")
+    reopened = owned_agent_runs_db(path, client_id="error-recovery-reload")
     reloaded = reopened.get_run(run_id)["steps"]
     errors = [step for step in reloaded if step["kind"] == "error"]
     failed = [step for step in reloaded if step["kind"] == "agent_run_failed"]
@@ -2435,7 +2434,7 @@ def test_persistent_service_error_capture_is_diagnosed_without_dangling_links(
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="persistent-error-reload")
+    reopened = owned_agent_runs_db(path, client_id="persistent-error-reload")
     row = reopened.get_run(run_id)
     assert row["status"] == RUN_ERROR
     assert not any(step["kind"] == "error" for step in row["steps"])

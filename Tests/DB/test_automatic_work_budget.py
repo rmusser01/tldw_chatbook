@@ -7,12 +7,12 @@ from dataclasses import replace
 
 import pytest
 
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 
 @pytest.fixture(name="db")
 def _automatic_work_db(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.sqlite", client_id="automatic-test")
+    database = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="automatic-test")
     yield database
     database.close()
 

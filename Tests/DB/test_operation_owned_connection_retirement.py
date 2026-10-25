@@ -1,3 +1,5 @@
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 """Finite callbacks retire replacement handles, not unchanged native borrowers."""
 
 import sqlite3
@@ -70,7 +72,7 @@ def test_core_guard_retires_only_replacement_borrowers(
     tmp_path, database_type, replace, fail_sql
 ):
     """Cleanup follows native identity on success/error, preserving live transactions."""
-    db = database_type(tmp_path / "core-owner.sqlite", "finite-core")
+    db = (owned_agent_runs_db if database_type is AgentRunsDB else database_type)(tmp_path / "core-owner.sqlite", "finite-core")
     try:
         previous = db._held_connection()
         previous.execute("BEGIN")

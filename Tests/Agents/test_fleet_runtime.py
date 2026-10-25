@@ -30,6 +30,13 @@ from collections import Counter
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import (
+    join_fleet_children,
+    pin_agent_settings,
+    pin_max_live_subagents,
+    pin_turn_scoped_children,
+)
 from Tests.Agents.test_agent_service import (
     SUBAGENT_PROMPT_PREFIX,
     FleetChat,
@@ -46,8 +53,8 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     RUN_RUNNING,
-    RUN_STUCK,
     RUN_SKILL_SCRIPT_TOOL_NAME,
+    RUN_STUCK,
     RUNTIME_TOOL_NAMES,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
@@ -61,8 +68,8 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import AgentService, _call_with_timeout
-from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolProvider,
     _default_specs,
@@ -76,17 +83,10 @@ from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
 from tldw_chatbook.Chat.trajectory import derive_trajectory
+from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-
-from Tests.Agents.conftest import (
-    join_fleet_children,
-    pin_agent_settings,
-    pin_max_live_subagents,
-    pin_turn_scoped_children,
-)
 
 
 class _NoopWorkspaceExecutor:
@@ -192,7 +192,7 @@ def _todo_provider(workspace, store: SessionTodoStore) -> LocalToolProvider:
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 def make_fleet_service(
@@ -2732,7 +2732,7 @@ def test_cancel_subagent_revokes_approval_cards_mid_run(db):
     assert any(step["kind"] == "agent_run_cancelled" for step in child["steps"])
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="cancel-reload")
+    reopened = owned_agent_runs_db(path, client_id="cancel-reload")
     runs = reopened.list_runs("c", include_superseded=True)
     records = [
         record
@@ -3241,7 +3241,7 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     db.close()
     AgentRunsDB._swept_paths.discard(str(path))
 
-    reopened = AgentRunsDB(path, client_id="persistent-launch-reload")
+    reopened = owned_agent_runs_db(path, client_id="persistent-launch-reload")
     repaired = reopened.get_run(child["id"])
     assert repaired["status"] == RUN_ERROR
     assert repaired["result"] is None
@@ -4154,7 +4154,7 @@ def test_worktree_creation_is_durable_until_exact_execution_owner_drains(db, git
     refusal = service._admit_agent_worktree(handle, run_id, owner)
     assert refusal is None
     created = service._agent_worktrees[handle.handle_id]
-    reopened = AgentRunsDB(db.db_path, client_id="reopened")
+    reopened = owned_agent_runs_db(db.db_path, client_id="reopened")
     record = AgentWorktreeRepository(reopened).get_for_conversation(run_id, "c")
     assert record is not None
     assert record["writer_state"] == "held"
@@ -4291,7 +4291,7 @@ def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(db, git_
     db.set_status(run_id, RUN_ERROR, result="timed out")
     owner.finish_root()
     repository = AgentWorktreeRepository(
-        AgentRunsDB(db.db_path, client_id="reopened-timeout")
+        owned_agent_runs_db(db.db_path, client_id="reopened-timeout")
     )
     assert repository.get_for_conversation(run_id, "c")["writer_state"] == "held"
     release.set()
@@ -4403,7 +4403,7 @@ def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
         )
         assert outcome.status == RUN_DONE
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-gated")
+        reopened = owned_agent_runs_db(db.db_path, client_id="reopened-gated")
         repository = AgentWorktreeRepository(reopened)
         record = repository.get_for_conversation(child["id"], "c")
         assert record is not None and record["writer_state"] == "held"
@@ -4477,7 +4477,7 @@ def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(db, git_repo)
     with use_run_id(run_id):
         result = provider.invoke("local:fs_read", {"path": "note.txt"})
     assert not result.ok
-    reopened = AgentRunsDB(db.db_path, client_id="reopened-uncertain")
+    reopened = owned_agent_runs_db(db.db_path, client_id="reopened-uncertain")
     repository = AgentWorktreeRepository(reopened)
     assert repository.get_for_conversation(run_id, "c")["writer_state"] == "uncertain"
 
@@ -4632,7 +4632,7 @@ def test_provider_admission_failure_retains_real_created_checkout(
         assert _git(git_repo, "branch", "--list", created.branch).strip()
         assert provider._agent_roots == {}
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-admit-failure")
+        reopened = owned_agent_runs_db(db.db_path, client_id="reopened-admit-failure")
         record = AgentWorktreeRepository(reopened).get_for_conversation(
             child["id"], "c"
         )
@@ -4706,7 +4706,7 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
         assert provider._agent_roots == {}
         assert coordinator.all_finished()
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-start-failure")
+        reopened = owned_agent_runs_db(db.db_path, client_id="reopened-start-failure")
         record = AgentWorktreeRepository(reopened).get_for_conversation(
             child["id"], "c"
         )

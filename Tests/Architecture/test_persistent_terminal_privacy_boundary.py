@@ -11,23 +11,23 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolSchema
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
-from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
 from tldw_chatbook.Agents.run_log import RunLogWriter
+from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
 from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
-from tldw_chatbook.Chat.console_library_policy import ConsoleAssistantLibraryAccess
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
 from tldw_chatbook.Chat.console_exchange_export import project_exchange_export
+from tldw_chatbook.Chat.console_library_policy import ConsoleAssistantLibraryAccess
 from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.config import load_settings
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore
 from tldw_chatbook.Terminal.contracts import (
@@ -45,7 +45,6 @@ from tldw_chatbook.UI.Navigation.screen_state_store import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PRODUCT_ROOT = REPO_ROOT / "tldw_chatbook"
@@ -374,7 +373,7 @@ def _real_boundary_payloads(
     )
     provider_messages = controller._provider_messages_for_session(session.id)
 
-    agent_runs = AgentRunsDB(tmp_path / "agent-runs.sqlite", client_id="privacy")
+    agent_runs = owned_agent_runs_db(tmp_path / "agent-runs.sqlite", client_id="privacy")
     try:
         run_rows = agent_runs.list_runs("ordinary-conversation")
     finally:

@@ -6,6 +6,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.conftest import pin_agent_settings
 from Tests.Agents.test_agent_service import FleetChat, fence
 from Tests.Agents.test_tool_worker_capacity import BlockingTool
@@ -14,7 +15,6 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def service_for(
@@ -66,7 +66,7 @@ def test_simultaneous_conversations_launch_only_six_real_children(
     tmp_path, monkeypatch
 ):
     pin_agent_settings(monkeypatch, subagents_outlive_turn=True)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="admission")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="admission")
     capacity = RuntimeCapacity()
     release = threading.Event()
     ready = threading.Barrier(4)
@@ -133,7 +133,7 @@ def test_simultaneous_conversations_launch_only_six_real_children(
 
 def test_terminal_child_with_timed_out_tool_holds_slot_until_tool_finishes(tmp_path):
     capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="admission")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="admission")
     tool = BlockingTool()
     first, _, _ = service_for(
         db,
@@ -194,7 +194,7 @@ def test_failed_thread_start_releases_capacity_and_spawn_allowance(
     tmp_path, monkeypatch, failure_site
 ):
     capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="admission")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="admission")
     service, _, _ = service_for(
         db,
         capacity,
@@ -245,7 +245,7 @@ def test_inline_model_start_failure_releases_capacity_and_spawn_allowance(
 ):
     pin_agent_settings(monkeypatch, max_live_subagents=1)
     capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="inline-admission")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="inline-admission")
     starts = []
 
     @contextmanager
@@ -285,7 +285,7 @@ def test_inline_mode_cannot_bypass_runtime_admission(tmp_path, monkeypatch):
     blocker = capacity.begin_execution(
         origin=WorkOrigin.MANUAL, conversation_id="other", child=True
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="inline-admission")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="inline-admission")
 
     def release_then_retry():
         assert [

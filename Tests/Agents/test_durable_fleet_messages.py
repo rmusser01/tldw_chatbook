@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.fleet_messages import (
@@ -647,10 +648,9 @@ def test_loaded_hints_leave_bridge_initialization_lock_before_reentrant_metadata
     tmp_path, request
 ):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db = CharactersRAGDB(tmp_path / "chat.sqlite", "progress-test")
-    runs = AgentRunsDB(tmp_path / "runs.sqlite", client_id="progress-test")
+    runs = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="progress-test")
     try:
         conversation_id = ChatPersistenceService(db).create_conversation(
             conversation_title="Saved"
@@ -704,13 +704,12 @@ async def test_threaded_saved_child_report_retires_only_new_chat_db_cache(
         BuiltinToolProvider,
         ToolCatalogRegistry,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.fleet_progress_repository import FleetProgressRepository
 
     pin_agent_settings(monkeypatch, run_log_enabled=False, subagents_outlive_turn=False)
     monkeypatch.setattr(run_log, "_setting", agent_service._setting)
     db = CharactersRAGDB(tmp_path / "child-chat.sqlite", "progress-test")
-    runs = AgentRunsDB(tmp_path / "child-runs.sqlite", client_id="progress-test")
+    runs = owned_agent_runs_db(tmp_path / "child-runs.sqlite", client_id="progress-test")
     saved_id = ChatPersistenceService(db).create_conversation(
         conversation_title="Saved"
     )

@@ -4,6 +4,8 @@ import importlib
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = pytest.mark.bootstrap_profile
 from pydantic import ValidationError
 
@@ -101,9 +103,8 @@ def test_reports_bound_draft_learnings_evidence_and_total_bytes():
 
 
 def test_unchecked_model_copy_cannot_cross_durable_launch_boundary(tmp_path):
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     invalid = request().model_copy(update={"objective": "é" * 5000})
     with pytest.raises(ValidationError):
         db.goal_runs.create(invalid, launch_id="invalid")

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from contextlib import contextmanager
-from pathlib import Path
 import sqlite3
+from contextlib import contextmanager
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
@@ -17,6 +18,7 @@ from Tests.Chat.test_console_dispatch_recovery import (
     _restored_store,
     _start,
 )
+from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_ERROR,
@@ -29,9 +31,8 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_service import AgentService
-from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
+from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleDispatchRecoveryKind,
@@ -46,11 +47,6 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleProviderIntent,
     ConsoleResolvedDestination,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
-    DisplayableThinkingBlock,
-    ThinkingEnvelope,
-    dump_thinking_blocks_json,
-)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
@@ -58,14 +54,17 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+    dump_thinking_blocks_json,
+)
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
     ChatSyncV2OutboxProducer,
 )
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 
 _SCOPE = {
     "server_profile_id": "server-a",
@@ -498,7 +497,7 @@ def test_agent_service_wires_the_exact_dispatch_owner_into_handoff(
 
     monkeypatch.setattr(agent_service_module, "run_agent_loop", exercise_real_callback)
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "agent-runs.sqlite", client_id="task16"),
+        db=owned_agent_runs_db(tmp_path / "agent-runs.sqlite", client_id="task16"),
         registry=ToolCatalogRegistry(),
         chat_call=lambda **_kwargs: pytest.fail("provider must be driven by loop"),
         persist_provider_continuation=store.persist_provider_continuation_event,

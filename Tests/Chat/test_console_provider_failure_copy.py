@@ -11,8 +11,9 @@ j3-provider-error-discards-detail-poisons-conversation, REGRESSION).
 import httpx
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Agents.hook_permissions import HookPermissions
-
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
     ChatAuthenticationError,
@@ -32,8 +33,6 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.console_provider_doubles import provider_resolution
 
 MMPROJ_BODY = (
     '{"error": {"message": "image input is not supported - '
@@ -88,7 +87,7 @@ class _ExplodingGateway:
 async def test_agent_failure_row_carries_body_and_image_recovery_hint(tmp_path):
     gateway = _ExplodingGateway()
     store = ConsoleChatStore()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -335,7 +334,7 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
 
     projected_gateway = ProjectedGateway()
     store = ConsoleChatStore()
-    db = AgentRunsDB(tmp_path / "typed-runs.db", client_id="typed-copy")
+    db = owned_agent_runs_db(tmp_path / "typed-runs.db", client_id="typed-copy")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db, store=store, provider_gateway=projected_gateway
     )

@@ -21,24 +21,24 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     RUN_DONE,
+    SEARCH_RUN_LOG_TOOL_NAME,
+    SPAWN_TOOL_NAME,
     AgentConfig,
     RunBudget,
     ToolResult,
 )
-from tldw_chatbook.Agents.agent_models import SEARCH_RUN_LOG_TOOL_NAME, SPAWN_TOOL_NAME
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import (
     SEARCH_RUN_LOG_TOOL_SCHEMA,
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-from Tests.Agents.test_agent_service import FleetChat, verbatim
-from Tests.Agents.conftest import join_fleet_children
 
 
 def _fence(name, args):
@@ -70,7 +70,7 @@ def real_search_run_log(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -171,7 +171,7 @@ def test_hit_in_an_older_run_is_found_and_attributed(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -230,7 +230,7 @@ def test_unresolvable_older_run_is_reported_not_silently_skipped(tmp_path, monke
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -294,7 +294,7 @@ def test_multiple_older_runs_mixed_resolvable_and_not(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -356,7 +356,7 @@ def test_subagent_cannot_call_search_run_log_with_conversation_scope(
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -639,7 +639,7 @@ def test_more_runs_than_the_cap_reports_the_excess_correctly(tmp_path, monkeypat
     from tldw_chatbook.Agents.run_log_search import MAX_CROSS_RUN_RUNS
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 

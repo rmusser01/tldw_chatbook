@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import threading
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
-import threading
 from typing import Any, Callable, Iterator
 
 import pytest
 import requests
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.console_agent_bridge import (
     DEFAULT_CONSOLE_RUN_BUDGET,
     ConsoleAgentBridge,
@@ -23,8 +24,6 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 
 _FINAL_SENTINEL = "QWENCLOUD-NATIVE-FINAL-SENTINEL"
 _CANCEL_CHECKPOINT = "cancel-checkpoint"
@@ -402,7 +401,7 @@ def _run_joined_reply(
     should_cancel: Any = lambda: False,
     agent_messages: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, ConsoleChatStore]:
-    db = AgentRunsDB(tmp_path / f"{api_mode}.db", client_id="qwen-native")
+    db = owned_agent_runs_db(tmp_path / f"{api_mode}.db", client_id="qwen-native")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(

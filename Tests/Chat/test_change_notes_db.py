@@ -12,12 +12,13 @@ import sqlite3
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
 
 
 def _make_run(db: AgentRunsDB, conversation_id: str = "conv1") -> str:
@@ -546,7 +547,7 @@ def test_migration_creates_table_and_appends_audit_version_8(tmp_path):
     # here). Simulate a pre-migration file by tearing the table/version
     # row back out via a raw sqlite3 connection, then reopening through
     # AgentRunsDB and asserting the migration reapplies.
-    AgentRunsDB(db_path, client_id="t").close()
+    owned_agent_runs_db(db_path, client_id="t").close()
 
     raw = sqlite3.connect(str(db_path))
     try:
@@ -574,7 +575,7 @@ def test_migration_creates_table_and_appends_audit_version_8(tmp_path):
     finally:
         raw.close()
 
-    reopened = AgentRunsDB(db_path, client_id="t")
+    reopened = owned_agent_runs_db(db_path, client_id="t")
     try:
         raw = sqlite3.connect(str(db_path))
         try:
@@ -623,7 +624,7 @@ def test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9(
     """
     db_path = tmp_path / "migrate_v9.db"
 
-    first = AgentRunsDB(db_path, client_id="t")
+    first = owned_agent_runs_db(db_path, client_id="t")
     run_id = first.create_run(conversation_id="c", agent_kind="primary")
     pre_migration_note_id = first.add_change_note(
         run_id=run_id,
@@ -685,7 +686,7 @@ def test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9(
     finally:
         raw.close()
 
-    reopened = AgentRunsDB(db_path, client_id="t")
+    reopened = owned_agent_runs_db(db_path, client_id="t")
     try:
         raw = sqlite3.connect(str(db_path))
         try:
@@ -729,7 +730,7 @@ def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path
     """
     db_path = tmp_path / "migrate_v10.db"
 
-    first = AgentRunsDB(db_path, client_id="t")
+    first = owned_agent_runs_db(db_path, client_id="t")
     run_id = first.create_run(conversation_id="c", agent_kind="primary")
     pre_migration_note_id = first.add_change_note(
         run_id=run_id,
@@ -793,7 +794,7 @@ def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path
     finally:
         raw.close()
 
-    reopened = AgentRunsDB(db_path, client_id="t")
+    reopened = owned_agent_runs_db(db_path, client_id="t")
     try:
         raw = sqlite3.connect(str(db_path))
         try:
@@ -841,7 +842,7 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
     """
     db_path = tmp_path / "migrate_v12.db"
 
-    first = AgentRunsDB(db_path, client_id="t")
+    first = owned_agent_runs_db(db_path, client_id="t")
     run_id = first.create_run(conversation_id="c", agent_kind="primary")
     pre_migration_note_id = first.add_change_note(
         run_id=run_id,
@@ -909,7 +910,7 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
     finally:
         raw.close()
 
-    reopened = AgentRunsDB(db_path, client_id="t")
+    reopened = owned_agent_runs_db(db_path, client_id="t")
     try:
         raw = sqlite3.connect(str(db_path))
         try:
@@ -953,7 +954,7 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
 
         # Reopening a THIRD time (double-open idempotent) must not
         # duplicate the schema_version audit row or fail the ALTERs again.
-        third = AgentRunsDB(db_path, client_id="t")
+        third = owned_agent_runs_db(db_path, client_id="t")
         try:
             raw = sqlite3.connect(str(db_path))
             try:
@@ -1004,9 +1005,9 @@ def test_add_change_note_round_trips_snapshot_id(db):
 def test_migration_reopening_twice_is_idempotent(tmp_path):
     db_path = tmp_path / "double_open.db"
 
-    first = AgentRunsDB(db_path, client_id="t")
+    first = owned_agent_runs_db(db_path, client_id="t")
     first.close()
-    second = AgentRunsDB(db_path, client_id="t")
+    second = owned_agent_runs_db(db_path, client_id="t")
     try:
         raw = sqlite3.connect(str(db_path))
         try:

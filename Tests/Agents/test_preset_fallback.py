@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     AgentDefinition,
@@ -47,7 +48,7 @@ APP = {
 
 
 def test_authoring_round_trip_and_fingerprint(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         key = db.create_agent_definition(PRESET)
         assert (
@@ -186,7 +187,7 @@ def test_proposed_refused_tool_batch_closes_fallback():
 
 
 def test_active_target_is_frozen_without_overwriting_original_audit(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         targets = [
             {
@@ -280,7 +281,7 @@ def test_service_fallback_persists_before_dispatch_and_owns_request_fields(
     monkeypatch.setattr(
         agent_service, "load_agents_routing_config", AgentsRoutingConfig
     )
-    db = AgentRunsDB(tmp_path / "service.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "service.db", client_id="test")
     definition = dataclasses.replace(
         PRESET,
         provider="custom-ep:first",
@@ -457,7 +458,7 @@ def test_real_adapter_fallback_uses_own_url_model_and_sampling(
         monkeypatch.setattr(gateway, "resolve_for_send", observed_resolve)
         registry = ToolCatalogRegistry()
         registry.register_provider(BuiltinToolProvider())
-        db = AgentRunsDB(tmp_path / "adapter.db", client_id="test")
+        db = owned_agent_runs_db(tmp_path / "adapter.db", client_id="test")
         cfg = AgentConfig(
             model="primary",
             provider="custom-ep:first",
@@ -619,7 +620,7 @@ async def test_settings_fallback_editor_round_trip_and_invalid_authoring(tmp_pat
         _make_panel,
     )
 
-    db = AgentRunsDB(tmp_path / "settings.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "settings.db", client_id="test")
     try:
         panel = _make_panel(db)
         async with PanelHarness(panel).run_test(size=(80, 24)) as pilot:
@@ -676,7 +677,7 @@ def test_retained_child_uses_active_frozen_target_without_reopening_chain(
     monkeypatch.setattr(
         agent_service, "load_agents_routing_config", AgentsRoutingConfig
     )
-    db = AgentRunsDB(tmp_path / "continuation.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "continuation.db", client_id="test")
     definition = AgentDefinition(
         name="worker",
         instructions="Work.",
@@ -952,7 +953,7 @@ def test_real_builtin_adapter_freezes_configured_url_for_fallback_and_continuati
             "params_json": json.dumps(dict(target.params)),
             "execution_provider": target.execution_provider,
         }
-        db = AgentRunsDB(tmp_path / "builtin.db", client_id="test")
+        db = owned_agent_runs_db(tmp_path / "builtin.db", client_id="test")
         key = db.create_run(
             conversation_id="c",
             agent_kind="subagent",

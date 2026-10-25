@@ -10,11 +10,14 @@ Task 7 of the agent-chat-fork-spawn plan (TASK-32482):
    ``Tests/Chat/test_chat_persistence_service.py``'s ``db_instance``
    fixture) with the UI completion callback stubbed to record kwargs.
 """
+
 import json
 import threading
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Chat.test_console_skill_script_confirm import _FakeApp
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -23,8 +26,6 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.Chat.test_console_skill_script_confirm import _FakeApp
-
 
 #: Event waits and worker joins share the existing bounded race-test deadline.
 _CHAT_CREATE_SYNC_TIMEOUT_SECONDS = 5
@@ -1286,7 +1287,6 @@ def child_new_chat_rig(real_db_controller, tmp_path):
     from threading import Event
     from types import SimpleNamespace
     from tldw_chatbook.Agents.run_context import CurrentRunActor
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
@@ -1295,7 +1295,7 @@ def child_new_chat_rig(real_db_controller, tmp_path):
     source.persisted_conversation_id = controller.store.persistence.create_conversation(
         conversation_title="Parent chat"
     )
-    runs = AgentRunsDB(tmp_path / "child-runs.sqlite")
+    runs = owned_agent_runs_db(tmp_path / "child-runs.sqlite")
     parent = runs.create_run(
         conversation_id=source.persisted_conversation_id,
         agent_kind="primary",

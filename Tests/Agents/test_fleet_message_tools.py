@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import FleetChat, fence
 from Tests.Agents.test_fleet_runtime import FLEET_CFG
 from tldw_chatbook.Agents.agent_models import ModelTurn, ToolCall, ToolResult
@@ -17,7 +18,6 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.fleet_messages import MessageStore
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 REPORT = "report_to_supervisor"
 READ = "read_agent_messages"
@@ -77,7 +77,7 @@ def test_child_reports_primary_collects_and_explicitly_relays(tmp_path, monkeypa
     )
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     service = AgentService(
         db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
     )
@@ -245,7 +245,7 @@ def test_toolless_primary_only_reads_an_existing_inbox(tmp_path, existing):
         fleet = FleetCoordinator(max_live=3, clock=time.monotonic, message_inbox=inbox)
     chat = FleetChat([fence(READ, {}), "done"] if existing else ["done"])
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        db=owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         registry=registry,
         chat_call=chat,
         fleet_coordinator=fleet,
@@ -279,7 +279,7 @@ def test_service_reader_rechecks_cancel_and_exact_execution_owner(
     cancelled = False
     saved = []
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        db=owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         registry=ToolCatalogRegistry(),
         fleet_coordinator=fleet,
     )
@@ -315,7 +315,7 @@ def test_automatic_reader_only_collects_its_chain_and_rechecks_kill_switch(
     from tldw_chatbook.Agents.agent_models import RunOutcome
     from tldw_chatbook.Agents.fleet_messages import MessageIdentity
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     context = accepted_context(db)
     inbox = MessageStore().open_inbox("conversation")
     for index, chain in enumerate((None, "foreign", context.chain_id)):
@@ -438,7 +438,7 @@ def test_first_request_plan_matches_live_native_fleet_disclosure(tmp_path, monke
         max_live=3, clock=time.monotonic, message_inbox=MessageStore().open_inbox("c")
     )
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        db=owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         registry=registry,
         chat_call=chat,
         fleet_coordinator=fleet,

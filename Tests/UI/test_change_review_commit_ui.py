@@ -39,7 +39,7 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
 import tldw_chatbook.config as config_module
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.UI.Screens.change_review_screen import (
     COMMIT_CLEAN_TREE_REASON,
     COMMIT_RUN_ACTIVE_REFUSAL,
@@ -304,7 +304,7 @@ async def _submit_modal(
 
 
 def _make_provider(tmp_path, conversation_id, **kwargs):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     return (
         AgentRunsChangeReviewProvider(

@@ -12,6 +12,7 @@ import pytest
 from tldw_profile_core import PreferencePayload
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.console_provider_doubles import provider_resolution
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry
@@ -22,7 +23,6 @@ from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Personal_Context.context_service import ProfileContextService
 from tldw_chatbook.Personal_Context.key_protector import InMemoryProfileKeyProtector
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
@@ -74,7 +74,7 @@ def preview_rig(tmp_path, monkeypatch):
         yield "done"
 
     gateway = SimpleNamespace(resolve_for_send=resolve, stream_chat=stream)
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,

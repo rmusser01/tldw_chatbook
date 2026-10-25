@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_agent_bridge import (
     _bridge_with_gateway,
     _ChunkGateway,
@@ -569,7 +570,6 @@ def test_fallback_cannot_inherit_another_local_servers_native_approval(
     from Tests.Agents.test_agent_service import CFG, _service_with, provider_reply
     from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     calls = []
 
@@ -579,7 +579,7 @@ def test_fallback_cannot_inherit_another_local_servers_native_approval(
             raise ChatProviderError("quota", status_code=402)
         return provider_reply("fallback complete")
 
-    db = AgentRunsDB(tmp_path / "fallback.db", client_id="fallback-policy")
+    db = owned_agent_runs_db(tmp_path / "fallback.db", client_id="fallback-policy")
     service = _service_with(db, chat)
     monkeypatch.setattr(service, "_provider_is_ready", lambda _provider: True)
     try:
@@ -632,7 +632,6 @@ def test_resumed_child_retains_its_final_call_thinking_only(
         ReasoningReplayPolicy,
         project_reasoning_history,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     configs = []
     real_config = agent_service.AgentConfig
@@ -647,7 +646,7 @@ def test_resumed_child_retains_its_final_call_thinking_only(
     capture.observe(replace(_delta("CHILD-FINAL-THOUGHT"), model=child_model))
     envelope = capture.settle("complete").envelope
     holder = {}
-    db = AgentRunsDB(tmp_path / "retained.db", client_id="retained-thinking")
+    db = owned_agent_runs_db(tmp_path / "retained.db", client_id="retained-thinking")
     db.create_agent_definition(
         AgentDefinition(name="worker", instructions="Calculate.", model=child_model)
     )

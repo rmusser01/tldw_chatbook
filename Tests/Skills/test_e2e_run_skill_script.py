@@ -43,12 +43,16 @@ from typing import Any, Callable
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.agent_service import AgentService as _RealAgentService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+from tldw_chatbook.runtime_policy.engine import PolicyEngine
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
@@ -56,10 +60,6 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
     SkillTrustStore,
 )
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
-from tldw_chatbook.runtime_policy.engine import PolicyEngine
-from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
-from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 _RUN_SCRIPT_ACTION_ID = "skills.run_script.launch.local"
 _SKILL_NAME = "demo-skill"
@@ -238,7 +238,7 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
             console_agent_bridge_module, "AgentService", _CapturingAgentService
         )
 
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         store = ConsoleChatStore()
         session = store.ensure_session()
         store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

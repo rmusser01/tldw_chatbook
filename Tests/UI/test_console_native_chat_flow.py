@@ -1,9 +1,10 @@
+
 import asyncio
-import time
-from copy import deepcopy
 import inspect
 import json
 import re
+import time
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -11,36 +12,41 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual import on
-
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.pilot import OutOfBounds
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+import tldw_chatbook.UI.Console_Modules.message as message_module
+import tldw_chatbook.UI.Console_Modules.session as session_module
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import provider_resolution, with_destination
 from Tests.fixtures.required_doubles import exploding_double
 from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import _build_test_app as _build_production_app
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.console_controller_stubs import stub_image_controller
-from Tests.UI.app_factory import _build_test_app as _build_production_app
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-
+from tldw_chatbook import config as config_module
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.attachment_core import PendingAttachment
-from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
-from tldw_chatbook.Workspaces import ConsoleConversationBrowserInputRow
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleActivityPresentation,
@@ -53,16 +59,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
-from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
-from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
-from tldw_chatbook.Chat.thinking_blocks import (
-    DisplayableThinkingBlock,
-    ProprietaryThinkingBlock,
-    ThinkingEnvelope,
-)
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
+)
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
@@ -70,30 +73,40 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
-from tldw_chatbook.Chat.provider_test_evidence import (
-    ConsoleGenerationTestRequest,
-    ProviderDraftIdentity,
-)
-from tldw_chatbook.Chat.console_project_instructions import (
-    ProjectInstructionControlState,
-)
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
 )
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ConsoleGenerationTestRequest,
+    ProviderDraftIdentity,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
+    ThinkingEnvelope,
+)
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
+from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
+from tldw_chatbook.UI.Console_Modules.session import (
+    ConsoleSessionController,
+    _persona_session_identity_from_handoff,
+    _persona_session_prompt_seed,
+)
+from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ConsoleProviderReturnIntent,
     ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
     ConversationSettingsReturnOutcome,
 )
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
@@ -103,26 +116,10 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.Widgets.Console.console_settings_modal import (
-    ConsoleSettingsDraftSnapshot,
-    ConsoleSettingsModal,
-)
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
-import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
-import tldw_chatbook.UI.Console_Modules.message as message_module
-import tldw_chatbook.UI.Console_Modules.session as session_module
-from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
-from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
-from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.UI.Console_Modules.session import (
-    _persona_session_identity_from_handoff,
-    _persona_session_prompt_seed,
-)
-from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsolePromptsModal,
@@ -132,14 +129,17 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceTree,
     WorkspaceTreeWorkspaceSelected,
 )
-from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsDraftSnapshot,
+    ConsoleSettingsModal,
+)
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from tldw_chatbook.Workspaces import ConsoleConversationBrowserInputRow
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
-from tldw_chatbook import config as config_module
-from Tests.console_provider_doubles import provider_resolution, with_destination
-
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 _ASYNC_SETTLE_TIMEOUT = 10.0
@@ -13888,13 +13888,12 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     id-anchored placement path -- not the ordinal fallback that would
     coincidentally land the block in the same place for a single-run,
     single-reply conversation."""
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = SimpleNamespace(
         db_path=str(tmp_path / "chacha.db")
     )
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
+    runs_db = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="t")
     primary_id = runs_db.create_run(
         conversation_id="conv-x",
         agent_kind="primary",

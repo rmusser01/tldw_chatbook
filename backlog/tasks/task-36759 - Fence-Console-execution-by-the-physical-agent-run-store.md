@@ -1,7 +1,7 @@
 ---
 id: TASK-36759
 title: Fence Console execution by the physical agent run store
-status: To Do
+status: In Progress
 created_date: 2026-10-25 17:38
 dependencies:
 - TASK-36729
@@ -15,6 +15,9 @@ documentation:
 - Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md
 - Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+assignee:
+- '@codex'
+updated_date: 2026-10-25 19:15
 ---
 
 ## Description
@@ -31,10 +34,33 @@ Prevent native and served processes from competing for the same Console executio
 - [ ] #4 Existing native Console callers keep their behavior under the owner, and real separate-process contention, retirement and read-only cases prove the boundary.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Direct implementation of the accepted physical run-store execution fence.
+
+1. Read the Task 1 brief, governing architecture and all AgentRunsDB callers; establish focused baseline and RED behavior evidence.
+2. Implement the fail-closed retained OS owner using the existing private-path/platform helpers; add a non-mutating read-only AgentRuns open.
+3. Require execution ownership before disk construction, schema/recovery/mutations and propagate the same owner through native, auxiliary and temporary legacy callers.
+4. Verify real process contention/death/alias safety and physical cleanup lifetime, update affected fixtures and living docs.
+5. Run Task 1 targeted tests and scoped static checks, self-review and commit explicit scope; complete independent task review before marking Done.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Implemented ADR-244’s physical run-store fence. ConsoleExecutionOwner retains a fail-closed OS lease keyed to the secured physical parent and store leaf, refuses aliases/foreign or multiply-linked files and unsupported locks, and verifies the acquired instance, process and resource identities. Existing owned legacy files are secured through the native private-file helper only after winning the lock; contenders do not create, harden or sweep the store.
 
+AgentRunsDB requires the same owner before schema/recovery and every mutation entry; automatic-work/Goal transactions and vacuum are covered. open_read_only uses a dedicated private-SQLite policy and matching maintenance provenance, without migrations, reconciliation or writes. Native runtime, Settings, retention, manual worktree recovery and the temporary legacy mobile engine propagate ownership. Active SQLite operations retain the lease; uncertain bounded cleanup keeps it until process exit, while proven idle cleanup permits restart.
+
+Updated explicit file-backed test fixtures with a test-only shared-owner factory (including subclass, embedded-process and indirect-class cases); no global fixture bypass. Updated Console, database-layer and web-server living architecture docs. No schema migration was needed: this directly implements backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md.
+
+Verification: required targeted modules plus recovery-error coverage: 571 passed, 2 skipped, 20 failures identical to the pre-change private_sqlite baseline. Final focused owner/native-retirement/mobile-restart run: 20 passed. Extended opener run: 349 passed with five change_bounds failures reproduced on the exact baseline and one mobile restart regression subsequently fixed/passing. Eleven extra receipt/fleet failures also reproduce on the baseline (raw_source_selection_changed). New-file Ruff/format checks pass; all changed Python syntax and per-file lint deltas checked. Detailed commands, failure identities, audit and remaining qualification limits are in .superpowers/sdd/2026-10-25-shared-console-mobile-supervision-implementation/task-1-report.md.
+
+Acceptance criteria and status intentionally remain unchanged pending independent specification and quality review. Full suite, provider calls, real user data, pushes and merges were not run.
+Final static follow-up: all 218 changed/new Python sources parse; default Ruff reports 1,012 inherited diagnostics and zero new per-file findings against 1bb7c507. Runtime format_ratchet snapshot at that base and worktree verify pass after formatting touched blocks only. Final owner/runtime/mobile/connection-reuse selection: 23 passed in 9.02s. Full diagnostics and immutable format baseline are saved beside the implementation report.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

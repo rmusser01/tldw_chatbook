@@ -18,7 +18,9 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.app import ComposeResult
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -64,8 +66,6 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
     derive_console_memory_banner_presentation,
 )
-
-from Tests.UI.test_destination_shells import _build_test_app
 
 
 def _append_local_command_run(
@@ -2129,7 +2129,7 @@ async def test_durable_resume_restores_only_guarded_roleplay_context():
 
 
 def test_local_command_resume_restores_one_anchored_display_only_marker(tmp_path):
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     conversation_id = "local-resume"
     _append_local_command_run(
         db, conversation_id=conversation_id, anchor="assistant-leaf"
@@ -2219,7 +2219,7 @@ def test_resume_drops_poison_local_rows_without_breaking_primary_markers(
     monkeypatch,
     local_query_fails,
 ):
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     primary_id = db.create_run(
         conversation_id="poison-local-resume",
         agent_kind="primary",
@@ -2277,7 +2277,7 @@ def test_resume_drops_poison_local_rows_without_breaking_primary_markers(
 
 
 def test_local_command_is_ignored_by_trajectory_rails_fleet_and_cost(tmp_path):
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     conversation_id = "local-exclusions"
     run_id = _append_local_command_run(
         db, conversation_id=conversation_id, anchor="assistant-leaf"

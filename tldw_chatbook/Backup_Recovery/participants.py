@@ -540,6 +540,8 @@ def _register_core_connection(repository, connection):
             }
             else participant.owner_id
         )
+        if participant.owner_id == "db.agent_runs" and participant.read_only:
+            policy_id = "db.agent_runs.read"
         if participant.owner_id == "notes.file_notes":
             policy_id = "notes.file_notes_replica"
         if participant.owner_id == "runtime.event_state":

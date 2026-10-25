@@ -5,13 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.mark.parametrize("standalone", [False, True])
 def test_v23_goal_upgrade_preserves_fleet_history(tmp_path, standalone):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     chain = db.automatic_work.create_chain("conversation", root_submission_id="root")
     with db.transaction() as conn:
         conn.execute(
@@ -46,7 +47,7 @@ def test_v23_goal_upgrade_preserves_fleet_history(tmp_path, standalone):
         ).read_text()
         with sqlite3.connect(path) as conn:
             conn.executescript(sql)
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     with db.connection() as conn:
         row = conn.execute(
             "SELECT * FROM automatic_wake_attempts WHERE id='attempt'"
@@ -60,7 +61,7 @@ def test_v23_goal_upgrade_preserves_fleet_history(tmp_path, standalone):
         )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     db.close()
-    AgentRunsDB(path).close()  # guarded runtime migration is repeatable
+    owned_agent_runs_db(path).close()  # guarded runtime migration is repeatable
 
 
 def test_standalone_goal_migration_matches_runtime_catalog(tmp_path):
@@ -85,7 +86,7 @@ def test_standalone_goal_migration_matches_runtime_catalog(tmp_path):
                 "tldw_chatbook/DB/migrations/agent_runs_v23_to_v24_goal_runs.sql"
             ).read_text()
         )
-    AgentRunsDB(paths[0]).close()
+    owned_agent_runs_db(paths[0]).close()
     catalogs = []
     for path in paths:
         with sqlite3.connect(path) as conn:

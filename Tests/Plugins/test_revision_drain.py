@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.activation import worker_guard
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
@@ -355,7 +356,6 @@ async def test_real_console_pending_permission_approval_blocks_revision_publicat
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.MCP.permission_store import (
         BUILTIN_TOOL_SERVER_KEY,
         MCPPermissionStore,
@@ -390,7 +390,7 @@ async def test_real_console_pending_permission_approval_blocks_revision_publicat
     gateway = _FleetChunkGateway(
         [[_fence("calculator", {"expression": "6*7"})], ["approved result"]], []
     )
-    runs = AgentRunsDB(
+    runs = owned_agent_runs_db(
         tmp_path / "approval-runs.sqlite", client_id="plugin-drain-approval"
     )
     bridge = ConsoleAgentBridge(

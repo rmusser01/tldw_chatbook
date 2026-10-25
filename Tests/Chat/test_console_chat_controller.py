@@ -1,3 +1,4 @@
+
 import asyncio
 import copy
 import json
@@ -8,57 +9,42 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.hook_test_utils import trusted_hook_engine
-
 from Tests.Chat.console_close_helpers import close_controller_session
+from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
-    normalize_tool_review,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
     RunOutcome,
     ToolCall,
+    normalize_tool_review,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import (
     TIMEOUT_REFUSAL,
     UNRESOLVED_REFUSAL,
     MCPPendingCall,
 )
-from tldw_chatbook.Agents import run_log as run_log_module
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat import console_history_budget
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_activity_receipts import (
+    ConsoleActivityReceiptService,
+)
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_mcp_review_hook,
 )
-from tldw_chatbook.Chat.console_activity_receipts import (
-    ConsoleActivityReceiptService,
-)
-from tldw_chatbook.Chat.console_prepared_request import build_console_request
-from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
-from tldw_chatbook.Chat.console_trace_provenance import (
-    ConsoleRequestRoute,
-    ConsoleTraceCaptureMode,
-    ProviderArtifactTraceProvenance,
-    TraceProvenanceSource,
-)
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.console_provider_gateway import (
-    ConsoleProviderGateway,
-    ConsoleProviderResolution,
-    ProviderProprietaryThinkingEvidence,
-    ProviderThinkingDelta,
-)
-from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleDispatchRecoveryActionId,
     ConsoleDispatchRecoveryKind,
     ConsoleDispatchRecoveryState,
-    ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
+    ConsoleNextSendHistoryProjection,
     ConsoleProviderSelection,
     ConsoleRunMarker,
     ConsoleRunState,
@@ -70,19 +56,16 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
     console_dispatch_recovery_from_checkpoint,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
-from tldw_chatbook.Chat.console_project_instructions import (
-    ProjectInstructionControlState,
-)
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore as _ConsoleChatStore,
+)
+from tldw_chatbook.Chat.console_chat_store import (
     ConsoleDispatchSettlementError,
 )
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpoint,
-    ConsoleDispatchReconstructability,
     ConsoleDispatchCheckpointState,
+    ConsoleDispatchReconstructability,
     ConsoleDispatchResultStatus,
     ConsoleDispatchWriteResult,
     ConsoleEgressClass,
@@ -98,17 +81,35 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyDefaults,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.console_prepared_request import build_console_request
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
+)
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    TraceProvenanceSource,
+)
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
 )
-from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.message_metadata import MESSAGE_ORIGIN_HOOK, MessageMetadata
+from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
-from tldw_chatbook.Chat.message_metadata import MESSAGE_ORIGIN_HOOK
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 class ConsoleChatStore(_ConsoleChatStore):
@@ -2617,7 +2618,7 @@ def test_inactive_direct_terminal_outcome_publishes_and_corrects_receipt(tmp_pat
     background = store.create_session(title="Background", ephemeral=True)
     store.switch_session(active.id)
     service = ConsoleActivityReceiptService(
-        AgentRunsDB(tmp_path / "activity-runs.db"), None
+        owned_agent_runs_db(tmp_path / "activity-runs.db"), None
     )
     controller = ConsoleChatController(
         store=store,
@@ -2651,7 +2652,7 @@ def test_inactive_receipt_failure_preserves_compatibility_marker(tmp_path, monke
     active = store.ensure_session(title="Active")
     background = store.create_session(title="Background", ephemeral=True)
     store.switch_session(active.id)
-    database = AgentRunsDB(tmp_path / "activity-runs.db")
+    database = owned_agent_runs_db(tmp_path / "activity-runs.db")
     service = ConsoleActivityReceiptService(database, None)
     controller = ConsoleChatController(
         store=store,
@@ -5189,7 +5190,7 @@ async def test_controller_agent_replays_same_live_session_thinking_policy(
     )
     gateway = ThinkingHistoryGateway()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "thinking-runs.db", client_id="task4"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "thinking-runs.db", client_id="task4"),
         store=store,
         provider_gateway=gateway,
     )
@@ -5294,7 +5295,7 @@ async def test_controller_bridge_agent_service_bound_private_history_on_real_sen
     ).provider_continuation = _controller_history_checkpoint("JOINED-PRIVATE-CANARY ")
     gateway = ContinuationHistoryGateway()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="task6"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs.db", client_id="task6"),
         store=store,
         provider_gateway=gateway,
     )
@@ -7841,7 +7842,7 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
     )
 
     chat_db = CharactersRAGDB(tmp_path / "durable-agent-trace.sqlite", "task12")
-    runs_db = AgentRunsDB(tmp_path / "durable-agent-runs.sqlite", client_id="task12")
+    runs_db = owned_agent_runs_db(tmp_path / "durable-agent-runs.sqlite", client_id="task12")
     repository = ConsoleTraceRepository()
     service = ConsoleTraceService(repository)
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
@@ -8076,7 +8077,7 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
     chat_db = CharactersRAGDB(tmp_path / "two-turn-trace.sqlite", "task31714")
     trace_observer = CharactersRAGDB(tmp_path / "two-turn-trace.sqlite", "trace-observer")
     observer_connection = trace_observer.get_connection()
-    runs_db = AgentRunsDB(tmp_path / "two-turn-runs.sqlite", client_id="task31714")
+    runs_db = owned_agent_runs_db(tmp_path / "two-turn-runs.sqlite", client_id="task31714")
     factory = ConsoleTraceBoundaryFactory(chat_db)
     requests = []
     recovery_boundaries = []
@@ -8734,7 +8735,7 @@ async def test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_t
     chat_db = CharactersRAGDB(tmp_path / "canvas-trace-chat.sqlite", "canvas-trace")
     trace_observer = CharactersRAGDB(tmp_path / "canvas-trace-chat.sqlite", "trace-observer")
     observer_connection = trace_observer.get_connection()
-    runs_db = AgentRunsDB(
+    runs_db = owned_agent_runs_db(
         tmp_path / "canvas-trace-runs.sqlite", client_id="canvas-trace"
     )
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=chat_db))
@@ -9076,7 +9077,7 @@ async def test_next_canvas_turn_reads_and_branches_from_native_historical_select
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
     db = CharactersRAGDB(tmp_path / "historical-selection.sqlite", "selection-test")
-    runs_db = AgentRunsDB(
+    runs_db = owned_agent_runs_db(
         tmp_path / "historical-runs.sqlite", client_id="selection-test"
     )
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
@@ -9958,7 +9959,7 @@ async def test_agent_retry_preflight_preserves_selected_generation_exactly(
     tmp_path,
 ) -> None:
     chat_db = CharactersRAGDB(tmp_path / "retry-chat.sqlite", "retry-preflight")
-    runs_db = AgentRunsDB(tmp_path / "retry-runs.sqlite", client_id="retry-preflight")
+    runs_db = owned_agent_runs_db(tmp_path / "retry-runs.sqlite", client_id="retry-preflight")
     try:
         persistence = ChatPersistenceService(chat_db)
         store = ConsoleChatStore(persistence=persistence)
@@ -10010,7 +10011,7 @@ async def test_agent_regenerate_preflight_does_not_create_a_sibling(
     chat_db = CharactersRAGDB(
         tmp_path / "regenerate-chat.sqlite", "regenerate-preflight"
     )
-    runs_db = AgentRunsDB(
+    runs_db = owned_agent_runs_db(
         tmp_path / "regenerate-runs.sqlite", client_id="regenerate-preflight"
     )
     try:

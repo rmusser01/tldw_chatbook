@@ -4,21 +4,20 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.private_profile import private_profile_test
-
 from tldw_chatbook.Agents.fleet_messages import MessageError
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.fixture
 def setup(tmp_path):
     store = ConsoleChatStore()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         store=store,
         provider_gateway=object(),
     )

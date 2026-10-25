@@ -18,6 +18,7 @@ import pytest
 import tldw_chatbook.Agents.local_tool_provider as ltp
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_local_review_hook import (
     _bare_controller,
     _compose_local_provider,
@@ -292,7 +293,6 @@ def _run_saves(monkeypatch, hub, tmp_path, answers):
         ToolCatalogRegistry,
     )
     from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     provider, approvals, _card_id = _console(monkeypatch, hub)
     rounds: list[list[str]] = []
@@ -314,7 +314,7 @@ def _run_saves(monkeypatch, hub, tmp_path, answers):
         ]
     )
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        db=owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         registry=registry,
         chat_call=chat,
         review_tool_calls=build_local_review_hook(provider, card),

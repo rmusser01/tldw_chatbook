@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 # These owners exercise native config participants selected at collection.
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -49,7 +51,6 @@ from tldw_chatbook.Chat.console_project_instructions import (
     fingerprint_canonical_locator,
     project_instruction_notice_key,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -107,7 +108,7 @@ def _service(tmp_path: Path, replies, **kwargs):
     registry.register_provider(BuiltinToolProvider())
     chat = _ScriptedChat(replies)
     service = AgentService(
-        AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         registry,
         chat_call=chat,
         **kwargs,
@@ -692,7 +693,7 @@ def test_explicit_read_and_assistant_quote_remain_normally_persisted(tmp_path):
     }
     chat = _ScriptedChat([read_call, f"Quoted: {SENTINEL}"])
     service = AgentService(
-        AgentRunsDB(tmp_path / "explicit.db", client_id="test"),
+        owned_agent_runs_db(tmp_path / "explicit.db", client_id="test"),
         registry,
         chat_call=chat,
     )

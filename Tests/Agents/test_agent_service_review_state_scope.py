@@ -44,6 +44,7 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.Agents.agent_service as agent_service
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     SPAWN_TOOL_NAME,
@@ -51,15 +52,14 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
-from tldw_chatbook.Agents.project_instruction_runtime import InstructionPreparation
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
-from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider, USER_DENY_REFUSAL
+from tldw_chatbook.Agents.mcp_tool_provider import USER_DENY_REFUSAL, MCPToolProvider
+from tldw_chatbook.Agents.project_instruction_runtime import InstructionPreparation
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.Chat.console_chat_controller import (
     build_mcp_review_hook,
     build_tool_review_hook,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.tool_executor import Tool
 
@@ -167,7 +167,7 @@ def running_loop():
 
 @pytest.fixture
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
 
 
 def _native_turn(calls: list[ToolCall], text: str = "") -> dict:

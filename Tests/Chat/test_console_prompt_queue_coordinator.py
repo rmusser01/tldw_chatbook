@@ -8,12 +8,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.console_close_helpers import close_controller_session
+from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
-from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_activity_receipts import (
     ConsoleActivityReceiptService,
 )
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
@@ -40,9 +42,6 @@ from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     QueueGenerationAuthorization,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from Tests.console_provider_doubles import provider_resolution
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -1106,7 +1105,7 @@ async def test_multi_entry_queue_chain_publishes_one_final_durable_outcome(tmp_p
     active_session = store.create_session(title="Active", ephemeral=True)
     store.switch_session(queued_session.id)
     service = ConsoleActivityReceiptService(
-        AgentRunsDB(tmp_path / "queue-activity.db"), None
+        owned_agent_runs_db(tmp_path / "queue-activity.db"), None
     )
     controller = ConsoleChatController(
         store=store,

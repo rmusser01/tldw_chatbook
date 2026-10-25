@@ -2,6 +2,7 @@
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_denial_circuit_breaker import run_batch
 from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Agents.agent_models import ToolResult
@@ -9,7 +10,6 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 class _QueuedGateway:
@@ -39,7 +39,7 @@ async def test_denial_terminal_preserves_partial_and_allows_next_submit(
 ):
     store = ConsoleChatStore()
     gateway = _QueuedGateway()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="denial-terminal")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="denial-terminal")
     try:
         bridge = ConsoleAgentBridge(
             agent_runs_db=db,

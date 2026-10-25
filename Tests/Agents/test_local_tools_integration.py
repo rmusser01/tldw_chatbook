@@ -17,16 +17,17 @@ review_tool_calls=hook, review_state_scope=provider.stamp_scope).
 import asyncio
 import dataclasses
 import json
-from io import BytesIO
 import threading
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 
 import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
 import tldw_chatbook.MCP.local_server_tools as local_server_tools
-from tldw_chatbook.Agents.agent_models import RUN_DONE, AgentConfig, RunBudget
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.agent_models import RUN_DONE, AgentConfig, RunBudget
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Agents.local_tool_provider import (
@@ -42,13 +43,12 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
     probe_initial_catalog,
 )
+from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
 from tldw_chatbook.Chat.console_chat_controller import (
     USER_DENIED_REFUSAL,
     build_local_review_hook,
     build_mcp_review_hook,
 )
-from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import (
     EffectiveToolState,
     resolve_effective_state,
@@ -228,7 +228,7 @@ def mcp_main_loop():
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 @pytest.fixture()

@@ -5,16 +5,16 @@ without the bundle is not measured (task-15110's lesson).
 """
 
 import time
-from threading import Event
 from pathlib import Path
+from threading import Event
 
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
-
 from tldw_chatbook.css import build_css
 from tldw_chatbook.Widgets.Console.console_turn_file_card import (
     MAX_MOUNTED_HUNKS,
@@ -609,7 +609,6 @@ async def test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs(tm
         CHANGE_KIND_SUBAGENT_POST_TURN,
         CHANGE_KIND_TURN,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.UI.Screens.change_review_screen import (
         AgentRunsChangeReviewProvider,
     )
@@ -622,7 +621,7 @@ async def test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs(tm
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     conv = "conv-1"
     run_id = db.create_run(conversation_id=conv, agent_kind="primary")
 

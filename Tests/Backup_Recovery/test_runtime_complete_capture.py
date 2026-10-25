@@ -75,12 +75,13 @@ async def main():
  # remain explicit; this fixture does not change fresh-profile missing policy.
  from tldw_chatbook.config import get_user_data_dir
  from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+ from Tests.agent_runs_owner import owned_agent_runs_db
  from tldw_chatbook.Agents.agent_models import AgentDefinition
  from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
  from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
  from hashlib import sha256
  data=get_user_data_dir()
- runs=AgentRunsDB(data/'agent_runs.db',client_id='capture-fixture')
+ runs=owned_agent_runs_db(data/'agent_runs.db',client_id='capture-fixture')
  runs.create_agent_definition(AgentDefinition(name='research',description='saved',instructions='Read the local notes.'))
  runs.close()
  note=b'# Saved note\nPrivate capture fixture.\n'

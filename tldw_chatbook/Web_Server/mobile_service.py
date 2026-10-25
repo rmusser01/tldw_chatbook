@@ -425,8 +425,14 @@ class MobileChatService:
                 workspace_registry=registry,
             )
         )
+        from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
+
+        # The shared-runtime cutover retires this legacy engine.
+        execution_owner = ConsoleExecutionOwner.acquire(self._data_dir / "runs.db")
         agent_runs_db = AgentRunsDB(
-            str(self._data_dir / "runs.db"), client_id="mobile-service"
+            str(self._data_dir / "runs.db"),
+            client_id="mobile-service",
+            execution_owner=execution_owner,
         )
         bridge = ConsoleAgentBridge(
             agent_runs_db=agent_runs_db,
@@ -1883,6 +1889,7 @@ class MobileChatService:
         # Outstanding send-turn tasks are deliberately killed; the engine
         # teardown below stops their runs.
         turn_tasks = list(self._turn_tasks.values())
+        physically_idle = not any(not task.done() for task in turn_tasks)
         self._turn_tasks.clear()
         self._state.turns_in_flight.clear()
         for task in turn_tasks:
@@ -1894,7 +1901,15 @@ class MobileChatService:
             return
         try:
             await asyncio.wait_for(engine.controller.shutdown(), timeout=10)
+            for session in engine.store.sessions():
+                conversation_id = engine.controller.conversation_id_for_session(
+                    session.id
+                )
+                physically_idle &= await asyncio.wait_for(
+                    engine.bridge.await_fleet_terminal(conversation_id), timeout=10
+                )
         except Exception:  # noqa: BLE001 - teardown must finish regardless
+            physically_idle = False
             logger.exception("mobile controller shutdown failed")
         try:
             db = getattr(getattr(engine.store, "persistence", None), "db", None)
@@ -1903,6 +1918,7 @@ class MobileChatService:
                     pass
                 db.close()
         except Exception:  # noqa: BLE001 - teardown must finish regardless
+            physically_idle = False
             logger.exception("mobile store quiesce/close failed")
         for closer in (
             engine.agent_runs_db.close,
@@ -1913,5 +1929,8 @@ class MobileChatService:
             try:
                 closer()
             except Exception:  # noqa: BLE001 - teardown must finish regardless
+                physically_idle = False
                 logger.exception("mobile database close failed")
+        if physically_idle:
+            engine.agent_runs_db._execution_owner.close()
         logger.info("mobile engine shut down")

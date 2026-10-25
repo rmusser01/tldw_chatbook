@@ -6,10 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Chat.console_agent_bridge import (
     AgentLiveSnapshot,
     AgentLiveStep,
@@ -18,8 +20,6 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
-from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -201,10 +201,9 @@ def test_resume_rederives_subagent_data_from_durable_run_store(tmp_path):
     same badge count + sub-agent listing after a "restart" -- the run store,
     not any in-memory/session state, is the source of truth for resume."""
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db_path = tmp_path / "agent_runs.db"
-    db = AgentRunsDB(db_path, client_id="t")
+    db = owned_agent_runs_db(db_path, client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     sub_id = db.create_run(
         conversation_id="conv-1",
@@ -219,7 +218,7 @@ def test_resume_rederives_subagent_data_from_durable_run_store(tmp_path):
 
     # Simulate resume: a brand-new bridge/DB handle over the same file, with
     # no in-memory live-snapshot state carried over.
-    fresh_db = AgentRunsDB(db_path, client_id="t")
+    fresh_db = owned_agent_runs_db(db_path, client_id="t")
     fresh_bridge = ConsoleAgentBridge(
         agent_runs_db=fresh_db, store=None, provider_gateway=None
     )
@@ -242,7 +241,7 @@ def test_resume_rederives_subagent_data_from_durable_run_store(tmp_path):
 
 
 def test_bridge_subagent_counts_batches_in_one_db_call(tmp_path, monkeypatch):
-    db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="t")
     parent = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.create_run(
         conversation_id="conv-1", agent_kind="subagent", task="x", parent_run_id=parent
@@ -467,7 +466,7 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -624,10 +623,9 @@ def test_resume_rederives_top_level_agent_summary_from_durable_run_store(tmp_pat
     primary+subagent run reports that history via historical_snapshot, not
     the idle default -- matching the badge/drill-in's existing durability."""
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db_path = tmp_path / "agent_runs.db"
-    db = AgentRunsDB(db_path, client_id="t")
+    db = owned_agent_runs_db(db_path, client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         primary_id,
@@ -654,7 +652,7 @@ def test_resume_rederives_top_level_agent_summary_from_durable_run_store(tmp_pat
 
     # Simulate resume: a brand-new bridge/DB handle over the same file.
     fresh_bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(db_path, client_id="t"),
+        agent_runs_db=owned_agent_runs_db(db_path, client_id="t"),
         store=None,
         provider_gateway=None,
     )
@@ -1467,7 +1465,7 @@ async def test_negative_availability_retries_after_real_first_record_append(
     monkeypatch.setattr(run_log, "resolve_log_root", lambda: tmp_path)
     clock = [100.0]
     monkeypatch.setattr(agent_module, "_run_log_clock", lambda: clock[0], raising=False)
-    db = AgentRunsDB(tmp_path / "append.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "append.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     host = ConsoleHarness(_build_test_app())
     async with host.run_test(size=(180, 48)) as pilot:
@@ -1765,7 +1763,7 @@ def test_log_target_metadata_and_binding_token(tmp_path, monkeypatch):
 
     from tldw_chatbook.Agents.run_log import RunLogWriter
 
-    db = AgentRunsDB(tmp_path / "target.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "target.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     primary = db.create_run(conversation_id="A", agent_kind="primary")
     child = db.create_run(

@@ -18,8 +18,8 @@ from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Select, Static, Tree
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.test_console_narrow_layout import _compositor_text
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
@@ -67,7 +67,7 @@ def _same_root_window_provider(tmp_path, kinds: tuple[str, ...]):
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     conv = "conv-1"
     run_id = db.create_run(conversation_id=conv, agent_kind="primary")
     markers = ("ALPHA_ONLY_MARKER", "BRAVO_ONLY_MARKER")
@@ -141,7 +141,7 @@ def review_fixture(tmp_path):
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     conv = "conv-1"
     run1 = db.create_run(conversation_id=conv, agent_kind="primary")
     run2 = db.create_run(conversation_id=conv, agent_kind="primary")
@@ -299,7 +299,7 @@ async def test_truncation_row_reports_accurate_hidden_count(tmp_path):
     root.mkdir()
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="c", agent_kind="primary")
     _record_turn(
         db,
@@ -400,7 +400,7 @@ async def test_a_hostile_cap_cannot_defeat_windowing(tmp_path):
     root.mkdir()
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="c", agent_kind="primary")
     _record_turn(
         db,
@@ -629,7 +629,7 @@ async def test_oversize_disclosure_banner_renders(tmp_path, monkeypatch):
     (root / "small.txt").write_text("hello\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
     def mutate():
@@ -696,7 +696,7 @@ async def test_nested_repo_banner_names_the_holes(tmp_path, monkeypatch):
     _sp.run(["git", "init", "--quiet", str(child)], check=True)
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
     def mutate():
@@ -809,7 +809,7 @@ async def test_badge_marks_files_no_write_tool_touched(tmp_path):
     (root / "tooled.txt").write_text("before\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
     def mutate():
@@ -899,7 +899,7 @@ async def test_deleted_and_renamed_rows_badge_even_when_path_was_tool_touched(
     (root / "old.txt").write_text("stable rename content\n" * 5)
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
     def mutate():
@@ -1162,7 +1162,7 @@ async def test_ordinary_multi_root_labels_remain_unchanged(tmp_path):
     root_b.mkdir()
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
     handle = tracker.begin_turn([root_a, root_b])
@@ -1368,7 +1368,7 @@ async def test_initials_survive_a_zero_leaf_initial_turn_regression(tmp_path):
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     conv = "conv-1"
 
     run1 = db.create_run(conversation_id=conv, agent_kind="primary")
@@ -1458,7 +1458,7 @@ def _big_diff_provider(tmp_path, *, line_count: int = 200, cap: int = 50):
     root.mkdir()
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="c", agent_kind="primary")
     _record_turn(
         db,
@@ -1781,7 +1781,7 @@ async def test_diff_cursor_scroll_target_survives_a_long_wrapped_line(tmp_path):
     root.mkdir()
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="c", agent_kind="primary")
 
     def mutate():
@@ -2098,7 +2098,7 @@ async def test_delivered_note_renders_sent_without_delete(review_fixture, tmp_pa
         hunk_excerpt="-before\n+after",
         note="already delivered",
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     db.mark_notes_delivered([note_id])
 
     app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
@@ -2155,7 +2155,7 @@ async def test_delete_on_note_delivered_behind_screens_back_notifies(
             "delete button rendered",
         )
 
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         db.mark_notes_delivered([note_id])
 
         notify_calls: list[tuple[tuple, dict]] = []
@@ -2228,7 +2228,7 @@ async def test_provider_add_change_note_raising_does_not_crash(tmp_path):
     (root / "edit.txt").write_text("before\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="c", agent_kind="primary")
     _record_turn(
         db, tracker, root, run_id, lambda: (root / "edit.txt").write_text("after\n")
@@ -2463,7 +2463,7 @@ async def test_notes_strip_scoped_to_its_own_window_not_the_sibling_window(
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     conv = "conv-1"
     run_id = db.create_run(conversation_id=conv, agent_kind="primary")
 

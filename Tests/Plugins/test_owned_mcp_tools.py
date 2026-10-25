@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 from Tests.hooks_v2_process_support import child_argv
@@ -1414,10 +1416,9 @@ async def test_owned_automatic_authority_is_rechecked_after_awaited_setup(
 ):
     from Tests.Chat.test_automatic_provider_budget import context_for
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     case = shared_connection_case
-    database = AgentRunsDB(tmp_path / "automatic.sqlite", client_id="owned-automatic")
+    database = owned_agent_runs_db(tmp_path / "automatic.sqlite", client_id="owned-automatic")
     context = context_for(database)
     reached, resume = asyncio.Event(), asyncio.Event()
     pending = None

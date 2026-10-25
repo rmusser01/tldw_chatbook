@@ -5,10 +5,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents import run_log
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -22,7 +22,7 @@ def test_run_log_read_retires_only_its_worker_metadata_connection(
     tmp_path, monkeypatch, reader, borrowed, fail_sql
 ):
     """A completed log reader must not strand its newly opened worker handle."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="log-owner")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="log-owner")
     try:
         primary = db.create_run(conversation_id="conv", agent_kind="primary")
         child = db.create_run(

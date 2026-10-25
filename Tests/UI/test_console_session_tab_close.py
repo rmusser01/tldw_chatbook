@@ -32,6 +32,7 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import (
     _build_test_app,
@@ -730,9 +731,8 @@ def _pending_close_app(request, kind, *, surviving_child=False):
     app.chachanotes_db = db
     app.local_chat_conversation_service = ChatConversationService(db)
     if surviving_child:
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-        runs = AgentRunsDB(directory / "runs.sqlite")
+        runs = owned_agent_runs_db(directory / "runs.sqlite")
         register_database(app.console_runtime, runs)
         app._pending_close_runs = runs
     yield app

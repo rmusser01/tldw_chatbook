@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
-import threading
 from typing import Any
 
 import pytest
 import requests
 
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -25,11 +26,9 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
 )
 from tldw_chatbook.Chat.provider_continuation import ContinuationRestoreTarget
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.LLM_Calls.moonshot import chat_with_moonshot
 from tldw_chatbook.LLM_Calls.zai import chat_with_zai
-
 
 _FINAL = "HOSTED-NATIVE-FINAL"
 _RESULT_A = '{"expression": "6*7", "result": 42, "result_type": "int"}'
@@ -611,7 +610,7 @@ def test_console_runs_two_native_calls_with_private_continuation(
         )
         validators.append(_zai_ordinary_validator())
     with _scripted_server(bodies, validators) as server:
-        db = AgentRunsDB(tmp_path / f"{provider}.db", client_id="hosted-native")
+        db = owned_agent_runs_db(tmp_path / f"{provider}.db", client_id="hosted-native")
         chat_db = CharactersRAGDB(
             tmp_path / f"{provider}-chat.db", f"hosted-native-{provider}"
         )
@@ -757,7 +756,7 @@ def test_hosted_tool_error_continues_structurally(
         [_error_tool_turn(provider), _final_turn(provider, text="ERROR-RECOVERED")],
         [_initial_validator(provider), _error_continuation_validator(provider)],
     ) as server:
-        db = AgentRunsDB(tmp_path / f"{provider}-error.db", client_id="hosted-error")
+        db = owned_agent_runs_db(tmp_path / f"{provider}-error.db", client_id="hosted-error")
         chat_db = CharactersRAGDB(
             tmp_path / f"{provider}-error-chat.db", f"hosted-error-{provider}"
         )
@@ -905,7 +904,7 @@ def test_hosted_partial_call_cancellation_never_executes(
             real_response_close(response)
 
         monkeypatch.setattr(requests.Response, "close", recording_response_close)
-        db = AgentRunsDB(tmp_path / f"{provider}-cancel.db", client_id="hosted-cancel")
+        db = owned_agent_runs_db(tmp_path / f"{provider}-cancel.db", client_id="hosted-cancel")
         chat_db = CharactersRAGDB(
             tmp_path / f"{provider}-cancel-chat.db", f"hosted-cancel-{provider}"
         )

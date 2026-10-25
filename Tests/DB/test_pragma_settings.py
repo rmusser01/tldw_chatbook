@@ -73,6 +73,7 @@ from typing import Callable
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
@@ -96,7 +97,6 @@ from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.TTS.profile_schema import open_profile_store
 from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import SQLiteStorage
 from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
-
 
 #: SQLite's numeric encoding for ``PRAGMA synchronous`` -- 0=OFF, 1=NORMAL,
 #: 2=FULL, 3=EXTRA. ``synchronous`` always reads back as an int regardless of
@@ -224,7 +224,7 @@ def _evals_memory(_tmp_path: Path):
 
 
 def _agent_runs_file(tmp_path: Path):
-    db = AgentRunsDB(tmp_path / "agent_runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.db")
     return db._held_connection(), db.close
 
 
@@ -418,7 +418,7 @@ _HELD_CONNECTION_DBS: list[tuple[str, Callable]] = [
     ("client_notifications", lambda path: ClientNotificationsDB(path / "notify.db")),
     ("event_state", lambda path: EventStateRepository(path / "event_state.db")),
     ("workspace", lambda path: WorkspaceDB(path / "workspace.db")),
-    ("agent_runs", lambda path: AgentRunsDB(path / "agent_runs.db")),
+    ("agent_runs", lambda path: owned_agent_runs_db(path / "agent_runs.db")),
 ]
 
 

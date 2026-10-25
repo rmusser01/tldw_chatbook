@@ -7,11 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
 from Tests.DB.test_automatic_work_budget import chain
 from tldw_chatbook.Chat import console_launch_wake as launch
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError
 
@@ -19,7 +19,7 @@ from tldw_chatbook.Utils.private_paths import PrivatePathError
 @pytest.fixture
 def native(tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "autowake_enabled", lambda: True)
-    db = AgentRunsDB(tmp_path / "agent_runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.db")
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="launch-test")
     chacha.add_conversation({"id": "conversation", "title": "Saved"})
@@ -85,7 +85,7 @@ async def test_missing_or_empty_ledger_ignores_badges_and_constructs_nothing(
 ):
     db_path = tmp_path / "agent_runs.db"
     if existing:
-        AgentRunsDB(db_path).close()
+        owned_agent_runs_db(db_path).close()
     app = SimpleNamespace(
         chachanotes_db=SimpleNamespace(db_path=tmp_path / "chacha.sqlite"),
         conversation_local_marks_service=SimpleNamespace(
@@ -381,7 +381,7 @@ async def test_launch_upgrades_legacy_survivor_and_preserves_manual_review(
     def open_runtime(actual_app):
         # Only the normal database owner upgrades and starts recovery, after
         # read-only discovery has identified a real saved survivor.
-        db = AgentRunsDB(path, client_id="legacy-launch-upgrade")
+        db = owned_agent_runs_db(path, client_id="legacy-launch-upgrade")
         runtime, controller = _controller(actual_app, db)
         opened.append((db, runtime, controller))
         return controller

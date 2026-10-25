@@ -1,5 +1,7 @@
 """Native capabilities retain explicit selection and narrowing semantics."""
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 
 def test_empty_agent_tool_list_never_inherits():
     from tldw_chatbook.Plugins.agent_presets import resolve_agent_tools
@@ -156,7 +158,6 @@ async def test_actual_managed_agent_keeps_empty_tools_and_untrusted_instructions
         FirstRequestSchemaPlan,
         build_spawn_schema,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     row = await _install_material(
@@ -172,7 +173,7 @@ async def test_actual_managed_agent_keeps_empty_tools_and_untrusted_instructions
         admitted["available_skills"], frozenset({"calculator"})
     )
     pin_max_live_subagents(monkeypatch, 1)
-    db = AgentRunsDB(tmp_path / "agent-runs.sqlite", client_id="native-preset-test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.sqlite", client_id="native-preset-test")
     try:
         service, chat = make_service(
             db,
@@ -243,7 +244,6 @@ async def test_actual_console_registers_selected_managed_agent(
     from Tests.Chat.test_console_agent_bridge import _fence
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     assert (
@@ -272,7 +272,7 @@ async def test_actual_console_registers_selected_managed_agent(
             )
 
     gateway = Gateway()
-    db = AgentRunsDB(
+    db = owned_agent_runs_db(
         tmp_path / "console-agent-runs.sqlite", client_id="native-preset-test"
     )
     try:
@@ -738,7 +738,6 @@ async def test_actual_inline_native_skill_empty_tools_refuses_model_tool(
     from Tests.Chat.test_console_agent_bridge import _fence
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     assert (
@@ -754,7 +753,7 @@ async def test_actual_inline_native_skill_empty_tools_refuses_model_tool(
             yield _fence("calculator", {"expression": "2+2"}) if index == 0 else "Done."
 
     gateway = Gateway()
-    db = AgentRunsDB(tmp_path / "inline-tools.sqlite", client_id="native-inline")
+    db = owned_agent_runs_db(tmp_path / "inline-tools.sqlite", client_id="native-inline")
     try:
         bridge = ConsoleAgentBridge(
             agent_runs_db=db,
@@ -792,7 +791,6 @@ async def test_actual_console_dependency_failure_blocks_owned_skill_only(
     from Tests.hooks_v2_process_support import child_argv
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     assert (
@@ -853,7 +851,7 @@ async def test_actual_console_dependency_failure_blocks_owned_skill_only(
             )
 
     gateway = Gateway()
-    db = AgentRunsDB(tmp_path / "dependencies.sqlite", client_id="native-dependencies")
+    db = owned_agent_runs_db(tmp_path / "dependencies.sqlite", client_id="native-dependencies")
     runtime = ConsoleRuntime(app=rig.controller.app)
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
@@ -902,7 +900,6 @@ async def test_actual_console_owned_mcp_dispatch_uses_host_run_binding(
     from Tests.console_provider_doubles import persisted_console_store
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
@@ -950,7 +947,7 @@ async def test_actual_console_owned_mcp_dispatch_uses_host_run_binding(
         skills_scope_service=skills,
         workspace_registry_service=registry,
     )
-    db = AgentRunsDB(tmp_path / "owned-console.sqlite", client_id="owned-console")
+    db = owned_agent_runs_db(tmp_path / "owned-console.sqlite", client_id="owned-console")
     tool, _state = next(iter(case.providers["a"]._entry_by_llm_name.values()))
     case.unified.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
     try:

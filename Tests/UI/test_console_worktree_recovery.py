@@ -6,6 +6,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_worktree_confirmed_recovery import work as _work
 
 work = _work
@@ -142,13 +143,12 @@ async def test_reopened_record_manual_action_uses_real_controller_card_and_git(
         ProjectInstructionControlState,
     )
     from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
     db, authority, child, _records = work
     (child.worktree_path / "a.txt").write_text("child changes\n")
     db.close()
-    reopened = AgentRunsDB(db.db_path_str)
+    reopened = owned_agent_runs_db(db.db_path_str)
     store = ConsoleChatStore()
     session = store.create_session(title="Recovery", workspace_id="workspace")
     session.persisted_conversation_id = "chat"

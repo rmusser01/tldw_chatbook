@@ -1,7 +1,9 @@
+
 import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.conftest import join_fleet_children, pin_max_live_subagents
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Agents.agent_models import (
@@ -24,7 +26,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -68,7 +69,7 @@ def _registry_with_code_review_skill():
 
 
 def test_skill_tool_routes_through_spawn(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
     script = [
         {
@@ -102,7 +103,7 @@ def test_skill_tool_routes_through_spawn(tmp_path):
 def test_named_child_recomputes_lesson_guidance_after_tool_narrowing(
     tmp_path, inline_spawns
 ):
-    db = AgentRunsDB(tmp_path / "narrowed-guidance.db", client_id="guidance")
+    db = owned_agent_runs_db(tmp_path / "narrowed-guidance.db", client_id="guidance")
     db.create_agent_definition(
         AgentDefinition(
             name="lesson-reader",
@@ -174,7 +175,7 @@ def test_named_child_recomputes_lesson_guidance_after_tool_narrowing(
 
 
 def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkeypatch):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     original_insert = db.insert_steps_at_indices
 
     def fail_spawn_capture(run_id, indexed_steps):
@@ -221,7 +222,7 @@ def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkey
 
 
 def test_skill_tool_respects_subagent_budget(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
     # Two skill calls with max_subagents=1: the second must be refused.
     script = [
@@ -305,7 +306,7 @@ def _discovery_plan() -> FirstRequestSchemaPlan:
 
 
 def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     names = _discovery_names()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
@@ -345,7 +346,7 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
 
 
 def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     names = _discovery_names()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
@@ -397,7 +398,7 @@ def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
 
 
 def test_combined_budget_native_spawn_then_skill_call(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
     # PR2a Task 6.5: the fleet is ON by default, so the native child runs
     # on its own thread -- one ordered queue is no longer deterministic.
@@ -457,7 +458,7 @@ def test_combined_budget_native_spawn_then_skill_call(tmp_path):
 
 
 def test_combined_budget_skill_call_then_native_spawn(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
     # PR2a Task 6.5: addressed per agent (see the sibling test above). The
     # SKILL's own spawn is threaded too -- both paths go through the one
@@ -531,7 +532,7 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
     happens at the permission GATE ("Tool not permitted"), never falling
     through to the budget-exhausted branch, and that skill_runner.run is
     never reached (the counting fake's `spawned_with` stays ``None``)."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
     # PR2a Task 6.5: addressed per agent (see the sibling tests above).
     chat = FleetChat(
@@ -619,7 +620,7 @@ def test_skill_call_runs_inline_and_returns_the_output_not_a_handle(
     that makes this regressable at all.
     """
     pin_max_live_subagents(monkeypatch, 3)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()
     chat = FleetChat(
         [

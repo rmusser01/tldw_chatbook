@@ -7,16 +7,16 @@ from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
+from textual.events import Key
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
     _retire_original_run_databases,
 )
-
-from tldw_chatbook.Chat.console_command_grammar import CommandParse, KIND_NOT_COMMAND
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_command_grammar import KIND_NOT_COMMAND, CommandParse
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
 from tldw_chatbook.UI.Console_Modules.raw_cli import (
     ConsoleRawCliController,
@@ -29,7 +29,6 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleDraftStash,
     classify_console_raw_draft,
 )
-from textual.events import Key
 
 
 def _stash(
@@ -143,7 +142,7 @@ def _controller(
         marshal_to_ui = default_marshal_to_ui
     if refusal_stash_bank is None:
         refusal_stash_bank = {}
-    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "agent-runs.db")
 
     controller = ConsoleRawCliController(
         raw_cli_runtime=lambda: runtime,
@@ -215,7 +214,7 @@ def test_raw_cli_anchor_resolves_the_leaf_captured_before_branch_switch(
     tmp_path: Path,
 ) -> None:
     runtime = _Runtime()
-    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     workers: list[Any] = []
     current_leaf = "native-leaf-a"
 

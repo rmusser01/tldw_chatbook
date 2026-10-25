@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_automatic_provider_budget import context_for
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
 from Tests.DB.test_automatic_work_budget import _automatic_work_db, chain  # noqa: F401
@@ -104,7 +105,7 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
     tmp_path, standalone
 ):
     path = tmp_path / "runs.sqlite"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     context = context_for(db)
     assert db.automatic_work.complete_wake("attempt", owner_id="owner")
     with db.transaction() as conn:
@@ -126,7 +127,7 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
                 conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
                 == 18
             )
-    reopened = AgentRunsDB(path)
+    reopened = owned_agent_runs_db(path)
     try:
         with reopened.connection() as conn:
             assert (

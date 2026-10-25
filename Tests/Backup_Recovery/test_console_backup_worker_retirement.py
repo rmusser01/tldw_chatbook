@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Backup_Recovery.test_finite_db_retirement import worker_leases
 from Tests.Backup_Recovery.test_participant_lifetimes import (
     local_root as local_root,  # noqa: PLC0414
@@ -60,9 +61,8 @@ async def test_workspace_availability_retires_worker_connection(tmp_path, local_
 @pytest.mark.asyncio
 async def test_fleet_recovery_retires_ledger_worker_connections(tmp_path, local_root):
     from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     coordinator = ConsoleFleetWakeCoordinator(
         SimpleNamespace(
             _agent_bridge=SimpleNamespace(runs_db=db),
@@ -104,10 +104,9 @@ async def test_fleet_bridge_swap_cannot_redirect_queued_worker_cleanup(
     tmp_path, local_root, monkeypatch
 ):
     from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    original = AgentRunsDB(tmp_path / "original.db")
-    replacement = AgentRunsDB(tmp_path / "replacement.db")
+    original = owned_agent_runs_db(tmp_path / "original.db")
+    replacement = owned_agent_runs_db(tmp_path / "replacement.db")
     bridge = SimpleNamespace(runs_db=original)
     coordinator = ConsoleFleetWakeCoordinator(
         SimpleNamespace(
@@ -144,14 +143,13 @@ async def test_owned_offload_preserves_borrowed_transaction(
     from concurrent.futures import ThreadPoolExecutor
     from functools import partial
 
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.base_db import run_owned_db_call
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
     db = (
         CharactersRAGDB(tmp_path / "notes.db", "test")
         if kind == "notes"
-        else AgentRunsDB(tmp_path / "runs.db")
+        else owned_agent_runs_db(tmp_path / "runs.db")
         if kind == "runs"
         else WorkspaceDB(tmp_path / "workspaces.db")
     )
@@ -194,12 +192,11 @@ async def test_owned_offload_retires_reopened_raw_closed_cache(
     from concurrent.futures import ThreadPoolExecutor
     from functools import partial
 
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.base_db import run_owned_db_call
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
     db = (
-        AgentRunsDB(tmp_path / "runs.db")
+        owned_agent_runs_db(tmp_path / "runs.db")
         if kind == "runs"
         else WorkspaceDB(tmp_path / "workspaces.db")
     )
@@ -232,13 +229,12 @@ async def test_ui_fleet_seed_keeps_captured_owner_when_bridge_changes(
 ) -> None:
     from Tests.UI.test_console_controller_wiring import _unmounted_console
     from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     screen = _unmounted_console()
     original_store = screen._console_chat_store
     original_controller = screen._console_chat_controller
-    original = AgentRunsDB(tmp_path / "original.db")
-    replacement = AgentRunsDB(tmp_path / "replacement.db")
+    original = owned_agent_runs_db(tmp_path / "original.db")
+    replacement = owned_agent_runs_db(tmp_path / "replacement.db")
     bridge = SimpleNamespace(runs_db=None if initially_none else original)
     reads = []
 
@@ -389,9 +385,8 @@ def test_finite_history_read_retires_reopened_cache_and_preserves_borrowed_owner
     tmp_path, local_root, monkeypatch, borrowed
 ) -> None:
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     connection = db._held_connection() if borrowed else None
     if borrowed:
@@ -496,9 +491,8 @@ def test_finite_marker_read_retires_reopened_cache_and_preserves_borrowed_owner(
     tmp_path, local_root, reader, borrowed
 ) -> None:
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     connection = db._held_connection() if borrowed else None
     if borrowed:
@@ -602,9 +596,8 @@ async def test_run_log_metadata_retires_only_its_worker_connection(
     from concurrent.futures import ThreadPoolExecutor
 
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     primary = db.create_run(conversation_id="conversation", agent_kind="primary")
     child = db.create_run(
         conversation_id="conversation", agent_kind="subagent", parent_run_id=primary

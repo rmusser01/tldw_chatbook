@@ -1095,9 +1095,10 @@ class ConsoleRuntime:
         self._response_rule_usage: dict[str, Any] = {}
         self._agent_bridge: Any | None = None
         self._worktree_recovery = None
+        self._execution_owner = None
         self._agent_runs_db: Any | None = None
         self._activity_receipts: Any | None = None
-        self._activity_receipts_lock = Lock()
+        self._activity_receipts_lock = RLock()
         self._receipt_owner_thread_id = get_ident()
         self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
@@ -4436,6 +4437,21 @@ class ConsoleRuntime:
             )
         return self._provider_gateway
 
+    def ensure_execution_owner(self, run_store: Path):
+        """Lazily own execution for the canonical sibling run store."""
+        from .console_execution_owner import (
+            ConsoleExecutionOwner,
+            ConsoleExecutionUnavailable,
+        )
+
+        with self._activity_receipts_lock:
+            if self._disposed:
+                raise ConsoleExecutionUnavailable("runtime_disposed")
+            if self._execution_owner is None:
+                self._execution_owner = ConsoleExecutionOwner.acquire(run_store)
+            self._execution_owner.require_current(run_store)
+            return self._execution_owner
+
     def ensure_activity_receipt_service(self) -> Any | None:
         """Create local result storage without constructing Console or a provider.
 
@@ -4458,7 +4474,10 @@ class ConsoleRuntime:
                 return None
             from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-            runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+            run_store = Path(db_path).parent / "agent_runs.db"
+            runs_db = AgentRunsDB(
+                run_store, execution_owner=self.ensure_execution_owner(run_store)
+            )
             try:
                 service = _LazyConsoleActivityReceiptService(
                     runs_db,
@@ -6260,9 +6279,10 @@ class ConsoleRuntime:
         # coordinator. Only after every trusted producer is tombstoned may
         # the shared Buddy sink release its remaining owner tokens.
         self._persona_buddy_sink.dispose()
+        coordinator_retired = coordinator is None
         if coordinator is not None:
             try:
-                await asyncio.to_thread(coordinator.shutdown, 2.0)
+                coordinator_retired = await asyncio.to_thread(coordinator.shutdown, 2.0)
             except Exception:  # noqa: BLE001 - quit must not die on teardown
                 logger.opt(exception=True).warning(
                     "Console runtime: Change Review shutdown failed at dispose."
@@ -6341,9 +6361,23 @@ class ConsoleRuntime:
         for task in cleanup_pending:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
+        # A bounded timeout is not proof that a thread/provider callback retired.
+        # Uncertain owners stay strongly retained until process exit (ADR-244).
+        if (
+            self._execution_owner is not None
+            and not pending
+            and not cleanup_pending
+            and coordinator_retired
+            and all(
+                not task.cancelled()
+                and task.exception() is None
+                and task.result() is not False
+                for task in drain_tasks
+            )
+        ):
+            self._execution_owner.close()
         if cancel_requested or asyncio.current_task().cancelling():
             raise asyncio.CancelledError
-
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:

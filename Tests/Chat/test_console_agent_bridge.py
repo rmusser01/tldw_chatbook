@@ -18,34 +18,88 @@ import pytest
 from loguru import logger
 
 import tldw_chatbook.Agents.agent_service as agent_service_module
-from tldw_chatbook.Chat import console_agent_bridge
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.console_provider_doubles import provider_resolution
+from Tests.private_profile import private_profile_test
+from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.agent_models import (
+    LOAD_TOOLS_NAME,
+    RUN_CANCELLED,
+    RUN_DONE,
+    RUN_ERROR,
+    SPAWN_TOOL_NAME,
+    STEP_ERROR,
+    STEP_MODEL,
+    STEP_SPAWN,
+    STEP_TOOL_CALL,
+    STEP_TOOL_RESULT,
+    TERMINAL_RUN_STATUSES,
+    AgentDefinition,
+    AgentStep,
+    RunBudget,
+    RunOutcome,
+    SkillFileBindings,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
+)
+from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.canvas_tool_provider import (
+    CANVAS_TOOL_NAMES,
+    CanvasToolProvider,
+)
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_KILL_SWITCH_REFUSAL,
+    LocalToolProvider,
+    _default_specs,
+)
+from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
+from tldw_chatbook.Agents.run_context import current_run_id
+from tldw_chatbook.Agents.tool_catalog import (
+    SkillToolProvider,
+    ToolCatalogRegistry,
+)
+from tldw_chatbook.Canvas.models import CanvasScope
+from tldw_chatbook.Chat import console_agent_bridge
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import (
+    _WARNED_SHADOWED_MCP_NAMES,
+    CANVAS_DISCOVERY_HINT,
     CHANGE_KIND_SUBAGENT_POST_TURN,
     CHANGE_KIND_TURN,
     CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
-    CANVAS_DISCOVERY_HINT,
     CONSOLE_AGENT_OPERATING_PROMPT,
-    ConsoleAgentTraceRequestFactory,
     FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
+    ConsoleAgentTraceRequestFactory,
     SubAgentSummary,
-    _StreamingModelAdapter,
     _append_canvas_discovery_hint,
     _append_to_last_user_message,
+    _BridgeSkillRunner,
+    _compose_run_allowed_tools,
+    _compose_run_registry_and_allowed,
+    _non_colliding_mcp_names,
     _openai_usage_from_provider_call,
+    _StreamingModelAdapter,
+    _subagent_summaries_from_fleet,
     compose_agent_system_prompt,
     format_agent_step_marker,
     format_todo_marker,
     inject_resume_agent_markers,
     intersect_console_run_budget,
-    _BridgeSkillRunner,
-    _compose_run_allowed_tools,
-    _compose_run_registry_and_allowed,
-    _non_colliding_mcp_names,
-    _subagent_summaries_from_fleet,
-    _WARNED_SHADOWED_MCP_NAMES,
     shadowed_mcp_names,
+)
+from tldw_chatbook.Chat.console_chat_controller import (
+    KILL_SWITCH_REFUSAL,
+    ConsoleChatController,
+)
+from tldw_chatbook.Chat.console_chat_controller import (
+    USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityPresentation,
@@ -58,25 +112,28 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleThinkingCompatibilityError,
 )
-from tldw_chatbook.Chat.console_chat_controller import (
-    ConsoleChatController,
-    KILL_SWITCH_REFUSAL,
-    USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
-)
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.attachment_core import PendingAttachment
-from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
+from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
-from tldw_chatbook.Chat.console_trace_final_values import SurfaceDeltaAdmission
 from tldw_chatbook.Chat.console_prepared_request import (
     PreparedProviderRequest,
     build_console_request,
 )
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
+    ProviderProprietaryThinkingEvidence,
+    ProviderThinkingDelta,
+    ProviderToolCalls,
+    ProviderTurnMetadata,
+)
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_trace_final_values import SurfaceDeltaAdmission
 from tldw_chatbook.Chat.console_trace_models import (
     FrozenTracePolicy,
     TraceCallState,
@@ -96,12 +153,12 @@ from tldw_chatbook.Chat.console_trace_service import (
     TraceCallIdentity,
     TraceCallPersistenceError,
 )
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
     preparation_actions,
 )
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationConflictError,
@@ -112,74 +169,19 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
-from tldw_chatbook.Chat.console_provider_gateway import (
-    ConsoleProviderGateway,
-    ConsoleProviderResolution,
-    ConsoleProviderStreamSignals,
-    ProviderProprietaryThinkingEvidence,
-    ProviderThinkingDelta,
-    ProviderToolCalls,
-    ProviderTurnMetadata,
-)
-from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB as AgentRunsDB  # noqa: PLC0414 - fixture export
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Agents.agent_models import (
-    LOAD_TOOLS_NAME,
-    RUN_CANCELLED,
-    RUN_DONE,
-    RUN_ERROR,
-    SPAWN_TOOL_NAME,
-    TERMINAL_RUN_STATUSES,
-    STEP_ERROR,
-    STEP_MODEL,
-    STEP_SPAWN,
-    STEP_TOOL_CALL,
-    STEP_TOOL_RESULT,
-    AgentStep,
-    AgentDefinition,
-    RunOutcome,
-    RunBudget,
-    SkillFileBindings,
-    ToolCatalogEntry,
-    ToolResult,
-    ToolSchema,
-)
-from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Agents import agent_service
-from tldw_chatbook.Agents.agent_service import AgentService
-from tldw_chatbook.Agents.canvas_tool_provider import (
-    CANVAS_TOOL_NAMES,
-    CanvasToolProvider,
-)
-from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
-from tldw_chatbook.Agents.run_context import current_run_id
-from tldw_chatbook.Agents.tool_catalog import (
-    SkillToolProvider,
-    ToolCatalogRegistry,
-)
-from tldw_chatbook.Canvas.models import CanvasScope
-from tldw_chatbook.Agents.local_tool_provider import (
-    LOCAL_KILL_SWITCH_REFUSAL,
-    LocalToolProvider,
-    _default_specs,
-)
-from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutionError,
     WorkspaceToolExecutor,
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
-from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
-from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
-
-from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
-from Tests.private_profile import private_profile_test
-from Tests.console_provider_doubles import provider_resolution
 
 
 class _InProcessWorkspaceExecutor:
@@ -206,7 +208,7 @@ def _retire_original_run_databases(monkeypatch, request):
     """The bridge test owns each database it constructs, including inline ones."""
     import sqlite3
 
-    database_type = request.module.AgentRunsDB
+    database_type = request.module.owned_agent_runs_db
     originals = []
 
     def create(*args, **kwargs):
@@ -214,7 +216,7 @@ def _retire_original_run_databases(monkeypatch, request):
         originals.append((database, tuple(database._maintenance_participant.connections)))
         return database
 
-    monkeypatch.setattr(request.module, "AgentRunsDB", create)
+    monkeypatch.setattr(request.module, "owned_agent_runs_db", create)
     try:
         yield
     finally:
@@ -707,7 +709,7 @@ def _bridge(tmp_path, scripts, native_tools_enabled=None):
 
 def _bridge_with_gateway(tmp_path, gateway, native_tools_enabled=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -1498,7 +1500,7 @@ def test_joined_continuation_never_logs_private_tool_arguments_or_results(
             ),
         ),
     )
-    db = AgentRunsDB(tmp_path / "private-resume.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "private-resume.db", client_id="t")
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -1623,7 +1625,7 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
         [_fence("calculator", {"expression": "6*7"})],
         ["It is 42."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="ws-session-42")
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -1727,7 +1729,7 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
     monkeypatch.setattr(wfr, "_registry_factory", lambda: ws_registry)
 
     gateway = _RecordingGateway()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="ws-note-1")
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -1762,7 +1764,7 @@ def test_run_reply_adds_the_honest_default_workspace_note(
     from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
     gateway = _RecordingGateway()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.create_session(workspace_id=DEFAULT_WORKSPACE_ID)
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -1821,7 +1823,7 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
         [_fence("write_file", {"file_path": "note.txt", "content": "hi"})],
         ["I could not save that."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -1851,7 +1853,7 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
     # CONTROL: the identical scripted call executes normally outside a
     # temporary chat.
     called["n"] = 0
-    db2 = AgentRunsDB(tmp_path / "runs2.db", client_id="t")
+    db2 = owned_agent_runs_db(tmp_path / "runs2.db", client_id="t")
     store2 = ConsoleChatStore()
     normal_session = store2.create_session()
     store2.append_message(normal_session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -2016,7 +2018,7 @@ def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path)
     gateway = _ChunkGateway(
         [[_native_calls("get_current_datetime", {})], ["It is now."]]
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -2120,7 +2122,7 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
             async for chunk in super().stream_chat(resolution, messages, tools=tools):
                 yield chunk
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -2200,7 +2202,7 @@ def test_a_concurrent_child_runs_alongside_the_parent_on_its_own_loop(tmp_path):
         ],
         [gated_child_turn],
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -2698,7 +2700,7 @@ async def test_manual_tool_loop_trace_failure_pauses_across_real_bridge_and_cont
     tmp_path,
 ):
     chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "task12-controller")
-    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="task12-controller")
+    runs_db = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="task12-controller")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
         session = store.create_session(session_id="session-1", title="Trace loop")
@@ -3671,7 +3673,7 @@ def test_stop_mid_final_answer_persists_cancelled_and_store_agrees(tmp_path):
 
 
 def test_historical_snapshot_idle_when_conversation_never_ran(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     snap = bridge.historical_snapshot("conv-never-seen")
     assert snap.status == "idle"
@@ -3680,7 +3682,7 @@ def test_historical_snapshot_idle_when_conversation_never_ran(tmp_path):
 
 
 def test_historical_snapshot_derives_status_steps_and_subagents_from_db(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         primary_id,
@@ -3726,7 +3728,7 @@ def test_historical_snapshot_derives_status_steps_and_subagents_from_db(tmp_path
 
 
 def test_historical_snapshot_ignores_subagents_of_other_runs(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(primary_id, "done", result="ok")
     other_primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
@@ -3747,7 +3749,7 @@ def test_historical_snapshot_ignores_subagents_of_other_runs(tmp_path):
 def test_historical_snapshot_caches_per_conversation_not_hit_every_call(
     tmp_path, monkeypatch
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(primary_id, "done", result="ok")
 
@@ -3774,7 +3776,7 @@ def test_historical_snapshot_caches_per_conversation_not_hit_every_call(
 def test_bridge_run_consumers_never_issue_a_broad_secret_bearing_query(
     tmp_path, monkeypatch
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(primary_id, "done", result="ok")
     subagent_id = db.create_run(
@@ -4403,7 +4405,7 @@ def test_live_actual_thinking_suppresses_only_its_model_round(
 def test_resume_suppresses_planning_from_exact_selected_envelope_rounds(
     tmp_path,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(
         conversation_id="conv-1",
         agent_kind="primary",
@@ -4579,7 +4581,7 @@ def test_planning_live_resume_marker_order_content_and_presentation_parity(
 def test_resume_step_markers_attach_presentation_for_every_known_step_shape(
     tmp_path,
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_id,
@@ -4638,7 +4640,7 @@ def test_resume_step_markers_attach_presentation_for_every_known_step_shape(
 def test_live_and_resume_change_marker_inventory_has_content_and_metadata_parity(
     tmp_path,
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(
@@ -4749,7 +4751,7 @@ def test_resume_marker_messages_surfaces_assistant_message_id_anchor(tmp_path):
     """Task 3: each block is paired with the run's ``assistant_message_id``
     (``None`` for a legacy/pre-Phase-C run that never recorded one) so the
     placement layer can anchor by id instead of guessing ordinally."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     anchored = db.create_run(
         conversation_id="conv-1",
         agent_kind="primary",
@@ -4798,7 +4800,7 @@ def test_resume_marker_messages_surfaces_assistant_message_id_anchor(tmp_path):
 
 
 def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     first = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         first,
@@ -4840,7 +4842,7 @@ def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_p
 
 
 def test_resume_marker_messages_skips_superseded_runs(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     superseded = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         superseded,
@@ -4898,7 +4900,7 @@ def test_resume_marker_messages_re_derives_diff_feedback_disclosure_after_marker
     """Task 6 (spec §4): a run with snapshots AND delivered notes yields
     its marker row(s) AND, after them, a disclosure row whose text equals
     ``format_diff_feedback_disclosure`` over the delivered notes."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_id,
@@ -4937,7 +4939,7 @@ def test_resume_marker_messages_groups_two_delivery_batches_in_delivery_order(
 ):
     """Two separate deliveries (two distinct ``delivered_at`` stamps) yield
     two disclosure rows, oldest delivery first."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_id,
@@ -4975,7 +4977,7 @@ def test_resume_marker_messages_groups_two_delivery_batches_in_delivery_order(
 
 def test_resume_marker_messages_omits_disclosure_for_pending_only_notes(tmp_path):
     """Pending (undelivered) notes yield NO disclosure row on resume."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_id,
@@ -5011,7 +5013,7 @@ def test_resume_marker_messages_heals_disclosure_when_live_append_never_happened
     lands, live never shows a row. This is the designed healer: a fresh
     resume (no prior live TOOL row in the store at all) must still surface
     the disclosure purely from the DB stamp."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(run_id, "done", result="ok")  # no steps: a plain answer
     note_id = _add_note(db, run_id, note="healed disclosure")
@@ -5036,7 +5038,7 @@ def test_resume_marker_messages_disclosure_survives_run_with_no_snapshot_rows(
     (change tracking failed or was never configured for that turn -- note
     delivery does not depend on tracking having succeeded). The disclosure
     row must still surface; it is not gated on ``snap_rows``."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_id,
@@ -5080,7 +5082,7 @@ def test_resume_marker_messages_disclosure_anchors_at_the_delivering_run(tmp_pat
     transcript would show the disclosure attached to the wrong turn (or,
     under the pre-fix anchor-run grouping, not at all if A had since been
     superseded)."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_a = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_a,
@@ -5139,7 +5141,7 @@ def test_resume_marker_messages_batch_spanning_two_anchor_runs_stays_one_row(
     annotated against TWO different runs' diffs must stay ONE disclosure
     row -- at the delivering run's position -- not fragment into one row
     per anchor run."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_a = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(run_a, "done", result="ok")
     note_a = _add_note(db, run_a, path="a.py", note="note on a")
@@ -5190,7 +5192,7 @@ def test_resume_marker_messages_legacy_null_delivered_by_run_id_falls_back_to_an
     mechanism. Verified against a conversation with a LATER run present,
     so a wrong "always use the newest/last run" fallback would be
     detectable."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_a = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_a,
@@ -5249,7 +5251,7 @@ def test_resume_marker_messages_survives_delivered_notes_read_failure(
     ``change_snapshots_for_conversation`` fetch immediately above it
     already is ("resume must not die on this"). A run's own step markers
     must still come back even if the disclosure lookup blows up."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.append_steps(
         run_id,
@@ -5612,7 +5614,7 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
         ["Looks fine to me."],  # sub-agent turn
         ["All done."],  # primary final
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -5642,7 +5644,7 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
 
     db_path = db.db_path
     db.close()
-    reopened = AgentRunsDB(db_path, client_id="trace-skill-reload")
+    reopened = owned_agent_runs_db(db_path, client_id="trace-skill-reload")
     runs = reopened.list_runs("conv-skill", include_superseded=True)
     parent = next(row for row in runs if row["agent_kind"] == "primary")
     child = next(row for row in runs if row["agent_kind"] == "subagent")
@@ -5685,7 +5687,7 @@ def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
         [_fence("code-review", {"args": "x"})],
         ["I could not review that."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -5976,7 +5978,7 @@ def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
         ["Looks fine to me."],
         ["All done."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -6025,7 +6027,7 @@ def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
         captured["service_bindings"] = kwargs.get("skill_file_bindings")
         real_service_init(self, *args, **kwargs)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -6370,7 +6372,7 @@ def test_bridge_uses_captured_local_empty_until_a_later_successful_snapshot(
     )
     skills = _FakeSkillsService(skill_name="new")
     gateway = _ChunkGateway([["first"], ["second"]])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="first")
@@ -7366,7 +7368,7 @@ def test_run_reply_keeps_the_parents_mcp_verdict_across_a_concurrent_child(tmp_p
     ]
     child_script = [gated_child_turn]  # the child's single turn, on its own thread
     gateway = _FleetChunkGateway(scripts, child_script)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -7429,7 +7431,7 @@ def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path
         [_fence("find_tools", {"query": "anything"})],
         ["done."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -7462,7 +7464,7 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
         [_fence("calculator", {"expression": "6*7"})],
         ["It is 42."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -7577,7 +7579,7 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path, monkeypatc
         lambda *_args, **_kwargs: 10_001,
     )
     parent_script, child_script = _discovery_heavy_shout_scripts()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -7969,7 +7971,7 @@ def test_agent_late_thinking_after_controller_stop_is_durably_settled(
         }
     )
     chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "late-thinking")
-    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="late-thinking")
+    runs_db = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="late-thinking")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
         session = store.create_session(title="late thinking")
@@ -8268,7 +8270,7 @@ def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
         ),
     )
     gateway = CapturingGateway()
-    db = AgentRunsDB(tmp_path / "resume-prepared.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "resume-prepared.db", client_id="t")
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -8434,7 +8436,7 @@ async def test_controller_agent_transport_preserves_vision_filtering_and_privacy
         mime_type="text/plain",
     )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "agent-transport.db", client_id="t"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "agent-transport.db", client_id="t"),
         store=store,
         provider_gateway=gateway,
     )
@@ -8638,7 +8640,7 @@ def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
         [_fence("install_skill", {"url": "https://github.com/o/r"})],
         ["Installed it."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -8685,7 +8687,7 @@ def test_install_skill_confirm_deny_does_not_install(tmp_path, monkeypatch):
         [_fence("install_skill", {"url": "https://github.com/o/r"})],
         ["Okay, cancelled."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -8723,7 +8725,7 @@ def test_install_skill_malformed_url_never_prompts(tmp_path):
         [_fence("install_skill", {"url": "not-a-url"})],
         ["That URL is not valid."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -8761,7 +8763,7 @@ def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
         [_fence("install_skill", {"url": "https://github.com/o/r"})],
         ["It already exists."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -8804,7 +8806,7 @@ def test_install_skill_absent_without_confirm_callback(tmp_path):
         [_fence("install_skill", {"url": "https://github.com/o/r"})],
         ["It seems that tool is unavailable."],
     ]
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -9369,7 +9371,7 @@ class _FleetTwoChildGateway:
 def test_fleet_snapshot_returns_empty_for_unknown_conversation(tmp_path):
     """No run has ever touched this conversation id -- `fleet_snapshot`
     must degrade to `[]` rather than raise (e.g. a KeyError)."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
     assert bridge.fleet_snapshot("never-seen-conversation") == []
@@ -9422,7 +9424,7 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
         child_result=["child answer"],
         gate=gate,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -9521,7 +9523,7 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
     complexity to pin this one dict operation) and asserts B's live
     handle survives A's late, stale teardown call.
     """
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
 
@@ -9586,7 +9588,7 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
 def test_cancel_subagent_returns_false_for_an_unknown_conversation(tmp_path):
     """No run has ever touched this conversation id -- a clean `False`,
     matching `fleet_snapshot`'s own no-service degradation."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
     assert bridge.cancel_subagent("never-seen-conversation", "whatever") is False
@@ -9622,7 +9624,7 @@ def test_cancel_subagent_delegates_to_the_published_services_live_handle(
         gate=gate,
         needed=1,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -9802,7 +9804,7 @@ def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_c
         child_result=["child answer"],
         gate=gate,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -10048,7 +10050,7 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
         gate=gate,
         needed=1,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -10125,7 +10127,7 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
             bridge.cancel_subagent("conv-survivor", handle_box["id"])
         ),
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -10392,7 +10394,7 @@ def test_live_children_are_capped_across_run_reply_calls(tmp_path, monkeypatch):
         child_result=["child answer"],
         gate=gate,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -10694,7 +10696,7 @@ def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
         gate=gate,
         needed=1,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

@@ -8,11 +8,9 @@ import threading
 from contextlib import nullcontext
 from uuid import uuid4
 
-from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
-from Tests.DB.test_automatic_wake_attempts import claim, survivor
-
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.conftest import pin_turn_scoped_children
 from Tests.Agents.test_fleet_runtime import make_fleet_service
 from Tests.Chat.test_console_agent_bridge import (
@@ -28,8 +26,10 @@ from Tests.Chat.test_console_fleet_wake import (
     _survivor,
     _terminal_subagent_run,
 )
+from Tests.DB.test_automatic_wake_attempts import claim, survivor
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget, ToolResult
+from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,
     RuntimeCapacity,
@@ -38,7 +38,6 @@ from tldw_chatbook.Agents.execution_capacity import (
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.mark.parametrize(
@@ -62,7 +61,7 @@ def test_cross_conversation_survivors_obey_runtime_cap_and_manual_reserves(
             ]
         )
     gateway = _FleetTwoChildGateway(script, ["child done"], gate, needed=6)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="budget-probe")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="budget-probe")
     store = ConsoleChatStore()
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     conversations = []
@@ -196,7 +195,7 @@ def test_terminal_status_cannot_release_runtime_capacity_before_worker_exit(
     monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.01)
     release = threading.Event()
     entered = threading.Event()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="budget-probe")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="budget-probe")
 
     def blocked_call():
         entered.set()

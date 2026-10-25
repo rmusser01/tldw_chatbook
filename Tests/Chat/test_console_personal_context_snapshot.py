@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 # Config admission remains bound to the profile selected at collection.
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -653,9 +655,8 @@ async def test_agent_next_send_reserves_the_live_library_schemas(
 
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "preview-runs.db")
+    db = owned_agent_runs_db(tmp_path / "preview-runs.db")
     real_bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,

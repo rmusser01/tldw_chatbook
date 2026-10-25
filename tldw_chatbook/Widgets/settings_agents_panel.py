@@ -97,8 +97,14 @@ def _derive_runs_db(app_instance) -> AgentRunsDB | None:
     try:
         # TASK-32804.10 AC#3: this factory feeds a compose() body; defer the
         # orphan-reconcile sweep off the event loop (run in on_mount below).
+        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+
+        path = Path(db_path).parent / "agent_runs.db"
+        runtime = ensure_console_runtime(app_instance)
         return AgentRunsDB(
-            Path(db_path).parent / "agent_runs.db", reconcile_on_init=False
+            path,
+            reconcile_on_init=False,
+            execution_owner=runtime.ensure_execution_owner(path),
         )
     except Exception as exc:  # noqa: BLE001 - any failure means "no DB"
         logger.warning(

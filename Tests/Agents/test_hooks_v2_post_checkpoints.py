@@ -5,6 +5,7 @@ import threading
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_hooks_v2_execution import event
 from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.Agents.hooks_v2.engine import HookEventOutcome, HookFailure
@@ -231,7 +232,6 @@ async def test_required_context_is_ready_before_release_and_reaches_actual_send(
         BuiltinToolProvider,
         ToolCatalogRegistry,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     body = "r" * 4000 if large else "required reviewed context"
     output = {
@@ -255,7 +255,7 @@ async def test_required_context_is_ready_before_release_and_reaches_actual_send(
     )
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h3-context")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h3-context")
     chat = ScriptedChat([fence("calculator", {"expression": "6*7"}), "done"])
     service = AgentService(
         db,
@@ -452,7 +452,6 @@ async def test_skill_completion_installs_requirements_before_service_observer(tm
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     engine = HookEngine(
         tuple(
@@ -487,7 +486,7 @@ async def test_skill_completion_installs_requirements_before_service_observer(tm
     def observed(*_args):
         observations.append(set(begun))
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h3-skill")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h3-skill")
     chat = ScriptedChat([fence("probe", {}), "done"])
     service = AgentService(
         db,
@@ -533,7 +532,6 @@ async def test_inline_skill_precheck_and_dispatched_child_budget_have_distinct_p
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     posted = []
     invoked = []
@@ -574,7 +572,7 @@ async def test_inline_skill_precheck_and_dispatched_child_budget_have_distinct_p
             "done",
         ]
     chat = ScriptedChat(script)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h3-fix1-skill")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h3-fix1-skill")
     service = AgentService(
         db,
         _registry_with_code_review_skill(),

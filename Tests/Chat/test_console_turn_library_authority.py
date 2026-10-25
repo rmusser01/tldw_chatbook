@@ -9,12 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import ContinuationEventContext, ToolBatchReady
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
@@ -40,20 +41,19 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_repository import (
     ConsoleLibraryPolicyRepository,
 )
+from tldw_chatbook.Chat.console_prompt_queue import PromptQueueReservation
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSnapshot
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
 )
-from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
-from tldw_chatbook.Chat.console_prompt_queue import PromptQueueReservation
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 class ConsoleChatStore(_ConsoleChatStore):
@@ -584,7 +584,7 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
 
         gateway = _SubmittedAgentGateway([])
         bridge = ConsoleAgentBridge(
-            agent_runs_db=AgentRunsDB(tmp_path / "submitted-agent-runs.sqlite", "t"),
+            agent_runs_db=owned_agent_runs_db(tmp_path / "submitted-agent-runs.sqlite", "t"),
             store=first_store,
             provider_gateway=gateway,
             native_tools_enabled=lambda: False,

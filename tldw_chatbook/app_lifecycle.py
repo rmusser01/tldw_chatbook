@@ -1696,7 +1696,17 @@ class LifecycleMixin:
                     ("db.agent_runs",), Path(db_path).parent / "agent_runs.db"
                 ) as allowed:
                     if allowed:
-                        run_retention_for_app(db_path)
+                        from tldw_chatbook.Chat.console_runtime import (
+                            ensure_console_runtime,
+                        )
+
+                        runtime = ensure_console_runtime(self)
+                        run_retention_for_app(
+                            db_path,
+                            execution_owner=runtime.ensure_execution_owner(
+                                Path(db_path).parent / "agent_runs.db"
+                            ),
+                        )
 
             await asyncio.to_thread(retained_cleanup)
         except Exception:  # noqa: BLE001 -- retention must never surface to the UI

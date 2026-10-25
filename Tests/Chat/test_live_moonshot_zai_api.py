@@ -281,6 +281,7 @@ _LIVE_CHILD = dedent(
         ConsoleProviderResolution,
     )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     text_sentinel = f"HOSTED_LIVE_TEXT_{secrets.token_hex(8).upper()}"
@@ -290,7 +291,7 @@ _LIVE_CHILD = dedent(
     system_prompt, user_prompt, expression = _build_probe_contract(
         provider, left, right, text_sentinel
     )
-    runs_db = AgentRunsDB(
+    runs_db = owned_agent_runs_db(
         data_dir / f"agent-runs-{provider}.db", client_id=f"{provider}-live"
     )
     chat_db = CharactersRAGDB(

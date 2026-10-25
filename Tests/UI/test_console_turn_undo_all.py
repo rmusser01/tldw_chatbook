@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-import threading
 
 import pytest
 from textual.widgets import Button, Static
 
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_console_narrow_layout import _compositor_text
+from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     AgentRunsChangeReviewProvider,
     ChangeRevertConfirmModal,
@@ -344,7 +344,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
     target.write_text("before\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="turn-undo-test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="turn-undo-test")
     run_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
     _record_real_turn(db, tracker, root, run_id)
 

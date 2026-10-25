@@ -21,12 +21,13 @@ from typing import get_args
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
 from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
     ContinuationProvider,
     ContinuationRound,
-    ContinuationCall,
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
@@ -1347,7 +1348,6 @@ def test_custom_endpoint_swap_sidecar_history_survives_run_turn_pin(
     from tldw_chatbook.Chat.console_history_budget import (
         ProviderContinuationSidecar,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
@@ -1359,7 +1359,7 @@ def test_custom_endpoint_swap_sidecar_history_survives_run_turn_pin(
         return script.pop(0)
 
     service = AgentService(
-        AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        owned_agent_runs_db(tmp_path / "runs.db", client_id="t"),
         registry,
         chat_call=chat_call,
     )

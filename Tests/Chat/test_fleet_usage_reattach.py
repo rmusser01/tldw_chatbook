@@ -44,6 +44,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_child_run_scope_ordering import _survivor_bridge
 from Tests.Chat.test_console_agent_bridge import (
     _fence,
@@ -63,7 +64,6 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -255,7 +255,7 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
             gate=gate,
             needed=1,
         )
-        runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        runs_db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         bridge = ConsoleAgentBridge(
             agent_runs_db=runs_db, store=store, provider_gateway=gateway
         )
@@ -612,7 +612,7 @@ def test_has_unsettled_children_reads_the_drain_paired_counter(tmp_path):
     live count already reads 0 while the drain has not fired (Task 1's
     pinned ordering), and a gate reading the live counter there would drop
     the re-attach source for a turn finalizing in that window."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
     assert bridge.has_unsettled_children("conv-x") is False

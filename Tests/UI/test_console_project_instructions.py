@@ -17,6 +17,10 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Footer, Static
 
+import tldw_chatbook.Chat.console_agent_bridge as bridge_module
+import tldw_chatbook.Chat.console_chat_controller as controller_module
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
@@ -40,23 +44,19 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     ProjectInstructionDispatchNotice,
 )
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-import tldw_chatbook.Chat.console_agent_bridge as bridge_module
-import tldw_chatbook.Chat.console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
-from Tests.console_provider_doubles import provider_resolution
 
 
 def _ui_module():
@@ -484,7 +484,7 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
     monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 95)
     preview_consent = Mock(side_effect=AssertionError("preview requested consent"))
     preview_service = AgentService(
-        AgentRunsDB(tmp_path / "preview.db", client_id="test"),
+        owned_agent_runs_db(tmp_path / "preview.db", client_id="test"),
         registry,
         chat_call=Mock(side_effect=AssertionError("preview called provider")),
         confirm_project_instruction_dispatch=preview_consent,
@@ -508,7 +508,7 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
         return {"choices": [{"message": {"content": "done"}}]}
 
     live_service = AgentService(
-        AgentRunsDB(tmp_path / "live.db", client_id="test"),
+        owned_agent_runs_db(tmp_path / "live.db", client_id="test"),
         registry,
         chat_call=chat_call,
         startup_instruction_candidate=candidate,
@@ -551,7 +551,7 @@ async def test_preview_fails_closed_when_run_log_binding_is_uncertain(
     )
     gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "uncertain-log.db", client_id="test"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "uncertain-log.db", client_id="test"),
         store=store,
         provider_gateway=gateway,
     )
@@ -646,7 +646,7 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "preview-plan.db", client_id="test"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "preview-plan.db", client_id="test"),
         store=store,
         provider_gateway=gateway,
     )
@@ -792,7 +792,7 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
     gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
     skills = Skills()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "skill-preview.db", client_id="test"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "skill-preview.db", client_id="test"),
         store=store,
         provider_gateway=gateway,
         skills_service=skills,
@@ -1462,7 +1462,7 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "captured-preview.db", client_id="test"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "captured-preview.db", client_id="test"),
         store=store,
         provider_gateway=gateway,
     )
@@ -1575,7 +1575,7 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "fallback-preview.db", client_id="test"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "fallback-preview.db", client_id="test"),
         store=store,
         provider_gateway=gateway,
     )

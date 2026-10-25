@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 from textual.widgets import Button, DataTable, Static
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.test_console_fleet_budget_history import _bridge, _painted_text
 from Tests.UI.test_console_fleet_historical_detail import _StyledConsoleHarness
 from Tests.UI.test_console_fleet_panel import _scroll_into_view, _setup_console
@@ -16,7 +17,6 @@ from Tests.UI.test_console_internals_decomposition import (
 from Tests.UI.test_console_parallel_runs import _assert_painted_at_own_region
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
@@ -60,7 +60,7 @@ async def _loaded(pilot, modal):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(180, 48), (120, 35)])
 async def test_view_all_pages_to_old_child_and_drills_into_it(tmp_path, size):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="history")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="history")
     try:
         parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
         for index in range(55):
@@ -195,7 +195,7 @@ async def test_history_error_is_recoverable_and_dismissed_load_is_safe():
 
 @pytest.mark.asyncio
 async def test_history_remains_reachable_after_a_childless_primary_run(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="history")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="history")
     try:
         parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
         child = db.create_run(
@@ -259,7 +259,7 @@ async def test_empty_history_paints_recovery_controls():
 async def test_history_selection_rechecks_conversation_and_agent_kind(
     tmp_path, monkeypatch
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="history")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="history")
     try:
         parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
         child = db.create_run(

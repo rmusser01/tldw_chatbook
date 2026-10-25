@@ -81,3 +81,19 @@ Database helpers in `config.py` resolve explicit path overrides first, then prof
 - [chat-pipeline.md](./chat-pipeline.md) — the messages/conversations consumers
 - [notes-sync.md](./notes-sync.md) — the notes tables' sync authority
 - [media-ingestion.md](./media-ingestion.md) — the Media DB write seam
+
+## AgentRuns execution and inspection (ADR-244)
+
+File-backed `AgentRunsDB` construction now requires a current
+`ConsoleExecutionOwner` before schema initialization or orphan reconciliation.
+All mutation methods, transaction entry points (including automatic-work/Goals),
+and vacuum require the same owner. In-memory isolated stores require no OS lease.
+`AgentRunsDB.open_read_only(path)` opens an existing store through the
+`db.agent_runs.read` private-SQLite policy and participants provenance; it never
+initializes/migrates schema or sweeps runs, and refuses mutation/recovery.
+
+The stable adjacent lock is never unlinked. After winning it, native private-path
+admission securely hardens a trusted owned legacy file to 0600; symlinks, multiple
+links, foreign ownership and unsafe parents fail closed. A contender cannot
+harden, create or sweep the run store. Ownership is independent of maintenance
+admission, which continues to gate all native connections.

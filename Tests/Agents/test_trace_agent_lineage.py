@@ -7,19 +7,19 @@ import threading
 
 import pytest
 
-from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import fence
+from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
+from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
     WAIT_AGENTS_TOOL_NAME,
 )
-from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Chat.console_fleet_wake import compose_wake_notice
 from tldw_chatbook.Chat.trajectory import derive_trajectory
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def _records(snapshot):
@@ -28,7 +28,7 @@ def _records(snapshot):
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="trace-lineage")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="trace-lineage")
 
 
 def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
@@ -121,7 +121,7 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
 
     db_path = db.db_path
     db.close()
-    reopened = AgentRunsDB(db_path, client_id="lineage-reload")
+    reopened = owned_agent_runs_db(db_path, client_id="lineage-reload")
     reloaded = reopened.list_runs("trace-lineage", include_superseded=True)
     assert {
         row["spawn_event_id"] for row in reloaded if row["agent_kind"] == "subagent"
@@ -211,7 +211,7 @@ def test_parent_terminal_echo_replaces_process_handle_at_every_durable_boundary(
 
     db_path = db.db_path
     db.close()
-    reopened = AgentRunsDB(db_path, client_id="terminal-handle-echo-reload")
+    reopened = owned_agent_runs_db(db_path, client_id="terminal-handle-echo-reload")
     durable_id = f"run:{handle.run_id}"
     for durable_parent_id, log_dir in (
         (parent_id, first_log_dir),
@@ -277,7 +277,7 @@ def test_fleet_create_capture_failure_chains_to_actual_diagnostic(
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="fleet-failure-reload")
+    reopened = owned_agent_runs_db(path, client_id="fleet-failure-reload")
     row = reopened.get_run(child_id)
     assert row["status"] == RUN_DONE
     steps = row["steps"]
@@ -337,7 +337,7 @@ def test_fleet_spawn_capture_failure_uses_durable_diagnostic_as_child_cause(
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="spawn-capture-reload")
+    reopened = owned_agent_runs_db(path, client_id="spawn-capture-reload")
     rows = reopened.list_runs("spawn-capture-failure", include_superseded=True)
     parent = next(row for row in rows if row["id"] == parent_id)
     child = next(row for row in rows if row["agent_kind"] == "subagent")
@@ -390,7 +390,7 @@ def test_failed_child_and_completed_primary_project_after_reload(db):
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="failure-reload")
+    reopened = owned_agent_runs_db(path, client_id="failure-reload")
     runs = reopened.list_runs("trace-failure", include_superseded=True)
     steps = [
         {**step, "run_id": row["id"], "conversation_id": "trace-failure"}
@@ -491,7 +491,7 @@ def test_failure_after_control_steps_allocates_a_distinct_causal_error(db):
     )
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="failure-after-step-reload")
+    reopened = owned_agent_runs_db(path, client_id="failure-after-step-reload")
     row = reopened.get_run(child["id"])
     steps = row["steps"]
     indices = [step["index"] for step in steps]

@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
@@ -202,7 +203,6 @@ async def test_local_refusal_copy_reaches_console_without_entering_agent_audit(
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     def call_real_handler(**_kwargs: Any) -> Any:
         return chat_with_anthropic(
@@ -219,7 +219,7 @@ async def test_local_refusal_copy_reaches_console_without_entering_agent_audit(
     owner = HookPermissions()
     assert owner.snapshot().ready
     db = (
-        AgentRunsDB(tmp_path / "local-runs.db", client_id="local-copy")
+        owned_agent_runs_db(tmp_path / "local-runs.db", client_id="local-copy")
         if agent_enabled
         else None
     )

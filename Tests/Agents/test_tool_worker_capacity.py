@@ -5,6 +5,7 @@ from contextlib import nullcontext
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import ScriptedChat, fence
 from Tests.Agents.test_fleet_runtime import RunIdProbeProvider
 from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget, ToolResult
@@ -12,7 +13,6 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -84,7 +84,7 @@ def run_tools(db, capacity, tool, conversation, origin, timeout=0.02):
 def test_finished_runs_and_retries_cannot_hide_eight_live_workers(tmp_path):
     capacity = RuntimeCapacity()
     tool = BlockingTool()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="capacity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="capacity")
     try:
         run_ids = []
         for i in range(6):
@@ -118,7 +118,7 @@ def test_finished_runs_and_retries_cannot_hide_eight_live_workers(tmp_path):
 def test_zero_timeout_inline_tool_cannot_bypass_shared_capacity(tmp_path):
     capacity = RuntimeCapacity(max_tool_workers=1, reserved_manual_tool_workers=0)
     tool = BlockingTool()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="capacity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="capacity")
     errors = []
 
     def run_inline():
@@ -145,7 +145,7 @@ def test_zero_timeout_inline_tool_cannot_bypass_shared_capacity(tmp_path):
 
 
 def test_invalid_origin_is_not_inferred_from_strings(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="capacity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="capacity")
     try:
         with pytest.raises(TypeError, match="WorkOrigin"):
             AgentService(db, ToolCatalogRegistry(), work_origin="manual")
@@ -168,7 +168,7 @@ def test_definitive_local_dispatch_obeys_shared_tool_capacity(tmp_path):
     registry = ToolCatalogRegistry()
     provider = DefinitiveTool()
     registry.register_provider(provider)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="definitive-capacity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="definitive-capacity")
     try:
         service = AgentService(db, registry, runtime_capacity=capacity)
         with owner.activate():

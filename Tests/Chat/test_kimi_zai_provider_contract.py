@@ -4,20 +4,9 @@ import asyncio
 import threading
 from types import SimpleNamespace
 
-from tldw_chatbook.Chat import console_provider_gateway as gateway_module
-from tldw_chatbook.Chat import Chat_Functions
-from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
-from tldw_chatbook.Chat.provider_continuation import (
-    ContinuationCall,
-    ContinuationRound,
-    ContinuationRestoreTarget,
-    ContinuationResult,
-    ProviderContinuationCheckpoint,
-    parse_provider_continuation_json,
-)
-from tldw_chatbook.LLM_Calls import moonshot, zai
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ContinuationEventContext,
@@ -30,12 +19,8 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.LLM_Calls.hosted_chat import (
-    HostedChatProtocolError,
-    HostedChatStream,
-    HostedChatTurn,
-)
-from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
+from tldw_chatbook.Chat import Chat_Functions
+from tldw_chatbook.Chat import console_provider_gateway as gateway_module
 from tldw_chatbook.Chat.console_agent_bridge import (
     _ModelCallLifeline,
     _StreamingModelAdapter,
@@ -44,7 +29,22 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleMessageRole,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRestoreTarget,
+    ContinuationResult,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+    parse_provider_continuation_json,
+)
+from tldw_chatbook.LLM_Calls import moonshot, zai
+from tldw_chatbook.LLM_Calls.hosted_chat import (
+    HostedChatProtocolError,
+    HostedChatStream,
+    HostedChatTurn,
+)
+from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
 
 
 def _checkpoint(*, provider: str = "moonshot") -> ProviderContinuationCheckpoint:
@@ -739,7 +739,7 @@ def test_streaming_adapter_carries_terminal_candidate_into_model_turn(tmp_path) 
         registry = ToolCatalogRegistry()
         registry.register_provider(BuiltinToolProvider())
         service = AgentService(
-            db=AgentRunsDB(tmp_path / "runs.db", client_id="contract"),
+            db=owned_agent_runs_db(tmp_path / "runs.db", client_id="contract"),
             registry=registry,
             chat_call=adapter.chat_call,
         )
@@ -889,7 +889,7 @@ def test_agent_service_forwards_current_checkpoint_as_one_owner_group(tmp_path) 
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "service.db", client_id="contract"),
+        db=owned_agent_runs_db(tmp_path / "service.db", client_id="contract"),
         registry=registry,
         chat_call=chat_call,
         prepare_provider_continuation_request=True,

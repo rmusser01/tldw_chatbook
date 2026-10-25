@@ -5,6 +5,7 @@ import json
 import threading
 from dataclasses import replace
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.conftest import join_fleet_children
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
@@ -15,7 +16,6 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 
@@ -79,7 +79,7 @@ def test_bulk_reader_worker_model_and_reader_only_tools_reach_runtime(tmp_path):
     source = workspace / "source.txt"
     source.write_text("original evidence\n", encoding="utf-8")
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     db.create_agent_definition(replace(BULK_READER_PRESET, model="budget-reader-model"))
     workspace_executor = WorkspaceToolExecutor(workspace)
     local = LocalToolProvider(

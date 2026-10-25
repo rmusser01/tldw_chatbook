@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Workspaces.change_revert import (
     RevertRefusedError,
     preflight_revert,
@@ -27,7 +27,7 @@ def turn(tmp_path):
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="c", agent_kind="primary")
 
     handle = tracker.begin_turn([root])

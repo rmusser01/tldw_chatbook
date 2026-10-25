@@ -8,49 +8,51 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.Chat.console_close_helpers import close_controller_session
-from tldw_chatbook.Chat import console_chat_controller as controller_module
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
-from tldw_chatbook.Chat.console_project_instructions import (
-    ProjectInstructionControlState,
-)
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.Chat.citation_repair import CitationRepairContract
-from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
-from tldw_chatbook.Chat.console_provider_gateway import (
-    NO_PROVIDER_CONTENT_COPY,
-    ConsoleProviderResolution,
-)
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Agents.agent_models import (
-    AgentStep,
-    RunOutcome,
-    RUN_DONE,
-    RUN_ERROR,
-    RUN_STUCK,
-    SPAWN_TOOL_NAME,
-    STEP_ERROR,
-    STEP_TOOL_RESULT,
-    ToolCall,
-    WAIT_AGENTS_TOOL_NAME,
-)
-from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
-
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Agents.test_mcp_tool_provider import (
     FakeMCPService,
     _catalog_record,
     _tool_dict,
 )
-from Tests.console_provider_doubles import provider_resolution, with_destination
-from Tests.console_provider_doubles import persisted_console_store
+from Tests.Chat.console_close_helpers import close_controller_session
+from Tests.console_provider_doubles import (
+    persisted_console_store,
+    provider_resolution,
+    with_destination,
+)
+from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    RUN_ERROR,
+    RUN_STUCK,
+    SPAWN_TOOL_NAME,
+    STEP_ERROR,
+    STEP_TOOL_RESULT,
+    WAIT_AGENTS_TOOL_NAME,
+    AgentStep,
+    RunOutcome,
+    ToolCall,
+)
+from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    NO_PROVIDER_CONTENT_COPY,
+    ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 # Real controller sends use the configuration admitted at collection time.
 # Every test here drives ConsoleChatController.submit_draft (or its queue /
@@ -298,7 +300,7 @@ async def _real_agent_citation_controller(
     # `submit_draft`, which refuses a non-ephemeral MANUAL send whose
     # adapter cannot `commit_durable_turn`.
     store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,
@@ -365,7 +367,7 @@ def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
             CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
         )
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -397,7 +399,7 @@ def _persistence_free_controller(tmp_path, scripts):
     gateway = _Gateway(scripts, ())
     store = ConsoleChatStore()
     store.create_session(title="Ephemeral", ephemeral=True)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -580,7 +582,7 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     # ids, which a real service supplies.
     store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     gateway = _Gateway([["Tok", "yo."]])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -647,7 +649,7 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     # ids, which a real service supplies.
     store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     gateway = _Gateway([["Tok", "yo."]])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -724,7 +726,7 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     # ids, which a real service supplies.
     store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     gateway = _Gateway([["Tok", "yo."]])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -910,7 +912,7 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
             CharactersRAGDB(str(tmp_path / "chat.db"), "test")
         )
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -2274,7 +2276,7 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     # test. These tests never assert on the double itself -- only on persisted
     # ids, which a real service supplies.
     store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -2342,7 +2344,7 @@ async def test_stopped_via_cancel_without_persistence_stays_null(tmp_path):
     # no persistence, therefore no persisted id -- on the path production
     # still supports.
     store.create_session(title="Ephemeral", ephemeral=True)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
@@ -2381,7 +2383,7 @@ def test_latest_unanchored_primary_run_id_guards_anchored_rows(tmp_path):
     run is always anchored by a finalizer path, so the lookup must return
     None for it rather than let the caller overwrite a good anchor."""
     store = ConsoleChatStore()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
 
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary", task="t")

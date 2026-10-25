@@ -200,6 +200,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
     ),
+    "db.agent_runs.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/AgentRuns_DB",
+        _READ_ONLY_URI,
+        "Non-owning Console inspection without schema initialization or recovery.",
+        preserve_read_only_source_mode=True,
+    ),
     "db.subscriptions.agent_read": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Subscriptions_DB",
         _READ_ONLY_URI,

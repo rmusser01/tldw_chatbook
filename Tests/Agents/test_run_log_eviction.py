@@ -19,6 +19,8 @@ import json
 import pytest
 from loguru import logger as loguru_logger
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.test_agent_service import ScriptedChat, native_call
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
@@ -32,6 +34,15 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import RUN_LOG_PROMPT_SECTION, AgentService
+from tldw_chatbook.Agents.run_log_eviction import (
+    DEFAULT_MIN_RECENT_ROUNDS,
+    RUN_LOG_EVICT_ENABLED_KEY,
+    RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
+    _make_round_boundary,
+    _task_row_index,
+    bound_history_for_send,
+    coerce_min_recent_rounds,
+)
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat import console_history_budget as budget_module
 from tldw_chatbook.Chat.console_history_budget import (
@@ -43,18 +54,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     continuation_owner_group,
     parse_provider_continuation_json,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Agents.run_log_eviction import (
-    DEFAULT_MIN_RECENT_ROUNDS,
-    RUN_LOG_EVICT_ENABLED_KEY,
-    RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
-    _make_round_boundary,
-    _task_row_index,
-    bound_history_for_send,
-    coerce_min_recent_rounds,
-)
-from Tests.Agents.test_agent_service import ScriptedChat, native_call
-
 
 # --------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -668,7 +667,7 @@ _MIN_RECENT_ROUNDS_ENV_VAR = (
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 def test_flag_off_sends_full_history_regardless_of_window(db, tmp_path, monkeypatch):

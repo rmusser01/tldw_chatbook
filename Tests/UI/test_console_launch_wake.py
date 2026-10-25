@@ -42,6 +42,8 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 # These owners exercise native config participants selected at collection.
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -373,7 +375,7 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
         )
 
     # The control: a genuinely new completion IS delivered on a later launch.
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed-2")
+    runs_db = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="seed-2")
     _terminal_subagent_run(runs_db, conversation_id, result="second child result")
     runs_db.close()
     app3, _marks3, gateway3 = _launch_app(tmp_path, real_service=True)
@@ -634,7 +636,7 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_pa
     app0 = _build_test_app("library")
     _attach_real_dbs(app0, tmp_path)
     app0.chachanotes_db.add_conversation({"id": "conv-crashed", "title": "Crashed"})
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed")
+    runs_db = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="seed")
     parent_id = runs_db.create_run(conversation_id="conv-crashed", agent_kind="primary")
     runs_db.set_status(parent_id, "done", "turn final")
     child_id = runs_db.create_run(
@@ -648,7 +650,7 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_pa
     # per-process guard discarded the way Tests/DB/test_agent_runs_db.py
     # models a restart.
     AgentRunsDB._swept_paths.discard(str(tmp_path / "agent_runs.db"))
-    swept = AgentRunsDB(tmp_path / "agent_runs.db", client_id="sweep")
+    swept = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="sweep")
     assert (swept.get_run(child_id) or {}).get("status") == "error", (
         "harness precondition: the reconcile sweep must have marked the "
         "crash-killed child as error"
@@ -704,7 +706,7 @@ async def test_the_kill_switch_silences_the_launch_fire_point_and_loses_nothing(
     assert marks_off.has_mark(conversation_id, FLEET_UNSEEN), (
         "the kill switch lost the ◈ mark"
     )
-    off_runs = AgentRunsDB(tmp_path / "agent_runs.db", client_id="check")
+    off_runs = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="check")
     assert not (off_runs.get_run(run_id) or {}).get("wake_delivered_at"), (
         "the kill switch stamped the ledger for a wake it never delivered"
     )
@@ -742,7 +744,7 @@ async def test_an_unresolvable_ephemeral_mark_is_cleared_at_launch(tmp_path):
     app0 = _build_test_app("library")
     marks0 = _attach_real_dbs(app0, tmp_path)
     ephemeral_id = "console-session-9f3ac1"
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed")
+    runs_db = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="seed")
     _parent, run_id = _terminal_subagent_run(
         runs_db, ephemeral_id, result="work nobody can be shown"
     )
@@ -764,7 +766,7 @@ async def test_an_unresolvable_ephemeral_mark_is_cleared_at_launch(tmp_path):
             "the launch tried to deliver into a conversation that does not "
             f"exist: {gateway.payloads!r}"
         )
-    check = AgentRunsDB(tmp_path / "agent_runs.db", client_id="check")
+    check = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="check")
     assert not (check.get_run(run_id) or {}).get("wake_delivered_at"), (
         "clearing an unresolvable mark must not stamp the ledger -- the "
         "result was never delivered to anyone"

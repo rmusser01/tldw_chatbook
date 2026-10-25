@@ -58,3 +58,14 @@ ADR-123 (`123-artifact-share-web-export.md` — the staged-snapshot child server
 - [canvas.md](./canvas.md) — served canvas internals
 - [artifacts.md](./artifacts.md) — the share entry point
 - [backup-recovery.md](./backup-recovery.md) — the startup fence that served mode shares
+
+## Shared Console execution fence (ADR-244 foundation)
+
+The executing native App or served child owns the physical run-store OS lease,
+not its routing parent. Contention refuses execution before AgentRuns schema or
+recovery work. Non-owning readers use the explicit read-only store path. The
+legacy mobile engine temporarily acquires the same kind of lease for its existing
+run-store path; its idle shutdown releases the lease only after controller/fleet retirement;
+bounded teardown retains that lease until process exit when
+physical retirement cannot be proven. Shared canonical storage/routing cutover
+is subsequent work; this foundation does not yet change served attachments.

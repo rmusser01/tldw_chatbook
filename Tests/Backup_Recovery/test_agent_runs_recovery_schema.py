@@ -7,6 +7,7 @@ from threading import Event
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA, recovery_adapters
@@ -55,9 +56,8 @@ def test_exact_agent_catalogs_validate_without_rewriting(tmp_path, route):
     if route != "fresh":
         legacy(path, {"native_v19": 19, "native_v20": 20}.get(route, 18))
     if route != "legacy":
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-        database = AgentRunsDB(path)
+        database = owned_agent_runs_db(path)
         database.close()
     before = path.read_bytes()
     assert validate_candidate(owner(), path, Event(), migrate=False) == ()
@@ -121,7 +121,7 @@ def test_unknown_agent_schema_or_version_refuses(tmp_path, alteration):
     else:
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-        database = AgentRunsDB(path)
+        database = owned_agent_runs_db(path)
         database.close()
     with closing(sqlite3.connect(path)) as connection:
         if alteration == "extra_table":

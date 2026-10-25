@@ -10,12 +10,12 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, ListView, Select
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Agents.agent_presets import AGENT_PRESETS
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.settings_agents_panel import AgentsSettingsPanel
-from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 BULK_READER_NAME = "bulk-reader"
 BULK_READER_DESCRIPTION = (
@@ -44,7 +44,7 @@ def _painted_text(svg: str) -> str:
 
 @pytest.fixture()
 def runs_db(tmp_path):
-    database = AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    database = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="test")
     try:
         yield database
     finally:
@@ -83,7 +83,7 @@ async def test_panel_closes_only_its_owned_file_backed_database(tmp_path):
         finally:
             owned_db.close()
 
-    caller_db = AgentRunsDB(tmp_path / "caller-owned.db", client_id="test")
+    caller_db = owned_agent_runs_db(tmp_path / "caller-owned.db", client_id="test")
     caller_connection = caller_db._held_connection()
     try:
         panel = AgentsSettingsPanel(app_instance=None, runs_db=caller_db)

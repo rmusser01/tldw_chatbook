@@ -121,3 +121,18 @@ Rule phase events refresh the visible run chip directly from current in-memory s
 Disable, Exclude and Delete first revoke affected assessment authority under a short current-user-scope fence, even if later persistence fails. That fence is released before writer admission. The mutation then rechecks the user scope and binding CAS, and invalidates again to fence work started during the wait. Rule writes acquire SQLite writer admission before the store/currentness mutation locks, recheck source and binding CAS after admission, and retain the short fences through commit or rollback. Temporary publication follows successful settlement; transcript adoption still uses its caller-owned transaction and completion observer. Waiting for another SQLite writer therefore cannot hold the synchronous Stop/source-revocation locks.
 
 Recovery-card synchronization runs before the transcript message-token gate: pre-send holds and continuation changes must remain visible even when message projection is unchanged. The expensive message pipeline retains its existing gate.
+
+## Physical execution owner (ADR-244)
+
+`Chat/console_execution_owner.py` holds a nonblocking OS lease for the secured
+physical run-store parent and leaf. `ConsoleRuntime` acquires it lazily before
+constructing the sibling `agent_runs.db`; different chat filenames in that
+parent share this resource. The empty runtime holder and saved-history readers
+do not acquire it. Settings and retention writers share the App's owner; manual
+worktree recovery shares its bridge's owner. A lost/unsafe lease refuses writes.
+
+The executing App/child retains the lease through physical SQLite operations.
+Disposal releases it only after the runtime drains, change-review publisher and
+cleanup prove retirement. Bounded or failed cleanup retains the owner until
+process exit; cancelling a waiter or losing a parent is never takeover authority.
+See [ADR-244](../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md).

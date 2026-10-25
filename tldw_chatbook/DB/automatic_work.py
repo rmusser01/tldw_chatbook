@@ -137,6 +137,7 @@ class AutomaticWorkLedger:
         Nested transactions are rejected before changing the connection. Catch
         BaseException too: cancellation must never leave a fence half-open.
         """
+        self._db._require_execution_owner()
         with self._db.connection() as conn:
             if conn.in_transaction:
                 raise RuntimeError("automatic work transaction cannot be nested")

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_dispatch_continuation_handoff import (
     _continuation,
     _deepseek_acceptance,
@@ -30,10 +31,10 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
-from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ProviderToolCalls,
@@ -44,7 +45,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def _install_checkpoint_free_continuation(
@@ -345,7 +345,7 @@ def _reasoning_controller(tmp_path: Path):
     )
     gateway = _ReasoningOnlyGateway()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(
+        agent_runs_db=owned_agent_runs_db(
             tmp_path / "agent-runs.sqlite",
             client_id="task16-review",
         ),

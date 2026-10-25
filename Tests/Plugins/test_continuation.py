@@ -2,6 +2,7 @@
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.DB.base_db import run_owned_db_call
 
@@ -230,7 +231,6 @@ async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_chang
     )
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Plugins.revocation import RevocationTarget
 
     rig = native_console
@@ -263,7 +263,7 @@ async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_chang
             ["child resumed"],
         ],
     )
-    database = AgentRunsDB(tmp_path / "fleet.sqlite", client_id="managed-fleet")
+    database = owned_agent_runs_db(tmp_path / "fleet.sqlite", client_id="managed-fleet")
     bridge = ConsoleAgentBridge(
         agent_runs_db=database,
         store=rig.store,
@@ -434,7 +434,6 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
         dump_provider_continuation_json,
         parse_provider_continuation_json,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     await rig.install()
@@ -507,7 +506,7 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
                 yield ProviderToolCalls((), ProviderTurnMetadata("stop", final))
 
     gateway = Gateway()
-    runs = AgentRunsDB(tmp_path / "primary-runs.sqlite", client_id="managed-primary")
+    runs = owned_agent_runs_db(tmp_path / "primary-runs.sqlite", client_id="managed-primary")
     bridge = ConsoleAgentBridge(
         agent_runs_db=runs,
         store=store,

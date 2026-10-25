@@ -18,13 +18,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
@@ -45,7 +45,7 @@ def workspace_fixture(tmp_path) -> _Workspace:
     (root / "a.py").write_text("line1\nline2\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     return _Workspace(root, service, tracker, db)
 
 

@@ -6,11 +6,12 @@ from dataclasses import replace
 import pytest
 import pytest_asyncio
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = pytest.mark.bootstrap_profile
 
 from Tests.Agents.test_goal_models import request
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -19,7 +20,7 @@ from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
 @pytest_asyncio.fixture
 async def stores(tmp_path):
-    runs = AgentRunsDB(tmp_path / "runs.db")
+    runs = owned_agent_runs_db(tmp_path / "runs.db")
     chat = CharactersRAGDB(tmp_path / "chat.db", "test")
     workspace_db = WorkspaceDB(tmp_path / "workspace.db")
     registry = LocalWorkspaceRegistryService(workspace_db)
@@ -186,7 +187,7 @@ def test_reopen_all_stores_after_chat_commit_recovers_same_conversation(
     runs.close()
     persistence.db.close_connection()
     registry.db.close()
-    reopened_runs = AgentRunsDB(paths[0])
+    reopened_runs = owned_agent_runs_db(paths[0])
     reopened_chat = CharactersRAGDB(paths[1], "test")
     reopened_workspaces = WorkspaceDB(paths[2])
     try:

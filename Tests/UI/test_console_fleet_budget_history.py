@@ -2,10 +2,14 @@
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.test_console_fleet_panel import (
     _AGENT_SECTION_SIZE,
     _scroll_into_view,
     _setup_console,
+)
+from Tests.UI.test_console_internals_decomposition import (
+    _configure_native_ready_console,
 )
 from Tests.UI.test_console_parallel_runs import _assert_painted_at_own_region
 from Tests.UI.test_destination_shells import _build_test_app
@@ -19,10 +23,6 @@ from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
-from Tests.UI.test_console_internals_decomposition import (
-    _configure_native_ready_console,
-)
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
 )
@@ -68,12 +68,12 @@ async def test_reopened_historical_row_paints_budget_without_refeeding_cost_chip
     tmp_path, budget, label
 ):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path, client_id="test")
+    db = owned_agent_runs_db(path, client_id="test")
     parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
     _seed(db, budget, parent=parent)
     db.set_status(parent, "done")
     db.close()
-    reopened = AgentRunsDB(path, client_id="reopened")
+    reopened = owned_agent_runs_db(path, client_id="reopened")
     try:
         bridge = _bridge(reopened)
         app = _build_test_app()
@@ -106,7 +106,7 @@ async def test_reopened_historical_row_paints_budget_without_refeeding_cost_chip
 async def test_continuation_detail_paints_complete_or_partial_ancestry(
     tmp_path, ancestor_budget, total
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
         ancestor = _seed(db, ancestor_budget, parent=parent)

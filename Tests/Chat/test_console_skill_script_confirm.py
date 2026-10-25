@@ -28,17 +28,16 @@ from typing import Any, Callable
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import persisted_console_store, provider_resolution
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.agent_service import AgentService as _RealAgentService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Skills_Interop.local_skills_service import ScriptPlan
 from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
-from Tests.console_provider_doubles import persisted_console_store
-from Tests.console_provider_doubles import provider_resolution
-from Tests.private_profile import private_profile_test
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -271,7 +270,7 @@ def _capture_run_skill_script_tool(
         console_agent_bridge_module, "AgentService", _CapturingAgentService
     )
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = persisted_console_store()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -939,7 +938,7 @@ def _capturing_run_reply(captured: list[dict[str, Any]]):
 def _bridged_controller(tmp_path) -> tuple[ConsoleChatController, list[dict[str, Any]]]:
     gateway = _StubGateway()
     store = persisted_console_store()
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,

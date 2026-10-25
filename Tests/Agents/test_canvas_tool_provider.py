@@ -9,6 +9,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     STEP_APPROVAL_REQUESTED,
     AgentConfig,
@@ -45,7 +46,7 @@ from tldw_chatbook.Canvas.models import (
     CanvasScope,
 )
 from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
 
 @pytest.fixture(autouse=True)
 def _private_canvas_run_log_context(monkeypatch):
@@ -1371,7 +1372,7 @@ def _run_review_integration(
             requests.append(deepcopy(kwargs))
         return replies.pop(0)
 
-    db = AgentRunsDB(db_path, client_id="canvas-tool-review")
+    db = owned_agent_runs_db(db_path, client_id="canvas-tool-review")
     service = AgentService(
         db,
         registry,

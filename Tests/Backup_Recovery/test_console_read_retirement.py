@@ -27,9 +27,10 @@ if route == "history":
     call = controller._persisted_console_browser_rows
 elif route == "changes":
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.UI.Screens.change_review_screen import AgentRunsChangeReviewProvider
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-    db = AgentRunsDB(root / "runs.db")
+    db = owned_agent_runs_db(root / "runs.db")
     provider = AgentRunsChangeReviewProvider(db=db, service=None, conversation_id="none", diff_display_max_lines=50)
     target, method = db, "change_snapshots_for_conversation"
     async def call():

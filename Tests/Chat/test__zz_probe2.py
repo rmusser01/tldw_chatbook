@@ -1,7 +1,9 @@
+import json
 import threading
 import time
-import json
+
 import Tests.Chat.test_console_agent_bridge as T
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 
 def test_probe_two_children(tmp_path):
@@ -15,7 +17,7 @@ def test_probe_two_children(tmp_path):
         child_result=["child answer"],
         gate=gate,
     )
-    db = T.AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = T.ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=T.ConsoleMessageRole.USER, content="hi")

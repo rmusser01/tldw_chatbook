@@ -6,15 +6,15 @@ from threading import Event
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_goal_models import request
 from Tests.Backup_Recovery.test_agent_runs_recovery_schema import owner
 from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def test_goal_archive_is_exact_and_restore_never_accepts_work(tmp_path):
     path = tmp_path / "goals.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     goal = db.goal_runs.create(request(), launch_id="launch")
     goal = db.goal_runs.set_provisioning(goal, status="ready")
     attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="before")
@@ -22,7 +22,7 @@ def test_goal_archive_is_exact_and_restore_never_accepts_work(tmp_path):
     before = path.read_bytes()
     assert validate_candidate(owner(), path, Event(), migrate=True) == ()
     assert path.read_bytes() == before
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     try:
         db.automatic_work.recover(current_owner_id="after")
         with db.connection() as conn:
@@ -42,7 +42,7 @@ def test_goal_archive_is_exact_and_restore_never_accepts_work(tmp_path):
 @pytest.mark.parametrize("case", ["missing_goal_table", "old_stamp", "extra_column"])
 def test_hybrid_goal_catalog_refuses_without_rewrite(tmp_path, case):
     path = tmp_path / "hybrid.db"
-    AgentRunsDB(path).close()
+    owned_agent_runs_db(path).close()
     with closing(sqlite3.connect(path)) as conn:
         if case == "missing_goal_table":
             conn.execute("DROP TABLE goal_waits")
@@ -59,7 +59,7 @@ def test_hybrid_goal_catalog_refuses_without_rewrite(tmp_path, case):
 @pytest.mark.parametrize("corruption", ["attempt_kind", "status", "reservation_owner"])
 def test_goal_archive_rejects_mismatched_domain_without_rewrite(tmp_path, corruption):
     path = tmp_path / "invalid-domain.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     goal = db.goal_runs.create(request(), launch_id="domain")
     goal = db.goal_runs.set_provisioning(goal, status="ready")
     attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="before")
@@ -99,7 +99,7 @@ def test_goal_archive_rejects_foreign_payload_identity(tmp_path, field):
     )
 
     path = tmp_path / "foreign-payload.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     goal = db.goal_runs.create(request(), launch_id="payload")
     goal = db.goal_runs.set_provisioning(goal, status="ready")
     attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="before")
@@ -163,7 +163,7 @@ def test_goal_archive_rejects_foreign_payload_identity(tmp_path, field):
     assert validate_candidate(owner(), path, Event(), migrate=False)
     assert path.read_bytes() == before
 
-    reopened = AgentRunsDB(path)
+    reopened = owned_agent_runs_db(path)
     try:
         with pytest.raises(ValueError, match="invalid_goal_ownership"):
             if field.startswith("checkpoint_"):
@@ -179,7 +179,7 @@ def test_goal_archive_rejects_cross_owner_report_or_native_run(tmp_path, corrupt
     from tldw_chatbook.Agents.goal_models import GoalReport
 
     path = tmp_path / "cross-owner.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     goal = db.goal_runs.create(request(), launch_id="first")
     goal = db.goal_runs.set_provisioning(goal, status="ready")
     attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="owner")

@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 import tldw_chatbook.config as config_module
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.UI.Screens.change_review_screen import (
     AgentRunsChangeReviewProvider,
 )
@@ -97,7 +97,7 @@ def bare(tmp_path: Path) -> Path:
 def provider(tmp_path: Path) -> AgentRunsChangeReviewProvider:
     # File-backed, never `:memory:` (in-memory SQLite is thread-affine and
     # breaks under the screen's threading -- see the module docstring).
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     return AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-1"
@@ -228,7 +228,7 @@ def test_current_diff_text_returns_tracked_diff(provider, repo):
 
 
 def test_untracked_preview_honors_diff_display_max_lines(tmp_path, repo):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-1", diff_display_max_lines=100
