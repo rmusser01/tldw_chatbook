@@ -7,6 +7,47 @@ and this project adheres to Some kind of Versioning
     
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-25
+
+Includes committed development changes since 0.2.3. Release preparation is
+tracked in TASK-36759; publication remains subject to the release gates.
+
+### Added
+- Console character radio portraits, a run status strip, native response rules,
+  and durable goal controls.
+- Personal Context retrieval and expanded Dreams discovery, Guardian reminders,
+  and Library story and tracking views.
+- Saved model configurations, a Tools hub in Settings, and expanded first-run
+  setup and provider connection guidance.
+- Authenticated served-browser access and mobile layout and input improvements.
+- File Notes history retention and folder-bound keyword project search.
+- Configurable automatic transcription defaults for media ingestion.
+
+### Changed
+- Shared adaptive panes and clearer navigation, selection, focus, and reader
+  controls across Roleplay, Library, and Settings.
+- Reduced Console startup, Send preparation, repeated layout, configuration,
+  SQLite helper, and background polling work.
+- Consolidated SQLite store infrastructure and expanded backup and recovery
+  compatibility checks.
+- Continues the app-only release scope: ordinary speech recording remains
+  available; experimental duplex voice remains unqualified and disabled.
+
+### Fixed
+- Console source selection, queued prompts, Resend, Stop and recovery ownership,
+  shutdown, tool permissions, and workspace file access.
+- Provider streaming, model metadata, local model context limits, connection
+  readiness, and speech and transcription lifecycle handling.
+- Library reader state, imports, note synchronization, collection provenance,
+  hostile text rendering, and Canvas interactions.
+- Settings focus, component rendering, copy, and startup stylesheet loading
+  inconsistencies.
+
+### Upgrade notes
+- Back up the application profile before upgrading. The main conversation and
+  notes database advances from schema 75 in 0.2.3 to schema 84; use the existing
+  backup and recovery workflow when returning to an older release.
+
 ## [0.2.3] - 2026-10-02
 
 Includes committed development changes since 0.2.2 and retains the evaluation
