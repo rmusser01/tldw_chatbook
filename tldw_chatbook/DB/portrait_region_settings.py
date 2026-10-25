@@ -75,12 +75,15 @@ def optional_recipe(raw: str | None) -> PortraitCompositionRecipe | None:
 
 
 def _row_source(row) -> PerformanceSource:
+    reference = json.loads(row["source_ref_json"])
+    if type(reference) is not list:
+        raise ValueError("portrait_performance_source_invalid")
     source = PerformanceSource(
         row["character_id"],
         row["expression_key"],
         row["source_sha256"],
         row["source_kind"],
-        tuple(json.loads(row["source_ref_json"])),
+        tuple(reference),
     )
     _validate_source(source)
     return source
@@ -144,11 +147,12 @@ def save_regions(
         actual = 0 if row is None else row["revision"]
         if actual != expected_revision:
             raise PerformanceConflict("portrait_regions_revision_changed")
-        if (
-            row is not None
-            and _row_source(row) == source
-            and row["recipe_json"] == encoded
-        ):
+        try:
+            previous_source = _row_source(row) if row is not None else None
+        except ValueError:
+            # A confirmed CAS replacement repairs invalid optional settings.
+            previous_source = None
+        if previous_source == source and row["recipe_json"] == encoded:
             return actual
         revision = actual + 1
         cursor.execute(

@@ -665,3 +665,55 @@ async def test_invalid_saved_source_retires_draft_on_every_verification_path(
             CharacterPerformanceRequested("import", role=FRAME_ROLES[1]), path=str(path)
         )
     assert controller.draft is None
+
+
+@pytest.mark.asyncio
+async def test_corrupt_optional_regions_keep_manual_import_and_remove_available(
+    personas_editor_with_saved_character, tmp_path
+):
+    from tldw_chatbook.Character_Chat.portrait_compositing import (
+        PixelRect,
+        PortraitCompositionRecipe,
+        prepared_base_pixel_sha256,
+    )
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        capture_performance_source,
+        normalize_performance_frames,
+    )
+    from tldw_chatbook.Character_Chat.portrait_performance_authoring import (
+        performance_reference,
+    )
+
+    _, screen, db, cid, _ = saved_source(personas_editor_with_saved_character)
+    source, data = capture_performance_source(
+        db, character_id=cid, requested_state="idle"
+    )
+    base = performance_reference(data, source.source_sha256).content
+    recipe = PortraitCompositionRecipe(
+        1,
+        12,
+        12,
+        prepared_base_pixel_sha256(base),
+        PixelRect(1, 1, 3, 3),
+        PixelRect(8, 1, 3, 3),
+        PixelRect(4, 8, 4, 3),
+        True,
+    )
+    db.save_character_portrait_regions(source, recipe, expected_revision=0)
+    frames = normalize_performance_frames({role: png() for role in FRAME_ROLES})
+    db.apply_character_portrait_performance(source, frames, expected_revision=0)
+    with db.transaction() as cursor:
+        cursor.execute("UPDATE character_portrait_regions SET source_ref_json='null'")
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    assert controller.draft.frames() == frames and controller._regions is None
+    path = tmp_path / "manual.png"
+    path.write_bytes(png("blue"))
+    assert await controller.handle(
+        CharacterPerformanceRequested("import", role="small"), path=str(path)
+    )
+    assert await controller.handle(CharacterPerformanceRequested("apply"))
+    assert await controller.handle(CharacterPerformanceRequested("remove"))
+    assert not db.get_character_portrait_performance(
+        character_id=cid, expression_key="neutral"
+    ).active

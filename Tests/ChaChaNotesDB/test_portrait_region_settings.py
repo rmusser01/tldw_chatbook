@@ -334,3 +334,39 @@ def test_change_during_composed_validation_cannot_publish(case, monkeypatch, cha
             expected_regions_revision=revision,
         )
     assert get(db, source) is None
+
+
+@pytest.mark.parametrize("raw", ["null", "1", "true", "{}", '""', "[true]"])
+def test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available(
+    case, raw
+):
+    from tldw_chatbook.UI.Persona_Modules.portrait_regions import prepare_regions
+
+    db, source, base, recipe, frames = case
+    db.apply_character_portrait_performance(source, frames, expected_revision=0)
+    revision = db.save_character_portrait_regions(source, recipe, expected_revision=0)
+    before = get(db, source)
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE character_portrait_regions SET source_ref_json=?", (raw,)
+        )
+    with pytest.raises(ValueError):
+        regions(db, source)
+    reference, digest, saved, actual, candidate = prepare_regions(
+        db, source, base, before
+    )
+    assert reference is not None and digest and saved is None and candidate is None
+    assert actual == revision and get(db, source) == before
+    with pytest.raises(PerformanceConflict):
+        db.save_character_portrait_regions(source, recipe, expected_revision=0)
+    assert (
+        db.execute_query(
+            "SELECT source_ref_json FROM character_portrait_regions"
+        ).fetchone()[0]
+        == raw
+    )
+    repaired = db.save_character_portrait_regions(
+        source, recipe, expected_revision=revision
+    )
+    assert repaired == revision + 1 and regions(db, source).source == source
+    assert get(db, source) == before
