@@ -160,3 +160,14 @@ individually annotated worker-name false positives. All 86 affected UI cases,
 dev rebase. `source-guard-corrections/` retains command/output digests. This
 deterministic installed evidence does not qualify a configured live image
 provider or rerun the historical Pocket TTS hardware qualification. AC5 stays open.
+
+
+## Full portrait UAT and live Pocket rerun — 2026-10-25
+
+[Fresh final matrix](../2026-10-25-uat/README.md) supersedes the prior historical-only
+Pocket limitation: real Pocket TTS 3.3.0/alba, installed app/CoreAudio, waveform and
+final-word equality, Stop/replacement/context retirement, sentence-tail handoff and
+guarded authoring sample pass. Two reviewed recovery/context bugs have red/green
+regressions; both rebuilt wheels match all 54 changed production files. This does
+not close configured live image-provider qualification: SwarmUI remains the only
+enabled backend, unsupported for reference edits; zero live requests, AC5 open.

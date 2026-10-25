@@ -1,0 +1,15 @@
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 63%]
+........................................................................ [ 79%]
+........................................................................ [ 95%]
+...................                                                      [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_portrait_performance.py::test_graphics_mount_finishes_when_preview_pose_changes
+Tests/UI/test_character_expression_avatar.py::test_graphics_widget_updates_image_without_remount
+  /Users/macbook-dev/.codex/worktrees/console-radio-portraits/tldw_chatbook/.venv/lib/python3.12/site-packages/textual_image/_pixeldata.py:141: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    data = self._image.getdata()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+451 passed, 2 warnings in 320.23s (0:05:20)

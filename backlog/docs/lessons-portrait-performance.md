@@ -140,3 +140,22 @@ open mouth.
 past timestamp, and assert that the mouth reader actually returns open before and
 after advancing the blink clock. Keep the old-tick red control: rest fallback must
 not count as evidence that live speech and idle preview interact correctly.
+
+
+## Native callbacks must retain the admitted UI context (PR #3244, 2026-10-25)
+
+**Incident.** A real Pocket TTS repeat crashed during message replacement in
+`ConsoleRoleplayMarkdown` → `DOMQuery.remove`: Textual's `active_app` was absent.
+The sink notification thread called `loop.call_soon_threadsafe(lifecycle.report,
+"playing")`; asyncio copied that thread's empty context. The report then created
+a Console repaint task and a Markdown message pump in that context. A same-thread
+callback fake would pass. The independent reviewer reproduced the exact mount
+stack using a plain thread; both native-notify and clean legacy-worker regressions
+fail before the correction and pass after it.
+
+**What to do.** Capture `copy_context()` in the owning coroutine before handing
+work to a native thread, then pass it explicitly as `context=` when scheduling the
+lifecycle report. Keep source/owner validators unchanged. Test that an observer's
+new task inherits the admitted app context, and repeat actual device replacement;
+being on the right event loop alone is insufficient. Final Pocket/native UAT and
+208 speech checks pass. See the 2026-10-25 portrait UAT evidence.
