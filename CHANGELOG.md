@@ -34,6 +34,8 @@ tracked in TASK-36759; publication remains subject to the release gates.
   available; experimental duplex voice remains unqualified and disabled.
 
 ### Fixed
+- Installed packages include the mobile web pages, authentication and device
+  scripts, and QR assets required by the served-browser entry point.
 - Console source selection, queued prompts, Resend, Stop and recovery ownership,
   shutdown, tool permissions, and workspace file access.
 - Provider streaming, model metadata, local model context limits, connection

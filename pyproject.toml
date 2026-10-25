@@ -572,6 +572,17 @@ exclude = [
     "static/served_shell.html",
     "static/served_shell.css",
     "static/served_shell.js",
+    "static/devices.js",
+    "static/passkeys.js",
+    "static/qrcodegen.js",
+    "static/VENDORED.md",
+    "static/mobile/index.html",
+    "static/mobile/app.css",
+    "static/mobile/app.js",
+    "static/mobile/manifest.webmanifest",
+    "static/mobile/icon-192.png",
+    "static/mobile/icon-512.png",
+    "static/mobile/apple-touch-icon.png",
 ]
 "tldw_profile_core" = ["schemas/*.json", "fixtures/v1/*.json"]
 # Include all .tcss files in css directory and subdirectories
