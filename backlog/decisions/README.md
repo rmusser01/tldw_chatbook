@@ -159,7 +159,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 
 | [ADR-232](232-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules, assess permitted execution evidence, and admit bounded correction through current Console custody; preserves source ADR-219 provenance. |
 | [ADR-242](242-console-radio-portrait-performance.md) | Accepted (design only) | Add reviewed local six-pose character performances and output-timed TTS presentation within the existing Console rail; preserve moods, motion preferences and portable artwork formats. |
-| [ADR-244](244-shared-console-ownership-and-mobile-supervision.md) | Accepted (design only; written review and six corrections complete) | Replace mobile-specific storage/execution with canonical Console ownership, retained served hosts, explicit mobile controls and recoverable history consolidation; supersedes ADR-234's split and amends ADR-236. |
+| [ADR-244](244-shared-console-ownership-and-mobile-supervision.md) | Accepted (design only) | Replace mobile-specific storage/execution with canonical Console ownership, retained served hosts, explicit mobile controls and recoverable history consolidation; supersedes ADR-234's split and amends ADR-236. |
 
 ## Historical Decision Material
 

@@ -1,7 +1,7 @@
 # Shared Console ownership and mobile agent supervision
 
 Date: 2026-10-25
-Status: Reviewed and accepted 2026-10-25; six design-review corrections verified; implementation has not started
+Status: Reviewed and accepted 2026-10-25; review corrections verified; implementation has not started
 Task: [TASK-36728](../../../backlog/tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Decision: [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
 
@@ -45,6 +45,7 @@ These are source facts, not runtime verification results:
 | Current mobile island | [mobile_service.py](../../../tldw_chatbook/Web_Server/mobile_service.py): `_build_engine` creates another controller/store/bridge over `mobile/chat.db`, `mobile/workspaces.db` and `mobile/runs.db`, with a `HeadlessAppContext`. `_restore_persisted_session` reopens mobile history. |
 | Served process lifetime | [serve.py](../../../tldw_chatbook/Web_Server/serve.py): `handle_websocket` constructs an `AppService`, binds its output callbacks to the socket, and stops it on disconnect. The installed textual-serve `stop` sends the child a quit message. |
 | Existing process transport | [control_protocol.py](../../../tldw_chatbook/Canvas/control_protocol.py): authenticated, bounded parent/child requests and events. Existing relay messages cover approvals and run status. Broker startup and revocation currently follow Canvas enablement. |
+| Projection overflow hazard | [control_protocol.py](../../../tldw_chatbook/Canvas/control_protocol.py) closes the child control connection when its bounded event queue fills. [serve.py](../../../tldw_chatbook/Web_Server/serve.py) starts the relay drainer only on first mobile use. Retaining this combination would turn ordinary projection traffic into execution-owner loss under the new shutdown policy. |
 | Current relay projection | [served_relay_publisher.py](../../../tldw_chatbook/Web_Server/served_relay_publisher.py): approvals follow mounted Console cards. Background and viewless decisions therefore need a runtime-owned projection. |
 | Existing command authority | [console_chat_controller.py](../../../tldw_chatbook/Chat/console_chat_controller.py): main-agent steering, redirect and Stop select `store.active_session_id`. Remote calls need explicit targeting without changing that selection. |
 | Shared-run-store hazard | [AgentRuns_DB.py](../../../tldw_chatbook/DB/AgentRuns_DB.py): construction defaults to `reconcile_on_init=True`; `reconcile_orphaned_runs` assumes one app per data directory and can mark another process's active runs as errors. Shared reads must not trigger that sweep. |
@@ -112,6 +113,7 @@ bounded runtime shutdown, and retains the fence until its process/physical work
 has retired. A surviving or hung child keeps replacements blocked; no replacement
 server may steal its fence or sweep its runs. OS-released ownership after actual
 process death permits the existing uncertainty-aware recovery, never blind replay.
+Projection congestion must not close that channel or trigger this shutdown path.
 
 Independently launched native processes are not yet registered remote controls.
 Do not advertise their persisted run rows as controllable live runs or
@@ -130,6 +132,19 @@ child failure, or served-server shutdown. Closing a browser, signing out a
 device, or revoking its session detaches that client and its authority; it does
 not implicitly Stop a run. Existing explicit Stop, session-close and app-shutdown
 semantics remain distinct.
+
+The served lifecycle owner starts the private event drainer before a retained
+child can publish events and keeps it running for that host's lifetime, including
+before the first mobile request, with zero phone subscribers or with the mobile
+surface disabled. Draining and publication never wait on a browser subscriber.
+If a private projection buffer fills, drop/coalesce replaceable projection events
+and retain a bounded reset-needed marker until a current snapshot establishes a
+new sequence boundary. That snapshot reconciles transcript, run/fleet state and
+pending decisions from their native owners. Projection loss never discards a
+command response/receipt or resolves a native decision. It must not close the
+host's authenticated control channel, release its execution fence, replace the
+host or trigger owner-loss shutdown. Genuine parent/control-channel failure
+still follows the shutdown contract above.
 
 Move socket callbacks behind a retained transport attachment. Keep draining the
 child's output while no terminal is attached, without writing to a dead socket,
@@ -253,6 +268,8 @@ authenticates afresh, checks the server/host epoch, reconciles outstanding comma
 IDs and takes a current snapshot. Subscribe and snapshot with an event-sequence
 boundary so changes cannot fall into a read/subscribe gap. Bound subscriber
 queues and replay; a cursor older than retained events triggers a snapshot reset.
+Private projection loss requires the same reset for affected subscriptions;
+an incomplete projection cannot be reported as current.
 The snapshot includes current decisions, run/fleet state and transcript cursor.
 No socket reconnect automatically resends a mutation.
 
@@ -381,9 +398,9 @@ guessing how an unsupported source should be transformed.
 
 | Component | Responsibility and limits |
 | --- | --- |
-| Served lifecycle/attachment owner | Retain and route to one existing child host per canonical profile, await that child's run-store fence, attach terminal transport, drain detached output, fence stale attachments and close hosts on server shutdown. The parent does not hold the child's execution authority. |
+| Served lifecycle/attachment owner | Retain and route to one existing child host per canonical profile, await that child's run-store fence, start private event draining before publication independently of phone subscribers, attach terminal transport, drain detached output, fence stale attachments and close hosts on server shutdown. The parent does not hold the child's execution authority. |
 | Existing Console runtime and domain owners | Hold execution authority in the executing process; admit command-owned phone inputs through the existing session claim, resolve exact commands/decisions, execute agents/tools and persist outcomes. Add explicit-target seams here; do not add a parallel mobile state machine. |
-| Existing control transport and mobile API | Authenticate, validate bounded requests, route to the owning process, expose snapshots/events/receipts and apply backpressure. Runtime control is independent of Canvas enablement. |
+| Existing control transport and mobile API | Authenticate, validate bounded requests, route to the owning process, expose snapshots/events/receipts and apply backpressure. Projection overflow coalesces/resets projections while preserving the host control channel and native outcomes. Runtime control is independent of Canvas enablement. |
 | Existing recovery subsystem plus consolidation adapter | Inventory/capture retired mobile data, map and apply records transactionally, recover interrupted work and publish verified cutover. It does not replay agent work. |
 | `/m` page | Render shared chat/run state, keep page-local navigation/drafts and submit explicit user commands. It owns presentation, not runtime lifecycle or permissions. |
 
@@ -402,6 +419,7 @@ contract is implemented and qualified; no speculative native daemon is added now
 | --- | --- |
 | Browser close, VPN drop, device sign-out/revoke | Detach that client's input/subscriptions/capabilities; accepted work continues under its owner. |
 | Slow/disconnected client | Bounded projection buffering; no blocked agent thread, output pipe or unbounded history. |
+| Private projection queue fills | Bounded coalescing/drop plus snapshot reset; the same host, control channel and execution fence remain live, including before any phone connects. Native decisions and command outcomes remain authoritative. |
 | Replacement terminal attachment | Full repaint into the new terminal; old keys/resize/cleanup cannot affect the new attachment. |
 | Canvas disabled | Canvas unavailable; mobile runtime controls remain available under ordinary authentication. |
 | Lost command acknowledgement | Query its receipt/current owner; no automatic replay or success inferred from a timeout. |
@@ -436,6 +454,15 @@ areas. Run the full test suite only if the user opts in.
   mouse clicks, cursor/mode state, multiline bracketed paste and resize after
   reattachment, without restarting the driver input thread. Test stale keys,
   resize and cleanup rejection. Separately test clean server teardown.
+- Before any mobile request, start a real served host with zero phone subscribers
+  and emit more events than the private broker queue can hold. Repeat with the
+  mobile surface disabled and with a slow subscriber. Verify lifecycle-owned
+  draining and force private projection overflow: buffers and reset state stay
+  bounded, the same child/process/run and execution fence remain live, and the
+  authenticated control channel stays connected. A current snapshot must restore
+  transcript, fleet and pending-decision state without resurrecting resolved
+  rounds or losing command responses/receipts. Separately sever the actual
+  parent/control channel and verify the existing bounded shutdown still occurs.
 - Exercise two chats and multiple subagents concurrently. Read/steer/redirect/
   Stop exact supported targets from the phone; verify unrelated runs, desktop
   selection, settings and drafts are unchanged. Show queued versus consumed
@@ -488,9 +515,11 @@ ADR-094 accepted-turn ownership, ADR-126 recovery and ADR-150/161 design-languag
 boundaries remain governing.
 
 Architecture, phone workflow and consolidation/failure/verification sections were
-approved in conversation. The user reviewed the written spec and approved all six
-source-backed corrections. Self-review and independent review found no remaining
-issues in those corrections; each has matching verification scenarios above.
+approved in conversation. The user reviewed the written spec and approved the six
+initial source-backed corrections and the subsequent projection-overflow correction.
+Each correction has matching verification scenarios above. Self-review and
+independent review found no remaining issues in the projection-overflow correction;
+genuine owner loss retains its shutdown boundary.
 Next, use the writing-plans skill to produce the implementation plan and atomic
 Backlog tasks. No production code, real user-data migration, provider call or
 runtime qualification is part of this design-writing task.
