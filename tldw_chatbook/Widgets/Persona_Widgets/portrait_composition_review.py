@@ -157,7 +157,7 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
     ]
     BUNDLED_CSS = """
     PortraitCompositionReview { align: center middle; }
-    PortraitCompositionReview > VerticalScroll {
+    PortraitCompositionReview > VerticalScroll.portrait-pairs-dialog {
         width: $ds-inspector-modal-width; max-width: $ds-width-full;
         height: $ds-height-full; max-height: $ds-height-full;
         padding: $ds-space-inset $ds-space-section;
@@ -168,7 +168,7 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
     PortraitCompositionReview #portrait-pairs-canvas:focus { outline: tall $ds-action-focus; }
     PortraitCompositionReview .pairs-pan { height: $ds-height-auto; width: $ds-width-full; }
     PortraitCompositionReview .pairs-coordinate { width: $ds-width-fill; height: $ds-height-auto; }
-    PortraitCompositionReview .pairs-pan Input { width: $ds-width-full; }
+    PortraitCompositionReview Input.portrait-pairs-input { width: $ds-width-full; }
     """
 
     def __init__(
@@ -188,7 +188,7 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
         self._loading = False
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with VerticalScroll(classes="portrait-pairs-dialog"):
             yield Static("Portrait pairs", classes="dialog-title")
             yield Static(
                 "Compare each mouth across open/closed eyes. Detail copies original RGBA pixels without resizing; terminal glyph colors are approximations. Arrow keys or h/j/k/l pan while the image is focused; offsets are source pixels.",
@@ -225,12 +225,18 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
                 with Vertical(classes="pairs-coordinate"):
                     yield Static("Pan X (pixels)", classes="form-label")
                     yield Input(
-                        "0", type="integer", id="portrait-pairs-x", classes="form-input"
+                        "0",
+                        type="integer",
+                        id="portrait-pairs-x",
+                        classes="form-input portrait-pairs-input",
                     )
                 with Vertical(classes="pairs-coordinate"):
                     yield Static("Pan Y (pixels)", classes="form-label")
                     yield Input(
-                        "0", type="integer", id="portrait-pairs-y", classes="form-input"
+                        "0",
+                        type="integer",
+                        id="portrait-pairs-y",
+                        classes="form-input portrait-pairs-input",
                     )
             yield Button("Close", id="portrait-pairs-close")
 

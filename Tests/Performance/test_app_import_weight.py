@@ -526,3 +526,37 @@ def test_ensure_numpy_resolves_real_numpy_when_installed() -> None:
     assert resolved is not None
     assert resolved.__name__ == "numpy"
     assert Embeddings_Lib.np is resolved
+
+
+def test_template_catalog_defers_provider_exports() -> None:
+    script = """
+import sys
+import tldw_chatbook.Media_Creation as package
+from tldw_chatbook.Media_Creation import generation_templates
+
+assert generation_templates.BUILTIN_TEMPLATES
+assert 'tldw_chatbook.Media_Creation.image_generation_service' not in sys.modules
+assert 'tldw_chatbook.Media_Creation.swarmui_client' not in sys.modules
+
+from tldw_chatbook.Media_Creation import ImageGenerationService, SwarmUIClient
+from tldw_chatbook.Media_Creation.image_generation_service import ImageGenerationService as Service
+from tldw_chatbook.Media_Creation.swarmui_client import SwarmUIClient as Client
+assert ImageGenerationService is Service
+assert SwarmUIClient is Client
+try:
+    package.missing_export
+except AttributeError:
+    pass
+else:
+    raise AssertionError('Unknown exports must raise AttributeError')
+"""
+    result = subprocess.run(  # nosec B603 -- fixed interpreter and import-only script
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -10,7 +10,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import partial, wraps
-from typing import Any, Dict, Literal, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, TypeVar
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
@@ -21,7 +21,6 @@ from loguru import logger
 from textual.message import Message
 
 # Local imports
-from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
 from tldw_chatbook.Audio.streaming_sink import (
     SinkStarted,
     SinkUnderrun,
@@ -76,6 +75,9 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 )
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
 
 _T = TypeVar("_T")
 _TTS_ARTIFACT_WRITE_BATCH_BYTES = 64 * 1024
@@ -198,12 +200,15 @@ class TTSRequestEvent(Message):
 
 
 def _request_presentation(
-    presentation: SpeechPresentation | None,
+    presentation: "SpeechPresentation | None",
     lifecycle: "TTSPlaybackLifecycle | None",
-) -> SpeechPresentation | None:
+) -> "SpeechPresentation | None":
     """Keep optional observation attached to its exact existing request owner."""
-    if presentation is not None and not isinstance(presentation, SpeechPresentation):
-        raise ValueError("presentation must be SpeechPresentation or None")
+    if presentation is not None:
+        from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
+
+        if not isinstance(presentation, SpeechPresentation):
+            raise ValueError("presentation must be SpeechPresentation or None")
     if lifecycle is None:
         return presentation
     if presentation is not None and presentation is not lifecycle.presentation:
@@ -222,7 +227,7 @@ class TTSMessageSpeechRequestEvent(Message):
         expected_destination_fingerprint: str | None = None,
         retry_failed_auto: bool = False,
         playback_lifecycle: "TTSPlaybackLifecycle | None" = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         super().__init__()
         if type(snapshot) is not TTSMessageSpeechSnapshot:
@@ -297,7 +302,7 @@ class TTSCompleteEvent(Message):
         error: Optional[str] = None,
         global_override_token: str | None = None,
         playback_lifecycle: "TTSPlaybackLifecycle | None" = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ):
         super().__init__()
         if global_override_token is not None and not (
@@ -316,6 +321,8 @@ class TTSCompleteEvent(Message):
             raise ValueError("playback_lifecycle must match message_id")
         self.playback_lifecycle = playback_lifecycle
         self.presentation = _request_presentation(presentation, playback_lifecycle)
+
+
 
 
 PlaybackLifecycleState = Literal["playing", "stopped", "failed"]
@@ -341,7 +348,7 @@ class TTSPlaybackLifecycle:
         request_id: int,
         validator: Callable[[], bool],
         callback: Callable[[PlaybackLifecycleState], None],
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         if type(message_id) is not str or not message_id:
             raise ValueError("message_id must be a non-empty string")
@@ -447,7 +454,7 @@ class TTSPlaybackEvent(Message):
         *,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
         outcome_callback: Callable[[bool], None] | None = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ):
         super().__init__()
         if playback_lifecycle is not None and (
@@ -1028,7 +1035,7 @@ class TTSEventHandler:
         character_ref: CharacterRef | None,
         expected_destination_fingerprint: str,
         validator: Callable[[], bool],
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> bool:
         """Speak app-owned preview or Buddy text through existing TTS authority.
 
@@ -1108,7 +1115,7 @@ class TTSEventHandler:
         *,
         on_finished: Callable[[bool], None],
         quiet: bool = False,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
         validator: Callable[[], bool] | None = None,
     ) -> None:
         """Speak one cooldown-free hands-free-loop utterance.
@@ -1752,7 +1759,7 @@ class TTSEventHandler:
         expected_destination_fingerprint: str | None = None,
         retry_failed_auto: bool = False,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Apply cooldown only after validation and character resolution."""
         current_time = asyncio.get_event_loop().time()
@@ -1891,7 +1898,7 @@ class TTSEventHandler:
         expected_destination_fingerprint: str | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
         cancellation_is_success: Callable[[], bool] | None = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Generate TTS audio (rate limiting handled by TTSService)"""
         try:
@@ -1923,7 +1930,7 @@ class TTSEventHandler:
         quiet: bool = False,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
         cancellation_is_success: Callable[[], bool] | None = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Generate one complete resolved TTS response and publish its artifact.
 
@@ -2681,7 +2688,7 @@ class TTSEventHandler:
         exact_request: TTSRequest | None = None,
         on_finished: Callable[[bool], None] | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> str | None:
         """Play one utterance live, one sentence-sized piece at a time.
 
@@ -2987,7 +2994,7 @@ class TTSEventHandler:
         fallback_on_failure: bool = False,
         on_finished: Callable[[bool], None] | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> str | None:
         """Play one response live through the streaming PCM sink.
 
@@ -3320,7 +3327,7 @@ class TTSEventHandler:
         on_finished: Callable[[bool], None],
         *,
         speed: float = 1.0,
-        presentation: SpeechPresentation | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Play one just-written legacy artifact for a cooldown-free utterance.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from textual import on
 from textual.app import ComposeResult
@@ -10,13 +11,11 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
-from ...Character_Chat.portrait_compositing import ComponentRole
-from ...Character_Chat.portrait_performance import (
-    FRAME_ROLES,
-    PortraitPerformanceRecord,
-)
-from ...Character_Chat.portrait_performance_authoring import PortraitPerformanceDraft
-from ..Console.character_expression_avatar import CharacterExpressionAvatar
+if TYPE_CHECKING:
+    from ...Character_Chat.portrait_compositing import ComponentRole
+    from ...Character_Chat.portrait_performance_authoring import (
+        PortraitPerformanceDraft,
+    )
 
 
 class CharacterPerformanceRequested(Message):
@@ -43,7 +42,7 @@ class PortraitPerformanceEditor(Vertical):
     BUNDLED_CSS = """
     PortraitPerformanceEditor { height: $ds-height-auto; width: $ds-width-fill; }
     PortraitPerformanceEditor .portrait-review-row { height: $ds-height-auto; width: $ds-width-fill; }
-    PortraitPerformanceEditor Button { width: $ds-width-auto; margin-right: $ds-space-1; }
+    PortraitPerformanceEditor Button.portrait-review-action { width: $ds-width-auto; margin-right: $ds-space-1; }
     PortraitPerformanceEditor .portrait-review-images { height: $ds-height-auto; width: $ds-width-fill; }
     PortraitPerformanceEditor .portrait-review-image { width: $ds-portrait-review-cols; height: $ds-portrait-review-lines; margin-right: $ds-space-2; }
     PortraitPerformanceEditor .portrait-review-copy { height: $ds-height-auto; color: $ds-text-muted; }
@@ -62,6 +61,8 @@ class PortraitPerformanceEditor(Vertical):
         self.compositing_available = False
 
     def compose(self) -> ComposeResult:
+        from ...Character_Chat.portrait_performance import FRAME_ROLES
+
         with Collapsible(title="Living portrait", collapsed=True):
             yield Static(
                 "Six matching stills: rest, small/open mouth and their blink variants. "
@@ -76,6 +77,7 @@ class PortraitPerformanceEditor(Vertical):
             )
             yield Button(
                 "Prepare saved artwork",
+                classes="portrait-review-action",
                 id="portrait-performance-prepare",
                 disabled=True,
             )
@@ -85,7 +87,10 @@ class PortraitPerformanceEditor(Vertical):
                 markup=False,
             )
             yield Button(
-                "Edit regions…", id="portrait-performance-regions", disabled=True
+                "Edit regions…",
+                classes="portrait-review-action",
+                id="portrait-performance-regions",
+                disabled=True,
             )
             yield Static("", id="portrait-performance-slots", markup=False)
             with Horizontal(classes="portrait-review-row"):
@@ -96,10 +101,16 @@ class PortraitPerformanceEditor(Vertical):
                     id="portrait-performance-role",
                 )
                 yield Button(
-                    "Import / replace…", id="portrait-performance-import", disabled=True
+                    "Import / replace…",
+                    classes="portrait-review-action",
+                    id="portrait-performance-import",
+                    disabled=True,
                 )
                 yield Button(
-                    "Clear slot", id="portrait-performance-clear", disabled=True
+                    "Clear slot",
+                    classes="portrait-review-action",
+                    id="portrait-performance-clear",
+                    disabled=True,
                 )
             with Horizontal(classes="portrait-review-images"):
                 with Vertical(classes="portrait-review-image"):
@@ -120,17 +131,29 @@ class PortraitPerformanceEditor(Vertical):
                 id="portrait-performance-preview-mode",
             )
             yield Button(
-                "Review pairs…", id="portrait-performance-review", disabled=True
+                "Review pairs…",
+                classes="portrait-review-action",
+                id="portrait-performance-review",
+                disabled=True,
             )
             with Horizontal(classes="portrait-review-row"):
                 yield Button(
-                    "Apply performance", id="portrait-performance-apply", disabled=True
+                    "Apply performance",
+                    classes="portrait-review-action",
+                    id="portrait-performance-apply",
+                    disabled=True,
                 )
                 yield Button(
-                    "Remove applied", id="portrait-performance-remove", disabled=True
+                    "Remove applied",
+                    classes="portrait-review-action",
+                    id="portrait-performance-remove",
+                    disabled=True,
                 )
                 yield Button(
-                    "Cancel draft", id="portrait-performance-cancel", disabled=True
+                    "Cancel draft",
+                    classes="portrait-review-action",
+                    id="portrait-performance-cancel",
+                    disabled=True,
                 )
             yield Select(
                 [
@@ -145,16 +168,19 @@ class PortraitPerformanceEditor(Vertical):
             with Horizontal(classes="portrait-review-row"):
                 yield Button(
                     "Generate components (3)…",
+                    classes="portrait-review-action",
                     id="portrait-performance-generate",
                     disabled=True,
                 )
                 yield Button(
                     "Retry component (1)…",
+                    classes="portrait-review-action",
                     id="portrait-performance-regenerate",
                     disabled=True,
                 )
                 yield Button(
                     "Play speech sample…",
+                    classes="portrait-review-action",
                     id="portrait-performance-sample",
                     disabled=True,
                 )
@@ -259,6 +285,12 @@ class PortraitPerformanceEditor(Vertical):
         read_speech: Callable | None = None,
     ) -> None:
         """Compare source and staged artwork with the Console's fitted renderer."""
+        from ...Character_Chat.portrait_performance import (
+            FRAME_ROLES,
+            PortraitPerformanceRecord,
+        )
+        from ..Console.character_expression_avatar import CharacterExpressionAvatar
+
         self._draft = draft
         self._epoch += 1
         epoch = self._epoch

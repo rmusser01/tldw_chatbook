@@ -1,0 +1,92 @@
+[
+  {
+    "path": "Tests/Audio/test_streaming_sink_presentation.py",
+    "current_diagnostics": 0,
+    "baseline_diagnostics": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Backup_Recovery/test_response_rules_restore.py",
+    "current_diagnostics": 0,
+    "baseline_diagnostics": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_app_import_weight.py",
+    "current_diagnostics": 0,
+    "baseline_diagnostics": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Audio/streaming_sink.py",
+    "current_diagnostics": 18,
+    "baseline_diagnostics": 18,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+    "current_diagnostics": 2,
+    "baseline_diagnostics": 2,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+    "current_diagnostics": 59,
+    "baseline_diagnostics": 59,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Media_Creation/__init__.py",
+    "current_diagnostics": 1,
+    "baseline_diagnostics": 2,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/character.py",
+    "current_diagnostics": 5,
+    "baseline_diagnostics": 5,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/hands_free.py",
+    "current_diagnostics": 32,
+    "baseline_diagnostics": 32,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/message.py",
+    "current_diagnostics": 38,
+    "baseline_diagnostics": 38,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+    "current_diagnostics": 214,
+    "baseline_diagnostics": 214,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/portrait_radio.py",
+    "current_diagnostics": 0,
+    "baseline_diagnostics": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py",
+    "current_diagnostics": 0,
+    "baseline_diagnostics": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_performance_editor.py",
+    "current_diagnostics": 0,
+    "baseline_diagnostics": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py",
+    "current_diagnostics": 0,
+    "baseline_diagnostics": 0,
+    "added": []
+  }
+]

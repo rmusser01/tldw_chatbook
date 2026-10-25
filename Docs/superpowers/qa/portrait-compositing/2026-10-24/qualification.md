@@ -137,3 +137,16 @@ failed-node comparison against unmodified dev and the unchanged zero-request liv
 inventory. See [the integration review](../../../reviews/2026-10-24-portrait-compositing-dev-rebase.md)
 for the baseline UI/Actor Pack failures and initial native-child timeout. TASK-36555
 AC5 remains open; this does not add live-provider/TTS/hardware or full-suite evidence.
+
+
+## PR #3244 CI corrections
+
+See the [CI follow-up review](../../../reviews/2026-10-24-portrait-compositing-ci-follow-up.md)
+and [fresh evidence](ci-follow-up/) for unchanged boot/CSS guards, exact historical
+restricted restore, public lazy exports and installed wheels matching all 52 changed
+production files. Initial intermittent geometry/visibility failures and failures
+reproduced on dev remain recorded. Earlier rebase counts describe earlier source.
+
+Fresh inventory remains SwarmUI-only, unsupported by the reference-image route:
+zero requests, no fallback, `live_qualified=false`. TASK-36555 AC5 remains unchecked.
+No full suite or new live provider/TTS/hardware qualification is claimed.

@@ -112,11 +112,6 @@ import inspect
 import os
 import uuid
 
-from tldw_chatbook.Audio.speech_presentation import (
-    SpeechPresentation,
-    SpeechPresentationOwner,
-)
-
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.widgets import Button
@@ -178,6 +173,8 @@ from ...Widgets.Console import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
+
     from ..Screens.chat_screen import ChatScreen
     from ...Chat.console_message_delete import ConsoleDeleteScope
     from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
@@ -1264,6 +1261,11 @@ class ConsoleMessageController:
             and ref.character_id.isdecimal()
             else None
         )
+        from tldw_chatbook.Audio.speech_presentation import (
+            SpeechPresentation,
+            SpeechPresentationOwner,
+        )
+
         presentation = SpeechPresentation(
             SpeechPresentationOwner(
                 buddy_owner,

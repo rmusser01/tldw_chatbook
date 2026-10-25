@@ -410,12 +410,12 @@ async def test_missing_native_finish_acknowledgement_has_bounded_pump_failure(
 def test_observer_analysis_failure_cannot_change_audio_or_completion(
     device_case, monkeypatch
 ):
-    import tldw_chatbook.Audio.streaming_sink as module
+    from tldw_chatbook.Audio.speech_presentation import PcmEnvelope
 
     def broken_analysis(*args):
         raise RuntimeError("observer analysis failed")
 
-    monkeypatch.setattr(module.PcmEnvelope, "push", broken_analysis)
+    monkeypatch.setattr(PcmEnvelope, "push", broken_analysis)
     sink, stream, _events, speech, clock = device_case(observed=True)
     pcm = struct.pack(f"<{FRAMES}h", *([16384] * FRAMES))
     assert sink.feed(pcm)
@@ -597,14 +597,14 @@ def test_stop_fences_an_inflight_pose_even_when_clock_timestamp_is_equal(
 def test_notification_and_explicit_mapping_checks_cannot_analyze_pcm_concurrently(
     device_case, monkeypatch
 ):
-    import tldw_chatbook.Audio.streaming_sink as module
+    from tldw_chatbook.Audio.speech_presentation import PcmEnvelope
 
     sink, _stream, _events, _speech, _clock = device_case(observed=True)
     entered = threading.Event()
     release = threading.Event()
     collision = threading.Event()
     analyzing = threading.Lock()
-    original_push = module.PcmEnvelope.push
+    original_push = PcmEnvelope.push
 
     def held_push(envelope, pcm):
         if not analyzing.acquire(blocking=False):
@@ -617,7 +617,7 @@ def test_notification_and_explicit_mapping_checks_cannot_analyze_pcm_concurrentl
         finally:
             analyzing.release()
 
-    monkeypatch.setattr(module.PcmEnvelope, "push", held_push)
+    monkeypatch.setattr(PcmEnvelope, "push", held_push)
     assert sink.feed(struct.pack("<24000h", *([8192] * 24000)))
     assert entered.wait(timeout=2)
     caller = threading.Thread(target=sink._publish_presentation)

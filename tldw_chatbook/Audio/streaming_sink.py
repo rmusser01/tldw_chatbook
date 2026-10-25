@@ -112,19 +112,19 @@ from collections import deque
 from dataclasses import dataclass, replace
 from importlib.util import find_spec
 from itertools import count
-from typing import Any, AsyncIterator, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optional
 
 from loguru import logger
 
-from tldw_chatbook.Audio.speech_presentation import (
-    EnvelopeWindow,
-    MouthPose,
-    PcmEnvelope,
-    SpeechEnvelopeFilter,
-    SpeechPresentation,
-    SpeechPresentationSnapshot,
-    TransportState,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import (
+        EnvelopeWindow,
+        MouthPose,
+        SpeechPresentation,
+        SpeechPresentationSnapshot,
+        TransportState,
+    )
+
 from tldw_chatbook.Utils import optional_deps
 
 #: Sentinel pushed onto a sink's notify queue to tell its notify thread to
@@ -344,6 +344,11 @@ class _SpeechOutputObserver:
         block_ms: int,
         clock: Callable[[], float],
     ) -> None:
+        from tldw_chatbook.Audio.speech_presentation import (
+            PcmEnvelope,
+            SpeechEnvelopeFilter,
+        )
+
         self.speech = speech
         self.rate = rate
         self.frame_bytes = channels * 2
@@ -536,6 +541,8 @@ class _SpeechOutputObserver:
     def _snapshot(
         self, now: float, pose: _TimedSpeechPose | None = None
     ) -> SpeechPresentationSnapshot:
+        from tldw_chatbook.Audio.speech_presentation import SpeechPresentationSnapshot
+
         return SpeechPresentationSnapshot(
             self.speech.owner,
             self.generation,

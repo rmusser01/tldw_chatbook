@@ -47,7 +47,6 @@ from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import (
     _read_avatar_image_bytes,
     _render_all_character_editor_thumbnails,
 )
-from ..Persona_Modules.portrait_performance import PortraitPerformanceController
 from ...Widgets.Persona_Widgets.portrait_performance_editor import CharacterPerformanceRequested
 from ...Character_Chat.Character_Chat_Lib import (
     CharacterCardImportOutcome,
@@ -395,6 +394,7 @@ if TYPE_CHECKING:
         RoleplayCharacterConversationLink,
         RoleplayDraftSnapshot,
     )
+    from ..Persona_Modules.portrait_performance import PortraitPerformanceController
 
 
 def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
@@ -11034,6 +11034,10 @@ class PersonasScreen(BaseAppScreen):
     def _portrait_performance(self) -> PortraitPerformanceController:
         controller = getattr(self, "_portrait_performance_controller", None)
         if controller is None:
+            from ..Persona_Modules.portrait_performance import (
+                PortraitPerformanceController,
+            )
+
             controller = self._portrait_performance_controller = (
                 PortraitPerformanceController(self, _drain_to_thread)
             )

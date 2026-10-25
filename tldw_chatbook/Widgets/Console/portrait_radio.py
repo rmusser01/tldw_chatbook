@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Static
 
-from ...Audio.speech_presentation import SpeechPresentationSnapshot
-from ...Chat.portrait_performance_state import (
-    portrait_radio_level,
-    portrait_radio_status,
-)
+if TYPE_CHECKING:
+    from ...Audio.speech_presentation import SpeechPresentationSnapshot
 
 
 class PortraitRadio(Vertical):
@@ -21,7 +19,7 @@ class PortraitRadio(Vertical):
 
     BUNDLED_CSS = """
     PortraitRadio { height: $ds-height-auto; width: $ds-width-full; min-width: $ds-size-0; }
-    PortraitRadio Static { height: $ds-control-height-compact; width: $ds-width-full; text-wrap: nowrap; text-overflow: ellipsis; }
+    PortraitRadio Static.portrait-radio-line { height: $ds-control-height-compact; width: $ds-width-full; text-wrap: nowrap; text-overflow: ellipsis; }
     #console-character-voice-status { color: $ds-text-muted; }
     #console-character-voice-status.voice-failed { color: $ds-status-error-readable; }
     #console-character-voice-meter { color: $ds-status-running; }
@@ -34,12 +32,17 @@ class PortraitRadio(Vertical):
         self._projection: tuple | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("Ready", id="console-character-voice-status", markup=False)
+        yield Static(
+            "Ready",
+            id="console-character-voice-status",
+            markup=False,
+            classes="portrait-radio-line",
+        )
         yield Static(
             "",
             id="console-character-voice-meter",
             markup=False,
-            classes="voice-suppressed",
+            classes="voice-suppressed portrait-radio-line",
         )
 
     def set_compact(self, compact: bool) -> None:
@@ -54,8 +57,17 @@ class PortraitRadio(Vertical):
         """Change text and visibility only; every ordinary row keeps its geometry."""
         if not self.is_mounted:
             return
-        label = portrait_radio_status(snapshot)
-        level = portrait_radio_level(snapshot, now=time.monotonic()) if motion else None
+        label, level = "Ready", None
+        if snapshot is not None:
+            from ...Chat.portrait_performance_state import (
+                portrait_radio_level,
+                portrait_radio_status,
+            )
+
+            label = portrait_radio_status(snapshot)
+            level = (
+                portrait_radio_level(snapshot, now=time.monotonic()) if motion else None
+            )
         status = self.query_one("#console-character-voice-status", Static)
         meter = self.query_one("#console-character-voice-meter", Static)
         cells = max(1, self.content_size.width)

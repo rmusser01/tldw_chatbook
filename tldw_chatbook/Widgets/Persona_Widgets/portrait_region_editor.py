@@ -142,7 +142,7 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
     BINDINGS: ClassVar = [("escape", "cancel", "Cancel")]
     BUNDLED_CSS = """
     PortraitRegionEditor { align: center middle; }
-    PortraitRegionEditor > VerticalScroll {
+    PortraitRegionEditor > VerticalScroll.portrait-regions-dialog {
         width: $ds-inspector-modal-width; max-width: $ds-width-full;
         height: $ds-height-full; max-height: $ds-height-full;
         padding: $ds-space-inset $ds-space-section;
@@ -153,7 +153,7 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
     PortraitRegionEditor #portrait-regions-detail { height: $ds-height-auto; width: $ds-width-full; }
     PortraitRegionEditor .region-fields { height: $ds-height-auto; width: $ds-width-full; }
     PortraitRegionEditor .region-field { width: $ds-width-fill; height: $ds-height-auto; }
-    PortraitRegionEditor .region-fields Input { width: $ds-width-full; }
+    PortraitRegionEditor Input.portrait-region-input { width: $ds-width-full; }
     PortraitRegionEditor .dialog-buttons { height: $ds-height-auto; }
     PortraitRegionEditor.region-compact .region-fields,
     PortraitRegionEditor.region-compact .dialog-buttons { layout: vertical; }
@@ -187,7 +187,7 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
         self._preview_epoch = 0
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with VerticalScroll(classes="portrait-regions-dialog"):
             yield Static("Portrait expression regions", classes="dialog-title")
             yield Static(
                 f"Prepared base: {self._width}×{self._height} pixels. Choose a region, then click two opposite corners or edit its coordinates. Image-left/right refer to the picture. Markers: L = left eye, R = right eye, M = mouth.",
@@ -216,7 +216,7 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
                         yield Input(
                             type="integer",
                             id=f"portrait-region-{key}",
-                            classes="form-input",
+                            classes="form-input portrait-region-input",
                         )
             yield Static(
                 "",

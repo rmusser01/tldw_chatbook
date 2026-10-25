@@ -18,10 +18,6 @@ from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 
 from ...Character_Chat.visual_identity import normalize_expression_key
-from ...Character_Chat.portrait_performance import (
-    PortraitPerformanceRecord,
-    source_from_resolution,
-)
 from ...Chat.character_expression_playback import (
     expression_image_size,
     expression_motion_enabled,
@@ -388,6 +384,11 @@ class ConsoleCharacterController:
         getter = getattr(db, "get_character_portrait_performance", None)
         if not callable(getter):
             return None, "performance=absent"
+        from ...Character_Chat.portrait_performance import (
+            PortraitPerformanceRecord,
+            source_from_resolution,
+        )
+
         source = source_from_resolution(resolution)
         record = getter(
             character_id=source.character_id, expression_key=source.expression_key

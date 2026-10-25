@@ -483,3 +483,21 @@ Reason: Preserve the approved storage, recovery, generation and speech contracts
 5. Retain integration evidence and review, update PR #3244, then push with an explicit lease against the previously published head. Keep the PR draft and TASK-36555 AC5 open; no live provider request or full-suite claim.
 
 Results are recorded in `Docs/superpowers/reviews/2026-10-24-portrait-compositing-dev-rebase.md` and the adjacent QA `rebase/` evidence.
+
+
+## PR #3244 CI follow-up
+
+Existing ADR-097/150/161/242/243 apply; no new ADR required. Reproduce hosted
+boot/CSS budget and historical restricted-restore failures, defer work until use,
+narrow the six CSS subjects without changing values, and extend only the installed
+portrait migration authority/catalog scopes. Keep negative controls in the pinned
+Console P0 selector. Review runtime callers, exports, rollback and fresh installed
+authoring/restore results before publishing.
+
+Completed evidence and limits: [CI follow-up review](../reviews/2026-10-24-portrait-compositing-ci-follow-up.md).
+Unchanged budgets pass locally; historical versions 80–83 retain all four exact
+lineages, cancellation/refusal roll back byte-for-byte, and fresh wheels match all
+52 changed production files. Initial intermittent UI/installed failures and exact
+dev baseline comparisons remain documented. New-head hosted checks remain separate
+from local verification. TASK-36555 AC5 stays open: SwarmUI only, zero live image
+requests, no fallback and `live_qualified=false`; no new live TTS/hardware evidence.

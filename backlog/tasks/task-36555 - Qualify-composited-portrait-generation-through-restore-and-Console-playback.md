@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/243-source-bound-portrait-compositing.md
 assignee:
 - '@codex'
-updated_date: 2026-10-24 22:58
+updated_date: 2026-10-25 00:13
 ---
 
 ## Description
@@ -51,6 +51,7 @@ Full-review correction:
 1. Add red opt-in probe tests that record a dispatched request and then raise KeyboardInterrupt/SystemExit. Assert safe evidence/report preservation, private temporary cleanup, propagation and no retries; include an incomplete manifest.
 2. Preserve safe artifacts/count uncertainty before temporary cleanup, write the availability report, then re-raise interruption. Keep private transport logs/credentials out of evidence and subprocess arguments.
 3. Run all probe controls, final affected/installed/restore checks and lint/format; review all three corrections, update plan/task evidence and commit. Keep unavailable live qualification AC5 open and status In Progress.
+PR #3244 CI follow-up: reproduce and fix unchanged boot/CSS budgets and restricted historical portrait migrations; run targeted regression and installed checks. Existing ADR-097/242/243 apply, no new ADR. Keep AC5 open and retain the live-provider qualification gap.
 <!-- SECTION:PLAN:END -->
 
 ## Final Summary
@@ -85,4 +86,5 @@ queued-cancellation race; no further defect found. See the corrections review an
 QA corrections/ evidence. ADR-243 applies. AC8 satisfied; AC5 remains open, zero live
 requests, current default/only enabled backend SwarmUI unsupported by reference path.
 PR #3244 rebased onto dev 2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4. Preserved Canvas v81→v82; portrait storage now v82→v83 and regions/provenance v83→v84, with exact recovery lineage and migration dispatch. Updated current-schema fixtures and theme-aware pair-review harness; rebuilt CSS and retained dev markup protection. Feature/integration gates include 89 migration/recovery, 122 core/export/packaging, 323 speech, 80 authoring, 53 Console/adjacent, 10 probe, 13 CSS/token and 15 prompt passes (3 prompt cases overlap core), plus successful fresh installed authoring/Console and original native F9 restore/edit journeys. Native restore originally timed out in its child; a diagnostic run and original uninstrumented isolated run passed with unchanged timeouts. Both successful wheels match all 50 changed production files and the Canvas/portrait/region SQL chain. All 51 failed nodes in broader selected legacy UI/Actor Pack runs reproduce on unmodified dev; no branch-only failed node. No added diagnostics versus exact legacy lint baselines. See Docs/superpowers/reviews/2026-10-24-portrait-compositing-dev-rebase.md and QA rebase/ evidence. Existing ADR-242/243 apply; no new ADR. AC5 remains unchecked and status In Progress: fresh inventory still SwarmUI only, reference path unsupported, zero image requests and live_qualified=false. No full suite or new live image/TTS/hardware qualification.
+PR #3244 CI follow-up: fixed unchanged boot/import/CSS budgets and restricted portrait-era restore migrations without relaxing admission. Final boot step 29 passed; exact failed Console P0 step 164 passed; final restore file 65 passed including versions 80–83 × four lineages × success/refusal/cancellation and scoped-authority negative controls in the pinned selector. Speech gate 308 passed, final overlapping speech/probe gate 83, radio/CSS/token 27, template/export 28, portrait migration/settings 20. Shared validation has 86 passes and 2 RAG schema-zero failures also reproduced on dev; broader template/settings has identical 27 failures/32 errors on branch and dev. Original isolated installed authoring passes in 41.16s and final native F9 restore/edit in 50.41s; both wheels match all 52 changed production files. Initial geometry shift and installed visibility timeout remain recorded with unconfirmed cause and unchanged timeouts. No added Ruff diagnostics versus exact legacy baseline; focused formatting and syntax pass. See Docs/superpowers/reviews/2026-10-24-portrait-compositing-ci-follow-up.md and QA ci-follow-up/. Existing ADR-097/150/161/242/243 apply; no new ADR. AC5 stays unchecked/In Progress: refreshed actual SwarmUI-only configuration, unsupported reference-image path, zero image requests, no fallback, live_qualified=false. No full suite or new live provider/TTS/hardware qualification.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

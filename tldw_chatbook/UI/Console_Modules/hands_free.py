@@ -124,10 +124,10 @@ from uuid import uuid4
 
 from loguru import logger
 
-from tldw_chatbook.Audio.speech_presentation import (
-    SpeechPresentation,
-    SpeechPresentationOwner,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import (
+        SpeechPresentation,
+    )
 
 # TASK-22504: `console_voice_input` (and its STT-stack closure) is loaded
 # on FIRST VOICE USE, not at module import -- this module rides the Chat
@@ -2117,6 +2117,11 @@ class ConsoleHandsFreeController:
                     and active.local_character_id() == character_id
                     and getattr(self.app_instance, "chachanotes_db", None) is scope
                 )
+
+            from tldw_chatbook.Audio.speech_presentation import (
+                SpeechPresentation,
+                SpeechPresentationOwner,
+            )
 
             presentation = SpeechPresentation(
                 SpeechPresentationOwner(
