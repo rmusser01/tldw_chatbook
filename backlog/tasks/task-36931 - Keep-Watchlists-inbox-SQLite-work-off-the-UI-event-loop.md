@@ -1,0 +1,48 @@
+---
+id: TASK-36931
+title: Keep Watchlists inbox SQLite work off the UI event loop
+status: To Do
+created_date: 2026-10-25 23:37
+labels:
+- textual-book
+- watchlists
+- notifications
+- performance
+priority: medium
+documentation:
+- Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Keep the application responsive while the Watchlists inbox reads or updates its local notification store, including when another SQLite writer is active.
+
+### Verified scope
+
+Verified on merged dev `7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05` after PR #3248. With the production mounted destination and an explicit private file-backed ClientNotificationsDB, a real competing writer held for 0.7 seconds made Mark read execute on the main thread for about 0.75 seconds and delayed a 10ms heartbeat by about 0.84 seconds. The ordinary control also persisted the read flag; it is a correctness control, not a storage-speed guarantee. A later merged-tree uncontended repeat measured a 1.31-second write and a 1.91-second heartbeat gap on the same UI thread. No fake slow DB result was injected; natural contention frequency and native terminal frames are unmeasured. Source also shows list and dismiss evaluated synchronously before _maybe_await.
+
+Affected source: tldw_chatbook/UI/Watchlists_Modules/notifications_inbox_controller.py:79-90,141,156-158; UI/Screens/watchlists_collections_screen.py:1209-1211,7940-8066.
+
+Book: Chapter 17 PDF335 (printed326), threaded work for synchronous blocking calls; Chapter 7 PDF145-146/158 (printed136-137/149), async handlers alone do not make blocking work safe.
+
+### Existing ownership and decisions
+
+TASK-33283 owns incremental panes and the original PERF-24 Schedules DB/automation-result Mark-all-read sites. Its original appendix names Notifications table recomposition but no inbox DB offload. TASK-15466 covers connection lifecycle, TASK-282 Home reads, TASK-21238 corrupt-store isolation, and TASK-19559/19870 worker-group/refresh ordering; retain those contracts.
+
+Related tasks: [TASK-33283](./task-33283%20-%20PERF-24-Watchlists-and-Schedules---incremental-panes-DB-off-the-event-loop.md), [TASK-15466](./task-15466%20-%20Port-the-held-connection-idiom-to-Library_Collections-RAG_Indexing-and-client_notifications.md), [TASK-282](./task-282%20-%20Home-dashboard-thread-and-cache-seam-queries.md), [TASK-21238](./task-21238%20-%20A%20corrupt%20notifications%20database%20can%20now%20fail%20unrelated%20Media%2C%20Research%20and%20Watchlists%20flows.md), [TASK-19559](./task-19559%20-%20exclusive%3DTrue%20without%20group%3D%20makes%20every%20worker%20on%20a%20node%20cancel%20its%20siblings.md), [TASK-19870](./task-19870%20-%20Mutation-workers-refresh-inline-instead-of-dispatching-into-the-loader-group.md), [TASK-36900](./task-36900%20-%20Keep-Watchlists-navigation-responsive-during-article-body-reads.md).
+
+ADR required: no.
+ADR paths: [ADR-011](../decisions/011-chatbook-workbench-ui-system.md), [ADR-033](../decisions/033-application-session-state-ownership.md), [ADR-042](../decisions/042-watchlists-reader-first-ia.md).
+Reason: Use existing controller/store boundaries and preserve policy gates plus file-backed and in-memory connection semantics; no new storage architecture or dependency is proposed.
+
+[Post-merge audit and reproducible evidence](../../Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md).
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 File-backed inbox list, mark-read and dismiss operations leave the UI loop responsive during controlled slow reads or competing SQLite writes.
+- [ ] #2 Ordinary mark-read and dismiss operations persist the intended notification state and refresh through the established inbox loader ownership.
+- [ ] #3 Existing policy refusals, corrupt/unavailable-store feedback and nonfatal worker behavior remain intact, without reporting a failed mutation as successful.
+- [ ] #4 Targeted coverage verifies file-backed responsiveness and compatible in-memory behavior without violating SQLite connection ownership or weakening lifecycle guards.
+<!-- AC:END -->

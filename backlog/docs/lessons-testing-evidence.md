@@ -22018,3 +22018,16 @@ CPU (`time.process_time()` around the call and its settle), not only the counter
 the fix targets. Put a cheap check in front of the expensive proof. Pin the
 refused path's cost structurally; here a test asserts that a refused sync
 composes the tray exactly once.
+
+## Normalize evidence report paths before matching them across platforms (post-PR #3248)
+
+During the 2026-10-25 Textual audit, the first standalone collector raised
+StopIteration although the Study parent and both actual child XML reports
+existed and independently showed one ordinary pass, one intended retention
+failure and zero errors. It serialized str(path.relative_to(base)) on Windows,
+then searched for study/result.xml with forward slashes. The collector error
+was not another product failure. Using relative_path.as_posix() selected the
+existing parent exactly once; the corrected packet was rerun with fresh private
+profiles. Normalize portable report paths before serializing or comparing them,
+and inspect the actual child reports when a collector disagrees with its inputs.
+Evidence: [post-merge audit](../../Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md).

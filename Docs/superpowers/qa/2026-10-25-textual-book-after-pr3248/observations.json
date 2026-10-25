@@ -1,0 +1,254 @@
+{
+  "study": {
+    "submit-ordinary.json": {
+      "transition": "ordinary",
+      "before": {
+        "attempt_id": "21",
+        "question": "Two plus two",
+        "status": "Question 1 of 1.",
+        "draft": "4",
+        "mode": "server",
+        "scope_generation": 1,
+        "selected_quiz": "Audit quiz",
+        "submit_enabled": true
+      },
+      "after": {
+        "attempt_id": null,
+        "question": "Attempt complete.",
+        "status": "Score: 1 / 1",
+        "draft": "",
+        "mode": "server",
+        "scope_generation": 1,
+        "selected_quiz": "Audit quiz",
+        "submit_enabled": false
+      },
+      "client_submissions": [
+        {
+          "attempt_id": 21,
+          "answers": {
+            "answers": [
+              {
+                "question_id": "11",
+                "user_answer": "4",
+                "hint_used": null,
+                "time_spent_ms": null
+              }
+            ]
+          }
+        }
+      ],
+      "server_complete": 1,
+      "server_cancelled": 0,
+      "local_records": [],
+      "notices": [],
+      "app_exception": "None"
+    },
+    "submit-runtime-local.json": {
+      "transition": "runtime-local",
+      "before": {
+        "attempt_id": "2d829b36-3ca2-4d3d-b062-69f61169f7ba",
+        "question": "Local current question",
+        "status": "Question 1 of 1.",
+        "draft": "local unsent answer",
+        "mode": "local",
+        "scope_generation": 2,
+        "selected_quiz": "Local current quiz",
+        "submit_enabled": true
+      },
+      "after": {
+        "attempt_id": null,
+        "question": "Attempt complete.",
+        "status": "Score: 1 / 1",
+        "draft": "",
+        "mode": "local",
+        "scope_generation": 2,
+        "selected_quiz": "Local current quiz",
+        "submit_enabled": false
+      },
+      "client_submissions": [
+        {
+          "attempt_id": 21,
+          "answers": {
+            "answers": [
+              {
+                "question_id": "11",
+                "user_answer": "4",
+                "hint_used": null,
+                "time_spent_ms": null
+              }
+            ]
+          }
+        }
+      ],
+      "server_complete": 1,
+      "server_cancelled": 0,
+      "local_records": [
+        {
+          "id": "2d829b36-3ca2-4d3d-b062-69f61169f7ba",
+          "completed_at": null,
+          "answers": []
+        }
+      ],
+      "notices": [],
+      "app_exception": "None"
+    }
+  },
+  "watchlists": {
+    "notification-contention-False.json": {
+      "contended": false,
+      "main_thread": 73496,
+      "calls": [
+        {
+          "thread": 73496,
+          "start": 354664.781,
+          "end": 354668.312
+        }
+      ],
+      "file_backed": true,
+      "db_path": "<audit-checkout>\\.test-tmp\\textual-after-3248-merged-rest-qualified\\watchlists\\pytest\\test_notification_write_conten0\\private-profile-process\\pytest\\test_notification_write_conten0\\audit-notifications.sqlite",
+      "max_heartbeat_gap": 4.264999999955762,
+      "write_seconds": 3.530999999959022,
+      "durably_read": true,
+      "holder_error": []
+    },
+    "notification-contention-True.json": {
+      "contended": true,
+      "main_thread": 72952,
+      "calls": [
+        {
+          "thread": 72952,
+          "start": 354767.671,
+          "end": 354768.39
+        }
+      ],
+      "file_backed": true,
+      "db_path": "<audit-checkout>\\.test-tmp\\textual-after-3248-merged-rest-qualified\\watchlists\\pytest\\test_notification_write_conten1\\private-profile-process\\pytest\\test_notification_write_conten0\\audit-notifications.sqlite",
+      "max_heartbeat_gap": 1.3130000000237487,
+      "write_seconds": 0.7190000000409782,
+      "durably_read": true,
+      "holder_error": []
+    },
+    "notifications-keyboard.json": {
+      "file_backed": true,
+      "db_path": "<audit-checkout>\\.test-tmp\\textual-after-3248-merged-rest-qualified\\watchlists\\pytest\\test_notifications_keyboard0\\private-profile-process\\pytest\\test_notifications_keyboard0\\audit-notifications.sqlite",
+      "production_modules": {
+        "ClientNotificationsDB": "<audit-checkout>\\tldw_chatbook\\Notifications\\client_notifications_db.py",
+        "NotificationsPane": "<audit-checkout>\\tldw_chatbook\\UI\\Watchlists_Modules\\notifications_pane.py"
+      },
+      "initial": {
+        "focus": "notifications-table",
+        "same_table": true,
+        "row": 0,
+        "selected": null,
+        "screen_selected": null
+      },
+      "after_first_down": {
+        "focus": "wl-region-items",
+        "same_table": false,
+        "row": 1,
+        "selected": "Audit C",
+        "screen_selected": "Audit C"
+      },
+      "after_second_down": {
+        "focus": "wl-region-items",
+        "same_table": false,
+        "row": 1,
+        "selected": "Audit C",
+        "screen_selected": "Audit C"
+      },
+      "after_refocus_down": {
+        "focus": "wl-region-items",
+        "same_table": false,
+        "row": 2,
+        "selected": "Audit B",
+        "screen_selected": "Audit B"
+      }
+    }
+  },
+  "personas": {
+    "held_service.json": {
+      "scenario": "held_service",
+      "book_id": 1,
+      "calls": [
+        {
+          "thread": 73432,
+          "at": 355109.64,
+          "book_id": 1,
+          "name": "Audit Lore-new"
+        }
+      ],
+      "main_thread": 56184,
+      "modules": {
+        "PersonasScreen": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\personas_screen.py",
+        "WorldBookManager": "<audit-checkout>\\tldw_chatbook\\Character_Chat\\world_book_manager.py",
+        "CharactersRAGDB": "<audit-checkout>\\tldw_chatbook\\DB\\ChaChaNotes_DB.py"
+      },
+      "submitted": "Audit Lore-new",
+      "rail_enabled": true,
+      "window": 0.6099999999860302,
+      "app_callback": true,
+      "screen_callback": false,
+      "rail_collapsed": false,
+      "finished": false,
+      "save_label": "Save settings",
+      "after_release_collapsed": true,
+      "persisted": "Audit Lore-new"
+    },
+    "ordinary.json": {
+      "scenario": "ordinary",
+      "book_id": 1,
+      "calls": [
+        {
+          "thread": 78516,
+          "at": 355061.828,
+          "book_id": 1,
+          "name": "Audit Lore-new"
+        }
+      ],
+      "main_thread": 85056,
+      "modules": {
+        "PersonasScreen": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\personas_screen.py",
+        "WorldBookManager": "<audit-checkout>\\tldw_chatbook\\Character_Chat\\world_book_manager.py",
+        "CharactersRAGDB": "<audit-checkout>\\tldw_chatbook\\DB\\ChaChaNotes_DB.py"
+      },
+      "submitted": "Audit Lore-new",
+      "rail_enabled": true,
+      "window": 0.5939999999827705,
+      "app_callback": true,
+      "screen_callback": true,
+      "rail_collapsed": true,
+      "finished": true,
+      "save_label": "Save settings",
+      "after_release_collapsed": true,
+      "persisted": "Audit Lore-new"
+    }
+  },
+  "research": {
+    "followup-held.json": {
+      "held": true,
+      "run_id": "755ccfce-18ad-48f9-be71-519b113ee9f1",
+      "events_while_pending": [
+        "Audit event"
+      ],
+      "independent_app_ticks": 13,
+      "answer_while_pending": "",
+      "events_after_release": [],
+      "answer_after_release": "Q: Why is that?\nStored evidence answer",
+      "asked": [
+        "Why is that?"
+      ]
+    },
+    "followup-ordinary.json": {
+      "held": false,
+      "run_id": "612a4085-1709-4f55-9c25-a67a497feed7",
+      "events_while_pending": [],
+      "independent_app_ticks": 16,
+      "answer_while_pending": "Q: Why is that?\nStored evidence answer",
+      "events_after_release": [],
+      "answer_after_release": "Q: Why is that?\nStored evidence answer",
+      "asked": [
+        "Why is that?"
+      ]
+    }
+  }
+}
