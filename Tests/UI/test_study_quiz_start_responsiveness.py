@@ -9,7 +9,16 @@ from textual.widgets import Button, Input, Static
 from textual.message import Message
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp, BUNDLED_STYLESHEET
-from tldw_chatbook.Study_Interop import QuizScopeService, ServerQuizService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Study_Interop import (
+    LocalQuizService,
+    QuizScopeService,
+    ServerQuizService,
+)
+from tldw_chatbook.UI.Screens.study_scope_models import (
+    StudyScopeContext,
+    StudyScopeType,
+)
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
 
@@ -307,4 +316,210 @@ async def test_start_completion_respects_replaced_quiz_panel(
             str(window.query_one("#quiz-attempt-question", Static).render())
             == "Two plus two"
         )
+        assert app._exception is None
+
+
+class ScopedClient(Client):
+    """Hold only the external Start call; keep production scope/backend services."""
+
+    def __init__(self):
+        super().__init__()
+        self.submissions = []
+
+    async def list_quizzes(self, **kwargs):
+        return [
+            {
+                "id": 1,
+                "name": "Global server quiz",
+                "total_questions": 1,
+                "workspace_id": None,
+            },
+            {
+                "id": 2,
+                "name": "Workspace B quiz",
+                "total_questions": 1,
+                "workspace_id": "B",
+            },
+        ]
+
+    async def list_quiz_questions(self, quiz_id, **kwargs):
+        question = dict(QUESTION)
+        if quiz_id == 2:
+            question.update(id=12, quiz_id=2, question_text="Workspace B question")
+        return [question]
+
+    async def start_quiz_attempt(self, quiz_id):
+        attempt = await super().start_quiz_attempt(quiz_id)
+        attempt["quiz_id"] = quiz_id
+        attempt["questions"] = await self.list_quiz_questions(quiz_id)
+        return attempt
+
+    async def submit_quiz_attempt(self, attempt_id, payload):
+        self.submissions.append(attempt_id)
+        return {"id": attempt_id, "quiz_id": 1, "score": 1, "total_possible": 1}
+
+
+async def change_start_context(app, pilot, screen, window, transition):
+    """Use the production scope/runtime observer while leaving Start pending."""
+    held = set(app.workers)
+
+    async def drain_new():
+        await pilot.pause()
+        for worker in list(app.workers):
+            if worker not in held:
+                await worker.wait()
+        await pilot.pause()
+
+    if transition == "workspace-B":
+        await screen._apply_scope_context_and_refresh(
+            StudyScopeContext(
+                scope_type=StudyScopeType.WORKSPACE,
+                workspace_id="B",
+                workspace_name="Workspace B",
+            ),
+            study_window=window,
+        )
+        await drain_new()
+    else:
+        app.instance.current_runtime_backend = "local"
+        await screen.handle_runtime_backend_changed("local")
+        await drain_new()
+        if transition == "runtime-away-back":
+            app.instance.current_runtime_backend = "server"
+            await screen.handle_runtime_backend_changed("server")
+            await drain_new()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["shell", "inner"])
+@pytest.mark.parametrize(
+    "transition", ["runtime-local", "workspace-B", "runtime-away-back"]
+)
+@private_profile_test
+async def test_start_completion_cannot_adopt_a_reset_context(
+    request, entry, transition
+):
+    client = ScopedClient()
+    db = CharactersRAGDB(db_path=":memory:", client_id="task-36899")
+    local_quiz_id = db.create_quiz(name="Local only quiz")
+    db.create_question(
+        quiz_id=local_quiz_id,
+        question_type="fill_blank",
+        question_text="Local question",
+        correct_answer="4",
+    )
+    app = Host(client)
+    app.instance.study_quiz_scope_service = QuizScopeService(
+        local_service=LocalQuizService(db),
+        server_service=ServerQuizService(client),
+    )
+    try:
+        async with app.run_test(size=(180, 80)) as pilot, release_on_exit(client):
+            screen, window = await open_quizzes(app, pilot)
+            answer = window.query_one("#quiz-answer-input", Input)
+            start_button(screen, entry).press()
+            await asyncio.wait_for(client.entered.wait(), 5)
+            await change_start_context(app, pilot, screen, window, transition)
+            assert answer.is_attached
+            controller = window.quizzes_controller
+            assert controller.current_attempt_id is None
+            expected_label = (
+                "Workspace B quiz"
+                if transition == "workspace-B"
+                else (
+                    "Local only quiz"
+                    if transition == "runtime-local"
+                    else "Global server quiz"
+                )
+            )
+            assert controller.selected_quiz_label() == expected_label
+            answer.value = "new-context draft"
+            await pilot.pause()
+            status = str(window.query_one("#quiz-attempt-status", Static).render())
+            question = str(window.query_one("#quiz-attempt-question", Static).render())
+            client.release.set()
+            await settle(app, pilot)
+            assert controller.current_attempt_id is None
+            assert answer.value == "new-context draft"
+            assert (
+                str(window.query_one("#quiz-attempt-status", Static).render()) == status
+            )
+            assert (
+                str(window.query_one("#quiz-attempt-question", Static).render())
+                == question
+            )
+            submit = window.query_one("#submit-quiz-answer-button", Button)
+            assert submit.disabled
+            submit.press()
+            await settle(app, pilot)
+            assert db.list_attempts(quiz_id=local_quiz_id) == {"items": [], "count": 0}
+            assert client.submissions == []
+            assert any("21" in notice and "context" in notice for notice in app.notices)
+            # The settled old admission must not strand the new context.
+            start = start_button(screen, entry)
+            assert not start.disabled
+            start.press()
+            await settle(app, pilot)
+            assert controller.current_attempt_id is not None
+            assert str(window.query_one("#quiz-attempt-question", Static).render()) == (
+                "Local question"
+                if transition == "runtime-local"
+                else (
+                    "Workspace B question"
+                    if transition == "workspace-B"
+                    else "Two plus two"
+                )
+            )
+            answer.value = "4"
+            await pilot.pause()
+            submit.press()
+            await settle(app, pilot)
+            assert (
+                str(window.query_one("#quiz-attempt-status", Static).render())
+                == "Score: 1 / 1"
+            )
+            if transition == "runtime-local":
+                attempts = db.list_attempts(quiz_id=local_quiz_id)["items"]
+                assert len(attempts) == 1 and attempts[0]["score"] == 1
+                assert client.submissions == []
+            else:
+                assert client.submissions == [21]
+            assert app._exception is None
+    finally:
+        client.release.set()
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["runtime-local", "runtime-away-back"])
+@private_profile_test
+async def test_failed_start_reports_the_previous_context_and_allows_retry(
+    request, transition
+):
+    client = ScopedClient()
+    client.fail_once = True
+    app = Host(client)
+    db = CharactersRAGDB(db_path=":memory:", client_id="task-36899-failure")
+    app.instance.study_quiz_scope_service = QuizScopeService(
+        local_service=LocalQuizService(db), server_service=ServerQuizService(client)
+    )
+    request.addfinalizer(db.close)
+    async with app.run_test(size=(180, 80)) as pilot, release_on_exit(client):
+        screen, window = await open_quizzes(app, pilot)
+        start_button(screen, "shell").press()
+        await asyncio.wait_for(client.entered.wait(), 5)
+        await change_start_context(app, pilot, screen, window, transition)
+        answer = window.query_one("#quiz-answer-input", Input)
+        answer.value = "new-context draft"
+        status = str(window.query_one("#quiz-attempt-status", Static).render())
+        client.release.set()
+        await settle(app, pilot)
+        assert answer.value == "new-context draft"
+        assert window.quizzes_controller.current_attempt_id is None
+        assert str(window.query_one("#quiz-attempt-status", Static).render()) == status
+        assert any("previous Study context" in notice for notice in app.notices)
+        if transition == "runtime-away-back":
+            start_button(screen, "shell").press()
+            await settle(app, pilot)
+            assert window.quizzes_controller.current_attempt_id == "21"
         assert app._exception is None

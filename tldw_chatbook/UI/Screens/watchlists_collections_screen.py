@@ -805,6 +805,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_retry_message: str | None = None
         self._items_retry_inflight = False
         self._items_snapshot_generation = 0
+        self._item_detail_generation = 0
         self._items_page_presentation_lock = asyncio.Lock()
         self._items_inflight_replacement: (
             tuple[tuple[Any, ...], asyncio.Future[bool]] | None
@@ -5318,6 +5319,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._focus_in_centre_header = False
 
     def watch_active_section(self) -> None:
+        self._item_detail_generation += 1
         # A tab switch always rebuilds the centre header and the section's own
         # pane (below): whatever `_focus_in_centre_header` was tracking about
         # the OLD DOM is moot the instant that DOM is torn down. Reset
@@ -5445,6 +5447,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.app.push_screen(OpmlImportDialog(), callback=self._on_opml_import_complete)
 
     def watch_runtime_backend(self) -> None:
+        self._item_detail_generation += 1
         # Backend identity is part of every Runs/detail publication. Advance
         # the monotonic owners even for an A -> B -> A transition, where a
         # plain backend-equality check would otherwise admit pre-B work.
@@ -9929,6 +9932,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         never served anything, exactly like `ArtifactsScreen.on_unmount`'s
         own guard around its worker cancellation.
         """
+        self._item_detail_generation += 1
         if self._feed_server.is_running:
             self._feed_server.stop()
         # No super().on_unmount(): the dispatcher already invokes
@@ -12040,6 +12044,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         snapshot = self._items_snapshot
         if snapshot is None or index < 0 or index >= snapshot.page_count:
             return False
+        self._item_detail_generation += 1
         generation = self._items_snapshot_generation
         rows = self._published_page_rows(snapshot.page(index))
 
@@ -12078,6 +12083,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if inflight is not None:
             return await asyncio.shield(inflight)
 
+        self._item_detail_generation += 1
         completion = asyncio.get_running_loop().create_future()
         self._items_inflight_continuation = completion
         generation = self._items_snapshot_generation
@@ -12176,118 +12182,97 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(ItemSelected)
     async def handle_item_selected(self, event: ItemSelected) -> None:
+        """Admit detail work without occupying the screen's message queue."""
         event.stop()
         if self.runtime_backend != "local":
             return
-        async with self._items_page_presentation_lock:
-            snapshot = self._items_snapshot
-            selection_generation = self._items_snapshot_generation
-            selection_page_key = (
-                snapshot.query.context_key if snapshot is not None else None
+        self._item_detail_generation += 1
+        selection_generation = self._item_detail_generation
+        snapshot_generation = self._items_snapshot_generation
+        snapshot = self._items_snapshot
+        page_index = self._items_page_index
+        backend = self.runtime_backend
+        selection_page_key = (
+            snapshot.query.context_key if snapshot is not None else None
+        )
+
+        def current() -> bool:
+            # Cancellation cannot stop an already-running DB thread. Authority
+            # also retires on away/back transitions, even if identities match.
+            return (
+                self._dom_is_live
+                and self.active_section == "items"
+                and self.runtime_backend == backend
+                and self._item_detail_generation == selection_generation
+                and self._items_snapshot_generation == snapshot_generation
+                and self._items_snapshot is snapshot
+                and self._items_page_index == page_index
             )
-        # TASK-15464: fetch the DETAIL body BEFORE any of the selection
-        # writes below, not after. `ContentPane.item` is a `recompose=True`
-        # reactive, so merging `content` into `event.item` first means one
-        # recompose per selection with the body already in it, instead of
-        # an empty-bodied recompose immediately followed by a second one
-        # once a background fetch lands -- exactly the recompose-storm
-        # shape this whole audit exists to remove from this screen.
-        await self._load_item_content(event.item)
+
+        self.run_worker(
+            self._load_item_content(
+                event.item,
+                runtime_backend=backend,
+                selection_page_key=selection_page_key,
+                is_current=current,
+            ),
+            name="watchlists-item-detail",
+            exclusive=True,
+            group="wc_item_detail",
+        )
+
+    async def _load_item_content(
+        self,
+        item: dict[str, Any] | None,
+        *,
+        runtime_backend: str,
+        selection_page_key: tuple[Any, ...] | None,
+        is_current: Callable[[], bool],
+    ) -> None:
+        """Hydrate and publish one shared row while its selection still owns it.
+
+        TASK-15464 keeps bodies out of list projections and hydrates before
+        ONE ContentPane.item publication. Do not mutate that shared row or
+        report a failed read until the same authority check admits publication.
+        The presentation lock preserves TASK-22450's atomic page commits.
+        """
         async with self._items_page_presentation_lock:
-            current_snapshot = self._items_snapshot
-            current_page_key = (
-                current_snapshot.query.context_key
-                if current_snapshot is not None
-                else None
-            )
-            if (
-                selection_generation != self._items_snapshot_generation
-                or selection_page_key != current_page_key
-            ):
+            if not is_current():
                 return
-            self._select_entity(event.item)
-            # Route to the reader (Task 4), independent of `_select_entity`'s
-            # generic Inspector reconciliation above: Sources/Runs/Rules also
-            # flow through `_select_entity`, and none of those dicts carry
-            # `content_kind`/`content` -- pushing them into `ContentPane` would
-            # render `render_for`'s article-fallback over the WRONG entity's
-            # fields instead of leaving the reader showing the last real item.
-            # Held on the screen (`_selected_content_item`), not just pushed to
-            # the mounted pane, so `_build_content_pane` can re-seed a rebuilt
-            # `ContentPane` the same way `_build_inspector_pane` re-seeds
-            # `selected_entity` — see that seeding note above.
-            self._selected_content_item = event.item
+        fetched = None
+        failed = False
+        if item is not None and item.get("id") is not None:
+            try:
+                fetched = await self._controller.get_item_content(
+                    runtime_backend=runtime_backend,
+                    item_id=item["id"],
+                )
+            except Exception:
+                failed = True
+        async with self._items_page_presentation_lock:
+            if not is_current():
+                return
+            if failed:
+                logger.debug("Failed to load watchlist item content for the reader.")
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Failed to load this item's full content.",
+                        severity="error",
+                    )
+            elif item is not None and fetched is not None:
+                # Preserve row identity and any existing body on a detail miss.
+                item["content"] = fetched
+            self._select_entity(item)
+            self._selected_content_item = item
             self._selected_content_page_key = selection_page_key
             try:
                 content = self.query_one("#watchlists-content-pane", ContentPane)
-                content.item = event.item
+                content.item = item
                 content.position = self._reader_position_text()
             except NoMatches:
                 pass
-            self._mark_item_read_on_open(event.item)
-
-    async def _load_item_content(self, item: dict[str, Any] | None) -> None:
-        """Backfill `item["content"]` from the DETAIL fetch (TASK-15464).
-
-        `get_new_items`'s list-page projection no longer selects `content`
-        (up to 50 rows' worth of full scraped article/diff text, on every
-        Items-pane refresh, for a column no list row ever rendered -- the
-        audit's named cost), so a freshly loaded list row carries no
-        `content` key at all. This fetches it for exactly the item about to
-        be opened, mutating `item` IN PLACE so the one dict object already
-        shared by `ItemsPane.items`, `_selected_content_item`, and (about to
-        be) `ContentPane.item` all see the same body once this returns --
-        never a second, separate copy for the reader to drift from the list.
-
-        A miss (`get_item_content` returning `None`) leaves `item` untouched
-        rather than clearing an existing `content` key -- a caller that
-        built its own item dict directly, bypassing this screen's own query
-        entirely (every test that seeds `ItemsPane.items` with a synthetic
-        dict already carrying `content`, e.g.
-        `test_selecting_an_item_renders_it_in_the_content_region`), keeps
-        working unchanged.
-
-        `item is None` (nothing selected) is a silent no-op -- there is
-        nothing to report. An actual FETCH failure (the active backend does
-        not support single-item reads, the row no longer exists, a transient
-        DB error) never raises into the caller -- content is the reader's
-        body, not a status `handle_item_selected` is relying on this to
-        report, matching `content_pane.render_for`'s own "never take the app
-        down over a reader nicety" rule -- but it is not silent either: this
-        is a background `_load*` read (`test_watchlists_check_now_failure.
-        py`'s structural contract), and that exemption from the
-        user-initiated-action "log at warning" rule is paid for with a
-        toast, exactly like the sibling `_load_items`/`_load_run_detail`
-        immediately around it. Without one, a denied `items.detail` policy
-        or a database locked by a concurrent write would render
-        byte-identically to "this item just has no body" -- an empty reader
-        with nothing said.
-
-        Args:
-            item: The item about to be opened, or `None`. Mutated in place
-                when a fetch returns a real value.
-        """
-        if item is None:
-            return
-        item_id = item.get("id")
-        if item_id is None:
-            return
-        notify = getattr(self.app_instance, "notify", None)
-        try:
-            fetched = await self._controller.get_item_content(
-                runtime_backend=self.runtime_backend,
-                item_id=item_id,
-            )
-        except Exception:
-            logger.debug("Failed to load watchlist item content for the reader.")
-            if callable(notify):
-                notify(
-                    "Failed to load this item's full content.",
-                    severity="error",
-                )
-            return
-        if fetched is not None:
-            item["content"] = fetched
+            self._mark_item_read_on_open(item)
 
     def _reader_position_text(self) -> str:
         """The reader footer's "N of M" (TASK-3072 plan task 9).
@@ -13849,7 +13834,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         items = pane.displayed_items()
         if not items:
             return
-        current = self._selected_content_item
+        # Navigation follows the latest intent while its body is still loading.
+        current = pane.selected_item or self._selected_content_item
         current_id = current.get("id") if current else None
         index: int | None = None
         if current_id is not None:
@@ -14154,7 +14140,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         items = pane.displayed_items()
         if not items:
             return
-        current = self._selected_content_item
+        # Navigation follows the latest intent while its body is still loading.
+        current = pane.selected_item or self._selected_content_item
         current_id = current.get("id") if current else None
         start = -1
         if current_id is not None:

@@ -521,7 +521,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 
 # Final TASK-36695/36698 review adds four positive/pruning controls.
 # TASK-36728/36729 append twenty-two mounted cases; existing shard slots stay fixed.
-MINIMUM_FILES = 867
+# TASK-36899 adds eight context lifetime/error controls without moving existing slots.
+# TASK-36900 adds eighteen real Reader/DB lifetime and pending-keyboard controls.
+MINIMUM_FILES = 893
 
 
 def read_census(path: Path) -> list[str]:

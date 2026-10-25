@@ -21781,3 +21781,8 @@ with a direct handler call.
 ## Release held responses before leaving run_test (TASK-36729, 2026-10-25)
 
 The first quiz Start RED run stopped at the cross-entry duplicate assertion, but its held server response was released only by a finally outside `async with app.run_test()`. App teardown waited on the blocked screen handler before that outer finally could run. Four completed child results were valid; the batch was incomplete and was not counted. An inner async cleanup context now releases the response before the App context exits, including on assertion failure. The corrected unchanged-source batch finished with four expected failures and six passing controls. Put hold release inside the App context's exit order; an outer finally alone does not guarantee a mounted negative control can terminate.
+
+
+## Scroll before capturing Pilot coordinates, then let layout settle (PR #3248)
+
+CI's existing Library receipt-open test timed out waiting for its Reader. A mouse-only trace of the unchanged test captured all three mouse events at (48, 30), hitting LibraryIngestQueuePanel, while the live enabled receipt button occupied row 34; no Button.press fired. The immediate scroll/hit check had used pre-layout geometry. Wait across layout turns for a stable, live hit-tested region, then reacquire the button before Pilot captures its coordinates. Keep the real click and the original Reader/DB outcome assertions. A delegation-property wrapper in the initial diagnostic caused its own TypeError and was excluded; the valid mouse-only trace established the missed target.

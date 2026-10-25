@@ -24,6 +24,7 @@ class StudyQuizzesController:
         self.window = window
         self.app_instance = window.app_instance
         self._attempt_start_pending = False
+        self._scope_generation = 0
         self.current_attempt_id: Optional[str] = None
         self.current_attempt_questions: list[dict[str, Any]] = []
         self.current_attempt_answers: list[dict[str, Any]] = []
@@ -718,6 +719,10 @@ class StudyQuizzesController:
         self._set_attempt_status("Question created.")
         self._notify_shell_state_changed()
 
+    def _start_context_key(self) -> tuple[int, str, dict[str, Any]]:
+        """Capture context lifetime as well as the current service arguments."""
+        return self._scope_generation, self._current_mode(), self._scope_arguments()
+
     async def start_attempt(self) -> None:
         if self._attempt_start_pending:
             self._notify("A quiz attempt is already starting.")
@@ -743,23 +748,37 @@ class StudyQuizzesController:
         ):
             return
         answer_input = self.window.query_one("#quiz-answer-input", Input)
+        start_mode = self._current_mode()
+        start_scope = self._scope_arguments()
+        start_context = self._scope_generation, start_mode, start_scope
         self._attempt_start_pending = True
         try:
             try:
                 attempt = await service.start_attempt(
-                    mode=self._current_mode(),
-                    **self._scope_arguments(),
+                    mode=start_mode,
+                    **start_scope,
                     quiz_id=quiz_id,
                 )
             except Exception:
                 logger.opt(exception=True).error("Failed to start quiz attempt")
-                self._notify("Failed to start quiz attempt.", severity="error")
+                self._notify(
+                    "Failed to start quiz attempt."
+                    if start_context == self._start_context_key()
+                    else "Failed to start quiz attempt in the previous Study context.",
+                    severity="error",
+                )
                 return
 
             attempt_id = str(attempt.get("backing_id") or attempt.get("id") or "")
             if not answer_input.is_attached or self.window.current_view != "quizzes":
                 self._notify(
                     f"Quiz attempt {escape(attempt_id)} started after its panel closed.",
+                    severity="information",
+                )
+                return
+            if start_context != self._start_context_key():
+                self._notify(
+                    f"Quiz attempt {escape(attempt_id)} started in the previous Study context.",
                     severity="information",
                 )
                 return
@@ -935,6 +954,7 @@ class StudyQuizzesController:
 
     def handle_scope_changed(self) -> None:
         """Reset controller-local state before scoped study data reloads."""
+        self._scope_generation += 1
         self.reset_quiz_panel(
             self._scope_unavailable_message()
             if not self._scope_is_available()
