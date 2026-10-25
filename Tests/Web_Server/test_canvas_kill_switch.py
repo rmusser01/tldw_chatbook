@@ -41,7 +41,7 @@ async def test_disabled_served_child_starts_without_canvas_control_secret() -> N
 
 
 @pytest.mark.asyncio
-async def test_live_disable_revokes_served_broker_gateway_and_browser_bindings() -> (
+async def test_live_disable_revokes_canvas_gateway_but_retains_console_control() -> (
     None
 ):
     order: list[str] = []
@@ -64,15 +64,17 @@ async def test_live_disable_revokes_served_broker_gateway_and_browser_bindings()
 
     await serve.ChatbookWebServerMixin._disable_canvas_runtime(owner)
 
-    assert order == ["broker", "gateway"]
-    assert owner._canvas_control_broker is None
+    assert order == ["gateway"]
+    assert isinstance(owner._canvas_control_broker, Broker)
     assert owner._served_canvas_launches == {}
-    assert owner._served_browser_children == {}
+    assert owner._served_browser_children == {"browser": "child"}
     assert owner._canvas_disabled_latched is True
 
 
 @pytest.mark.asyncio
-async def test_policy_watcher_revokes_all_sibling_served_children() -> None:
+async def test_policy_watcher_revokes_sibling_previews_but_retains_runtime_control() -> (
+    None
+):
     enabled = [True]
     order: list[str] = []
 
@@ -102,11 +104,16 @@ async def test_policy_watcher_revokes_all_sibling_served_children() -> None:
     enabled[0] = False
     await task
 
-    assert order == ["all-child-controls", "all-browser-previews"]
-    assert owner._served_browser_children == {}
+    assert order == ["all-browser-previews"]
+    assert isinstance(owner._canvas_control_broker, Broker)
+    assert owner._served_browser_children == {
+        "browser-a": "child-a",
+        "browser-b": "child-b",
+    }
     assert owner._served_canvas_launches == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_create_server_passes_disabled_policy_to_served_owner(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

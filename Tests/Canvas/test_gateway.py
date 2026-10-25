@@ -2831,6 +2831,7 @@ async def test_bridge_expiry_handles_settle_on_completion_and_lifecycle(
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_runtime_owns_one_lazy_gateway_and_disposes_it() -> None:
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 

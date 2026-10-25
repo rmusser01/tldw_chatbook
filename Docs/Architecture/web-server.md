@@ -27,7 +27,7 @@ Token precedence: `TLDW_CHATBOOK_WEB_ACCESS_TOKEN` env → `[web_server].access_
 
 ## Canvas served mode (seam)
 
-The server composes the loopback canvas control broker (started on startup, revoked on shutdown), the `CanvasGateway` with the served-authority proxy (every failure becomes a typed unavailable error; 2 s broker timeouts), the process-pinned runtime profile snapshot, and the kill switch with a **restart latch** — disabling canvas mid-run stays off until restart, and a 0.25 s policy watcher revokes children. Internals: [canvas.md](./canvas.md).
+The server composes the loopback canvas control broker (started on startup, revoked on shutdown), the `CanvasGateway` with the served-authority proxy (every failure becomes a typed unavailable error; 2 s broker timeouts), the process-pinned runtime profile snapshot, and the kill switch with a **restart latch** — disabling canvas mid-run stays off until restart, and a 0.25 s policy watcher revokes Canvas previews/capabilities while retaining authenticated Console control and child bindings. Internals: [canvas.md](./canvas.md).
 
 ## Artifact share (dataflow)
 
@@ -69,3 +69,71 @@ run-store path; its idle shutdown releases the lease only after controller/fleet
 bounded teardown retains that lease until process exit when
 physical retirement cannot be proven. Shared canonical storage/routing cutover
 is subsequent work; this foundation does not yet change served attachments.
+
+## Independent served control and bounded projections (ADR-244, Task 2)
+
+The private loopback broker starts before children regardless of Canvas/mobile
+exposure. `issue_child` installs lifecycle-owned `ConsoleEventBuffer` state before
+returning spawn credentials; the authenticated connection reader continuously
+folds child projection frames into it with no browser-owned drain. Browser or
+mobile absence never prevents draining. The broker stays alive across Canvas
+disablement; gateway close, launch revocation and the restart latch still refuse
+all Canvas capabilities/routes. Real channel failure, malformed envelopes and
+revoked/replayed child credentials remain failures, with child disconnect visible
+to lifecycle supervision. No reconnect is manufactured.
+
+Private control protocol **3** is separate from HTTP `/api/v1/mobile` and browser
+`chatbook-v1`; private versions 1/2 refuse. The closed Console method envelopes are:
+
+| Method | Request payload | Response payload |
+| --- | --- | --- |
+| `console.snapshot` | `{"request": {...}}` | `{"snapshot": {...}}` |
+| `console.events` | `{"request": {...}}` | `{"batch": {...}}` |
+| `console.ticket` | `{"request": {...}}` | `{"ticket": {...}}` |
+| `console.command` | `{"request": {...}}` | `{"receipt": {...}}` |
+| `console.receipt` | `{"request": {...}}` | `{"receipt": {...}}` or `{"receipt": null}` |
+
+Every method uses `.request`/`.response` suffixes. Existing recursive frame,
+value/depth/collection limits apply; extra outer fields and wrong container types
+refuse. Later native adapters strictly validate the inner arguments. These methods
+currently refuse `authority_unavailable` without constructing an engine.
+`console.changed` is body-free `{sequence: int >= 0, reset_required?: bool}` metadata.
+Correlated responses resolve directly through the pending request map; projections
+never own command outcomes, receipts or native approval resolution.
+
+`ConsoleHostIdentity(server_epoch, console_id)` is frozen and extra-forbidden;
+a retained child keeps its ID, and replacement under the same server epoch gets
+a fresh ID. `ConsoleTarget` adds exact session/incarnation and optional
+turn/run/handle/round IDs. All non-null fields use `validate_opaque_identifier`
+plus path/whitespace rejection; UUID/hex and colon-separated native run forms
+remain valid. Spelling alone grants no authority: later adapters must resolve
+identities against the current native owner.
+
+The parent buffer retains at most 64 projections by default and one Event wake.
+Overflow and child-publisher loss set sticky reset state without closing control.
+Reads are non-consuming, expose a monotonic parent sequence and detect historical
+gaps even after an acknowledgement. Only a snapshot acknowledgement at the
+current parent sequence clears the sticky marker. This parent transport cursor is
+separate from native projection revision: a later snapshot adapter must register
+its parent cursor **before** native capture, replay events received during capture,
+and never acknowledge past that capture merely because transport advanced.
+
+The legacy mobile engine remains until its later cutover. Its relay observes
+lifecycle state using its own cursor, drops decision projections on loss and
+refuses stale/replacement-child decisions even while its observer is paused.
+Per-browser projection queues also cap at 64; overflow retains one reset and
+suppresses further projections for that subscription. The existing phone status
+line reports unavailable and clears/fences approval cards until page refresh
+obtains a new subscription/current native state. This affects projection traffic
+only; native execution, decisions and HTTP/control command responses retain their
+existing owners. The child publisher uses a bounded thread-safe deque, one
+coalesced loop wake and one async sender, with reset metadata on dropped history.
+
+Verification: `Tests/Web_Server/test_served_console_events.py` covers zero
+subscribers, overflow, current snapshot acknowledgement, independent wake readers,
+Canvas/mobile-disabled control, identity replacement, paused decision fencing,
+bounded browser subscriptions and real Chromium reset behavior. Existing broker,
+publisher, auth, Canvas kill-switch and mobile relay tests retain their native
+security assertions. The auth module and config-reading kill-switch node use the
+documented `bootstrap_profile` marker so guarded config keeps its admitted private
+source; test DB/session stores remain temporary.

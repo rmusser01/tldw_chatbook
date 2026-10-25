@@ -18,9 +18,9 @@ from tldw_chatbook.Canvas.control_protocol import (
 pytestmark = pytest.mark.loopback_network
 
 
-def test_v2_auth_codec_retains_snapshot_identity():
+def test_v3_auth_codec_retains_snapshot_identity():
     message = ControlMessage(
-        version=2,
+        version=CONTROL_PROTOCOL_VERSION,
         message_type="auth.request",
         request_id="auth-1",
         deadline_ms=None,
@@ -166,14 +166,14 @@ def test_codec_fails_closed_on_wrong_envelope_scalar_types(field, value, code) -
     [
         (
             (
-                b'{"version":2,"type":"health.request","request_id":"request-1",'
+                b'{"version":3,"type":"health.request","request_id":"request-1",'
                 b'"deadline_ms":' + (b"9" * 5000) + b',"payload":{}}'
             ),
             "invalid_json",
         ),
         (
             (
-                b'{"version":2,"type":"bridge.request","request_id":"request-1",'
+                b'{"version":3,"type":"bridge.request","request_id":"request-1",'
                 b'"deadline_ms":null,"payload":{"request":'
                 + (b"[" * 2000)
                 + b"null"
@@ -959,5 +959,56 @@ def test_revoked_channel_reports_disconnect_and_rejects_lost_events() -> None:
             )
         await client.aclose()
         await broker.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_private_v3_refuses_legacy_envelopes(version):
+    with pytest.raises(ControlProtocolError, match="unsupported_version"):
+        ControlMessage(version, "health.request", "request-a", None, {})
+
+
+@pytest.mark.parametrize(
+    "method, response_field",
+    [
+        ("snapshot", "snapshot"),
+        ("events", "batch"),
+        ("ticket", "ticket"),
+        ("command", "receipt"),
+        ("receipt", "receipt"),
+    ],
+)
+def test_console_private_method_envelopes_are_bounded_closed_and_refuse_unsupported(
+    method, response_field
+):
+    request_type = f"console.{method}.request"
+    response_type = f"console.{method}.response"
+    request = _message(request_type, {"request": {}})
+    assert decode_control_frame(encode_control_frame(request)[4:]) == request
+    response = _message(response_type, {response_field: {}})
+    assert decode_control_frame(encode_control_frame(response)[4:]) == response
+    with pytest.raises(ControlProtocolError, match="unknown_payload_field"):
+        _message(request_type, {"request": {}, "path": "/private/profile"})
+    with pytest.raises(ControlProtocolError, match="invalid_payload_field"):
+        _message(request_type, {"request": []})
+
+    async def scenario():
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        client = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
+        try:
+            await client.start()
+            with pytest.raises(ControlProtocolError, match="authority_unavailable"):
+                await broker.request(
+                    "child-a", request_type, {"request": {}}, timeout=1
+                )
+            assert (
+                await broker.request("child-a", "health.request", {}, timeout=1)
+            ).payload["status"] == "ok"
+        finally:
+            await client.aclose()
+            await broker.aclose()
 
     asyncio.run(scenario())

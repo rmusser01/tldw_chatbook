@@ -19,8 +19,6 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
     # `getattr`: the start/stop pair is driven on partially-specified
     # app doubles in tests (see test_canvas_control_spawn).
     publisher = getattr(self, "served_relay_publisher", None)
-    if publisher is not None and client is not None:
-        publisher.attach(run_state_source=self._served_relay_run_states)
     if client is None or self._served_canvas_control_start_task is not None:
         return
     task = app_globals["asyncio"].create_task(
@@ -33,6 +31,8 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
     ) -> None:
         try:
             completed.result()
+            if publisher is not None:
+                publisher.attach(run_state_source=self._served_relay_run_states)
         except app_globals["asyncio"].CancelledError:
             pass
         except Exception as error:  # noqa: BLE001 -- preserve optional transport recovery
@@ -42,6 +42,15 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
             )
 
     task.add_done_callback(observe)
+
+
+async def _handle_served_control_request(self: Any, request: Any) -> Any:
+    """Keep Console control independent of Canvas feature/scope availability."""
+    from .Canvas.control_protocol import ControlProtocolError
+
+    if request.message_type.startswith("console."):
+        raise ControlProtocolError("authority_unavailable")
+    return await self.served_canvas_handler.handle(request)
 
 
 def _served_relay_run_states(self: Any) -> Any:

@@ -11,8 +11,8 @@ Constraints):
 
 - Publishing must NEVER block or raise into a caller. Approval callbacks
   run on the agent worker thread; run-status observation runs on the event
-  loop. Every method enqueues onto a bounded internal queue through
-  ``call_soon_threadsafe`` (dropping on overflow or before attach) and a
+  loop. Every method enqueues into a bounded thread-safe buffer, using one
+  coalesced ``call_soon_threadsafe`` wake. Overflow publishes a reset and a
   single drainer task performs the async client send, swallowing and
   logging (ids only) every exception.
 - The relay mirrors the TUI card lifecycle: ``approval_raised`` records the
@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from collections import deque
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -97,17 +99,24 @@ class ServedRelayPublisher:
                 is attached.
         """
 
+        if type(max_pending) is not int or not 1 <= max_pending <= 1024:
+            raise ValueError("invalid pending-relay limit")
         self._client = client
         self._max_pending = max_pending
         self._poll_interval = poll_interval
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._queue: asyncio.Queue[tuple[str, dict[str, Any]]] | None = None
+        self._queue: deque[tuple[str, dict[str, Any]]] = deque()
+        self._queue_lock = threading.Lock()
+        self._wake = asyncio.Event()
+        self._wake_scheduled = False
+        self._reset_required = False
+        self._sequence = 0
         self._drainer: asyncio.Task[None] | None = None
         self._poller: asyncio.Task[None] | None = None
         self._busy = False
         # round ids of currently mounted approval rounds, newest last —
         # mirrors the TUI card slot (one deep) and the parent's capture.
-        self._mounted_rounds: list[str] = []
+        self._mounted_rounds: deque[str] = deque(maxlen=max_pending)
         self._last_run_status: dict[str, str] = {}
 
     # ------------------------------------------------------------------ #
@@ -138,7 +147,6 @@ class ServedRelayPublisher:
         except RuntimeError:
             return
         self._loop = loop
-        self._queue = asyncio.Queue(maxsize=self._max_pending)
         self._drainer = asyncio.create_task(
             self._drain(), name="served-relay-publisher"
         )
@@ -154,6 +162,7 @@ class ServedRelayPublisher:
         tasks = [task for task in (self._drainer, self._poller) if task is not None]
         self._drainer = None
         self._poller = None
+        self._loop = None
         for task in tasks:
             task.cancel()
         if tasks:
@@ -163,14 +172,12 @@ class ServedRelayPublisher:
         """Wait until every queued event has been sent (test surface)."""
 
         queue = self._queue
-        if queue is None:
-            return
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
             # Always yield first so a just-scheduled put (call_soon_threadsafe)
             # lands before the emptiness check.
             await asyncio.sleep(0)
-            if not queue.empty() or self._busy:
+            if queue or self._reset_required or self._busy:
                 if asyncio.get_running_loop().time() >= deadline:
                     return
                 continue
@@ -201,9 +208,10 @@ class ServedRelayPublisher:
                 "timeout_seconds": _timeout_seconds(payload.get("timeout_seconds")),
             },
         )
-        if round_id in self._mounted_rounds:
-            self._mounted_rounds.remove(round_id)
-        self._mounted_rounds.append(round_id)
+        with self._queue_lock:
+            if round_id in self._mounted_rounds:
+                self._mounted_rounds.remove(round_id)
+            self._mounted_rounds.append(round_id)
 
     def approval_cleared(
         self, round_id: str | None = None, resolution: str = "cleared"
@@ -214,9 +222,14 @@ class ServedRelayPublisher:
         clear payload carries no id).
         """
 
-        resolved_round = round_id
-        if resolved_round is None:
-            resolved_round = self._mounted_rounds.pop() if self._mounted_rounds else ""
+        with self._queue_lock:
+            resolved_round = round_id
+            if resolved_round is None:
+                resolved_round = (
+                    self._mounted_rounds.pop() if self._mounted_rounds else ""
+                )
+            elif resolved_round in self._mounted_rounds:
+                self._mounted_rounds.remove(resolved_round)
         if not resolved_round:
             return
         self._enqueue(
@@ -240,46 +253,51 @@ class ServedRelayPublisher:
         if self._client is None:
             return
         loop = self._loop
-        queue = self._queue
-        if loop is None or queue is None or loop.is_closed():
-            logger.debug(
-                "served relay drop type=%s reason=not_attached", message_type
-            )
+        if loop is None or loop.is_closed():
             return
-
-        def _put() -> None:
-            try:
-                queue.put_nowait((message_type, payload))
-            except asyncio.QueueFull:
-                logger.warning(
-                    "served relay drop type=%s reason=queue_full", message_type
-                )
-
+        with self._queue_lock:
+            self._sequence += 1
+            if len(self._queue) >= self._max_pending:
+                self._reset_required = True
+            else:
+                self._queue.append((message_type, payload))
+            if self._wake_scheduled:
+                return
+            self._wake_scheduled = True
         try:
-            loop.call_soon_threadsafe(_put)
+            loop.call_soon_threadsafe(self._notify)
         except RuntimeError:
-            logger.debug(
-                "served relay drop type=%s reason=closed_loop", message_type
-            )
+            with self._queue_lock:
+                self._wake_scheduled = False
+
+    def _notify(self) -> None:
+        with self._queue_lock:
+            self._wake_scheduled = False
+        self._wake.set()
 
     async def _drain(self) -> None:
-        queue = self._queue
-        assert queue is not None
         while True:
-            message_type, payload = await queue.get()
-            self._busy = True
-            try:
-                await self._client.send_relay_event(message_type, payload)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning(
-                    "served relay send failed type=%s round_or_session=%s",
-                    message_type,
-                    payload.get("round_id") or payload.get("session_id") or "",
-                )
-            finally:
-                self._busy = False
+            await self._wake.wait()
+            self._wake.clear()
+            while True:
+                with self._queue_lock:
+                    if self._reset_required:
+                        message_type = "console.changed"
+                        payload = {"sequence": self._sequence, "reset_required": True}
+                        self._reset_required = False
+                    elif self._queue:
+                        message_type, payload = self._queue.popleft()
+                    else:
+                        break
+                self._busy = True
+                try:
+                    await self._client.send_relay_event(message_type, payload)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("served relay send failed type=%s", message_type)
+                finally:
+                    self._busy = False
 
     async def _poll_run_states(self, source: _RunStateSource) -> None:
         while True:

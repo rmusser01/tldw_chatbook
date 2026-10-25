@@ -19,12 +19,16 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from .limits import CanvasLimits, validate_opaque_identifier
 
-CONTROL_PROTOCOL_VERSION = 2
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+    from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+
+CONTROL_PROTOCOL_VERSION = 3
 # A generated download may carry 10 MiB of decoded bytes as a base64 data URL.
 # Keep the private frame closed to that documented V1 ceiling plus a small JSON
 # envelope allowance; this is not an unbounded general-purpose transport.
@@ -53,6 +57,11 @@ _REQUEST_REPLY = {
     "bridge.request": "bridge.response",
     "bridge.decision.request": "bridge.decision.response",
     "relay.decide.request": "relay.decide.response",
+    "console.snapshot.request": "console.snapshot.response",
+    "console.events.request": "console.events.response",
+    "console.ticket.request": "console.ticket.response",
+    "console.command.request": "console.command.response",
+    "console.receipt.request": "console.receipt.response",
     "health.request": "health.response",
     "shutdown.request": "shutdown.response",
 }
@@ -144,6 +153,17 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "relay.run.status": (frozenset({"session_id", "status"}), frozenset()),
     "relay.decide.request": (frozenset({"round_id", "decisions"}), frozenset()),
     "relay.decide.response": (frozenset({"round_id", "delivered"}), frozenset()),
+    "console.snapshot.request": (frozenset({"request"}), frozenset()),
+    "console.snapshot.response": (frozenset({"snapshot"}), frozenset()),
+    "console.events.request": (frozenset({"request"}), frozenset()),
+    "console.events.response": (frozenset({"batch"}), frozenset()),
+    "console.ticket.request": (frozenset({"request"}), frozenset()),
+    "console.ticket.response": (frozenset({"ticket"}), frozenset()),
+    "console.command.request": (frozenset({"request"}), frozenset()),
+    "console.command.response": (frozenset({"receipt"}), frozenset()),
+    "console.receipt.request": (frozenset({"request"}), frozenset()),
+    "console.receipt.response": (frozenset({"receipt"}), frozenset()),
+    "console.changed": (frozenset({"sequence"}), frozenset({"reset_required"})),
     "health.request": (frozenset(), frozenset()),
     "health.response": (frozenset({"status"}), frozenset()),
     "shutdown.request": (frozenset(), frozenset()),
@@ -156,6 +176,7 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 _CHILD_EVENT_TYPES = frozenset(
     {
         "canvas.events",
+        "console.changed",
         "relay.approval.raised",
         "relay.approval.cleared",
         "relay.run.status",
@@ -244,6 +265,17 @@ def _validate_payload(message_type: str, payload: object) -> Mapping[str, Any]:
     copied = dict(payload)
     _validate_json(copied)
     _validate_typed_fields(copied)
+    for key in ("snapshot", "batch", "ticket", "receipt"):
+        if (
+            key in copied
+            and not isinstance(copied[key], Mapping)
+            and not (
+                message_type == "console.receipt.response"
+                and key == "receipt"
+                and copied[key] is None
+            )
+        ):
+            raise ControlProtocolError("invalid_payload_field")
     return MappingProxyType(copied)
 
 
@@ -306,11 +338,14 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
             raise ControlProtocolError("invalid_payload_field")
         if key in mapping_fields and not isinstance(value, Mapping):
             raise ControlProtocolError("invalid_payload_field")
-        if key in {"following", "approved", "delivered"} and type(value) is not bool:
+        if (
+            key in {"following", "approved", "delivered", "reset_required"}
+            and type(value) is not bool
+        ):
             raise ControlProtocolError("invalid_payload_field")
         if key in {"events", "canvases"} and not isinstance(value, list):
             raise ControlProtocolError("invalid_payload_field")
-        if key == "source_bytes" and (
+        if key in {"source_bytes", "sequence", "after_sequence"} and (
             not isinstance(value, int) or isinstance(value, bool) or value < 0
         ):
             raise ControlProtocolError("invalid_payload_field")
@@ -455,6 +490,7 @@ class _ChildState:
     child_id: str
     secret: str = field(repr=False)
     generation: str
+    host_events: ConsoleEventBuffer = field(repr=False)
     connected: asyncio.Event = field(default_factory=asyncio.Event)
     writer: asyncio.StreamWriter | None = field(default=None, repr=False)
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -462,9 +498,7 @@ class _ChildState:
     cancelled_ids: OrderedDict[str, None] = field(
         default_factory=OrderedDict, repr=False
     )
-    events: asyncio.Queue[ControlMessage] = field(
-        repr=False, default_factory=asyncio.Queue
-    )
+    event_cursor: int = 0
 
 
 class CanvasControlBroker:
@@ -482,6 +516,7 @@ class CanvasControlBroker:
         if not 1 <= max_queued_events <= 1024:
             raise ValueError("invalid event-queue limit")
         self._runtime_snapshot_id = _snapshot_identity(runtime_snapshot_id)
+        self._server_epoch = uuid4().hex
         self._max_pending_requests = max_pending_requests
         self._max_queued_events = max_queued_events
         self._server: asyncio.AbstractServer | None = None
@@ -510,6 +545,7 @@ class CanvasControlBroker:
 
     def issue_child(self, child_id: str) -> ChildControlLaunch:
         """Mint a fresh launch secret, revoking any earlier incarnation."""
+        from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
 
         _identifier(child_id, "child_id")
         if self._server is None or self._port is None:
@@ -521,7 +557,7 @@ class CanvasControlBroker:
             child_id=child_id,
             secret=secrets.token_urlsafe(32),
             generation=uuid4().hex,
-            events=asyncio.Queue(maxsize=self._max_queued_events),
+            host_events=ConsoleEventBuffer(limit=self._max_queued_events),
         )
         self._children[child_id] = state
         return ChildControlLaunch(
@@ -644,7 +680,50 @@ class CanvasControlBroker:
         state = self._children.get(child_id)
         if state is None:
             raise ControlProtocolError("unknown_child")
-        return await asyncio.wait_for(state.events.get(), timeout)
+
+        async def observe() -> ControlMessage:
+            while True:
+                batch = state.host_events.read(state.event_cursor)
+                if batch.reset_required and batch.sequence > state.event_cursor:
+                    state.event_cursor = batch.sequence
+                    return ControlMessage(
+                        CONTROL_PROTOCOL_VERSION,
+                        "console.changed",
+                        f"event-{uuid4().hex}",
+                        None,
+                        {"sequence": batch.sequence, "reset_required": True},
+                    )
+                if batch.events:
+                    event = batch.events[0]
+                    state.event_cursor = event["sequence"]
+                    return ControlMessage(
+                        CONTROL_PROTOCOL_VERSION,
+                        event["kind"],
+                        f"event-{uuid4().hex}",
+                        None,
+                        event["payload"],
+                    )
+                await state.host_events.wait_changed(state.event_cursor)
+
+        return await asyncio.wait_for(observe(), timeout)
+
+    def console_events(self, child_id: str) -> ConsoleEventBuffer:
+        """Observe lifecycle-owned state installed before child publication."""
+        state = self._children.get(child_id)
+        if state is None:
+            raise ControlProtocolError("unknown_child")
+        return state.host_events
+
+    def console_identity(self, child_id: str) -> ConsoleHostIdentity:
+        """Return routing identity; replacing a child always mints a new Console."""
+        from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+
+        state = self._children.get(child_id)
+        if state is None:
+            raise ControlProtocolError("unknown_child")
+        return ConsoleHostIdentity(
+            server_epoch=self._server_epoch, console_id=state.generation
+        )
 
     async def _accept_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -692,11 +771,16 @@ class CanvasControlBroker:
             )
             while True:
                 message = await _read_message(reader)
+                if (
+                    self._children.get(child_id) is not state
+                    or state.writer is not writer
+                ):
+                    raise ControlProtocolError("child_revoked")
                 if message.message_type in _CHILD_EVENT_TYPES:
-                    try:
-                        state.events.put_nowait(message)
-                    except asyncio.QueueFull:
-                        raise ControlProtocolError("event_backpressure") from None
+                    sequence = state.host_events.publish(
+                        message.message_type, dict(message.payload)
+                    )
+                    state.host_events.note_changed(sequence)
                     continue
                 if (
                     message.message_type in _RESPONSE_TYPES

@@ -591,7 +591,7 @@ def _release_lifecycle_diagnostics(stack, monkeypatch, name):
                         "id": key,
                         "connected": value.connected.is_set(),
                         "pending": len(value.pending),
-                        "events": value.events.qsize(),
+                        "events": len(value.host_events.read(0).events),
                     }
                     for key, value in broker._children.items()
                 ]
@@ -631,6 +631,7 @@ def _release_lifecycle_diagnostics(stack, monkeypatch, name):
 
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("failure", ["snapshot", "old-version", "absent-broker"])
+@pytest.mark.bootstrap_profile
 async def test_actual_child_control_refusal_keeps_terminal_usable(
     tmp_path, monkeypatch, failure
 ):
@@ -649,7 +650,8 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
     if failure == "absent-broker":
         # The parent remains latched off, but a fresh child reads enabled config.
         await stack.server._disable_canvas_runtime()
-        assert stack.server._canvas_control_broker is None
+        await stack.server._canvas_control_broker.aclose()
+        stack.server._canvas_control_broker = None
     if failure == "old-version":
         issue_child = stack.server._canvas_control_broker.issue_child
 
@@ -2857,6 +2859,7 @@ async def test_event_scope_mismatch_reconciles_only_same_live_child(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 async def test_two_browser_sessions_cannot_reuse_child_canvas_scope(
     tmp_path: Path,
 ) -> None:

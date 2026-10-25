@@ -71,6 +71,7 @@
 
   const state = {
     sessions: [],
+    projectionUnavailable: false,
     openSessionId: null,
     messages: [], // wire messages of the open session, in order
     messageIds: new Set(),
@@ -132,11 +133,13 @@
   }
 
   function showError(code) {
-    els.statusLine.textContent = "Error: " + String(code);
+    els.statusLine.textContent =
+      (state.projectionUnavailable ? "Live updates unavailable. " : "") +
+      "Error: " + String(code);
     els.statusLine.hidden = false;
     clearTimeout(state.statusTimer);
     state.statusTimer = setTimeout(() => {
-      els.statusLine.hidden = true;
+      if (!state.projectionUnavailable) els.statusLine.hidden = true;
     }, 6000);
   }
 
@@ -625,6 +628,7 @@
   // --- Approvals                                                          ---
 
   async function refreshApprovals() {
+    if (state.projectionUnavailable) return;
     let data;
     try {
       data = await api("GET", API_BASE + "/approvals");
@@ -632,6 +636,7 @@
       showError(code);
       return;
     }
+    if (state.projectionUnavailable) return;
     state.approvals = Array.isArray(data.approvals) ? data.approvals : [];
     renderApprovals();
   }
@@ -808,6 +813,15 @@
     const sessionId = typeof event.session_id === "string" ? event.session_id : "";
     const payload = event.payload || {};
     switch (event.type) {
+      case "reset":
+        state.projectionUnavailable = true;
+        state.approvals = [];
+        renderApprovals();
+        clearTimeout(state.statusTimer);
+        els.statusLine.textContent =
+          "Live updates unavailable. Refresh this page to reload current state.";
+        els.statusLine.hidden = false;
+        break;
       case "run_started":
         state.activeRuns.add(sessionId);
         if (sessionId === state.openSessionId) updateComposerState();

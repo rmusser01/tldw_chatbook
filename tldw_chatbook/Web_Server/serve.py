@@ -1593,24 +1593,7 @@ class ChatbookWebServerMixin:
         return self._mobile_service
 
     def _attach_mobile_relay(self, service: Any) -> None:
-        """Bind the desktop approval relay when both halves exist (ADR-236).
-
-        Lazy by construction: the service (mobile surface) is only built
-        on the first mobile-surface request, and the relay needs the
-        canvas control broker (``_canvas_control_broker`` — built at
-        startup only while canvas is enabled). The two inert cases stay
-        inert: mobile surface off → this method is never reached (the
-        mobile routes are not registered), and canvas disabled → the
-        broker is ``None`` and desktop approval rounds never leave the
-        child, so they stay invisible on the phone (documented
-        limitation). The child-id source reads the live browser-binding
-        registry (``_served_browser_children``, ``bind_served_browser`` /
-        ``unbind_served_browser``), so children appearing or disappearing
-        later are followed by the service's drainer. ``attach_relay`` is
-        idempotent and starts its drainer on the serving loop; rounds
-        raised before this first mobile use wait in the broker's bounded
-        per-child queue and are still picked up.
-        """
+        """Observe lifecycle-owned projections when the mobile surface is used."""
         if getattr(service, "_relay_task", None) is not None:
             return
         broker = getattr(self, "_canvas_control_broker", None)
@@ -1622,17 +1605,13 @@ class ChatbookWebServerMixin:
     async def on_startup(self, app) -> None:
         """Start the private loopback control broker before children spawn."""
 
-        if self._canvas_enabled():
-            self._canvas_control_broker = CanvasControlBroker(
-                runtime_snapshot_id=runtime_snapshot_id(self._canvas_profile_snapshot)
-            )
-            await self._canvas_control_broker.start()
-            self._canvas_policy_watch_task = asyncio.create_task(
-                self._watch_canvas_policy(),
-                name="chatbook-served-canvas-policy",
-            )
-        else:
-            self._canvas_control_broker = None
+        self._canvas_control_broker = CanvasControlBroker(
+            runtime_snapshot_id=runtime_snapshot_id(self._canvas_profile_snapshot)
+        )
+        await self._canvas_control_broker.start()
+        self._canvas_policy_watch_task = asyncio.create_task(
+            self._watch_canvas_policy(), name="chatbook-served-canvas-policy"
+        )
         await super().on_startup(app)
 
     async def on_shutdown(self, app) -> None:
@@ -1681,22 +1660,13 @@ class ChatbookWebServerMixin:
         await self._disable_canvas_runtime()
 
     async def _disable_canvas_runtime(self) -> None:
-        """Idempotently revoke served Canvas control and browser delivery."""
+        """Revoke Canvas capabilities while retaining Console runtime control."""
 
-        if self._canvas_disabled_latched and getattr(
-            self, "_canvas_control_broker", None
-        ) is None:
-            self._served_canvas_launches.clear()
-            self._served_browser_children.clear()
+        if self._canvas_disabled_latched:
             return
         self._canvas_disabled_latched = True
-        broker = getattr(self, "_canvas_control_broker", None)
-        self._canvas_control_broker = None
-        if broker is not None:
-            await broker.aclose()
         await self._served_canvas_gateway.aclose()
         self._served_canvas_launches.clear()
-        self._served_browser_children.clear()
 
     async def _expire_websocket_session(self, session) -> None:
         """Revoke a connected channel at its moving idle/absolute deadline."""

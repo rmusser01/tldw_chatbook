@@ -62,9 +62,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable
 
-from tldw_chatbook.Canvas.control_protocol import ControlProtocolError
+from tldw_chatbook.Canvas.control_protocol import (
+    DEFAULT_MAX_QUEUED_EVENTS,
+    ControlProtocolError,
+)
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
@@ -365,6 +369,7 @@ class MobileChatService:
         # and refuses duplicates, so two racing first touches of the same
         # unknown id must not both restore.
         self._restore_lock = asyncio.Lock()
+        self._reset_subscribers: set[asyncio.Queue[MobileEvent]] = set()
         self._subscribers: set[asyncio.Queue[MobileEvent]] = set()
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -380,9 +385,8 @@ class MobileChatService:
         self._media_db: MediaDatabase | None = None
         self._reading_dbs_lock = threading.Lock()
         # Desktop approval relay (ADR-236): set once ``attach_relay`` binds
-        # the parent's canvas control broker; None keeps the relay inert
-        # (canvas disabled — desktop approvals then stay invisible on the
-        # phone, a documented limitation).
+        # the parent's lifecycle control broker; Canvas disablement does
+        # not revoke this runtime connection (ADR-244).
         self._relay_broker: Any | None = None
         self._relay_child_ids: Callable[[], Iterable[str]] | None = None
         self._relay_task: asyncio.Task[None] | None = None
@@ -391,6 +395,7 @@ class MobileChatService:
         # child-local, so the composite key keeps two children colliding
         # on one round id from shadowing or stealing each other's rounds.
         self._desktop_approvals: dict[tuple[str, str], dict[str, Any]] = {}
+        self._relay_observed_buffers: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ #
     # Construction                                                        #
@@ -1253,6 +1258,17 @@ class MobileChatService:
             {**payload, "surface": "mobile"}
             for payload in self._state.pending_approvals.values()
         ]
+        if self._relay_broker is not None:
+            for child_id in {key[0] for key in self._desktop_approvals}:
+                try:
+                    events = self._relay_broker.console_events(child_id)
+                    if (
+                        events is not self._relay_observed_buffers.get(child_id)
+                        or events.read(0).reset_required
+                    ):
+                        self._drop_child_rounds(child_id, "projection_unavailable")
+                except ControlProtocolError:
+                    self._drop_child_rounds(child_id, "child_unavailable")
         desktop = [dict(entry) for entry in self._desktop_approvals.values()]
         return mobile + desktop
 
@@ -1333,29 +1349,10 @@ class MobileChatService:
     def attach_relay(
         self, broker: Any, *, child_ids: Callable[[], Iterable[str]]
     ) -> None:
-        """Bind the desktop approval relay to the parent's control broker.
+        """Observe child lifecycle projections without owning transport draining.
 
-        Starts one drainer supervisor task that owns a per-child drain
-        task for every child ``child_ids()`` lists (the serve.py
-        browser-binding registry, read live). Each drain task reads the
-        child's broker event queue — the queue production canvas delivery
-        never consumes (the served canvas gateway pulls events via
-        ``canvas.events.request`` request/reply), so this drainer is its
-        only consumer and cannot steal canvas frames from the gateway.
-        Desktop rounds land in ``_desktop_approvals`` and surface through
-        :meth:`list_approvals` / the ``approval_requested`` /
-        ``run_status`` events.
-
-        Must run on the serving loop (the supervisor task starts here);
-        idempotent — a second call is a no-op, so the inert case (canvas
-        disabled → the caller never attaches) and the attached case are
-        both stable. Rounds raised before the attach are still picked up:
-        they wait in the broker's bounded per-child queue until drained.
-
-        Args:
-            broker: The parent's ``CanvasControlBroker``.
-            child_ids: Live source of currently bound child ids (one
-                entry per served browser terminal session).
+        Each observer has a cursor. Lost projections clear displayed decision
+        authority until a native snapshot reconciles the child.
         """
         if self._closed or self._relay_task is not None:
             return
@@ -1386,6 +1383,7 @@ class MobileChatService:
                 for child_id, task in list(drains.items()):
                     if task.done():
                         drains.pop(child_id, None)
+                        self._relay_observed_buffers.pop(child_id, None)
                 try:
                     live = {str(value) for value in child_ids()}
                 except Exception:  # noqa: BLE001 - keep draining what we have
@@ -1399,6 +1397,7 @@ class MobileChatService:
                 for child_id in [known for known in drains if known not in live]:
                     drains.pop(child_id).cancel()
                     self._drop_child_rounds(child_id, "child_unbound")
+                    self._relay_observed_buffers.pop(child_id, None)
                 owners = {
                     str(entry.get("child_id") or "")
                     for entry in self._desktop_approvals.values()
@@ -1422,25 +1421,45 @@ class MobileChatService:
             if drains:
                 await asyncio.gather(*drains.values(), return_exceptions=True)
             self._desktop_approvals.clear()
+            self._relay_observed_buffers.clear()
 
     async def _drain_relay_child(self, broker: Any, child_id: str) -> None:
-        """Read one child's broker event queue until the child is revoked."""
+        """Observe one child's bounded history; never consume another view."""
+        sequence = 0
+        observed = None
         while True:
             try:
-                message = await broker.next_event(
-                    child_id, timeout=_RELAY_DRAIN_TIMEOUT_SECONDS
+                events = broker.console_events(child_id)
+                if observed is not None and observed is not events:
+                    self._drop_child_rounds(child_id, "child_restarted")
+                    sequence = 0
+                observed = events
+                self._relay_observed_buffers[child_id] = events
+                batch = events.read(sequence)
+                if batch.reset_required:
+                    self._drop_child_rounds(child_id, "projection_reset_required")
+                    if batch.sequence != sequence:
+                        self._emit(
+                            "reset", "", {"child_id": child_id, "reset_required": True}
+                        )
+                else:
+                    for event in batch.events:
+                        self._handle_relay_event(
+                            child_id,
+                            SimpleNamespace(
+                                message_type=event["kind"], payload=event["payload"]
+                            ),
+                        )
+                sequence = batch.sequence
+                await asyncio.wait_for(
+                    events.wait_changed(sequence), _RELAY_DRAIN_TIMEOUT_SECONDS
                 )
             except TimeoutError:
                 continue
-            except ControlProtocolError as error:
-                if error.code != "unknown_child":
-                    logger.debug(
-                        "mobile relay drain stopped child_id=%s code=%s",
-                        child_id,
-                        error.code,
-                    )
+            except ControlProtocolError:
+                self._drop_child_rounds(child_id, "child_unavailable")
+                self._relay_observed_buffers.pop(child_id, None)
                 return
-            self._handle_relay_event(child_id, message)
 
     def _handle_relay_event(self, child_id: str, message: Any) -> None:
         """Fold one relayed child event into the desktop surfaces."""
@@ -1535,6 +1554,17 @@ class MobileChatService:
         if broker is None or entry is None:
             return False
         child_id = key[0]
+        try:
+            events = broker.console_events(child_id)
+            if (
+                events is not self._relay_observed_buffers.get(child_id)
+                or events.read(0).reset_required
+            ):
+                self._drop_child_rounds(child_id, "projection_unavailable")
+                return False
+        except ControlProtocolError:
+            self._drop_child_rounds(child_id, "child_unavailable")
+            return False
         round_id = key[1]
         try:
             response = await broker.request(
@@ -1562,15 +1592,18 @@ class MobileChatService:
     # ------------------------------------------------------------------ #
 
     async def events(self) -> AsyncIterator[MobileEvent]:
-        """Subscribe to the service's event fan-out (one queue per caller)."""
+        """Observe bounded projections; overflow stays reset until resubscription."""
         await self._ensure_started()
-        queue: asyncio.Queue[MobileEvent] = asyncio.Queue()
+        queue: asyncio.Queue[MobileEvent] = asyncio.Queue(
+            maxsize=DEFAULT_MAX_QUEUED_EVENTS
+        )
         self._subscribers.add(queue)
         try:
             while True:
                 yield await queue.get()
         finally:
             self._subscribers.discard(queue)
+            self._reset_subscribers.discard(queue)
 
     def _emit(self, type_: str, session_id: str, payload: dict[str, Any]) -> None:
         """Fan one event out to every subscriber (loop thread only)."""
@@ -1579,7 +1612,22 @@ class MobileChatService:
             type=type_, session_id=session_id, payload=payload, seq=self._seq
         )
         for queue in list(self._subscribers):
-            queue.put_nowait(event)
+            if queue in self._reset_subscribers:
+                continue
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                while not queue.empty():
+                    queue.get_nowait()
+                queue.put_nowait(
+                    MobileEvent(
+                        type="reset",
+                        session_id="",
+                        payload={"reset_required": True},
+                        seq=self._seq,
+                    )
+                )
+                self._reset_subscribers.add(queue)
         logger.debug(
             "mobile event type=%s session_id=%s seq=%d",
             type_,
