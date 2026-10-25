@@ -126,7 +126,7 @@
       "Python-version concern does not apply: requires-python >=3.12"
     ]
   },
-  "post_fix_batch": "completed; latest bounded pass has no findings",
+  "post_fix_batch": "Hosted edge cases corrected; bounded follow-up has no production findings; strengthened timestamp regression rechecked separately.",
   "schema_validation": {
     "validated": true,
     "schema_sha256": "fe301cea52b41ad9ec84f2e508ca2d04bb7a6d3805d42e06f3d8cfa08d9943f0",
@@ -224,6 +224,42 @@
     "eval_rebackup_local": {
       "summary": "exact Windows-failed recovery journey: 1 passed locally in 36.80s",
       "log_sha256": "0cb665c9922a0a504d9184c1db6840bbbd7a8f71e9a28c828bd7f87659b890c3"
+    },
+    "hosted_edge_cases_red": {
+      "summary": "4 failed; initial idle timestamp subsequently corrected",
+      "log_sha256": "bdb094c8bbb11fd67cf203bead7d5e3ed7d00e0c573e0d377a22e8d9f76aa9ff"
+    },
+    "idle_real_speech_red": {
+      "summary": "1 failed; actual fresh open-mouth observation",
+      "log_sha256": "84a39ce85402228a229612f852ed365b320de82864742eb674a042afa401173b"
+    },
+    "hosted_edge_cases_green": {
+      "summary": "8 passed including original live-owner mount and ordinary invalid-input retention",
+      "log_sha256": "22dc85d9eeddb15d038c3dbfbfcb8dbf85ed0789a7ec82ef430aef6203ec97a0"
+    },
+    "hosted_affected": {
+      "summary": "62 passed",
+      "log_sha256": "50146e0d4d9b61509258f8d4e1b45af0e76c3ce02c3f51f1c0d6c6ba226616c1"
+    },
+    "hosted_installed_and_boot": {
+      "summary": "5 passed; fresh wheel and unchanged UI-ready ceiling",
+      "log_sha256": "6f8ca5327ed73c09dc4b7bc26b0b3058bbc10759fa4fe20263801fb81a9f7491"
+    },
+    "idle_independent_clock_old_tick": {
+      "summary": "original a845 tick fails idle blink; positive open-mouth assertions pass",
+      "log_sha256": "cb75c4fef1cb90f3e9528eb185f7a216b7800e52880ebde74968246b4b0e64c7"
+    },
+    "diagnostic_inventory_review": {
+      "summary": "sole intended addition: one fixed debug diagnostic, no new sink/private values",
+      "log_sha256": "0c0aca961b6212f24cdaa50bbe97394d4c1d0853ee6732e2741948d3f9b7fe57"
+    },
+    "diagnostic_inventory_verified": {
+      "summary": "verified: 697 owners, 7753 TASK-494 calls",
+      "log_sha256": "70c9523a299e76e6eef72405e745e686546c27be36c5233b910ed57fe3782831"
+    },
+    "hosted_independent_clock_green": {
+      "summary": "7 passed with independent renderer clock, positive live-mouth controls and prior mount behavior",
+      "log_sha256": "6928935ac14f911db6573da9c878bfdd816f5247f6e33f98f8d9fe003b535f30"
     }
   },
   "legacy_differential_lint": [
@@ -446,12 +482,12 @@
     "Tests/UI/test_console_control_bar_coalescing.py": "d5a2a1fc30dae63023c856ab65873c23a5569fe6ec2f6098a8dfd0647c13e274",
     "Tests/UI/test_console_hands_free_wiring.py": "6b48d3989dc56e06fd3ff3bbc737b985d0604b2443e64877c30b3f32c7e1bacf",
     "Tests/UI/test_console_marker_projection_fallback.py": "87d7ead8a19c005c1e7ac35f899939c93f7d82c5d4ef992a945d57707290dd81",
-    "Tests/UI/test_console_portrait_performance.py": "6daca425afe9de9bd8d521126d1c9cff31752245ffab396cc68edbdddda8ae93",
+    "Tests/UI/test_console_portrait_performance.py": "0a4adc11ffd8d357c75a035c945cb3cc9ba715e1fe627cc780e24ed5cd42ea03",
     "Tests/UI/test_console_radio_portrait.py": "6ba41c0826d4c7249e4412c700fb95d295f10c6354f047463b88350864667a76",
     "Tests/UI/test_console_rate_chip_screen.py": "02195701c48b640802358ac9c6e204080065381958d5b51fd456169e8020aa39",
     "Tests/UI/test_library_media_actions_target_opened_item.py": "dab451a6067abd852a978785d0ea92279c18db6de13f1915f0ffb8ce16e87bc5",
     "Tests/UI/test_personas_expression_slots.py": "6efdcdddd21e8a494b944c8b40b6592a4ce11b4d4f73aab4ccc38869c30fec8c",
-    "Tests/UI/test_personas_portrait_performance.py": "dfb86715ae50cda864bf6c9956949b5d7d9e93fc89c6e774253bad98e0f6fddf",
+    "Tests/UI/test_personas_portrait_performance.py": "18ee821f6502f5d81bdccaadb4c07b5fe4cefbb1a16355c50865267d5a36a32e",
     "Tests/UI/test_personas_portrait_performance_generate.py": "d4bf0076bc40a5dcaf7d895e78cd5fd5693b6b27a3c4c0ffd59d7058a783776b",
     "Tests/UI/test_portrait_composition_review.py": "a9cb50e1bb9ebc73d7a8d2d82ea3ed10400d46f65afa3ec7ccb1321c0a715d76",
     "Tests/UI/test_portrait_region_editor.py": "b58b032e7df58040c9d9662b4def4ef7294a5d76a2d3bcefcb76c44d8fd1b207",
@@ -483,12 +519,12 @@
     "tldw_chatbook/UI/Console_Modules/wiring.py": "7e28cfa9efa3720cae297f4a8d204975f14828c63af427a48f07251999d6ca36",
     "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py": "ce6fc980a9b5f75ccf5cf37def6d7e8df3266687e1fbdb3463022c3951a8fd53",
     "tldw_chatbook/UI/Persona_Modules/portrait_composition_generation.py": "93d8b04b775ae754fa8261a086f535cfd9cacdd28c521a1974da2f438a4b10a0",
-    "tldw_chatbook/UI/Persona_Modules/portrait_performance.py": "0e12e7ec651061c5e4df8f738d17b8c32142fa1446d27c268ad5073e0f81e8b2",
+    "tldw_chatbook/UI/Persona_Modules/portrait_performance.py": "6105c5f3607db07fb77b101d06cdd6b42090061d4140995315db7876a97484cd",
     "tldw_chatbook/UI/Persona_Modules/portrait_regions.py": "7403a6c9b910b07ef4abe1fd6651b57feb05fbd8c8a6cce4502bd037cd08140e",
     "tldw_chatbook/UI/Screens/chat_screen.py": "e7367d6bbd7c27d3a7f9444dca932bc51ffb41f613380a9674eef96b2e8f72ae",
     "tldw_chatbook/UI/Screens/personas_screen.py": "006854aaabd21795e5d5f5edaa7a65aa8c5af4f1a43a2ea6b952d0ee42ba4589",
     "tldw_chatbook/Utils/mosaic_render.py": "b87f203cd3d3da47c6d5b4b225c7399e8d4eb5853de5d5bbb2bd8294bacf6293",
-    "tldw_chatbook/Widgets/Console/character_expression_avatar.py": "8c22823533f2accb461c9cde140e642ea8de331d864bde4579d236f189a63b3b",
+    "tldw_chatbook/Widgets/Console/character_expression_avatar.py": "73e1175f74be16b371196da24b16bc89d5950726d7997557f0fde815c1e1eb6d",
     "tldw_chatbook/Widgets/Console/portrait_radio.py": "7bd93ccfe0735f4445ed685c2dbe6a5ce00a392d2c6566167a8346139ba23f46",
     "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py": "bf5e05b0361990cb6d16815f08ff6697ab7f7e49e7cc21350ff8fe834a19fe76",
     "tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py": "b668352550fb9e705c8a95314dee63e1a11c8b731a8ce152fa9a8bac972cce00",
@@ -515,8 +551,35 @@
   "changed_application_files": 54,
   "changed_test_files": 50,
   "ci_observations": {
-    "c4ea7272fc": "UI-ready module ceiling failed at 1033/1031; timing-dependent residents isolated, two first-use costs deferred. Windows recovery hit its unchanged 30s capture watchdog; TTS shutdown cancellation secondary. Latest CI required; no capture limit relaxed."
+    "c4ea7272fc": "UI-ready module ceiling failed at 1033/1031; timing-dependent residents isolated, two first-use costs deferred. Windows recovery hit its unchanged 30s capture watchdog; TTS shutdown cancellation secondary. Latest CI required; no capture limit relaxed.",
+    "a84519829e": "Windows/Linux recovery and boot checks passed; all source/UI lanes reached 27 passing with only the required summary pending before hosted corrections. Later corrections require their own CI."
   },
   "post_review_only_code_change": "Formatting of the appended rate tests; production and test behavior unchanged.",
-  "initial_published_fix_head": "c4ea7272fcf2c96861d1834b9fa1dbe38bdb0ee4"
+  "initial_published_fix_head": "c4ea7272fcf2c96861d1834b9fa1dbe38bdb0ee4",
+  "hosted_review_follow_up": {
+    "commit": "a84519829ef8d3744d53cb768b61febb8790af04",
+    "review_id": 5642084297,
+    "selected_paths": 21,
+    "inline_findings": 2,
+    "outside_diff_suggestions": 2,
+    "dispositions": [
+      "Normalize only invalid saved source capture as PerformanceConflict; keep other user-input errors and existing conflicts unchanged",
+      "Clear graphics.image when its owner retires after mount; preserve live-owner initial pose adoption",
+      "Idle preview uses rest mouth and blinks independently of live speech",
+      "Log a fixed reader-failure debug message once per live widget, without private exception/context; silence expected retirement"
+    ]
+  },
+  "last_cli_follow_up": {
+    "base": "a84519829e",
+    "findings": 1,
+    "reviewed_files": [
+      "Tests/UI/test_console_portrait_performance.py",
+      "Tests/UI/test_personas_portrait_performance.py",
+      "backlog/tasks/task-36555 - Qualify-composited-portrait-generation-through-restore-and-Console-playback.md",
+      "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+      "tldw_chatbook/Widgets/Console/character_expression_avatar.py"
+    ],
+    "log_sha256": "920d2dc6343940a8c7408386733c2a305987cf09a77ede47e04a0dd96c0fb8c4",
+    "disposition": "No production findings. Timestamp suggestion addressed with an independent renderer clock, positive open-mouth assertions, and an original-tick red control."
+  }
 }

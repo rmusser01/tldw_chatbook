@@ -97,3 +97,46 @@ registered count reaches zero; do not clear ownership/recovery registries. Repea
 29 new/affected mounted cases passed and the same `lsof` probe reported no fixture
 database handles at session finish. This changes test-owner teardown, not production
 worker admission or connection borrowing.
+
+## Test the actual in-place Save transition (TASK-36555 / PR #3244, 2026-10-25)
+
+**Incident.** The external text-change fix passed controls that only toggled
+`_character_save_inflight`. Hosted follow-up found that `_after_character_save`
+also advances the screen's editor generation while keeping the same editor open.
+The actual Save reconciliation regression lost its valid staged portrait despite
+unchanged artwork. Treating every generation change as a source change loses paid
+component work; freely recapturing current authority risks adopting another session.
+
+**What to do.** Carry a draft only through the explicit Save finisher's exact prior
+token to its next generation, with the same editor, editor-load token and remaining
+session fields. Preserve the original database/profile identity, recheck saved
+artwork afterward, and keep old in-flight operations fenced to their old authority.
+Run the real Save finisher with unchanged artwork, changed artwork and a stale
+session; the `test_actual_save_reconciliation_preserves_only_same_source_draft`
+controls distinguish these cases. Existing ADR-243 applies.
+
+## Finish mount bookkeeping, but detach retired frame references (PR #3244, 2026-10-25)
+
+**Incident.** Rejecting a changed preview pose immediately after graphics mount left
+the Preparing surface permanently visible. Keeping the initial pose until the next
+tick fixed that case, but a second mounted regression found that a retired owner
+left `graphics.image` pointing at an unadopted pose which cleanup closed.
+
+**What to do.** Distinguish pose changes under the same live owner from retirement.
+Finish adopting a live owner's initial fallback and let the next tick paint the new
+pose. For a retired owner, clear the child's frame reference before closing that
+unadopted pose. Force both transitions around the real asynchronous mount and
+check the image reference, visible surface and shared preparation-budget cleanup.
+
+## Give live-speech tests a positive freshness control (PR #3244, 2026-10-25)
+
+**Incident.** An idle-preview test first stamped its callback with
+`time.monotonic()`. The tick had already sampled an earlier `now`, so the resulting
+future observation was correctly rejected and the broken idle path passed through
+rest fallback. The original tick fails once the test supplies a genuinely fresh
+open mouth.
+
+**What to do.** Control only the renderer's clock, give the observation a slightly
+past timestamp, and assert that the mouth reader actually returns open before and
+after advancing the blink clock. Keep the old-tick red control: rest fallback must
+not count as evidence that live speech and idle preview interact correctly.
