@@ -748,13 +748,15 @@ class StudyQuizzesController:
         ):
             return
         answer_input = self.window.query_one("#quiz-answer-input", Input)
-        start_context = self._start_context_key()
+        start_mode = self._current_mode()
+        start_scope = self._scope_arguments()
+        start_context = self._scope_generation, start_mode, start_scope
         self._attempt_start_pending = True
         try:
             try:
                 attempt = await service.start_attempt(
-                    mode=start_context[1],
-                    **start_context[2],
+                    mode=start_mode,
+                    **start_scope,
                     quiz_id=quiz_id,
                 )
             except Exception:

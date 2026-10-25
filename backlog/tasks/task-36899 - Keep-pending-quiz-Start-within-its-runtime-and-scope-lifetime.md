@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3247.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 21:00
+updated_date: 2026-10-25 21:47
 ---
 
 ## Description
@@ -66,4 +66,6 @@ Reason: bounded direct correction under existing ownership; no new service/stora
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented controller context generations with captured runtime and scope arguments, retaining shared Start admission and removed-panel protection. Obsolete success cannot adopt an attempt or erase a current draft; notices truthfully identify an already-created attempt in the previous Study context. Added eight mounted reset/error cases and updated Docs/Architecture/study.md. Qualified targeted Study run: 61 passed, including 27 independently inspected clean private UI reports; unchanged server from_config test used the supported invocation-only bootstrap_profile marker. Scoped Ruff/format and markup census pass. Fresh Superpowers whole-branch review found no Study issue; Reader feedback is handled within its separate task. ADR required: no; direct implementation of backlog/decisions/011-chatbook-workbench-ui-system.md and 033-application-session-state-ownership.md. Implementation plan: Docs/superpowers/plans/2026-10-25-quiz-start-and-reader-lifetimes.md. No live-server, full-app binding-replacement or full-suite claim.
+
+CI follow-up: retained named captured mode/scope locals so the existing fail-closed service-keyword architecture guard can resolve the unchanged keyword contract. Guard reproduced 7 passed/1 failed before correction and passes all 8 afterward; full targeted Study selection rerun: 61 passed, all 27 private children independently clean. Architecture guard and service APIs unchanged. Current-head hosted qualification is recorded on PR #3248 and the linked QA record.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -536,7 +536,18 @@ async def test_receipt_open_in_library_then_l_saves_the_opened_item(
             receipt_is_visible,
             message="the live receipt button never became clickable",
         )
-        button = screen.query_one("#library-ingest-open-ingest-job-1", Button)
+        # Scrolling queues layout: a hit-test in the same turn can still use
+        # the old region. Settle and re-acquire before Pilot freezes coordinates.
+        previous_region = None
+        for _ in range(30):
+            await pilot.pause()
+            current = screen.query_one("#library-ingest-open-ingest-job-1", Button)
+            if receipt_is_visible() and current.region == previous_region:
+                button = current
+                break
+            previous_region = current.region
+        else:
+            raise AssertionError("the live receipt's click region never settled")
         if receipt_change == "during_click":
             pause = pilot.pause
             replaced = False

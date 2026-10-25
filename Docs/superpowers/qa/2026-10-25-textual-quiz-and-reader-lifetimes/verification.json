@@ -1,25 +1,26 @@
 {
-  "recorded_utc": "2026-10-25T21:04:29.732557+00:00",
+  "recorded_utc": "2026-10-25T21:54:13.604965+00:00",
   "base": "79da83a8dca98eab6ca854a7505b8abd264eb959",
   "source_sha256_canonical_git_lf": {
-    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": "8f172eac87f97e58e0aa8280eea4e5193d997e45554fd37f1fc23117ccbcdc44",
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": "d4f2c273f29569e016d3007ccf7ac12f4add61cf55a256ef54c4354bd207e765",
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": "4b09683110b4527a19cac18ad8cd3f64638af282b99b2b0c6c40437540aa7a87",
     "Tests/UI/test_study_quiz_start_responsiveness.py": "f862884c9aed4101b88093bb14ba97fecc2e00e320d09ce0444c274322630616",
     "Tests/UI/test_watchlists_reader_responsiveness.py": "5be3a4b2e7bd6c44fa418afb72c5f44af20c4e3cdf1d8a942686d2ea2d3ad104",
     "Tests/Watchlists/test_watchlists_pagination.py": "a62a951e41fb72a4b47d03db0d9537d21ff0a88d8a4b3f376495574b97a1e3e6",
+    "Tests/UI/test_library_media_actions_target_opened_item.py": "b913b2c7fc150cd9dc5039b5b6770c229a0cc4a9ecc7ef79c79afb8f047c2af1",
     "scripts/ui_pr_gate_census.txt": "28fe8d872714dfde00c71ea41193991cc717e6c035a1715bbe4b838766540b24",
     "scripts/check_ui_pr_gate_census.py": "c16f2188a3d033432b713fe9640effb8c577ed2468789358142e05a16c21a6ab"
   },
   "runs": [
     {
-      "run": "study/green-study-qualified",
+      "run": "study/ci-study-requalified",
       "counts": {
         "tests": 61,
         "failures": 0,
         "errors": 0,
         "skipped": 0
       },
-      "seconds": 290.472,
+      "seconds": 264.927,
       "selectors": [
         "Tests/UI/test_study_quiz_start_responsiveness.py",
         "Tests/UI/test_study_quiz_attempt_retry.py",
@@ -27,10 +28,137 @@
         "Tests/Study_Interop/test_local_quiz_service.py",
         "Tests/Study_Interop/test_server_quiz_service.py"
       ],
-      "xml_sha256": "c70ccd59d206d69602d6856198341fbf45dd5d24b9e7e1a2ab0dcbf7c423d405",
+      "xml_sha256": "57cf52ab9cfd15f4348ed8c831bf47592d4048fe7d9cd5f96008d6367c794656",
       "private_child_reports": 27,
       "private_child_counts": {
         "tests": 27,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "integration/ci-study-keyword-green",
+      "counts": {
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 1.261,
+      "selectors": [
+        "Tests/Architecture/test_study_handler_service_keywords.py"
+      ],
+      "xml_sha256": "f17d6f0b0b6dee7f3e3f91dcf4e842fdf0d6e821964c89edcf78386175745777",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "integration/ci-study-adjacent-architecture",
+      "counts": {
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 1.667,
+      "selectors": [
+        "Tests/Architecture/test_study_handler_service_keywords.py",
+        "Tests/Architecture/test_tier2_evals_media_study_guards.py"
+      ],
+      "xml_sha256": "8859fbc3f61d4e41d5d584cb53950bf0e2f5a30852404be2a7e65af1bc892541",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "integration/ci-study-keyword-red",
+      "counts": {
+        "tests": 8,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 1.595,
+      "selectors": [
+        "Tests/Architecture/test_study_handler_service_keywords.py"
+      ],
+      "xml_sha256": "594e1ff619bcf33396b97b39724195dbc33edd217aa1d6a2390cc88c9fa55e89",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/ci-library-receipt-settled",
+      "counts": {
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 39.538,
+      "selectors": [
+        "Tests/UI/test_library_media_actions_target_opened_item.py::test_receipt_open_in_library_then_l_saves_the_opened_item"
+      ],
+      "xml_sha256": "6767d0e023e09ae50666a3a57e7860c7debf8de1455998cf3ce12d25849ca71b",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/ci-library-file-settled",
+      "counts": {
+        "tests": 10,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 139.919,
+      "selectors": [
+        "Tests/UI/test_library_media_actions_target_opened_item.py"
+      ],
+      "xml_sha256": "ba33e09569810ad49e2d9455389b792e1b2481cd36860f782acb80e453cd538a",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "run": "watchlists/ci-library-readlater-baseline",
+      "counts": {
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "seconds": 41.015,
+      "selectors": [
+        "Tests/UI/test_library_media_actions_target_opened_item.py::test_read_later_and_edit_save_target_the_opened_item_not_row_1"
+      ],
+      "xml_sha256": "86cf3a4b92ce8a2788752bb0aab79b557d0020a48f2ff82b41fe8225becdecc7",
+      "private_child_reports": 0,
+      "private_child_counts": {
+        "tests": 0,
         "failures": 0,
         "errors": 0,
         "skipped": 0
