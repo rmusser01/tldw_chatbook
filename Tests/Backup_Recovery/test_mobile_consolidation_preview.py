@@ -453,3 +453,78 @@ def test_source_fingerprint_detects_directory_replacement_with_same_files(tmp_pa
     after = preview_mobile_consolidation(source, _stores(tmp_path))
     assert not after.issues
     assert before.source_fingerprint != after.source_fingerprint
+
+
+def _case_alias_directory(tmp_path):
+    import pytest
+
+    physical = tmp_path / "CasePhysical"
+    physical.mkdir(mode=0o700)
+    alias = tmp_path / "casephysical"
+    if not alias.exists() or not alias.samefile(physical):
+        pytest.skip("requires a real case-insensitive filesystem alias")
+    return physical, alias
+
+
+def test_case_alias_source_configs_keep_all_destination_candidates(
+    tmp_path, monkeypatch
+):
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import (
+        fingerprints,
+        seed_legacy_mobile,
+    )
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        preview_selected_mobile,
+    )
+
+    physical, alias = _case_alias_directory(tmp_path)
+    source = physical / "shared" / "mobile"
+    expected = seed_legacy_mobile(source)
+    first = _config(tmp_path, "case-first", tmp_path / "first-destination")
+    second = _config(tmp_path, "case-second", tmp_path / "second-destination")
+    first.write_text(first.read_text().replace(str(tmp_path / "data"), str(physical)))
+    second.write_text(second.read_text().replace(str(tmp_path / "data"), str(alias)))
+    assert (alias / "shared" / "mobile").samefile(source)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(second))
+    preview = preview_selected_mobile(first, first)
+    assert preview.needs_destination_review
+    assert "mobile_destination_review_required" in preview.issues
+    assert len(preview.candidate_destinations) == 2
+    assert fingerprints(source) == expected["fingerprints"]
+
+
+def test_case_alias_destination_parent_refuses_distinct_namespace_hashes(tmp_path):
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        CanonicalConsoleStores,
+        preview_mobile_consolidation,
+    )
+
+    physical, alias = _case_alias_directory(tmp_path)
+    destination = CanonicalConsoleStores(
+        physical / "chat.db", alias / "workspaces.db", physical / "agent_runs.db"
+    )
+    preview = preview_mobile_consolidation(tmp_path / "absent-mobile", destination)
+    assert "mobile_unsafe_alias" in preview.issues
+    assert not list(physical.iterdir())
+
+
+def test_case_alias_destination_candidates_refuse_missing_namespace_reuse(
+    tmp_path, monkeypatch
+):
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import seed_legacy_mobile
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        preview_selected_mobile,
+    )
+
+    physical, alias = _case_alias_directory(tmp_path)
+    seed_legacy_mobile(tmp_path / "data" / "shared" / "mobile")
+    first = _config(tmp_path, "alias-first", physical / "not-created")
+    second = _config(tmp_path, "alias-second", alias / "not-created")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(second))
+    preview = preview_selected_mobile(first, first)
+    assert "mobile_unsafe_alias" in preview.issues
+    assert preview.needs_destination_review
+    assert (
+        len({candidate.identity for candidate in preview.candidate_destinations}) == 2
+    )
+    assert not list(physical.iterdir())

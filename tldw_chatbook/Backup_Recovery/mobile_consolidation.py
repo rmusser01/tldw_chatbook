@@ -36,6 +36,24 @@ def _resource_identity(path: Path) -> tuple:
     return (str(path), info.st_dev, info.st_ino)
 
 
+def _source_group_identity(path: Path) -> tuple:
+    """Group admitted existing objects without weakening path-bound fingerprints."""
+    identity = _resource_identity(path)
+    return identity if identity[-1] == "absent" else identity[1:]
+
+
+def _refuse_witness_aliases(witnesses) -> None:
+    """Different spellings of an observed object cannot grant separate destinations."""
+    representations = {}
+    for _, chain in witnesses:
+        for path, device, inode, _ in chain:
+            if device is None:
+                continue
+            previous = representations.setdefault((device, inode), path)
+            if previous != path:
+                raise ValueError("mobile_unsafe_alias")
+
+
 def _digest(value) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, default=str).encode()
@@ -267,6 +285,7 @@ def _preview(source_dir, destination, config=None, *, review_destination=True):
     witnesses = _destination_witnesses(destination)
     try:
         _ = destination.identity  # Validate the explicit namespace before observation.
+        _refuse_witness_aliases(witnesses)
         resources = tuple(
             _resource_identity(path)
             for path in (
@@ -591,13 +610,21 @@ def preview_selected_mobile(
             continue
         try:
             config = read_profile_config(selected)
-            if _resource_identity(legacy_mobile_dir(config)) == _resource_identity(
-                source_dir
-            ):
+            if _source_group_identity(
+                legacy_mobile_dir(config)
+            ) == _source_group_identity(source_dir):
                 candidate = CanonicalConsoleStores(*canonical_console_paths(config))
                 candidates[candidate.identity] = candidate
         except (OSError, ValueError):
             issues.add("mobile_candidate_unavailable")
+    try:
+        _refuse_witness_aliases(
+            witness
+            for candidate in candidates.values()
+            for witness in _destination_witnesses(candidate)
+        )
+    except ValueError:
+        issues.add("mobile_unsafe_alias")
     with _preview_reads():
         preview = _preview(source_dir, destination, source)
     needs_review = preview.has_data and len(candidates) > 1
