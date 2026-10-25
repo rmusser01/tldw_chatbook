@@ -363,3 +363,123 @@ async def test_cancelled_guarded_preview_settles_its_channel_without_stopping_ne
     # No old handler owner remains: existing exact Stop reports failure rather
     # than claiming it stopped the replacement. Its own channel still settles.
     assert old.read().state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_native_started_callback_preserves_app_context_for_observer_task(
+    monkeypatch,
+):
+    import asyncio
+    import struct
+
+    from textual._context import active_app
+    from textual.app import App
+
+    from Tests.Audio.test_streaming_sink_presentation import DelayedStream
+    from tldw_chatbook.Audio.streaming_sink import StreamingPcmSink
+    from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as module
+    from tldw_chatbook.TTS.pcm_stream import SinkPlan
+
+    app = App()
+    handler = TTSEventHandler()
+    opened, fed = asyncio.Event(), asyncio.Event()
+    observed = asyncio.get_running_loop().create_future()
+    loop = asyncio.get_running_loop()
+    holder = {}
+
+    async def repaint():
+        observed.set_result(active_app.get(None))
+
+    def report(state):
+        if state == "playing":
+            asyncio.create_task(repaint())
+
+    def backend(**kwargs):
+        holder["stream"] = DelayedStream(**kwargs)
+        loop.call_soon_threadsafe(opened.set)
+        return holder["stream"]
+
+    def sink(**kwargs):
+        holder["sink"] = StreamingPcmSink(stream_factory=backend, **kwargs)
+        return holder["sink"]
+
+    async def source():
+        yield struct.pack("<480h", *([16384] * 480))
+        fed.set()
+
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="native-context",
+        request_id=1,
+        validator=lambda: True,
+        callback=report,
+    )
+    monkeypatch.setattr(module, "StreamingPcmSink", sink)
+    monkeypatch.setattr(handler, "_post_tts_message", AsyncMock(return_value=True))
+    with app._context():
+        task = asyncio.create_task(
+            handler._stream_response_via_sink(
+                SinkPlan(24000, 1, 0, None),
+                source(),
+                message_id="native-context",
+                playback_lifecycle=lifecycle,
+            )
+        )
+    try:
+        await asyncio.wait_for(opened.wait(), 2)
+        await asyncio.wait_for(fed.wait(), 2)
+        holder["stream"].tick()
+        assert await asyncio.wait_for(observed, 2) is app
+        holder["stream"].finish_output()
+        assert await asyncio.wait_for(task, 2) == "success"
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_owned_file_started_callback_preserves_app_context_for_observer_task(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    import threading
+    from contextvars import Context
+
+    from textual._context import active_app
+    from textual.app import App
+
+    from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as module
+
+    app = App()
+    handler = TTSEventHandler()
+    observed = asyncio.get_running_loop().create_future()
+
+    async def repaint():
+        observed.set_result(active_app.get(None))
+
+    def report(state):
+        if state == "playing":
+            asyncio.create_task(repaint())
+
+    def playback(*args, on_started, **kwargs):
+        Context().run(on_started)
+        return True
+
+    monkeypatch.setattr(module, "_play_legacy_clip_and_await_completion", playback)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: object()
+    )
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="file-context", request_id=1, validator=lambda: True, callback=report
+    )
+    with app._context():
+        await handler._run_owned_file_playback(
+            "file-context",
+            tmp_path / "sample.wav",
+            lifecycle,
+            threading.Event(),
+            threading.Event(),
+        )
+    assert await asyncio.wait_for(observed, 2) is app
+    await handler.cleanup_tts_resources()

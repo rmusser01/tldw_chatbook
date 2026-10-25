@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextvars import copy_context
 from dataclasses import replace
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, TypeVar
@@ -3077,6 +3078,7 @@ class TTSEventHandler:
         await self._stop_prior_legacy_clip()
         last_underrun_frames = 0
         event_loop = asyncio.get_running_loop()
+        playback_context = copy_context()
         playback_started = threading.Event()
 
         def _on_event(event: object) -> None:
@@ -3103,6 +3105,7 @@ class TTSEventHandler:
                 event_loop.call_soon_threadsafe(
                     playback_lifecycle.report,
                     "playing",
+                    context=playback_context,
                 )
             self._post_sink_event(event)
 
@@ -4096,10 +4099,13 @@ class TTSEventHandler:
         from tldw_chatbook.TTS.audio_player import get_audio_player
 
         loop = asyncio.get_running_loop()
+        playback_context = copy_context()
 
         def report_started() -> None:
             playback_started.set()
-            loop.call_soon_threadsafe(lifecycle.report, "playing")
+            loop.call_soon_threadsafe(
+                lifecycle.report, "playing", context=playback_context
+            )
 
         try:
             finished = await self._run_blocking_tts_io(
