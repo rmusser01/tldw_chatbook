@@ -63,7 +63,27 @@ def test_idle_stays_within_fixed_canvas_offset():
 
 def test_runtime_motion_matches_packaged_design_tokens():
     values = load_performance_motion_values()
-    assert values == PerformanceMotionValues(3, 7, 0.2, 6, 1)
+    assert values == PerformanceMotionValues(3, 7, 0.2, 6, 0)
+
+
+def test_default_playback_keeps_registration_fixed_through_speech_and_blinks():
+    motion = load_performance_motion_values()
+    clock = PortraitPerformanceClock(motion=motion, interval=lambda: motion.blink_min_s)
+    samples = [
+        clock.sample(mouth, now=now)
+        for now, mouth in (
+            (0, "rest"),
+            (0.5, "small"),
+            (1.5, "open"),
+            (3, "rest"),
+            (3.05, "small"),
+            (3.1, "open"),
+            (3.3, "open"),
+            (4.5, "rest"),
+        )
+    ]
+    assert {pose.role for pose in samples} == set(FRAME_ROLES)
+    assert all(pose.offset_px == 0 for pose in samples)
 
 
 def test_missing_motion_token_fails_closed(monkeypatch, tmp_path):

@@ -355,7 +355,7 @@ $ds-conversation-menu-width: 30;
 $ds-portrait-blink-min: 3s;
 $ds-portrait-blink-max: 7s;
 $ds-portrait-idle-cycle: 6s;
-$ds-portrait-idle-offset-px: 1;
+$ds-portrait-idle-offset-px: 0;
 
 
 $ds-portrait-review-cols: 24;

@@ -144,8 +144,9 @@ face. No pose decode, SQLite lookup or rail remount occurs on the frame timer.
 
 `PortraitPerformanceClock` keeps blink and idle timing independent of mouth pose.
 It reads packaged scalar motion tokens once during preparation: blink spacing
-3–7 s, hold `$ds-duration-fast`, six-second idle cycle and one-pixel offset inside
-a fixed canvas. Hidden time does not advance it. `CharacterExpressionAvatar`
+3–7 s, hold `$ds-duration-fast`, and zero whole-image idle offset inside
+a fixed canvas (TASK-36699). Blinking supplies idle animation; the retained
+six-second cycle/helper has zero default amplitude. Hidden time does not advance it. `CharacterExpressionAvatar`
 paints at most 30 fps, rejects stale speech and rechecks mouth qualification after
 slow rendering so an old loud frame cannot reopen after silence. Unmount waits
 for decode/render workers before releasing their input images.

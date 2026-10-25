@@ -14,6 +14,11 @@ six independent edits with three source-bound component edits and local assembly
 It also adds explicit reusable region settings/provenance. The six-frame playback,
 speech, source ownership and portable-export boundaries here remain in force.
 
+Motion correction (2026-10-25, TASK-36699): the portrait now stays stationary.
+Blinking provides idle animation; the existing idle-offset token defaults to zero.
+Live-call review rejected whole-image translation as visible bobbing at small
+fallback sizes. Playback roles, ownership and accessibility boundaries are unchanged.
+
 ## Context
 
 The Console already resolves character expressions and plays animated image
