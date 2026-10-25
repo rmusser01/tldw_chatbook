@@ -16,7 +16,7 @@
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 
-**Status:** Implementation in progress. Tasks 1–3 passed independent task review; targeted evidence and inherited-check limits are recorded in their Backlog records and execution ledger. Tasks 4–11 remain pending. Final shared-mobile qualification and phone/VPN receipt remain open.
+**Status:** Implementation in progress. Tasks 1–4 passed independent task review; targeted evidence and inherited-check limits are recorded in their Backlog records and execution ledger. Tasks 5–11 remain pending. Final shared-mobile qualification and phone/VPN receipt remain open.
 
 ```text
 ADR required: no
@@ -310,7 +310,7 @@ Route ordinary meta kinds through `super().on_meta`. Add a repo-owned driver sub
 - Produce `ConsoleRemoteCommands(runtime, host_identity)` with async `send(target: ConsoleTarget, text: str, command_id: str, *, expected_revisions: dict[str, int]) -> str` returning the existing custody turn ID, and async `execute(action: str, target: ConsoleHostIdentity | ConsoleTarget, payload: dict, command_id: str) -> dict`. Send payload has exactly `text` and `expected_revisions`; the revision map has `settings_revision`, `generation_settings_revision`, `context_policy_revision`, `identity_revision` and `conversation_binding_revision` from the last confirmed target snapshot. Require non-negative integers, excluding bool, and revalidate them before capture and native promotion. Initially support Send, main controls and subagent guidance/Stop; unsupported actions refuse. Task 5 adds decisions and Task 9 adds create/open through these same owners.
 - Add controller `steer_run(session_id: str, text: str, *, expected_run_id: str) -> str | None`, `redirect_run` with the same signature, and `stop_run(session_id: str, *, expected_run_id: str | None, expected_turn_id: str | None, record_user_stop: bool = True) -> bool`. Stop requires an exact existing turn or run; do not allow an untargeted remote Stop of whatever happens to be next. Existing active-tab methods derive the current native target and delegate.
 
-- [ ] **Step 1: Add the independent-composition regression to the existing input fixture.** This complete test reuses that module's `input_store` and `_attachment` helpers.
+- [x] **Step 1: Add the independent-composition regression to the existing input fixture.** This complete test reuses that module's `input_store` and `_attachment` helpers.
 
 ```python
 def test_command_inputs_ignore_desktop_composition_but_keep_native_scope(input_store):
@@ -331,8 +331,8 @@ def test_command_inputs_ignore_desktop_composition_but_keep_native_scope(input_s
     assert session.one_shot_prefill == 'desktop prefill'
 ```
 
-- [ ] **Step 2: Run RED and add promotion/race cases.** Run `.venv/bin/python -m pytest Tests/Chat/test_console_received_intent_inputs.py -q`. Extend the real custody fixture so phone input reaches the existing prepared/queued send while desktop typing and active-tab switches occur. Gate actual preparation entry and mutate native settings/binding separately to prove those changes still refuse. Assert one exact phone echo, no desktop composition transfer, no global staged-RAG consumption and no early accepted/applied claim.
-- [ ] **Step 3: Extend the existing input origin instead of editing the desktop draft.** Factor shared core witness checks within `session_inputs_are_current`; retain the original full composer comparison for composer snapshots. A command snapshot compares session/incarnation/settings/context/binding but has no authority over desktop input revisions. Keep `repr=False` on text-bearing fields.
+- [x] **Step 2: Run RED and add promotion/race cases.** Run `.venv/bin/python -m pytest Tests/Chat/test_console_received_intent_inputs.py -q`. Extend the real custody fixture so phone input reaches the existing prepared/queued send while desktop typing and active-tab switches occur. Gate actual preparation entry and mutate native settings/binding separately to prove those changes still refuse. Assert one exact phone echo, no desktop composition transfer, no global staged-RAG consumption and no early accepted/applied claim.
+- [x] **Step 3: Extend the existing input origin instead of editing the desktop draft.** Factor shared core witness checks within `session_inputs_are_current`; retain the original full composer comparison for composer snapshots. A command snapshot compares session/incarnation/settings/context/binding but has no authority over desktop input revisions. Keep `repr=False` on text-bearing fields.
 
 ```python
 # In received admission, after session_inputs_are_current has checked its origin:
@@ -348,7 +348,7 @@ claim = store.claim_received_turn(
 ```
 
 The native claim already supports `draft_revision=None`; reuse it rather than adding a parallel claim API. In phone preparation skip only composer-owned draft transfer, attachment/prefill capture, view-generation coupling and global staged-evidence checks. Keep native source/configuration/currentness, permissions, hook policy, physical callback custody and atomic promotion. `commit_session_input_draft` remains a composer operation and is never called for phone input. This is manual origin for native hook/budget semantics, not automatic-work authority.
-- [ ] **Step 4: Add target-based native controls.** Resolve the exact live session/incarnation before touching per-session maps, then check expected turn/run/handle under the native ownership fence. Extract the existing active control bodies into those explicit-session methods; active wrappers delegate without temporarily switching `store.active_session_id`. Include response-rule preparation, queued-continuation Stop and physical cancellation paths from the existing `stop_active_run`, not only streaming cancellation. Return native refusals unchanged. Subagents use `steer_subagent`/`cancel_subagent` and their conversation-owned mailbox; add no subagent Redirect.
+- [x] **Step 4: Add target-based native controls.** Resolve the exact live session/incarnation before touching per-session maps, then check expected turn/run/handle under the native ownership fence. Extract the existing active control bodies into those explicit-session methods; active wrappers delegate without temporarily switching `store.active_session_id`. Include response-rule preparation, queued-continuation Stop and physical cancellation paths from the existing `stop_active_run`, not only streaming cancellation. Return native refusals unchanged. Subagents use `steer_subagent`/`cancel_subagent` and their conversation-owned mailbox; add no subagent Redirect.
 
 ```python
 def steer_active_run(self, text: str) -> str | None:
@@ -362,7 +362,7 @@ def steer_active_run(self, text: str) -> str | None:
 ```
 
 Implement `_current_primary_run_id(session_id: str) -> str | None` from the bridge's existing live-primary lookup and session's durable conversation identity; do not select the newest historical row as proof of live execution. Runtime `send` captures checked target configuration via `capture_received_configuration_owned`, constructs the existing received intent with command origin and submits it under native custody. Its return means Preparing; acceptance is observed later by Task 6.
-- [ ] **Step 5: Verify and commit.** Run the three existing input/custody files, `Tests/Chat/test_console_received_intent_saved_acceptance.py`, `Tests/Chat/test_console_remote_commands.py`, `Tests/Chat/test_console_runtime_shutdown.py`, and connected steering/subagent tests located by `rg -l 'steer_active_run|redirect_active_run|steer_subagent' Tests/Chat Tests/Agents`. Cover two concurrent chats, stale incarnation/run, worker completion during submission, queued-versus-consumed guidance and untouched desktop state. Commit `feat: add exact-target Console command input` after scoped static checks.
+- [x] **Step 5: Verify and commit.** Run the three existing input/custody files, `Tests/Chat/test_console_received_intent_saved_acceptance.py`, `Tests/Chat/test_console_remote_commands.py`, `Tests/Chat/test_console_runtime_shutdown.py`, and connected steering/subagent tests located by `rg -l 'steer_active_run|redirect_active_run|steer_subagent' Tests/Chat Tests/Agents`. Cover two concurrent chats, stale incarnation/run, worker completion during submission, queued-versus-consumed guidance and untouched desktop state. Commit `feat: add exact-target Console command input` after scoped static checks.
 
 ### Task 5: Runtime projections and answerable decisions — TASK-36763
 
