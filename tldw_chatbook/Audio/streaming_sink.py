@@ -27,9 +27,10 @@ Design constraints (see the streaming-pcm-sink plan for the full spec):
   `BUFFER_CAP_SECONDS` of audio at the stream's sample rate. Once full,
   `feed()` returns `False` and a single `SinkBufferFull` event is emitted
   per full episode (not once per rejected call).
-* The device callback registered with the audio backend must never raise:
-  an exception escaping that callback would kill the backend's audio
-  thread.
+* The backend-independent callback never raises on errors. The thin native
+  wrapper may emit sounddevice's intentional `CallbackStop` signal after
+  the final submitted block; output-finished acknowledgement, not source
+  queue exhaustion, completes the natural drain.
 
 Thread contract: `open()`, `feed()`, `close()`, and `stop()` may be called
 from any thread. The audio backend invokes the device callback
@@ -103,15 +104,26 @@ no longer transitively imports `recording_service`/`sounddevice` at all.
 from __future__ import annotations
 
 import asyncio
+import math
 import queue
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.util import find_spec
-from typing import Any, AsyncIterator, Callable, Literal, Optional
+from itertools import count
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optional
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import (
+        EnvelopeWindow,
+        MouthPose,
+        SpeechPresentation,
+        SpeechPresentationSnapshot,
+        TransportState,
+    )
 
 from tldw_chatbook.Utils import optional_deps
 
@@ -287,6 +299,331 @@ def _import_sounddevice():
         return None
 
 
+_PRESENTATION_GENERATIONS = count(1)
+_PRESENTATION_INTERVAL = 0.02
+
+
+@dataclass(frozen=True, slots=True)
+class _TimedSpeechPose:
+    start: float
+    end: float
+    source_end: int
+    mouth: MouthPose
+    level: float | None
+    valid: bool
+
+
+def _read_output_timing(
+    timing: Any, status: Any, clock: Callable[[], float]
+) -> tuple[float, float, float] | None:
+    """Copy native timing scalars; unavailable timing never fails playback."""
+    try:
+        if bool(getattr(status, "output_underflow", False)):
+            return None
+        return (
+            float(clock()),
+            float(timing.currentTime),
+            float(timing.outputBufferDacTime),
+        )
+    except Exception:  # noqa: BLE001 - native timing is optional.
+        return None
+
+
+class _SpeechOutputObserver:
+    """Bounded accepted-audio preparation and device-tail poses for one sink.
+
+    Admission/callback methods only hand off bounded state. Analysis, clock mapping
+    and publication run on the sink's existing notification thread.
+    """
+
+    def __init__(
+        self,
+        speech: SpeechPresentation,
+        rate: int,
+        channels: int,
+        block_ms: int,
+        clock: Callable[[], float],
+    ) -> None:
+        from tldw_chatbook.Audio.speech_presentation import (
+            PcmEnvelope,
+            SpeechEnvelopeFilter,
+        )
+
+        self.speech = speech
+        self.rate = rate
+        self.frame_bytes = channels * 2
+        self.clock = clock
+        self.generation = 0
+        self.retired_generation: int | None = None
+        self.state: TransportState = "preparing"
+        self.lock = threading.Lock()
+        self.pending: deque[bytes] = deque()
+        self.pending_bytes = 0
+        self.head_offset = 0
+        self.eof = False
+        self.closed = False
+        self.unsupported = False
+        self.input_finished = False
+        self.input_bytes = 0
+        self.source_frames = 0
+        self.raw: deque[tuple] = deque()
+        self.raw_cap = max(2, 1000 // block_ms + 2)
+        self.byte_cap = (BUFFER_CAP_SECONDS + 1) * rate * self.frame_bytes
+        self.window_cap = (BUFFER_CAP_SECONDS + 1) * 50 + 2
+        self.envelope = PcmEnvelope(sample_rate=rate, channels=channels)
+        self.windows: deque[EnvelopeWindow] = deque()
+        self.poses: deque[_TimedSpeechPose] = deque()
+        self.filter = SpeechEnvelopeFilter()
+        self.last_window: int | None = None
+        self.mouth: MouthPose = "rest"
+        self.offset: float | None = None
+        self.last_backend = float("-inf")
+        self.last_callback = float("-inf")
+        self.last_end = float("-inf")
+        self.played_source = 0
+
+    def activate(self) -> None:
+        """Allocate output identity after the previous live sink has retired."""
+        with self.lock:
+            if not self.closed and self.generation == 0:
+                self.generation = next(_PRESENTATION_GENERATIONS)
+
+    def admit(self, pcm: bytes) -> None:
+        with self.lock:
+            if self.closed or self.unsupported:
+                return
+            if self.pending_bytes + len(pcm) > self.byte_cap:
+                self.unsupported = True
+                return
+            self.pending.append(pcm)
+            self.pending_bytes += len(pcm)
+
+    def end_input(self) -> None:
+        with self.lock:
+            self.eof = True
+
+    def record_output(
+        self, timing: Any, frames: int, source_frames: int, status: Any = None
+    ) -> None:
+        timing_values = _read_output_timing(timing, status, self.clock)
+        with self.lock:
+            start = self.source_frames
+            self.source_frames += source_frames
+            if self.closed or self.unsupported:
+                return
+            if timing_values is None:
+                self.unsupported = True
+                return
+            if len(self.raw) >= self.raw_cap:
+                self.unsupported = True
+                return
+            self.raw.append((*timing_values, frames, start, source_frames))
+
+    def _analyze(self) -> None:
+        segment_bytes = max(self.frame_bytes, self.rate // 50 * self.frame_bytes)
+        for _ in range(4):
+            with self.lock:
+                if self.closed or self.unsupported:
+                    return
+                if not self.pending:
+                    finish = self.eof and not self.input_finished
+                    self.input_finished = self.input_finished or finish
+                    chunk = None
+                else:
+                    finish = False
+                    head = self.pending[0]
+                    end = min(len(head), self.head_offset + segment_bytes)
+                    chunk = head[self.head_offset : end]
+                    self.head_offset = end
+                    self.pending_bytes -= len(chunk)
+                    if end == len(head):
+                        self.pending.popleft()
+                        self.head_offset = 0
+            if chunk is not None:
+                self.windows.extend(self.envelope.push(chunk))
+                self.input_bytes += len(chunk)
+            elif finish:
+                self.windows.extend(self.envelope.finish())
+            else:
+                break
+            if len(self.windows) > self.window_cap:
+                self.unsupported = True
+                return
+
+    def _prepare_output(self, row: tuple) -> None:
+        callback_at, backend_now, dac_at, frames, source_start, source_count = row
+        if (
+            not all(
+                math.isfinite(value) for value in (callback_at, backend_now, dac_at)
+            )
+            or backend_now < self.last_backend
+            or callback_at < self.last_callback
+            or dac_at < backend_now
+            or dac_at - backend_now + frames / self.rate > 1.0
+        ):
+            self.unsupported = True
+            return
+        offset = callback_at - backend_now
+        if self.offset is None:
+            self.offset = offset
+        elif abs(self.offset - offset) > 0.1:
+            self.unsupported = True
+            return
+        start = dac_at + self.offset
+        if start < self.last_end - 1.0 / self.rate:
+            self.unsupported = True
+            return
+        if start > self.last_end + 1.0 / self.rate:
+            self.filter.reset()
+            self.last_window = None
+        self.last_backend = backend_now
+        self.last_callback = callback_at
+        self.last_end = start + frames / self.rate
+        position = source_start
+        source_end = source_start + source_count
+        while position < source_end:
+            window = next(
+                (
+                    w
+                    for w in self.windows
+                    if w.start_frame <= position < w.start_frame + w.frame_count
+                ),
+                None,
+            )
+            if window is None:
+                self.filter.reset()
+                self.last_window = None
+                self.poses.append(
+                    _TimedSpeechPose(
+                        start + (position - source_start) / self.rate,
+                        start + source_count / self.rate,
+                        source_end,
+                        "rest",
+                        None,
+                        False,
+                    )
+                )
+                break
+            end_position = min(source_end, window.start_frame + window.frame_count)
+            if self.last_window != window.start_frame:
+                self.last_window = window.start_frame
+                self.mouth = self.filter.update(
+                    window.dbfs, duration_ms=window.frame_count * 1000 / self.rate
+                )
+            mouth = self.mouth
+            self.poses.append(
+                _TimedSpeechPose(
+                    start + (position - source_start) / self.rate,
+                    start + (end_position - source_start) / self.rate,
+                    end_position,
+                    mouth,
+                    window.dbfs if mouth != "rest" else None,
+                    True,
+                )
+            )
+            position = end_position
+        if source_count < frames:
+            self.filter.reset()
+            self.last_window = None
+            self.poses.append(
+                _TimedSpeechPose(
+                    start + source_count / self.rate,
+                    self.last_end,
+                    source_end,
+                    "rest",
+                    None,
+                    True,
+                )
+            )
+        if len(self.poses) > self.raw_cap * 4:
+            self.unsupported = True
+
+    def _snapshot(
+        self, now: float, pose: _TimedSpeechPose | None = None
+    ) -> SpeechPresentationSnapshot:
+        from tldw_chatbook.Audio.speech_presentation import SpeechPresentationSnapshot
+
+        return SpeechPresentationSnapshot(
+            self.speech.owner,
+            self.generation,
+            self.state,
+            now,
+            None if pose is None else pose.level,
+            "rest" if pose is None else pose.mouth,
+            pose is not None and pose.valid,
+        )
+
+    def publish(self) -> None:
+        self._analyze()
+        with self.lock:
+            if self.closed:
+                return
+            rows = tuple(self.raw)
+            self.raw.clear()
+        if not self.unsupported:
+            for row in rows:
+                self._prepare_output(row)
+                if self.unsupported:
+                    break
+        now = self.clock()
+        if not math.isfinite(now):
+            self.unsupported = True
+            now = 0.0
+        if self.unsupported:
+            self.release()
+            self.speech.publish(self._snapshot(now))
+            return
+        while self.poses and self.poses[0].end <= now:
+            self.played_source = max(
+                self.played_source, self.poses.popleft().source_end
+            )
+        while (
+            self.windows
+            and self.windows[0].start_frame + self.windows[0].frame_count
+            <= self.played_source
+        ):
+            self.windows.popleft()
+        pose = (
+            self.poses[0]
+            if self.poses and self.poses[0].start <= now < self.poses[0].end
+            else None
+        )
+        with self.lock:
+            closed = self.closed
+        if not closed:
+            self.speech.publish(self._snapshot(now, pose))
+
+    def terminate(self) -> None:
+        # The request adapter owns logical terminal status, including WAV fallback.
+        with self.lock:
+            self.closed = True
+            if self.generation and self.retired_generation is None:
+                self.retired_generation = next(_PRESENTATION_GENERATIONS)
+            retired_generation = self.retired_generation
+            discarded_pending, self.pending = self.pending, deque()
+            discarded_raw, self.raw = self.raw, deque()
+            self.pending_bytes = 0
+        discarded_pending.clear()
+        discarded_raw.clear()
+        if retired_generation is None:
+            return
+        try:
+            now = self.clock()
+        except Exception:  # noqa: BLE001 - observation never owns audio failure.
+            now = 0.0
+        self.speech.publish(replace(self._snapshot(now), generation=retired_generation))
+
+    def release(self) -> None:
+        with self.lock:
+            discarded_pending, self.pending = self.pending, deque()
+            discarded_raw, self.raw = self.raw, deque()
+            self.pending_bytes = 0
+        discarded_pending.clear()
+        discarded_raw.clear()
+        self.windows.clear()
+        self.poses.clear()
+
+
 class StreamingPcmSink:
     """Plays a live stream of PCM16 audio chunks with low-latency interruption.
 
@@ -311,6 +648,8 @@ class StreamingPcmSink:
         on_event: Callable[[object], None],
         blocksize_ms: int = 20,
         stream_factory: Optional[Callable[..., Any]] = None,
+        presentation: SpeechPresentation | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Initialize the sink.
 
@@ -325,13 +664,26 @@ class StreamingPcmSink:
             stream_factory: Optional factory used in place of
                 `sounddevice.OutputStream` to construct the output stream.
                 Called as `factory(samplerate=..., channels=..., blocksize=...,
-                callback=...)`. Production code leaves this `None`, which
+                callback=..., finished_callback=...)`. The callback returns
+                a graceful-completion request; the finished callback confirms
+                output completion; a valid final DAC tail is also respected.
+                Production leaves this `None`, which
                 lazily imports `sounddevice` inside `open()`; tests inject a
                 fake stream here to drive playback synchronously.
+            presentation: Optional exact-owner, latest-value speech observation.
+            clock: Monotonic clock shared with the observation; defaults to the
+                process clock. Backend timestamp mapping occurs off the callback.
         """
         self._emit_cb = on_event
         self._blocksize_ms = blocksize_ms
         self._factory = stream_factory
+        self._presentation = presentation
+        self._observer: _SpeechOutputObserver | None = None
+        self._presentation_lock = threading.Lock()
+        self._clock = clock
+        self._drain_requested = False
+        self._backend_finished_seen = False
+        self._drain_timing: tuple[float, float, float, float] | None = None
         self._lock = threading.Lock()
         self._buf: deque[bytes] = deque()  # arbitrary-size chunks
         self._buffered_bytes = 0  # bytes still queued whole in self._buf
@@ -351,6 +703,7 @@ class StreamingPcmSink:
         self._bytes_per_frame = 2
         self._full_reported = False
         self._underruns = 0
+        self._underrun_queued = False
         self._underrun_last_emit_block = -(10**9)
         self._block_index = 0
         self._stream: Any = None
@@ -373,21 +726,22 @@ class StreamingPcmSink:
         except Exception:
             logger.opt(exception=True).debug("sink event emit failed")
 
-    def _teardown_stream(self) -> None:
-        """Abort and close `self._stream`, if any, and clear the reference.
+    def _teardown_stream(self, *, abort: bool = True) -> None:
+        """Close a stream, aborting first for interruption/failure only.
 
         Safe to call from any thread and safe to call more than once (a
         second call finds `self._stream` already `None` and does nothing).
-        Never calls `stream.stop()` -- only `abort()` -- for the same
-        latency reason as `stop()` itself: PortAudio drains its buffer on
-        a graceful stop, which would blow the two-block silence budget.
+        Explicit Stop/failure aborts immediately. Natural completion passes
+        `abort=False` after native acknowledgement and any qualified DAC tail.
+        Never block on `stream.stop()` or discard a pending natural tail.
         """
         with self._lock:
             stream, self._stream = self._stream, None
         if stream is None:
             return
         try:
-            stream.abort()
+            if abort:
+                stream.abort()
             stream.close()
         except Exception:
             logger.opt(exception=True).debug("sink stream teardown raised")
@@ -395,7 +749,9 @@ class StreamingPcmSink:
     def _notify_loop(self) -> None:
         """Drain `self._notify_q`, delivering callback-thread-originated work.
 
-        Runs on a dedicated per-sink daemon thread started by `open()`.
+        Runs on the existing per-sink daemon thread started by `open()`.
+        Optional presentation uses a 20 ms timed wait, independently of public
+        events; callback metadata is coalesced rather than queued per paint.
         Each queued job is either the `_NOTIFY_STOP` sentinel (exit the
         loop) or a `(kind, event)` pair: `"emit"` just delivers `event`;
         `"teardown_and_emit"` additionally tears down the stream and
@@ -404,17 +760,112 @@ class StreamingPcmSink:
         which may touch the stream directly from the callback thread.
         """
         while True:
-            job = self._notify_q.get()
+            try:
+                job = self._notify_q.get(
+                    timeout=_PRESENTATION_INTERVAL
+                    if self._observer is not None or self._backend_finished_seen
+                    else None
+                )
+            except queue.Empty:
+                self._publish_presentation()
+                if self._backend_finished_seen:
+                    with self._lock:
+                        if self._state not in ("stopped", "failed"):
+                            self._notify_q.put_nowait(("backend_finished", None))
+                continue
             try:
                 if job is _NOTIFY_STOP:
+                    if self._observer is not None:
+                        with self._presentation_lock:
+                            self._observer.release()
                     return
                 kind, event = job
+                if kind == "backend_finished":
+                    self._finish_backend()
+                    continue
+                if kind == "underrun":
+                    with self._lock:
+                        event = SinkUnderrun(frames=self._underruns)
+                        self._underrun_queued = False
                 if kind == "teardown_and_emit":
                     self._teardown_stream()
+                    self._end_presentation()
                     _clear_live_sink(self)
+                if isinstance(event, SinkStarted) and self._observer is not None:
+                    self._observer.state = "playing"
+                self._publish_presentation()
                 self._emit(event)
             finally:
                 self._notify_q.task_done()
+
+    def _publish_presentation(self) -> None:
+        """Sample qualified output on the notification path, never on the callback."""
+        if self._observer is None:
+            return
+        with self._presentation_lock:
+            try:
+                self._observer.publish()
+            except Exception:  # noqa: BLE001 - optional observation cannot fail audio.
+                logger.debug("Speech timing observation disabled")
+                self._observer.unsupported = True
+                try:
+                    self._observer.release()
+                    self._observer.terminate()
+                except Exception:  # noqa: BLE001 - observer cleanup cannot fail audio.
+                    logger.debug("Speech timing observation cleanup failed")
+
+    def _end_presentation(self) -> None:
+        if self._observer is not None:
+            try:
+                self._observer.terminate()
+            except Exception:  # noqa: BLE001 - observer cleanup cannot fail audio.
+                logger.debug("Speech timing observation cleanup failed")
+
+    def _on_stream_finished(self) -> None:
+        """Hand off native completion without teardown or listener work here."""
+        with self._lock:
+            if self._backend_finished_seen or self._state in ("stopped", "failed"):
+                return
+            self._backend_finished_seen = True
+            self._notify_q.put_nowait(("backend_finished", None))
+
+    def _finish_backend(self) -> None:
+        """Complete a natural drain only after all native output has played."""
+        with self._lock:
+            if self._state in ("stopped", "failed"):
+                return
+            unexpected = self._state != "draining" or not self._drain_requested
+            if not unexpected:
+                timing = self._drain_timing
+                if timing is not None:
+                    callback_at, backend_now, dac_at, duration = timing
+                    end = callback_at + dac_at - backend_now + duration
+                    try:
+                        now = self._clock()
+                        # CoreAudio can acknowledge finished before its scheduled DAC tail.
+                        if (
+                            all(math.isfinite(value) for value in (*timing, now, end))
+                            and 0 <= dac_at - backend_now
+                            and 0 < dac_at - backend_now + duration <= 1.0
+                            and 0 < end - now <= 1.0
+                        ):
+                            return
+                    except Exception:  # noqa: BLE001 - invalid timing uses native acknowledgement.
+                        logger.debug(
+                            "Native output timing unavailable; using finished acknowledgement"
+                        )
+                self._state = "stopped"
+                self._terminal_reason = "drained"
+        if unexpected:
+            self._fail(
+                "audio backend finished before end of stream", from_callback=True
+            )
+            return
+        self._teardown_stream(abort=False)
+        self._end_presentation()
+        _clear_live_sink(self)
+        self._emit(SinkDrained())
+        self._notify_q.put_nowait(_NOTIFY_STOP)
 
     def open(self, sample_rate: int, channels: int = 1) -> None:
         """Open the output stream and start the device callback.
@@ -486,6 +937,18 @@ class StreamingPcmSink:
             self._prebuffer_bytes = (
                 PREBUFFER_MS * sample_rate * self._bytes_per_frame // 1000
             )
+        if self._presentation is not None:
+            try:
+                self._observer = _SpeechOutputObserver(
+                    self._presentation,
+                    sample_rate,
+                    channels,
+                    self._blocksize_ms,
+                    self._clock,
+                )
+            except Exception:  # noqa: BLE001 - optional observation cannot fail open.
+                logger.debug("Speech timing observation unavailable")
+                self._observer = None
         factory = self._factory
         if factory is None:
             sd = _import_sounddevice()
@@ -494,14 +957,17 @@ class StreamingPcmSink:
                 return
 
             def factory(**kw):
+                def callback(outdata, frames, timing, status):
+                    if kw["callback"](outdata, frames, timing, status):
+                        raise sd.CallbackStop
+
                 return sd.OutputStream(
                     samplerate=kw["samplerate"],
                     channels=kw["channels"],
                     blocksize=kw["blocksize"],
                     dtype="int16",
-                    callback=lambda outdata, frames, t, status: kw["callback"](
-                        outdata, frames, t, status
-                    ),
+                    callback=callback,
+                    finished_callback=kw["finished_callback"],
                 )
 
         try:
@@ -510,10 +976,16 @@ class StreamingPcmSink:
                 channels=channels,
                 blocksize=frames_per_block,
                 callback=self._callback,
+                finished_callback=self._on_stream_finished,
             )
             self._stream.start()
         except Exception as exc:
             self._fail(f"audio device open failed: {exc}")
+            return
+        with self._lock:
+            finished_during_open = self._backend_finished_seen and self._state == "idle"
+        if finished_during_open:
+            self._fail("audio backend finished before playback opened")
             return
         with self._lock:
             if self._state != "idle":
@@ -550,6 +1022,8 @@ class StreamingPcmSink:
             # immediately instead of waiting for that.
             _clear_live_sink(self)
             return
+        if self._observer is not None:
+            self._observer.activate()
         self._notify_thread = threading.Thread(
             target=self._notify_loop,
             name="StreamingPcmSinkNotify",
@@ -576,10 +1050,14 @@ class StreamingPcmSink:
             `True` if the chunk was accepted, `False` if it was rejected
             (sink not open/draining, already closed, or buffer full).
         """
+        if type(pcm) is not bytes:
+            return False
         report = False
         with self._lock:
             if self._state not in ("open", "draining") or self._closed:
                 return False
+            if not pcm:
+                return True
             pending = self._buffered_bytes + self._leftover_remaining_locked()
             if pending + len(pcm) > self._cap_bytes:
                 report = not self._full_reported
@@ -587,6 +1065,8 @@ class StreamingPcmSink:
             else:
                 self._buf.append(pcm)
                 self._buffered_bytes += len(pcm)
+                if self._observer is not None:
+                    self._observer.admit(pcm)
                 return True
         if report:
             self._emit(SinkBufferFull())
@@ -598,8 +1078,8 @@ class StreamingPcmSink:
         No-op unless the sink is currently `"open"`. Does not stop
         playback immediately -- buffered audio (including audio still
         below the prebuffer threshold) is allowed to play out, after which
-        the device callback transitions the sink to `"stopped"` and emits
-        `SinkDrained`. Use `stop()` instead for immediate interruption.
+        the backend's output-finished acknowledgement transitions the sink
+        to `"stopped"` and emits `SinkDrained`. Use `stop()` for interruption.
 
         Calling `close()` before `open()` has transitioned the sink to
         `"open"` (i.e. while still `"idle"`, mid-`open()`, or after a
@@ -614,6 +1094,8 @@ class StreamingPcmSink:
                 return
             self._closed = True
             self._state = "draining"
+            if self._observer is not None:
+                self._observer.end_input()
 
     def stop(self) -> None:
         """Abort playback immediately and discard any buffered audio.
@@ -658,6 +1140,7 @@ class StreamingPcmSink:
             self._leftover = b""
             self._leftover_off = 0
         self._teardown_stream()
+        self._end_presentation()
         if already_terminal:
             return
         _clear_live_sink(self)
@@ -673,6 +1156,9 @@ class StreamingPcmSink:
 
     def settle(self, timeout: float = 5.0) -> bool:
         """Block until this sink's notify thread has delivered all queued work.
+
+        This settles queued notification work, not device-pending output.
+        A pending natural tail can have an empty queue and no terminal reason.
 
         `stop()` (and the drain/failure teardown paths) enqueue their
         final work non-blockingly and never wait for it to actually reach
@@ -744,10 +1230,11 @@ class StreamingPcmSink:
             self._notify_q.put(_NOTIFY_STOP)
             return
         self._teardown_stream()
+        self._end_presentation()
         _clear_live_sink(self)
         self._emit(SinkFailed(reason=reason))
 
-    def _callback(self, outdata, frames, _time, _status) -> None:
+    def _callback(self, outdata, frames, _time, _status) -> bool:
         """Device audio callback: fill `outdata` with the next block of audio.
 
         This runs on the audio backend's own thread and must never raise
@@ -758,15 +1245,26 @@ class StreamingPcmSink:
         Args:
             outdata: Output buffer to fill, shaped `(frames, channels)`.
             frames: Number of frames requested for this block.
-            _time: Backend-supplied timing info (unused).
-            _status: Backend-supplied status flags (unused).
+            _time: Backend current/DAC timestamps for bounded observation handoff.
+            _status: Hardware underflow invalidates optional timing observation.
+
+        Returns:
+            True only to request native graceful completion after the final
+            submitted block; terminal state waits for acknowledgement and any
+            qualified scheduled output tail.
         """
         try:
             need = frames * self._bytes_per_frame
             with self._lock:
                 if self._state not in ("open", "draining"):
                     outdata[:] = 0
-                    return
+                    return False
+                if (
+                    self._closed
+                    and (self._buffered_bytes + self._leftover_remaining_locked())
+                    % self._bytes_per_frame
+                ):
+                    raise ValueError("incomplete final PCM channel frame")
                 if not self._audible:
                     have_any = (
                         self._buffered_bytes > 0
@@ -793,8 +1291,14 @@ class StreamingPcmSink:
                         pass
                     else:
                         outdata[:] = 0
-                        return
+                        if self._observer is not None:
+                            self._observer.record_output(_time, frames, 0, _status)
+                        return False
                 chunk = self._take_locked(need)
+                if self._observer is not None:
+                    self._observer.record_output(
+                        _time, frames, len(chunk) // self._bytes_per_frame, _status
+                    )
                 drained = (
                     self._closed
                     and self._buffered_bytes == 0
@@ -817,22 +1321,22 @@ class StreamingPcmSink:
             else:
                 outdata[:] = 0
             if drained:
+                timing = (
+                    _read_output_timing(_time, _status, self._clock)
+                    if self._audible
+                    else None
+                )
                 with self._lock:
-                    if self._state == "draining":
-                        self._state = "stopped"
-                        self._terminal_reason = "drained"
-                        emit_drain = True
-                    else:
-                        emit_drain = False
-                if emit_drain:
-                    # Stream teardown and the live-sink registry clear must
-                    # not happen on this (the audio callback) thread -- see
-                    # the module's thread contract -- so hand both off to
-                    # the notify thread along with the event itself, then
-                    # tell it to exit once it's done (this sink is terminal).
-                    self._notify_q.put(("teardown_and_emit", SinkDrained()))
-                    self._notify_q.put(_NOTIFY_STOP)
+                    self._drain_requested = self._state == "draining"
+                    if timing is not None:
+                        duration = (
+                            frames
+                            * self._bytes_per_frame
+                            / (self._cap_bytes // BUFFER_CAP_SECONDS)
+                        )
+                        self._drain_timing = (*timing, duration)
             self._block_index += 1
+            return drained
         except Exception:
             # Swallow EVERYTHING: a raise here kills the PortAudio thread.
             try:
@@ -840,6 +1344,7 @@ class StreamingPcmSink:
             except Exception:
                 pass
             self._fail("audio callback error", from_callback=True)
+            return False
 
     def _leftover_remaining_locked(self) -> int:
         """Return how many unconsumed bytes remain in `self._leftover`.
@@ -872,6 +1377,9 @@ class StreamingPcmSink:
             Up to `need` bytes of audio; shorter than `need` only if the
             buffer did not contain enough data.
         """
+        available = self._buffered_bytes + self._leftover_remaining_locked()
+        need = min(need, available - available % self._bytes_per_frame)
+
         remaining = self._leftover_remaining_locked()
         if remaining >= need:
             start = self._leftover_off
@@ -916,9 +1424,9 @@ class StreamingPcmSink:
         a quiet period always reports immediately (the throttle only
         suppresses *repeat* reports of an ongoing underrun). The event
         itself is handed to the notify queue rather than emitted directly,
-        per the module's thread contract -- this is a plain `"emit"` job
-        (no stream teardown), so it does not need the `_NOTIFY_STOP`
-        sentinel that terminal events push.
+        per the module's thread contract. One outstanding job coalesces
+        cumulative underruns while a listener is blocked; no stream teardown
+        or terminal sentinel is needed.
 
         Args:
             frames: Number of audio frames this callback could not fill
@@ -929,9 +1437,11 @@ class StreamingPcmSink:
         if (
             self._block_index - self._underrun_last_emit_block
             >= _UNDERRUN_THROTTLE_BLOCKS
+            and not self._underrun_queued
         ):
             self._underrun_last_emit_block = self._block_index
-            self._notify_q.put(("emit", SinkUnderrun(frames=self._underruns)))
+            self._underrun_queued = True
+            self._notify_q.put_nowait(("underrun", None))
 
     @property
     def state(self) -> str:

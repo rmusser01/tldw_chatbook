@@ -320,3 +320,8 @@ WorkspaceCreateModal #workspace-create-modal {
 WorkspaceCreateModal #workspace-create-error {
     color: $ds-status-error-readable;
 }
+
+/* App-tier focus overrides the global *:focus rule on the original-pixel viewer. */
+PortraitCompositionReview #portrait-pairs-canvas:focus {
+    outline: tall $ds-active-fg;
+}

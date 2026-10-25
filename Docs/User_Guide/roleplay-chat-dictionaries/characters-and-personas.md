@@ -169,6 +169,106 @@ too. **✨ Generate all** asks first — "This will overwrite the existing avata
 and/or expression images. Continue?" (**Generate all** / **Cancel**) — and
 reports "{k}/{N} generated.".
 
+### Editor — living portrait imports
+
+Open **Living portrait** under a saved local character's artwork. Choose `idle`
+for the active portrait, an operational expression (`thinking`, `speaking`,
+`error`), or a saved pack expression key, then **Prepare saved artwork**. Save
+changed portrait artwork or Apply reaction-artwork changes first. Prepare never
+saves unrelated text edits. Server characters are read-only.
+
+Select each of the six slots and **Import / replace…** a still PNG, JPEG or WebP:
+`rest`, `small`, `open`, `blink_rest`, `blink_small`, `blink_open`. All images must
+have matching dimensions. Each image is limited to 1,048,576 pixels and 4 MiB;
+the complete normalized set is limited to 16 MiB. Animated images are refused.
+Artwork made in an external image editor or service, including ChatGPT, uses this
+same import workflow. Export six separate files with identical framing and dimensions;
+for square images, 1024×1024 meets the pixel limit. Keep the originals when preparing
+smaller copies. The app does not resize over-limit imports automatically.
+
+**Clear slot** only changes the draft. Compare the source with the Console-sized
+preview, cycle all six poses, inspect individual poses, or run **Idle + blink**
+without generating images or playing speech. Review a 2×3 matrix: each mouth state
+(closed, small, open) needs both open and closed eyes. Check matching mouth shapes
+within each pair and consistent lighting, head position and background across all
+six. Externally generated files can differ despite sharing a reference; replace any
+inconsistent imported slot before Apply.
+
+**Apply performance** publishes all six poses together. **Cancel draft** keeps the
+applied artwork; **Remove applied** restores ordinary artwork. Changing the
+character, profile or source invalidates the draft. Reopen and Prepare to inspect
+the stored set. Performances stay in the local profile and its full backups;
+character cards, Actor Packs, sync and server exports do not carry them.
+
+### Editor — reusable eye and mouth regions
+
+After **Prepare saved artwork**, choose **Edit regions…**. Mark the image-left eye,
+image-right eye and mouth by clicking two opposite corners, or use the labeled
+X/Y/Width/Height fields entirely by keyboard. Values are prepared-image pixels;
+letterboxing is excluded and resizing the view leaves saved coordinates unchanged.
+Each region must be at least 3×3 pixels, inside the base and separate from the others.
+The source crop and feather mask help check the selected boundaries. The overview's
+L/R/M markers identify the three regions.
+
+Confirm **Base: open eyes, closed mouth**, then **Save regions**. If this condition is
+false, use another saved base or ready-made imports. Regions are local preparation
+settings, reused when the exact source is prepared again. Save does not activate new
+artwork. Changing regions stops only the current draft sample and starts a new
+rest-only draft; the applied performance stays active. An unchanged Save keeps its
+revision and draft. Cancel in the region dialog discards only unsaved region edits.
+Saved regions survive **Remove applied** and full-profile backup/restore; portable
+character/Actor Pack/Chatbook exports and sync omit them.
+
+### Editor — generate poses and hear a sample
+
+After preparing saved artwork and **Save regions**, **Generate components (3)…**
+offers three sequential image-edit requests to the configured reference-image backend:
+eyelids, small mouth and open mouth. The confirmation names the provider, model/workflow,
+destination, source and count. Charges may apply. No other provider or automatic paid
+retry is selected. Ready-made imports remain available without a configured backend. If the saved source
+cannot produce a reference within image limits, component generation and region
+selection are unavailable; manual imports, Apply and Remove still work.
+
+After confirmation, a fresh batch starts a rest-only draft and clears all prior draft
+components. Successful responses contribute pixels only through the saved regions;
+the source lighting and pixels outside those regions stay unchanged. The app assembles
+both eye variants of every mouth state from shared finished components. All three
+components are required before Apply or a speech sample. A failed/uncertain component
+retains only successes from that batch; old slots cannot complete it.
+
+Use the separate **Eyelids / Small mouth / Open mouth** selector and **Retry component
+(1)…** for one explicit retry. Eyelids replaces the three blink poses; a mouth retry
+replaces its open/closed-eye pair. Other frame bytes stay unchanged. A failed retry
+keeps its previous valid candidate. An uncertain request may already have been charged.
+Source/character/profile/regions or image-settings changes reject late results and
+cancel remaining requests. Nothing activates before **Apply performance**.
+
+**Review pairs…** opens a static 2×3 matrix: mouth columns closed/small/open and eye
+rows open/closed. Choose an eye or mouth detail for common crops copied from the
+original frame PNGs. Arrow keys or h/j/k/l pan while the image has focus; the labeled
+numeric X/Y offsets allow precise navigation. Large regions use bounded crops instead
+of a six-canvas montage. Terminal glyph colors are approximations; review data itself
+uses original RGBA pixels. Close returns to the same draft with no generation, audio,
+Save or Apply. Review has no mandatory acknowledgement checkbox. If another editor changes the saved
+source or regions, the open review closes and clears its old artwork; Prepare again
+to review the new state. A temporarily unavailable check closes the dialog while
+retaining your draft.
+
+Exact pairing does not guarantee convincing eyelids, lips or registration within a
+patch. Inspect for seams and alignment; retry a component or adjust regions as needed.
+Reopen and Prepare reuses matching regions and validated applied component provenance
+without feathering it again. Successful manual Import/Clear drops component lineage;
+ordinary six-frame Apply remains available, and generating components again starts
+a fresh batch. Cancelled or invalid imports retain the prior candidate.
+
+With six poses ready, **Play speech sample…** confirms the selected character's current
+voice destination and says: “Hello. This is a portrait preview. Notice the pauses.”
+The sample animates only this draft's preview and creates no chat message or automatic
+speech preference. **Stop sample**, Cancel or leaving the source stops only that
+sample. Missing TTS leaves imports, generation, offline review and Apply available.
+Static or Reduce motion suppresses automatic preview movement; individual poses can
+still be selected for review.
+
 ### Editor — saving and validation
 
 The footer lists problems under **"Validation errors:"** — **"name:

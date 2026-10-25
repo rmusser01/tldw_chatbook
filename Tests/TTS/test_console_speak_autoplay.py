@@ -671,6 +671,8 @@ async def test_manual_generation_preserves_legacy_service_call_shape(tmp_path) -
 
 
 class _SpeechRequestControllerStub:
+    bind_speech_presentation = ConsoleMessageController.bind_speech_presentation
+    current_speech_presentation = ConsoleMessageController.current_speech_presentation
     _begin_console_speech_presentation = (
         ConsoleMessageController._begin_console_speech_presentation
     )

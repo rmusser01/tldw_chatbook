@@ -356,6 +356,11 @@ class PersonasVisualIdentityPackWidget(Vertical):
         }.get(busy, self._dirty_copy())
         self.query_one("#personas-visual-identity-dirty", Static).update(copy)
 
+    @property
+    def has_staged_changes(self) -> bool:
+        """Whether another authoring surface must wait for Apply or discard."""
+        return bool(self._staged)
+
     def reset_staged(self) -> None:
         """Discard only unpublished widget state."""
 

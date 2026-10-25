@@ -158,6 +158,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-193](193-native-v2-profile-compatibility-and-admission.md) | Accepted (design only) | Require current profile-wide consumer qualification and exact native atomic admission before V2 use. |
 
 | [ADR-232](232-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules, assess permitted execution evidence, and admit bounded correction through current Console custody; preserves source ADR-219 provenance. |
+| [ADR-242](242-console-radio-portrait-performance.md) | Accepted (design only) | Add reviewed local six-pose character performances and output-timed TTS presentation within the existing Console rail; preserve moods, motion preferences and portable artwork formats. |
 
 ## Historical Decision Material
 
@@ -207,3 +208,5 @@ Do not reuse numbers.
 
 | [ADR-227: Native Console goal runs](227-native-console-goal-runs.md) | Accepted | Bounded native goal iterations, evidence, storage and current-dev runtime integration; preserves source ADR-141 provenance. |
 | [ADR-240: Retire the MCP destination; Settings hosts the Tools & MCP hub](240-mcp-destination-retirement-tools-hub-in-settings.md) | Accepted | Re-home the four-mode MCP workbench intact as a Settings category (ADR-172 retirement template); `mcp`/`tools_settings` alias Settings and ctrl+9 survives as a compatibility deep-link; amends ADR-015 (14 -> 13 destinations). |
+
+| [ADR-243: Source-bound portrait compositing](243-source-bound-portrait-compositing.md) | Accepted for planning | Reusable manual expression regions, three component edits, exact local six-pose assembly and profile-local provenance; amends ADR-242 generation/authoring. |

@@ -608,9 +608,12 @@ async def test_sync_tick_refreshes_avatar(console_screen_with_db):
     char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, char_id, "Ada")
 
-    await (
-        screen._sync_native_console_chat_ui()
-    )  # the real sync entrypoint, not the refresh directly
+    # A coalesced call returns False while an earlier sync owns the screen.
+    # Observe completion through the same real entrypoint before reading pixels.
+    for _ in range(100):
+        if await screen._sync_native_console_chat_ui():
+            break
+        await asyncio.sleep(.01)
 
     assert screen._active_character_avatar is not None
     assert screen._active_character_avatar_name == "Ada"

@@ -274,13 +274,20 @@ def test_restricted_historical_restore_migrates_only_disposable_copy(
     assert source.read_bytes() == before
 
 
+@pytest.mark.parametrize("version", (80, 81, 82, 83))
 @pytest.mark.parametrize("lineage", range(4))
+@pytest.mark.parametrize("failure", (None, "deny", "cancel"))
 def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
-    tmp_path, lineage
+    tmp_path, monkeypatch, lineage, version, failure
 ):
     from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
     from tldw_chatbook.DB.recovery_core import core_adapters
-    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V80_SCHEMAS
+    from tldw_chatbook.DB.recovery_core_schema import (
+        CHACHANOTES_V80_SCHEMAS,
+        CHACHANOTES_V81_SCHEMAS,
+        CHACHANOTES_V82_SCHEMAS,
+        CHACHANOTES_V83_SCHEMAS,
+    )
 
     path = tmp_path / "retained-lineage.sqlite"
     with closing(sqlite3.connect(path)) as connection, connection:
@@ -289,7 +296,12 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
         )
 
         install_canvas_revision_payload_validator(connection)
-        catalog = CHACHANOTES_V80_SCHEMAS[lineage]
+        catalog = {
+            80: CHACHANOTES_V80_SCHEMAS,
+            81: CHACHANOTES_V81_SCHEMAS,
+            82: CHACHANOTES_V82_SCHEMAS,
+            83: CHACHANOTES_V83_SCHEMAS,
+        }[version][lineage]
         # Virtual tables create their native shadow tables themselves.
         declarations = sorted(
             catalog,
@@ -310,7 +322,8 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
                     "SELECT 1 FROM sqlite_schema WHERE sql=?", (sql,)
                 ).fetchone()
         connection.execute(
-            "INSERT INTO db_schema_version(schema_name,version) VALUES ('rag_char_chat_schema',80)"
+            "INSERT INTO db_schema_version(schema_name,version) VALUES ('rag_char_chat_schema',?)",
+            (version,),
         )
         connection.execute(
             "INSERT INTO conversations(id,root_id,title,client_id) VALUES ('retained','retained','saved lineage','rules')"
@@ -322,7 +335,41 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
     current_schemas = tuple(
         schema for version, schema in policy.schema_sql if version == current_version
     )
-    assert validate_candidate(owner, path, Event(), migrate=True) == ()
+    from tldw_chatbook.Backup_Recovery import sqlite_validation as validation
+
+    cancel = Event()
+    observed = []
+    authorize = validation._Restrictions.authorize
+
+    def observe(self, action, first, second, database, source):
+        if self not in observed:
+            observed.append(self)
+        if (
+            failure
+            and action == sqlite3.SQLITE_ALTER_TABLE
+            and second == "character_portrait_performances"
+        ):
+            if failure == "cancel":
+                cancel.set()
+            return sqlite3.SQLITE_DENY
+        return authorize(self, action, first, second, database, source)
+
+    if version in (82, 83):
+        _assert_portrait_migration_authority_is_owner_step_and_source_scoped(version)
+    monkeypatch.setattr(validation._Restrictions, "authorize", observe)
+    before = path.read_bytes()
+    issues = validate_candidate(owner, path, cancel, migrate=True)
+    for restrictions in observed:
+        assert restrictions.portrait_migration is None
+        assert not restrictions.migrating
+        assert restrictions.migration_owner is None
+    if failure:
+        assert issues == (
+            "cancelled" if failure == "cancel" else "sqlite_validation_unavailable",
+        )
+        assert path.read_bytes() == before
+        return
+    assert issues == ()
     with closing(sqlite3.connect(path)) as connection:
         catalog = tuple(
             r[0]
@@ -371,3 +418,77 @@ def test_response_rule_candidate_refusal_never_rewrites_rejected_input(
     )
     assert expected in validate_candidate(owner, path, Event(), migrate=True)
     assert path.read_bytes() == before
+
+
+def _assert_portrait_migration_authority_is_owner_step_and_source_scoped(phase):
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import _Restrictions
+
+    table = (
+        "character_portrait_performances"
+        if phase == 82
+        else "character_portrait_regions"
+    )
+    admitted = [
+        (sqlite3.SQLITE_CREATE_TABLE, table, None, "main", None),
+        (
+            sqlite3.SQLITE_CREATE_INDEX,
+            f"sqlite_autoindex_{table}_1",
+            table,
+            "main",
+            None,
+        ),
+        (sqlite3.SQLITE_FUNCTION, None, "json_valid", None, None),
+    ]
+    if phase == 83:
+        admitted.extend(
+            [
+                (
+                    sqlite3.SQLITE_ALTER_TABLE,
+                    "main",
+                    "character_portrait_performances",
+                    None,
+                    None,
+                ),
+                (
+                    sqlite3.SQLITE_PRAGMA,
+                    "quick_check",
+                    "character_portrait_performances",
+                    None,
+                    None,
+                ),
+            ]
+        )
+    denied = [
+        (sqlite3.SQLITE_CREATE_TABLE, "unexpected", None, "main", None),
+        (sqlite3.SQLITE_ALTER_TABLE, "main", "character_cards", None, None),
+        (sqlite3.SQLITE_UPDATE, table, "source_ref_json", "main", None),
+        (sqlite3.SQLITE_DELETE, table, None, "main", None),
+        (sqlite3.SQLITE_FUNCTION, None, "load_extension", None, None),
+    ]
+    with closing(sqlite3.connect(":memory:")) as connection:
+        restrictions = _Restrictions(connection)
+        restrictions.migrating = True
+        restrictions.migration_owner = "db.chachanotes.primary"
+        restrictions.portrait_migration = phase
+        assert all(
+            restrictions.authorize(*callback) == sqlite3.SQLITE_OK
+            for callback in admitted
+        )
+        assert all(
+            restrictions.authorize(*callback) == sqlite3.SQLITE_DENY
+            for callback in denied
+        )
+        create = admitted[0]
+        assert restrictions.authorize(*create[:3], "temp", None) == sqlite3.SQLITE_DENY
+        assert (
+            restrictions.authorize(*create[:4], "unexpected_trigger")
+            == sqlite3.SQLITE_DENY
+        )
+        restrictions.portrait_migration = 83 if phase == 82 else 82
+        assert restrictions.authorize(*create) == sqlite3.SQLITE_DENY
+        restrictions.portrait_migration = phase
+        restrictions.migration_owner = "db.evals"
+        assert restrictions.authorize(*create) == sqlite3.SQLITE_DENY
+        restrictions.migration_owner = "db.chachanotes.primary"
+        restrictions.migrating = False
+        assert restrictions.authorize(*create) == sqlite3.SQLITE_DENY

@@ -8,9 +8,10 @@ import re
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextvars import copy_context
 from dataclasses import replace
 from functools import partial, wraps
-from typing import Any, Dict, Literal, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, TypeVar
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
@@ -75,6 +76,9 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 )
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
 
 _T = TypeVar("_T")
 _TTS_ARTIFACT_WRITE_BATCH_BYTES = 64 * 1024
@@ -196,6 +200,23 @@ class TTSRequestEvent(Message):
         self.voice = voice  # Optional voice override
 
 
+def _request_presentation(
+    presentation: "SpeechPresentation | None",
+    lifecycle: "TTSPlaybackLifecycle | None",
+) -> "SpeechPresentation | None":
+    """Keep optional observation attached to its exact existing request owner."""
+    if presentation is not None:
+        from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
+
+        if not isinstance(presentation, SpeechPresentation):
+            raise ValueError("presentation must be SpeechPresentation or None")
+    if lifecycle is None:
+        return presentation
+    if presentation is not None and presentation is not lifecycle.presentation:
+        raise ValueError("presentation must match playback_lifecycle")
+    return lifecycle.presentation
+
+
 class TTSMessageSpeechRequestEvent(Message):
     """Request speech for one store-issued immutable Console snapshot."""
 
@@ -207,6 +228,7 @@ class TTSMessageSpeechRequestEvent(Message):
         expected_destination_fingerprint: str | None = None,
         retry_failed_auto: bool = False,
         playback_lifecycle: "TTSPlaybackLifecycle | None" = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         super().__init__()
         if type(snapshot) is not TTSMessageSpeechSnapshot:
@@ -237,6 +259,7 @@ class TTSMessageSpeechRequestEvent(Message):
         self.expected_destination_fingerprint = expected_destination_fingerprint
         self.retry_failed_auto = retry_failed_auto
         self.playback_lifecycle = playback_lifecycle
+        self.presentation = _request_presentation(presentation, playback_lifecycle)
         self._outcome_reported = False
 
     @property
@@ -280,6 +303,7 @@ class TTSCompleteEvent(Message):
         error: Optional[str] = None,
         global_override_token: str | None = None,
         playback_lifecycle: "TTSPlaybackLifecycle | None" = None,
+        presentation: "SpeechPresentation | None" = None,
     ):
         super().__init__()
         if global_override_token is not None and not (
@@ -297,6 +321,9 @@ class TTSCompleteEvent(Message):
         ):
             raise ValueError("playback_lifecycle must match message_id")
         self.playback_lifecycle = playback_lifecycle
+        self.presentation = _request_presentation(presentation, playback_lifecycle)
+
+
 
 
 PlaybackLifecycleState = Literal["playing", "stopped", "failed"]
@@ -312,6 +339,7 @@ class TTSPlaybackLifecycle:
         "_callback",
         "_state",
         "_lock",
+        "presentation",
     )
 
     def __init__(
@@ -321,6 +349,7 @@ class TTSPlaybackLifecycle:
         request_id: int,
         validator: Callable[[], bool],
         callback: Callable[[PlaybackLifecycleState], None],
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         if type(message_id) is not str or not message_id:
             raise ValueError("message_id must be a non-empty string")
@@ -328,6 +357,7 @@ class TTSPlaybackLifecycle:
             raise ValueError("request_id must be a positive integer")
         if not callable(validator) or not callable(callback):
             raise ValueError("validator and callback must be callable")
+        self.presentation = _request_presentation(presentation, None)
         self.message_id = message_id
         self.request_id = request_id
         self._validator = validator
@@ -382,6 +412,8 @@ class TTSPlaybackLifecycle:
             }:
                 return False
             self._state = state
+        if self.presentation is not None:
+            self.presentation.set_transport(state)
         try:
             self._callback(state)
         except Exception:
@@ -423,6 +455,7 @@ class TTSPlaybackEvent(Message):
         *,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
         outcome_callback: Callable[[bool], None] | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ):
         super().__init__()
         if playback_lifecycle is not None and (
@@ -435,6 +468,7 @@ class TTSPlaybackEvent(Message):
         self.action = action  # "play", "pause", "stop"
         self.message_id = message_id
         self.playback_lifecycle = playback_lifecycle
+        self.presentation = _request_presentation(presentation, playback_lifecycle)
         self._outcome_callback = outcome_callback
         self._outcome_reported = False
 
@@ -952,6 +986,7 @@ class TTSEventHandler:
                     error=str(error),
                     global_override_token=token,
                     playback_lifecycle=event.playback_lifecycle,
+                    presentation=event.presentation,
                 )
             )
             event.report_outcome(False)
@@ -973,6 +1008,7 @@ class TTSEventHandler:
                             "again."
                         ),
                         playback_lifecycle=event.playback_lifecycle,
+                        presentation=event.presentation,
                     )
                 )
                 event.report_outcome(False)
@@ -989,6 +1025,7 @@ class TTSEventHandler:
             expected_destination_fingerprint=expected,
             retry_failed_auto=event.retry_failed_auto,
             playback_lifecycle=event.playback_lifecycle,
+            presentation=event.presentation,
         )
 
     async def speak_guarded_utterance(
@@ -999,8 +1036,9 @@ class TTSEventHandler:
         character_ref: CharacterRef | None,
         expected_destination_fingerprint: str,
         validator: Callable[[], bool],
+        presentation: "SpeechPresentation | None" = None,
     ) -> bool:
-        """Speak app-owned, named Buddy text through existing TTS authority.
+        """Speak app-owned preview or Buddy text through existing TTS authority.
 
         The caller validates the exact source/binding and supplies previously
         confirmed destination authority. Completion means playback terminated,
@@ -1024,6 +1062,7 @@ class TTSEventHandler:
             request_id=1,
             validator=validator,
             callback=report,
+            presentation=presentation,
         )
         try:
             if not owner.is_current():
@@ -1055,6 +1094,7 @@ class TTSEventHandler:
                 outcome_callback=generation_finished,
                 expected_destination_fingerprint=expected_destination_fingerprint,
                 playback_lifecycle=owner,
+                presentation=presentation,
             )
             if not owner.is_current() and not finished.done():
                 return False
@@ -1065,6 +1105,7 @@ class TTSEventHandler:
                     action="stop",
                     message_id=owner.message_id,
                     playback_lifecycle=owner,
+                    presentation=presentation,
                 )
             )
 
@@ -1075,6 +1116,8 @@ class TTSEventHandler:
         *,
         on_finished: Callable[[bool], None],
         quiet: bool = False,
+        presentation: "SpeechPresentation | None" = None,
+        validator: Callable[[], bool] | None = None,
     ) -> None:
         """Speak one cooldown-free hands-free-loop utterance.
 
@@ -1151,6 +1194,8 @@ class TTSEventHandler:
             if fired:
                 return
             fired = True
+            if presentation is not None:
+                presentation.set_transport("stopped" if ok else "failed")
             try:
                 on_finished(ok)
             except Exception:
@@ -1160,9 +1205,22 @@ class TTSEventHandler:
                 )
 
         message_id = f"handsfree-{uuid4().hex}"
+        owner = (
+            TTSPlaybackLifecycle(
+                message_id=message_id,
+                request_id=1,
+                validator=validator,
+                callback=lambda _state: None,
+                presentation=presentation,
+            )
+            if validator is not None
+            else None
+        )
         try:
+            if owner is not None and not owner.is_current():
+                return
             prepared_text = await self._prepare_tts_text(text, message_id, quiet=quiet)
-            if prepared_text is None:
+            if prepared_text is None or (owner is not None and not owner.is_current()):
                 return
             generation_task = asyncio.create_task(
                 self._generate_tts(
@@ -1172,10 +1230,18 @@ class TTSEventHandler:
                     resolution=None,
                     on_finished=fire,
                     quiet=quiet,
+                    presentation=presentation,
+                    playback_lifecycle=owner,
                 )
             )
             await self._add_active_task(generation_task)
             await generation_task
+        except asyncio.CancelledError:
+            if presentation is not None:
+                presentation.set_transport("stopped")
+            if owner is not None:
+                owner.report_terminal("stopped")
+            raise
         finally:
             fire(False)
 
@@ -1694,6 +1760,7 @@ class TTSEventHandler:
         expected_destination_fingerprint: str | None = None,
         retry_failed_auto: bool = False,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Apply cooldown only after validation and character resolution."""
         current_time = asyncio.get_event_loop().time()
@@ -1720,6 +1787,7 @@ class TTSEventHandler:
                             "requesting TTS again"
                         ),
                         playback_lifecycle=playback_lifecycle,
+                        presentation=presentation,
                     )
                 )
                 if outcome_callback is not None:
@@ -1744,6 +1812,7 @@ class TTSEventHandler:
                 expected_destination_fingerprint=expected_destination_fingerprint,
                 playback_lifecycle=playback_lifecycle,
                 cancellation_is_success=lambda: owner.cancel_as_success,
+                presentation=presentation,
             )
         elif outcome_callback is None and expected_destination_fingerprint is None:
             generation = self._generate_tts_with_rate_limit(
@@ -1751,6 +1820,7 @@ class TTSEventHandler:
                 message_id,
                 voice,
                 resolution,
+                presentation=presentation,
             )
         elif outcome_callback is None:
             generation = self._generate_tts_with_rate_limit(
@@ -1759,6 +1829,7 @@ class TTSEventHandler:
                 voice,
                 resolution,
                 expected_destination_fingerprint=expected_destination_fingerprint,
+                presentation=presentation,
             )
         else:
             generation = self._generate_tts_with_rate_limit(
@@ -1768,6 +1839,7 @@ class TTSEventHandler:
                 resolution,
                 outcome_callback=outcome_callback,
                 expected_destination_fingerprint=(expected_destination_fingerprint),
+                presentation=presentation,
             )
         task = asyncio.create_task(generation)
         if owner is not None:
@@ -1827,6 +1899,7 @@ class TTSEventHandler:
         expected_destination_fingerprint: str | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
         cancellation_is_success: Callable[[], bool] | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Generate TTS audio (rate limiting handled by TTSService)"""
         try:
@@ -1839,6 +1912,7 @@ class TTSEventHandler:
                 expected_destination_fingerprint=(expected_destination_fingerprint),
                 playback_lifecycle=playback_lifecycle,
                 cancellation_is_success=cancellation_is_success,
+                presentation=presentation,
             )
         except asyncio.CancelledError:
             logger.info("TTS generation cancelled")
@@ -1857,6 +1931,7 @@ class TTSEventHandler:
         quiet: bool = False,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
         cancellation_is_success: Callable[[], bool] | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Generate one complete resolved TTS response and publish its artifact.
 
@@ -1882,6 +1957,8 @@ class TTSEventHandler:
         """
         from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
+        if presentation is None and playback_lifecycle is not None:
+            presentation = playback_lifecycle.presentation
         normalized_message_id = message_id or "adhoc"
         resolution_source = (
             resolution.source
@@ -2165,6 +2242,7 @@ class TTSEventHandler:
                     exact_request=exact_request,
                     on_finished=on_finished,
                     playback_lifecycle=playback_lifecycle,
+                    presentation=presentation,
                 )
                 if streamed_pieces_code is not None:
                     outcome_code = streamed_pieces_code
@@ -2227,6 +2305,7 @@ class TTSEventHandler:
                         message_id=normalized_message_id,
                         on_finished=on_finished,
                         playback_lifecycle=playback_lifecycle,
+                        presentation=presentation,
                     )
                     if streamed_outcome_code is not None:
                         outcome_code = streamed_outcome_code
@@ -2393,6 +2472,7 @@ class TTSEventHandler:
                             fallback_on_failure=True,
                             on_finished=on_finished,
                             playback_lifecycle=playback_lifecycle,
+                            presentation=presentation,
                         )
                         if streamed_outcome_code is not None:
                             outcome_code = streamed_outcome_code
@@ -2442,7 +2522,7 @@ class TTSEventHandler:
             await self._cache_audio_file(
                 normalized_message_id,
                 artifact_path,
-                playback_lifecycle,
+                playback_lifecycle if on_finished is None else None,
             )
 
             await self._post_tts_message(
@@ -2471,7 +2551,10 @@ class TTSEventHandler:
                     # legacy-path utterance, confirmed by the reviewer's
                     # probe.
                     audio_file=artifact_path if on_finished is None else None,
-                    playback_lifecycle=playback_lifecycle,
+                    playback_lifecycle=(
+                        playback_lifecycle if on_finished is None else None
+                    ),
+                    presentation=presentation,
                 )
             )
             if not completion_accepted and on_finished is None:
@@ -2483,6 +2566,16 @@ class TTSEventHandler:
                 )
                 artifact_path = None
             if on_finished is not None:
+                if (
+                    playback_lifecycle is not None
+                    and not playback_lifecycle.is_current()
+                ):
+                    await self._discard_tts_artifact(
+                        normalized_message_id, artifact_path
+                    )
+                    artifact_path = None
+                    outcome_code = "superseded"
+                    return
                 # Task-4: a hands-free utterance has no per-message widget
                 # for the app's own `TTSCompleteEvent` handler to route an
                 # auto-play through (see `_play_utterance_legacy_artifact`'s
@@ -2495,6 +2588,7 @@ class TTSEventHandler:
                     text,
                     on_finished,
                     speed=effective_speed,
+                    presentation=presentation,
                 )
             outcome_code = "success" if completion_accepted else "delivery_rejected"
         except asyncio.CancelledError as cancellation:
@@ -2557,9 +2651,18 @@ class TTSEventHandler:
                             else self._tts_error_copy(error)
                         ),
                         playback_lifecycle=playback_lifecycle,
+                        presentation=presentation,
                     )
                 )
         finally:
+            if presentation is not None and outcome_code not in {
+                "success",
+                "interrupted",
+                "superseded",
+            }:
+                presentation.set_transport(
+                    "stopped" if outcome_code == "cancelled" else "failed"
+                )
             if playback_lifecycle is not None:
                 if outcome_code not in {"success", "interrupted", "superseded"}:
                     playback_lifecycle.report("failed")
@@ -2598,6 +2701,7 @@ class TTSEventHandler:
         exact_request: TTSRequest | None = None,
         on_finished: Callable[[bool], None] | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> str | None:
         """Play one utterance live, one sentence-sized piece at a time.
 
@@ -2739,6 +2843,7 @@ class TTSEventHandler:
             fallback_on_failure=False,
             on_finished=on_finished,
             playback_lifecycle=playback_lifecycle,
+            presentation=presentation,
         )
 
     def _validate_speech_response(
@@ -2902,6 +3007,7 @@ class TTSEventHandler:
         fallback_on_failure: bool = False,
         on_finished: Callable[[bool], None] | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
+        presentation: "SpeechPresentation | None" = None,
     ) -> str | None:
         """Play one response live through the streaming PCM sink.
 
@@ -2972,6 +3078,7 @@ class TTSEventHandler:
         await self._stop_prior_legacy_clip()
         last_underrun_frames = 0
         event_loop = asyncio.get_running_loop()
+        playback_context = copy_context()
         playback_started = threading.Event()
 
         def _on_event(event: object) -> None:
@@ -2991,15 +3098,18 @@ class TTSEventHandler:
                 # one writer; the read below happens once, after `pump()`
                 # has already returned, from this coroutine's own thread.
                 last_underrun_frames = event.frames
+            if presentation is not None and isinstance(event, SinkStarted):
+                presentation.set_transport("playing")
             if playback_lifecycle is not None and isinstance(event, SinkStarted):
                 playback_started.set()
                 event_loop.call_soon_threadsafe(
                     playback_lifecycle.report,
                     "playing",
+                    context=playback_context,
                 )
             self._post_sink_event(event)
 
-        sink = StreamingPcmSink(on_event=_on_event)
+        sink = StreamingPcmSink(on_event=_on_event, presentation=presentation)
         # Fix-round F2: `open()` is documented thread-safe and never
         # raises, but it is NOT free -- lazily importing `sounddevice` on
         # first use plus building/starting the real `OutputStream` measured
@@ -3089,12 +3199,15 @@ class TTSEventHandler:
                     message_id=message_id,
                     audio_file=None,
                     playback_lifecycle=playback_lifecycle,
+                    presentation=presentation,
                 )
             )
             if not completion_accepted:
                 if on_finished is not None:
                     on_finished(False)
                 return "delivery_rejected"
+            if presentation is not None:
+                presentation.set_transport("stopped")
             if result.outcome == "drained":
                 if playback_lifecycle is not None:
                     if playback_lifecycle.state == "playing":
@@ -3127,6 +3240,8 @@ class TTSEventHandler:
         )
         if fallback_on_failure:
             return None
+        if presentation is not None:
+            presentation.set_transport("failed")
         if playback_lifecycle is not None:
             playback_lifecycle.report_terminal("failed")
         await self._post_tts_message(
@@ -3134,6 +3249,7 @@ class TTSEventHandler:
                 message_id=message_id,
                 error="TTS playback failed; retry",
                 playback_lifecycle=playback_lifecycle,
+                presentation=presentation,
             )
         )
         if on_finished is not None:
@@ -3226,6 +3342,7 @@ class TTSEventHandler:
         on_finished: Callable[[bool], None],
         *,
         speed: float = 1.0,
+        presentation: "SpeechPresentation | None" = None,
     ) -> None:
         """Play one just-written legacy artifact for a cooldown-free utterance.
 
@@ -3341,6 +3458,9 @@ class TTSEventHandler:
                     audio_file,
                     timeout_seconds=timeout_seconds,
                     stop_requested=stop_requested,
+                    on_transport=(
+                        presentation.set_transport if presentation is not None else None
+                    ),
                 )
             )
             ok = False
@@ -3979,10 +4099,13 @@ class TTSEventHandler:
         from tldw_chatbook.TTS.audio_player import get_audio_player
 
         loop = asyncio.get_running_loop()
+        playback_context = copy_context()
 
         def report_started() -> None:
             playback_started.set()
-            loop.call_soon_threadsafe(lifecycle.report, "playing")
+            loop.call_soon_threadsafe(
+                lifecycle.report, "playing", context=playback_context
+            )
 
         try:
             finished = await self._run_blocking_tts_io(
@@ -3993,6 +4116,11 @@ class TTSEventHandler:
                     timeout_seconds=_LEGACY_PLAYBACK_POLL_MAX_SECONDS,
                     stop_requested=stop_requested,
                     on_started=report_started,
+                    on_transport=(
+                        lifecycle.presentation.set_transport
+                        if lifecycle.presentation is not None
+                        else None
+                    ),
                 )
             )
             await asyncio.sleep(0)
@@ -4656,6 +4784,7 @@ def _play_legacy_clip_and_await_completion(
     stop_requested: threading.Event | None = None,
     poll_interval_seconds: float = _LEGACY_PLAYBACK_POLL_INTERVAL_SECONDS,
     on_started: Callable[[], None] | None = None,
+    on_transport: Callable[[Literal["playing", "paused"]], None] | None = None,
 ) -> bool:
     """Blocking: start playback on `player` and wait (bounded) for this clip
     to stop being the player's current one (task-4 review F2, the
@@ -4706,6 +4835,7 @@ def _play_legacy_clip_and_await_completion(
             (task-4 review round 3) for THIS specific handoff. `None` is
             treated the same as an event that is never set.
         poll_interval_seconds: Sleep between checks.
+        on_transport: Optional confirmed player status, without output timing.
 
     Returns:
         `False` if `play()` itself never started the clip, if playback
@@ -4753,6 +4883,11 @@ def _play_legacy_clip_and_await_completion(
         if player.get_current_file() != audio_file:
             return False
         state = player.get_state()
+        if on_transport is not None and state in (
+            PlaybackState.PLAYING,
+            PlaybackState.PAUSED,
+        ):
+            on_transport("paused" if state == PlaybackState.PAUSED else "playing")
         if state == PlaybackState.FINISHED:
             return True
         if state in (PlaybackState.ERROR, PlaybackState.IDLE):

@@ -104,6 +104,7 @@ class _Restrictions:
         self.browse_order_migration = False
         self.response_rules_migration = False
         self.canvas_sibling_migration = False
+        self.portrait_migration = None
         self.preparing_response_rules = False
         self.sargable_migration = False
         self.canvas_schema = False
@@ -269,7 +270,13 @@ class _Restrictions:
             }
             if self.canvas_schema:
                 allowed.add("canvas_revision_payload_valid")
-            if self.preparing_response_rules or self.response_rules_migration:
+            if (
+                self.preparing_response_rules
+                or self.response_rules_migration
+                or self.migrating
+                and self.migration_owner == "db.chachanotes.primary"
+                and self.portrait_migration in (82, 83)
+            ):
                 allowed.add("json_valid")
             if self.migrating:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
@@ -330,6 +337,13 @@ class _Restrictions:
                 self.migrating and self.migration_owner == "db.guardian"
                 and first == "quick_check" and second == "guardian_alerts"
             )
+            permitted |= (
+                self.migrating
+                and self.migration_owner == "db.chachanotes.primary"
+                and self.portrait_migration == 83
+                and first == "quick_check"
+                and second == "character_portrait_performances"
+            )
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
         if (
             self.reading_fts_metadata
@@ -362,11 +376,47 @@ class _Restrictions:
                     and database == "main"
                     and source is None
                 )
-                if self.response_rules_migration and database == "main" and source is None:
+                if self.portrait_migration in (82, 83) and source is None:
+                    tables = (
+                        {
+                            "character_portrait_performances",
+                            "character_portrait_performance_frames",
+                        }
+                        if self.portrait_migration == 82
+                        else {"character_portrait_regions"}
+                    )
+                    indexes = {f"sqlite_autoindex_{table}_1": table for table in tables}
+                    allowed |= database == "main" and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in tables
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and indexes.get(first) == second
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first in indexes
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                    allowed |= (
+                        self.portrait_migration == 83
+                        and action == sqlite3.SQLITE_ALTER_TABLE
+                        and (first, second, database)
+                        == ("main", "character_portrait_performances", None)
+                    )
+                if (
+                    self.response_rules_migration
+                    and database == "main"
+                    and source is None
+                ):
                     tables = {
-                        "console_response_rule_revisions", "console_response_rule_bindings",
-                        "console_response_rule_validations", "console_response_rule_drafts",
-                        "console_response_rule_fixtures", "console_response_rule_assessments",
+                        "console_response_rule_revisions",
+                        "console_response_rule_bindings",
+                        "console_response_rule_validations",
+                        "console_response_rule_drafts",
+                        "console_response_rule_fixtures",
+                        "console_response_rule_assessments",
                         "console_machine_followup_receipts",
                     }
                     indexes = {
@@ -810,6 +860,8 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V80_SCHEMAS,
         CHACHANOTES_V81_SCHEMAS,
         CHACHANOTES_V82_SCHEMAS,
+        CHACHANOTES_V83_SCHEMAS,
+        CHACHANOTES_V84_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -833,6 +885,8 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V80_SCHEMAS,
         *CHACHANOTES_V81_SCHEMAS,
         *CHACHANOTES_V82_SCHEMAS,
+        *CHACHANOTES_V83_SCHEMAS,
+        *CHACHANOTES_V84_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1060,6 +1114,8 @@ def _validate_candidate(
                         CHACHANOTES_V79_SCHEMAS,
                         CHACHANOTES_V80_SCHEMAS,
                         CHACHANOTES_V81_SCHEMAS,
+                        CHACHANOTES_V82_SCHEMAS,
+                        CHACHANOTES_V83_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1080,6 +1136,10 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V80_SCHEMAS
                         or version == 81
                         and actual_sql in CHACHANOTES_V81_SCHEMAS
+                        or version == 82
+                        and actual_sql in CHACHANOTES_V82_SCHEMAS
+                        or version == 83
+                        and actual_sql in CHACHANOTES_V83_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1159,10 +1219,19 @@ def _validate_candidate(
                                 restrictions.browse_order_migration = False
                                 restrictions.response_rules_migration = False
                                 restrictions.canvas_sibling_migration = False
-                        for statement in statements:
-                            if restrictions.expired():
-                                raise InterruptedError
-                            connection.execute(statement)
+                        restrictions.portrait_migration = (
+                            version
+                            if installed.owner_id == "db.chachanotes.primary"
+                            and version in (82, 83)
+                            else None
+                        )
+                        try:
+                            for statement in statements:
+                                if restrictions.expired():
+                                    raise InterruptedError
+                                connection.execute(statement)
+                        finally:
+                            restrictions.portrait_migration = None
                         restrictions.migrating = False
                         issues, version = _check(
                             connection, installed, policy, restrictions

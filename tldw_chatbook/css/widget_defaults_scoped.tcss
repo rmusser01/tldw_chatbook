@@ -2721,6 +2721,15 @@ WorkspaceArchiveReceiptModal #workspace-archive-receipt { width: 60; height: aut
 WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions { height: 3; }
 WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions Button.workspace-archive-receipt-modal-button { width: auto; min-width: 8; margin-right: 1; }
 
+/* ===== WIDGET: PortraitRadio (Widgets/Console/portrait_radio.py) ===== */
+
+
+
+PortraitRadio #console-character-voice-status { color: $text-muted; }
+PortraitRadio #console-character-voice-status.voice-failed { color: $text-error; }
+PortraitRadio #console-character-voice-meter { color: $primary; }
+PortraitRadio #console-character-voice-meter.voice-suppressed { visibility: hidden; }
+
 /* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
 
 

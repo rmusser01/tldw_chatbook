@@ -1,6 +1,8 @@
 import asyncio
 from unittest.mock import patch
 
+import pytest
+
 from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
 
 
@@ -76,3 +78,61 @@ def test_export_success_reports_not_cancelled(tmp_path):
     assert result["success"] is True
     assert result["archive_version"] == "3.0"
     assert result["canvas_included"] is True
+
+
+@pytest.mark.bootstrap_profile
+def test_character_chatbook_omits_profile_local_performance(tmp_path):
+    import json
+    import zipfile
+
+    from Tests.Character_Chat.test_portrait_compositing import core, scene
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        capture_performance_source,
+    )
+    from tldw_chatbook.Chatbooks.chatbook_models import ContentType
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    base, recipe, components = scene()
+    database = CharactersRAGDB(tmp_path / "characters.db", "radio-export")
+    try:
+        cid = database.add_character_card({"name": "Local radio", "image": base})
+        source, _ = capture_performance_source(
+            database, character_id=cid, requested_state="idle"
+        )
+        revision = database.save_character_portrait_regions(
+            source, recipe, expected_revision=0
+        )
+        frames = core().assemble_components(base, recipe, components)
+        database.apply_character_portrait_performance(
+            source,
+            frames,
+            expected_revision=0,
+            composition_recipe=recipe,
+            expected_regions_revision=revision,
+        )
+        service = LocalChatbookService({"ChaChaNotes": str(database.db_path)})
+        output = tmp_path / "radio.zip"
+        result = asyncio.run(
+            service.export_chatbook(
+                {
+                    "name": "Radio",
+                    "content_selections": {ContentType.CHARACTER: [str(cid)]},
+                    "output_path": str(output),
+                    "auto_include_dependencies": False,
+                }
+            )
+        )
+        assert result["success"], result
+        with zipfile.ZipFile(output) as archive:
+            assert not any("performance" in name for name in archive.namelist())
+            payload = json.loads(
+                archive.read(f"content/characters/character_{cid}.json")
+            )
+            assert payload["name"] == "Local radio"
+            assert "performance" not in json.dumps(payload)
+            assert "base_pixel_sha256" not in json.dumps(payload)
+            assert "neutral_base_confirmed" not in json.dumps(payload)
+            assert all(frame.sha256 not in json.dumps(payload) for frame in frames)
+        assert database.get_character_card_by_id(cid)["image"] == base
+    finally:
+        database.close()

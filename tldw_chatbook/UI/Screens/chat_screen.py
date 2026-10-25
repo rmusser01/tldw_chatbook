@@ -300,12 +300,6 @@ from ...Chat.console_prefill import (
 )
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
-from ...Chat.console_token_rate import (
-    TokenRateReading,
-    TokenRateTracker,
-    format_rate_chip_settled,
-    merge_rate_into_run_copy,
-)
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
@@ -7034,7 +7028,7 @@ class ChatScreen(BaseAppScreen):
         # the viewed session's newest assistant row. Live counts use the
         # shared estimator; the settled figure upgrades to the provider's
         # reported output total when the message carries usage.
-        self._console_rate_tracker = TokenRateTracker(count_fn=estimate_tokens)
+        self._console_rate_tracker = None
         #: TASK-35100: this tick's tracker reading, stashed for the mode
         #: bar's run-chip merge (which syncs BEFORE the transcript sync and
         #: therefore consumes the previous tick's reading -- one 0.2s lag
@@ -11381,30 +11375,19 @@ class ChatScreen(BaseAppScreen):
         box: tuple[int, int] | None = None,
         prerendered: "CharacterAvatarPrerender | None" = None,
     ) -> Widget:
-        """Build a fresh avatar widget from the cached spec (data, not a widget).
+        """Build a disposable avatar from the controller's immutable spec.
 
-        `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
-        `_refresh_active_character_avatar_if_scope_changed`). With no spec,
-        or a spec whose image decode failed/is pending, render a compact
-        text placeholder. The cache holds this spec (data), not a live
-        widget -- every (re)mount builds a fresh widget from it.
-
-        This method must NEVER raise: it is reached from
-        `_render_character_avatar_into_section`, which runs outside
-        `_refresh_active_character_avatar_if_scope_changed`'s try/except (and
-        that refresh itself must never raise into the 0.2s Console sync
-        poll). Any image-build failure -- graphics mount OR the rich_pixels
-        fallback -- degrades to the same text placeholder used for the
-        no-image case.
+        Widget-owned animation; cached static images and a missing-art fallback.
+        Source geometry is validated; renderer failures use the still fallback.
 
         Args:
-            spec: The cached avatar spec, or None.
-            box: The rail's target cell box, if it has one.
-            prerendered: A renderable already built off the event loop
-                (TASK-22221). Used ONLY when its recorded image, resolved
-                box, and colour mode still match what this build resolves --
-                otherwise the mosaic is rebuilt inline, which is exactly what
-                a viewport that moved mid-render must fall back to.
+            spec: Current source, optional performance and speech reader.
+            box: Target cell box measured by the rail.
+            prerendered: Off-thread raster, reused only when its image, fitted
+                box and colour mode still match the live request.
+
+        Returns:
+            The fitted portrait widget, or its still/missing-art fallback.
         """
         if spec and spec.get("animation_bytes") and box != (0, 0):
             from types import SimpleNamespace
@@ -11434,6 +11417,9 @@ class ChatScreen(BaseAppScreen):
                 id="console-character-avatar-image",
                 decode_identity=spec.get("decode_identity"),
                 fallback_decode_identity=spec.get("animation_fallback_identity"),
+                performance=spec.get("performance"),
+                read_speech=spec.get("read_speech"),
+                on_frame=self._character.sync_radio,
             )
         if not spec or (
             spec.get("pil") is None
@@ -17375,7 +17361,11 @@ class ChatScreen(BaseAppScreen):
         # rate would cross the chip's 34-cell cap and ellipsize the rate
         # into unreadability ("· 30..."). The reading is the previous tick's
         # (the transcript sync stashes it and runs later in the same tick).
-        if active_run_copy:
+        if (
+            active_run_copy
+            and self._show_console_rate()
+            and self._console_rate_reading is not None
+        ):
             # TASK-35160 review round 2: the merge decision is a pure
             # function (unit-pinned). Agent runs stay STREAMING through
             # tool rounds and approval parking, so the status alone does
@@ -17388,6 +17378,8 @@ class ChatScreen(BaseAppScreen):
             session_id = (
                 store.active_session_id if store is not None else None
             )
+            from ...Chat.console_token_rate import merge_rate_into_run_copy
+
             active_run_copy = merge_rate_into_run_copy(
                 active_run_copy,
                 reading,
@@ -17438,6 +17430,13 @@ class ChatScreen(BaseAppScreen):
                     message = candidate
                     break
             if message is not None:
+                from ...Chat.console_token_rate import (
+                    TokenRateTracker,
+                    format_rate_chip_settled,
+                )
+
+                if self._console_rate_tracker is None:
+                    self._console_rate_tracker = TokenRateTracker(count_fn=estimate_tokens)
                 content = (
                     message.variants.current.content
                     if getattr(message, "variants", None) is not None
@@ -17459,10 +17458,12 @@ class ChatScreen(BaseAppScreen):
             else:
                 # No assistant row in this session (fresh/other tab): the
                 # stashed reading belongs to a DIFFERENT session's stream.
-                self._console_rate_tracker.reset()
+                if self._console_rate_tracker is not None:
+                    self._console_rate_tracker.reset()
                 self._console_rate_reading = None
         else:
-            self._console_rate_tracker.reset()
+            if self._console_rate_tracker is not None:
+                self._console_rate_tracker.reset()
             self._console_rate_reading = None
         try:
             status_chips = self.query_one(

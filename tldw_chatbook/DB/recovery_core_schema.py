@@ -1033,3 +1033,54 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_CANVAS_V81_TO_V82_SQL = (
     "UPDATE db_schema_version SET version=82 WHERE schema_name='rag_char_chat_schema' AND version=81",
 )
+
+# ADR-242: fixed installed declarations; never execute archive-supplied SQL.
+CHACHANOTES_V83_ADDITIONS = (
+    "CREATE TABLE character_portrait_performance_frames (\n    performance_id INTEGER NOT NULL REFERENCES character_portrait_performances(id) ON DELETE CASCADE,\n    role TEXT NOT NULL CHECK(role IN ('rest','small','open','blink_rest','blink_small','blink_open')),\n    png BLOB NOT NULL CHECK(typeof(png) = 'blob' AND length(png) BETWEEN 1 AND 4194304),\n    width INTEGER NOT NULL CHECK(width > 0),\n    height INTEGER NOT NULL CHECK(height > 0 AND width * height <= 1048576),\n    sha256 TEXT NOT NULL CHECK(length(sha256) = 64),\n    PRIMARY KEY(performance_id, role)\n)",
+    "CREATE TABLE character_portrait_performances (\n    id INTEGER PRIMARY KEY,\n    character_id INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE,\n    expression_key TEXT NOT NULL CHECK(length(expression_key) > 0),\n    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),\n    source_kind TEXT NOT NULL CHECK(source_kind IN ('portrait','legacy_expression','visual_identity')),\n    source_ref_json TEXT NOT NULL CHECK(json_valid(source_ref_json) AND length(source_ref_json) <= 128),\n    schema_version INTEGER NOT NULL DEFAULT 1 CHECK(schema_version = 1),\n    revision INTEGER NOT NULL CHECK(revision > 0),\n    active INTEGER NOT NULL CHECK(active IN (0,1)),\n    UNIQUE(character_id, expression_key)\n)",
+)
+CHACHANOTES_V83_SCHEMAS = tuple(
+    tuple(sorted(schema + CHACHANOTES_V83_ADDITIONS, key=_installed_schema_order))
+    for schema in CHACHANOTES_V82_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V83_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 83, CHACHANOTES_V83_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_PORTRAIT_V82_TO_V83_SQL = CHACHANOTES_V83_ADDITIONS + (
+    "UPDATE db_schema_version SET version=83 WHERE schema_name='rag_char_chat_schema' AND version=82",
+)
+
+# Exact installed v84 declarations, including SQLite's ALTER TABLE rendering.
+CHACHANOTES_V84_PARENT = "CREATE TABLE character_portrait_performances (\n    id INTEGER PRIMARY KEY,\n    character_id INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE,\n    expression_key TEXT NOT NULL CHECK(length(expression_key) > 0),\n    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),\n    source_kind TEXT NOT NULL CHECK(source_kind IN ('portrait','legacy_expression','visual_identity')),\n    source_ref_json TEXT NOT NULL CHECK(json_valid(source_ref_json) AND length(source_ref_json) <= 128),\n    schema_version INTEGER NOT NULL DEFAULT 1 CHECK(schema_version = 1),\n    revision INTEGER NOT NULL CHECK(revision > 0),\n    active INTEGER NOT NULL CHECK(active IN (0,1)), composition_recipe_json TEXT\n    CHECK(composition_recipe_json IS NULL OR (json_valid(composition_recipe_json) AND length(CAST(composition_recipe_json AS BLOB)) <= 2048)),\n    UNIQUE(character_id, expression_key)\n)"
+CHACHANOTES_V84_REGIONS = "CREATE TABLE character_portrait_regions (\n    character_id INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE,\n    expression_key TEXT NOT NULL CHECK(length(expression_key) > 0),\n    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),\n    source_kind TEXT NOT NULL CHECK(source_kind IN ('portrait','legacy_expression','visual_identity')),\n    source_ref_json TEXT NOT NULL CHECK(json_valid(source_ref_json) AND length(source_ref_json) <= 128),\n    recipe_json TEXT NOT NULL CHECK(json_valid(recipe_json) AND length(CAST(recipe_json AS BLOB)) <= 2048),\n    revision INTEGER NOT NULL CHECK(revision > 0),\n    PRIMARY KEY(character_id, expression_key)\n)"
+CHACHANOTES_V84_SCHEMAS = tuple(
+    tuple(
+        sorted(
+            tuple(
+                CHACHANOTES_V84_PARENT
+                if statement == CHACHANOTES_V83_ADDITIONS[1]
+                else statement
+                for statement in schema
+            )
+            + (CHACHANOTES_V84_REGIONS,),
+            key=_installed_schema_order,
+        )
+    )
+    for schema in CHACHANOTES_V83_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V84_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 84, CHACHANOTES_V84_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_REGIONS_V83_TO_V84_SQL = (
+    CHACHANOTES_V84_REGIONS,
+    "ALTER TABLE character_portrait_performances ADD COLUMN composition_recipe_json TEXT\n    CHECK(composition_recipe_json IS NULL OR (json_valid(composition_recipe_json) AND length(CAST(composition_recipe_json AS BLOB)) <= 2048))",
+    "UPDATE db_schema_version SET version=84 WHERE schema_name='rag_char_chat_schema' AND version=83",
+)

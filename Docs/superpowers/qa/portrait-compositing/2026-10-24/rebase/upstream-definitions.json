@@ -1,0 +1,86 @@
+[
+  {
+    "path": "Tests/DB/test_response_rules_migration.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "Tests/UI/test_personas_expression_slots.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "upstream_new_definitions": [
+      "CharactersRAGDB._migrate_from_v81_to_v82"
+    ],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/DB/recovery_core.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/DB/recovery_core_schema.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/left_rail.py",
+    "upstream_new_definitions": [
+      "rail_focus_shortcuts"
+    ],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+    "upstream_new_definitions": [
+      "PersonasScreen._apply_character_window",
+      "PersonasScreen._begin_export_marked",
+      "PersonasScreen._character_title",
+      "PersonasScreen._end_visit",
+      "PersonasScreen._forget_deleted_marks",
+      "PersonasScreen._handle_search_submitted",
+      "PersonasScreen._handle_window_wanted",
+      "PersonasScreen._list_fence",
+      "PersonasScreen._list_fence_is_current",
+      "PersonasScreen._list_window",
+      "PersonasScreen._run_list_window",
+      "PersonasScreen._server_list_window",
+      "PersonasScreen._start_list_window",
+      "PersonasScreen._toggle_lore_enabled",
+      "PersonasScreen._window_read_failed",
+      "PersonasScreen.on_screen_resume",
+      "PersonasScreen.on_screen_suspend",
+      "_wait_at_most",
+      "_whole_count"
+    ],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Workbench/workbench_widgets.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_control_bar.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py",
+    "upstream_new_definitions": [],
+    "upstream_new_definitions_missing": []
+  }
+]

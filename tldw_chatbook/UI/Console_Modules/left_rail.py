@@ -86,6 +86,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
+from ...Widgets.Console.portrait_radio import PortraitRadio
 from ...Widgets.Console.console_character_context import ConsoleCharacterContext
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.destination_rail import (
@@ -1596,8 +1597,36 @@ class ConsoleLeftRail(Vertical):
         complete_rows = max(0, body.virtual_region_with_margin.height)
         image_rows = max(0, frame.virtual_region_with_margin.height)
         measured_non_image_rows = max(0, complete_rows - image_rows)
-        available_rows = max(0, section.max_content_lines - measured_non_image_rows)
-        available_cols = max(0, body.content_region.width)
+        radio = self.query_one(PortraitRadio)
+        meter = radio.query_one("#console-character-voice-meter")
+        meter_rows = meter.outer_size.height if meter.display else 0
+        header_rows = self.query_one(
+            "#console-rail-section-header-character"
+        ).outer_size.height
+        viewport_rows = max(0, self._snapshot_outer_viewport_height() - header_rows)
+        compact_budget = (
+            min(section.max_content_lines, viewport_rows)
+            if viewport_rows
+            else section.max_content_lines
+        )
+        without_meter = (
+            compact_budget
+            - measured_non_image_rows
+            + meter_rows
+            - frame.styles.gutter.height
+        )
+        compact = without_meter < max(1, frame.styles.gutter.height * 2)
+        if compact != radio.has_class("voice-compact"):
+            radio.set_compact(compact)
+            self.call_after_refresh(self.request_allocation_reconcile)
+            return
+        available_rows = max(
+            0,
+            section.max_content_lines
+            - measured_non_image_rows
+            - frame.styles.gutter.height,
+        )
+        available_cols = max(0, body.content_region.width - frame.styles.gutter.width)
         controls_geometry = (available_cols, measured_non_image_rows)
         if controls_geometry != self._character_avatar_controls_geometry:
             self._character_avatar_controls_geometry = controls_geometry
@@ -2427,9 +2456,10 @@ class ConsoleLeftRail(Vertical):
                     # Avatar painting is independent of the browser's data
                     # refresh/recompose lifecycle.  Keep its holder and
                     # private caption outside that replaceable subtree.
+                    character_identity,
                     avatar_frame,
                     character_name,
-                    character_identity,
+                    PortraitRadio(),
                     reaction_state,
                     reaction_button,
                     ConsoleCharacterContext(
@@ -2441,6 +2471,7 @@ class ConsoleLeftRail(Vertical):
                 character_content = Vertical(
                     avatar_frame,
                     character_name,
+                    PortraitRadio(),
                     reaction_state,
                     reaction_button,
                     Static("No character chats yet", markup=False),

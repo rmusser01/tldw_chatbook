@@ -1,0 +1,11 @@
+{
+  "default_backend": "swarmui",
+  "enabled_backends": [
+    "swarmui"
+  ],
+  "reference_capable_default": false,
+  "image_requests": 0,
+  "live_qualified": false,
+  "status": "unavailable",
+  "reason": "Configured default is not an enabled reference-image backend. No fallback selected."
+}

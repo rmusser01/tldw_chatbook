@@ -58,6 +58,108 @@ The mounted Dictionary Settings form acknowledges only the raw controls submitte
 
 Cards can drive live expression playback: `emote_directives.CharacterEmoteEvent` parses emote directives **inline during streaming** (inside `append_stream_chunk`, with a fail-closed parser reset), and `character_expression_playback.prepare_expression` selects the sprite/mood for display. Durable emote metadata follows ADR-075.
 
+## Local portrait performance attachments
+
+
+`Character_Chat/portrait_compositing.py` provides the ADR-243 composition core:
+strict source-pixel rectangles, canonical tagged RGBA base identity, inward masks,
+one-time raw-edit feathering, binary finished-plane assembly and invariant-checked
+component recovery. Original alpha and outside-mask pixels are preserved exactly;
+PNG encoding changes do not change prepared pixel identity. It uses the existing
+shared decode reservations and bounded still normalizer with explicit image closure.
+
+`PortraitCompositionCandidate` is a disposable immutable snapshot of the recipe,
+region revision, finished components and currently available frames. Draft replacement
+is authoritative, not a merge; a new rest-only candidate cannot inherit old slots.
+Composed publication requires all three components and six roles. Successful manual
+imports switch to ordinary six-role readiness; failed edits preserve lineage.
+These core contracts and the settings repository are implemented in TASK-36551/36552.
+`UI/Persona_Modules/portrait_regions.py` implements source-bound preparation and
+independent region Save; `PortraitRegionEditor` contains numeric/two-corner selection,
+centered mosaic mapping and a coalesced static source/crop/mask preview. It shares
+compositor decode reservations, returns only Rich text and rejects retired render work.
+The controller retires the exact modal/sample, reuses canonical settings, recovers
+only invariant-checked components and installs a rest-only candidate on changed Save.
+Apply preserves candidate provenance; manual imports still drop lineage on success.
+Reference preparation is optional: a saved source that exceeds its decode/PNG budget
+still opens ordinary manual frames and permits import/Apply/Remove. Only region
+selection and component generation are disabled; original limits are unchanged.
+`portrait_composition_generation.py` now replaces the historical six-edit path with
+three shared-reference requests and one-component dependent retries. Every fresh batch
+resets to rest-only before dispatch; candidate identity, source, settings revision and
+config fence late work. Manual/composed readiness uses `draft.can_apply`. The actual
+`PortraitCompositionReview` consumes immutable original frame PNGs for a labeled 2×3
+matrix and common native eye/mouth crops, supports keyboard/numeric pan, and retires
+exact displayed owners even beneath another modal. While either authoring dialog is
+open, the existing context poll coalesces one owned off-thread source/settings-revision
+check. Persisted changes retire the draft/dialogs; a read failure closes the review but
+keeps draft frames. Captured epochs/handles reject queued or late old checks, own Save
+is fenced, and screen close drains native validation before releasing its owner.
+Its output raster is capped at
+1 megapixel and native rendering introduces no fitted-thumbnail resampling. Ordinary
+Console animation and speech presentation ownership are unchanged.
+
+
+`Character_Chat/portrait_performance.py` normalizes six aligned still poses
+(`rest`, `small`, `open` and their `blink_` variants) into bounded PNGs. Work shares
+the existing avatar preparation budget and releases decoded images on failure.
+Canonical source identities use the actual resolved expression, source digest and
+immutable asset or legacy-image IDs; current and historical resolution of one
+asset have the same identity.
+
+Schema 83 adds `character_portrait_performances` and
+`character_portrait_performance_frames`. `CharactersRAGDB` Apply/get/Remove APIs
+publish all six poses atomically, revalidate source selection and expected revision,
+and retain increasing inactive revision tombstones after Remove. Savepoints also
+preserve replacement atomicity inside caller-owned transactions. A source change
+leaves the old record available for explicit revision-checked replacement; consumers
+must match its source before rendering it. Soft deletion preserves rows, while
+permanent character deletion cascades through the parent and frames.
+
+Schema 84 (ADR-243) adds `character_portrait_regions`, one source-bound recipe per
+character/expression, and nullable `composition_recipe_json` on the performance parent.
+`DB/portrait_region_settings.py` validates bounded canonical recipe JSON and prepared
+RGBA identity, independently saves regions under source/settings CAS, and atomically
+publishes optional provenance with six validated poses under both revisions. Idempotent
+current-revision Save leaves region and performance revisions unchanged. Manual Apply
+and Remove clear applied provenance; Remove retains regions. Valid unchanged stored
+roles are decoded/content-checked and retained byte-for-byte under publication CAS.
+New roles still pass the existing normalization contract. Unknown/invalid applied
+recipes read as absent, leaving ordinary six-frame artwork usable; component recovery
+requires the compositor's complete pixel invariant check. No raw provider edit or
+finished-component sidecar is stored. Regions follow character soft-delete/restore and
+permanent-delete cascades. The installed recovery catalog retains historical schemas
+and has the fixed v82→v83→v84 portrait steps after the v81→v82 Canvas step; native full-profile restore preserves both contracts.
+
+These attachments are profile-local (ADR-242/243). Native full-profile SQLite backup
+and recovery schema admission include them; original artwork, character cards,
+Actor Packs, Chatbooks and sync formats are unchanged. See [ADR-242](../../backlog/decisions/242-console-radio-portrait-performance.md).
+
+`prepare_performance` reuses existing per-image decode reservations to prepare six
+aligned fitted frames off-thread. Small artwork is fitted once, keeping idle offset
+in canvas pixels. Current/next pose images share the same 64 MiB active/in-flight
+budget; the existing independent shared-decode cap is unchanged. Failures close
+partial allocations and retain the selected poster rather than a different talking
+face. No pose decode, SQLite lookup or rail remount occurs on the frame timer.
+
+`PortraitPerformanceClock` keeps blink and idle timing independent of mouth pose.
+It reads packaged scalar motion tokens once during preparation: blink spacing
+3–7 s, hold `$ds-duration-fast`, six-second idle cycle and one-pixel offset inside
+a fixed canvas. Hidden time does not advance it. `CharacterExpressionAvatar`
+paints at most 30 fps, rejects stale speech and rechecks mouth qualification after
+slow rendering so an old loud frame cannot reopen after silence. Unmount waits
+for decode/render workers before releasing their input images.
+
+The Console matches the exact local profile/session/character owner and current
+canonical source before using a performance. Active revision, inactive tombstone
+or explicit absence participates in spec identity. Forced refresh workers have
+separate generations, so unchanged artwork keeps its mounted animation while late
+replaced work cannot paint. Manual selection wins; owned older-message replay uses
+its valid immutable mood and restores the current mood afterward. Missing historical
+art never borrows neutral talking frames. Static, Reduce motion, animations-off,
+reactions-off and avatar visibility preserve their existing rules. The image viewer
+copies the current fitted canvas without acquiring a timer.
+
 ## Failure behaviors
 
 | Case | Behavior |
@@ -80,3 +182,24 @@ ADR-037 (roleplay assistant identity / persona-user profile separation), ADR-046
 3. `{{persona}}` is a character-side alias (the AI's name), not the user persona.
 4. Character sessions bypass the agent bridge (`force_plain`) — no tool calls in roleplay.
 5. Macros are expanded before persistence boundaries but stored templates keep them raw (trusted provenance, ADR-046).
+
+`UI/Persona_Modules/portrait_performance.py` owns one disposable authoring draft.
+The inline `PortraitPerformanceEditor` emits explicit actions through PersonasScreen;
+it has no DB or provider authority. Preparation captures the actual local DB/service,
+editor session, canonical persisted source and local authority ID. Native file work
+normalizes a bounded still off-thread and recaptures the source before staging;
+Apply and Remove use the storage CAS and emit Console invalidation after commit.
+The existing Personas context poll discards obsolete drafts without another timer.
+Worker draining retains actual publication results through cancellation, and closes
+only operation-owned thread-local DB connections. Dirty artwork/bindings require
+explicit Save/Apply; unrelated text is never saved by this flow. Preview uses the
+same bounded avatar renderer/timer, with explicit offline pose/cycle/idle modes.
+
+`PortraitRadio` projects the current owned snapshot through the character controller
+and the existing avatar frame clock/Console sync; it owns no timer or audio service.
+Its fixed status/meter rows update without layout invalidation. Fresh qualified PCM
+levels fill the bar; stale/unqualified timing hides it with visibility, retaining the
+row. Measured compact layout alone removes that row. The existing rail allocator
+subtracts frame borders and identification/status rows before contain fitting.
+Character captions and workbench labels render as plain text, including card names
+that resemble Rich markup. Source styles use design tokens and generated CSS.

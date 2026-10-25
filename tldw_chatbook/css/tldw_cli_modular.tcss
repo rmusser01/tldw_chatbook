@@ -351,6 +351,16 @@ $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
 
+
+$ds-portrait-blink-min: 3s;
+$ds-portrait-blink-max: 7s;
+$ds-portrait-idle-cycle: 6s;
+$ds-portrait-idle-offset-px: 1;
+
+
+$ds-portrait-review-cols: 24;
+$ds-portrait-review-lines: 13;
+
 /* ===== MODULE: core/_reset.tcss ===== */
 
 
@@ -2456,6 +2466,11 @@ WorkspaceCreateModal #workspace-create-modal {
 
 WorkspaceCreateModal #workspace-create-error {
     color: $ds-status-error-readable;
+}
+
+
+PortraitCompositionReview #portrait-pairs-canvas:focus {
+    outline: tall $ds-active-fg;
 }
 
 /* ===== MODULE: components/_status.tcss ===== */
@@ -9090,7 +9105,16 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     border-left: solid $ds-status-error;
 }
 
+#console-character-identity {
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    text-style: $ds-text-strong;
+}
+
 #console-character-avatar-frame {
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;

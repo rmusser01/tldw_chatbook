@@ -1,0 +1,124 @@
+{
+  "failed_ci_head": "fda2a3ee96a387239115072a3317772b41f6ab04",
+  "failed_ci_merge": "3963966e2833596bc577a11d6f803cc89bc37a92",
+  "dev_base": "6fcbded875a00970936a2d6f8da62cb487e213e9",
+  "runs": {
+    "focus_red": {
+      "summary": "29 failed, 60 passed in 8.19s",
+      "log_sha256": "cf3b8ce4a0e46a06dc7d199e0db283451b2e98feac233551124f2be33fce6cec",
+      "failed_nodes": [
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[frutiger_aero]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[litestep]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[gruvbox_light]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[earthy_nature]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[pastel_dreams]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[sweet_sorbet]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[cloudy_day]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[kawaii_candy]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[bunny_fluff]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[neon_sunset_drive]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[palm_mall]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[paradise_virtua]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[zero_day_stealth]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[retro_mint_chip]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[twilight_lavender_fields]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[industrial_gearworks]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[coral_bloom]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[zen_garden]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[spring_meadowburst]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[urban_stealth_camo]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[confectionery_bliss]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[desert_oasis_mirage]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[magical_girl_transform]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[akira_neo_tokyo_grit]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[scouting_legionnaire]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[saiyan_power_orange]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[sakura_viewing_picnic]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[flexoki]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[atom-one-light]"
+      ]
+    },
+    "mounted_focus_red": {
+      "summary": "1 failed, 1 passed in 3.57s",
+      "log_sha256": "97135e8ca84a71b577cdcf31d93740fe282c2bf8cc8700b43f54b4843d1cd2d6",
+      "failed_nodes": [
+        "Tests/UI/test_portrait_composition_review.py::test_mounted_static_review_pan_resize_and_close[pastel_dreams]"
+      ]
+    },
+    "widget_default_only_attempt": {
+      "summary": "1 failed, 112 passed in 55.75s",
+      "log_sha256": "fc69f5304342994d27139f9a5acf258dbe8b7343189008c96f8e3d4007842a9c",
+      "failed_nodes": [
+        "Tests/UI/test_portrait_composition_review.py::test_mounted_static_review_pan_resize_and_close[pastel_dreams]"
+      ]
+    },
+    "receipt_recomposition_red": {
+      "summary": "1 failed, 1 passed in 6.84s",
+      "log_sha256": "689e288c8f6589f51093cd12f164dc65198895b789357452d5e806eda0d652c3",
+      "failed_nodes": [
+        "Tests/UI/test_library_media_actions_target_opened_item.py::test_receipt_open_in_library_then_l_saves_the_opened_item[True]"
+      ]
+    },
+    "receipt_recomposition_dev_red": {
+      "summary": "1 failed, 1 passed in 10.23s",
+      "log_sha256": "e91b8768aeadac10abca162ef67dc55343b95fff4487448f951415d6d7b83547",
+      "failed_nodes": [
+        "Tests/UI/test_library_media_actions_target_opened_item.py::test_receipt_open_in_library_then_l_saves_the_opened_item[True]"
+      ]
+    },
+    "receipt_first_readiness_attempt": {
+      "summary": "1 failed, 73 passed in 27.43s",
+      "log_sha256": "89d82e95b7be5142a7d269d964dc95de82b3b27aaa65dcf47ffe3dca09b92152",
+      "failed_nodes": [
+        "Tests/UI/test_library_media_actions_target_opened_item.py::test_receipt_open_in_library_then_l_saves_the_opened_item[False]"
+      ]
+    },
+    "receipt_file_final": {
+      "summary": "9 passed in 22.79s",
+      "log_sha256": "3a599c2c92371e7d3ea5b930ad1e942205f281031c20ec366735f344d9805acd",
+      "failed_nodes": []
+    },
+    "receipt_and_census_final": {
+      "summary": "74 passed in 11.28s",
+      "log_sha256": "dbeabed63e4c4912e664a39024570e2d5f5e83210ee02b5a9a657efb868dbad7",
+      "failed_nodes": []
+    },
+    "contrast_css_final": {
+      "summary": "114 passed in 56.99s",
+      "log_sha256": "0a79a04fb3e99a4961a4f972a1f269b2b4a60269b5facbcc926ff9ac95a0d6b2",
+      "failed_nodes": []
+    },
+    "installed_final": {
+      "summary": "1 passed in 41.83s",
+      "log_sha256": "9718a3aa023182495edadcc1432d148d977f1cb2664ff36f3efc478f2af4e3f1",
+      "failed_nodes": []
+    }
+  },
+  "legacy_lint": [
+    {
+      "path": "Tests/UI/test_library_media_actions_target_opened_item.py",
+      "baseline_diagnostics": 1,
+      "current_diagnostics": 1,
+      "added_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_theme_contrast.py",
+      "baseline_diagnostics": 1,
+      "current_diagnostics": 1,
+      "added_diagnostics": []
+    }
+  ],
+  "production_changes_relative_to_tested_merge": [
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py",
+    "tldw_chatbook/css/components/_dialogs.tcss",
+    "tldw_chatbook/css/tldw_cli_modular.tcss",
+    "tldw_chatbook/css/widget_defaults_self.tcss"
+  ],
+  "notes": [
+    "Counts overlap; do not sum.",
+    "The controlled replacement case reproduces the receipt failure on unchanged dev production.",
+    "A later receipt/census attempt did not open the Reader; explicit focus readiness retains the intended pointer gesture and passes the repeated invocation.",
+    "Static contrast passed with a widget-default-only token change, but mounted pastel_dreams remained 1.03:1; the final app-tier owner passes both.",
+    "No full suite or new live TTS/hardware/image request."
+  ]
+}

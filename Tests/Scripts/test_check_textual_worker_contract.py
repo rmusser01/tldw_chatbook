@@ -2786,12 +2786,15 @@ def test_w003_awaiting_an_async_helper_obtains_its_pending_future_only(
     is the wait (PR #2987 review). Textual's ``invoke`` awaits a handler's
     return value once, which for an ``async def`` is the coroutine."""
     body, flagged = _ASYNC_HANDBACK_RECEIVERS[receiver]
-    source = _ASYNC_HANDBACK[handed] + f"""
+    source = (
+        _ASYNC_HANDBACK[handed]
+        + f"""
 
 class S:
     async def on_button_pressed(self, event):
         {body}
 """
+    )
     expected = [_row("S.on_button_pressed", "open_review")] if flagged else []
     assert _w003(source) == expected
 
@@ -5233,8 +5236,7 @@ _CHAT = "tldw_chatbook/UI/Screens/chat_screen.py"
 
 
 def _with_inline_push(tree: ast.Module, cls: str, method: str) -> ast.Module:
-    """``tree`` with ``await self.app.push_screen_wait(Picker())`` prepended to
-    the LIVE (last) definition of ``cls.method``."""
+    """Prepend a wait-for-dismiss push to the live definition of ``cls.method``."""
     push = (
         ast.parse("async def _():\n    await self.app.push_screen_wait(Picker())\n")
         .body[0]
@@ -5251,6 +5253,10 @@ def _with_inline_push(tree: ast.Module, cls: str, method: str) -> ast.Module:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and node.name == method
     ][-1]
+    if isinstance(live, ast.FunctionDef):
+        push = ast.parse("self.app.push_screen(Picker(), wait_for_dismiss=True)").body[
+            0
+        ]
     live.body.insert(0, push)
     return tree
 
@@ -5269,9 +5275,8 @@ def _with_inline_push(tree: ast.Module, cls: str, method: str) -> ast.Module:
             f"{_CHAT}::ChatScreen.on_console_workbench_action_requested",
         ),
         (
-            "_send_console_message_from_visible_action",
-            f"{_CHAT}::ChatScreen.on_key->_send_console_message_from_visible_action"
-            f" => {_CHAT}::ChatScreen._send_console_message_from_visible_action",
+            "on_key",
+            f"{_CHAT}::ChatScreen.on_key => {_CHAT}::ChatScreen.on_key",
         ),
     ],
 )
@@ -5280,8 +5285,9 @@ def test_a_new_push_in_a_console_send_dispatcher_is_flagged_on_the_real_tree(
 ):
     """The reviewer's reproduction, on the real tree against the real census:
     a new push in one of the Console's Send entry points must fail W003.
-    Until TASK-33621.28 each of them also had a census row of its own (the
-    hook-review Send freeze), which must not have hidden the new one."""
+    Enter now routes through send_acknowledgement rather than calling the
+    old visible-action helper directly; exercise its live keyboard boundary.
+    Existing census rows must not hide a new wait at any of these boundaries."""
     known = _mod._read_census(_mod.WAIT_PUSH_CENSUS)
     clean = _mod._WaitGraph(list(real_tree.values())).roots()
     assert _mod._added(known, _mod._tally(clean)) == [], "real tree drifted"

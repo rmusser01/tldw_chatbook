@@ -25,6 +25,7 @@ from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
+from .portrait_performance_editor import PortraitPerformanceEditor
 from .personas_character_tts_widget import PersonasCharacterTTSWidget
 from .personas_visual_identity_pack_widget import PersonasVisualIdentityPackWidget
 from .personas_pane_messages import (
@@ -702,6 +703,7 @@ class PersonasCharacterEditorWidget(Container):
                             classes="personas-char-editor-expr-thumb",
                         )
             yield Container(id="personas-char-editor-visual-identity-host")
+            yield PortraitPerformanceEditor()
         # TASK-34400: validation errors echo card text (names, book entries).
         yield Static("", id="personas-char-editor-validation", markup=False)
         with Horizontal(classes="ds-toolbar"):
@@ -748,6 +750,8 @@ class PersonasCharacterEditorWidget(Container):
         self, data: Dict[str, Any], *, visual_identity_pending: bool = False
     ) -> None:
         """Fill the form from ``data`` (tolerant of legacy key aliases)."""
+        if self.is_mounted:
+            self.query_one(PortraitPerformanceEditor).reset()
         self._visual_identity_session_token += 1
         self._actor_pack_mode = False
         self._loading = True
@@ -1351,6 +1355,7 @@ class PersonasCharacterEditorWidget(Container):
         until-then-unsaved character gains its id).
         """
         enabled = self.expression_character_id() is not None
+        self.query_one(PortraitPerformanceEditor).set_allowed(enabled)
         hint_text = "" if enabled else "Save the character to add expressions."
         self.query_one(
             "#personas-char-editor-expr-import", Button

@@ -460,27 +460,31 @@ class _CoreAdapter:
 
     def schema_policy(self) -> SchemaPolicy | None:
         from .recovery_core_schema import (
+            CHACHANOTES_BROWSE_V79_TO_V80_SQL,
+            CHACHANOTES_CANVAS_V81_TO_V82_SQL,
             CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
-            CHACHANOTES_V75_SCHEMA,
-            CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
-            CHACHANOTES_V76_SHIPPED_SCHEMAS,
-            CHACHANOTES_V76_NATIVE_SCHEMAS,
+            CHACHANOTES_FLEET_V77_TO_V78_SQL,
             CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+            CHACHANOTES_PORTRAIT_V82_TO_V83_SQL,
+            CHACHANOTES_REGIONS_V83_TO_V84_SQL,
+            CHACHANOTES_RULES_V80_TO_V81_SQL,
+            CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
+            CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_V75_SCHEMA,
+            CHACHANOTES_V76_NATIVE_SCHEMAS,
+            CHACHANOTES_V76_SHIPPED_SCHEMAS,
             CHACHANOTES_V77_SCHEMAS,
             CHACHANOTES_V78_SCHEMAS,
             CHACHANOTES_V79_SCHEMAS,
-            CHACHANOTES_FLEET_V77_TO_V78_SQL,
-            CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
-            CHACHANOTES_BROWSE_V79_TO_V80_SQL,
-            CHACHANOTES_RULES_V80_TO_V81_SQL,
+            CHACHANOTES_V80_SCHEMAS,
             CHACHANOTES_V81_SCHEMAS,
             CHACHANOTES_V82_SCHEMAS,
-            CHACHANOTES_CANVAS_V81_TO_V82_SQL,
-            CHACHANOTES_V80_SCHEMAS,
-            CORE_SCHEMAS,
+            CHACHANOTES_V83_SCHEMAS,
+            CHACHANOTES_V84_SCHEMAS,
             COLLECTIONS_V4_SCHEMA,
-            COLLECTIONS_V5_SCHEMAS,
             COLLECTIONS_V4_TO_V5_SQL,
+            COLLECTIONS_V5_SCHEMAS,
+            CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
         )
@@ -514,8 +518,10 @@ class _CoreAdapter:
             # under the v80 head (head + dictionary cover V80[0]/[1]).
             schemas += tuple((80, schema) for schema in CHACHANOTES_V80_SCHEMAS)
             schemas += tuple((81, schema) for schema in CHACHANOTES_V81_SCHEMAS)
-            schemas += tuple((82, schema) for schema in CHACHANOTES_V82_SCHEMAS[2:])
-            versions += (81, 80, 79, 78, 77, 76, 75)
+            schemas += tuple((82, schema) for schema in CHACHANOTES_V82_SCHEMAS)
+            schemas += tuple((83, schema) for schema in CHACHANOTES_V83_SCHEMAS)
+            schemas += tuple((84, schema) for schema in CHACHANOTES_V84_SCHEMAS[2:])
+            versions += (83, 82, 81, 80, 79, 78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
@@ -523,6 +529,8 @@ class _CoreAdapter:
                 (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
                 (80, 81, CHACHANOTES_RULES_V80_TO_V81_SQL),
                 (81, 82, CHACHANOTES_CANVAS_V81_TO_V82_SQL),
+                (82, 83, CHACHANOTES_PORTRAIT_V82_TO_V83_SQL),
+                (83, 84, CHACHANOTES_REGIONS_V83_TO_V84_SQL),
             )
         elif self.owner_id == "db.library_collections":
             versions = (5, 4)

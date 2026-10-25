@@ -55,7 +55,71 @@ a discarded import emits no success notification (TASK-36363).
 
 ## Playback model
 
-Two paths, never both for one response: **live PCM streaming** through `StreamingPcmSink` (PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio calls from the callback), or **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
+Two paths, never concurrently for one response: **PCM output** through `StreamingPcmSink` (raw streaming or an eligible complete PCM16 WAV body; PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio stream operations from the callback), or an **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
+
+## Pure speech presentation contracts
+
+`Audio/speech_presentation.py` supplies stdlib-only PCM16 energy windows, a raw
+silence gate with finite dBFS smoothing, immutable owner/snapshot values and a
+thread-safe latest-value channel. PCM windows follow accepted source frames,
+including split channel samples and fractional frames per 20 ms window; this
+module does not open a device, run a thread or assign an output clock.
+
+`SpeechPresentation` belongs to one exact host-issued owner instance and cannot
+be retargeted. It rejects old generations/observations, preserves confirmed pause
+and terminal transport, and closes stale (>100 ms), future or invalid progress.
+Qualified silence has a closed mouth and no finite level while retaining valid
+timing; unknown timing is separate. Clock failure degrades observation without
+raising into audio callers. No waveform/history is stored in the channel.
+
+`StreamingPcmSink(..., presentation=...)` prepares accepted PCM on its existing
+notification thread and publishes every nominal 20 ms. Source consumption and
+inserted device silence remain separate, including half-sample chunk boundaries
+and partial zero-padded blocks. Validated backend current/DAC timestamps map to
+one monotonic output timeline; poses are selected only inside their actual output
+interval. The device-tail horizon is at most one second. Missing, nonfinite,
+backward, excessive or hardware-underflow timing selects closed/status-only
+observation, with audio unchanged. Queued preparation is bounded by the existing
+queued-audio capacity plus that tail; readers hold only one snapshot. Underrun
+notifications coalesce behind a blocked listener. A stalled publisher relies on
+snapshot freshness rather than accumulating UI events.
+
+Natural drain requests sounddevice `CallbackStop` only through the thin backend
+wrapper. The sink stays draining, registered and abortable until `finished_callback`
+confirms pending audio played; then it closes without aborting, publishes drain
+and releases ownership. Immediate Stop/failure still aborts; late acknowledgements
+cannot change the terminal result. The existing buffered-duration plus five-second
+pump watchdog bounds missing acknowledgement. `settle()` settles queued events,
+not a pending device tail. A backend finishing during open cannot evict a healthy
+previous sink. Complete eligible WAV routing is reused, including existing scoped
+cleanup and fallback; no second player is introduced.
+
+Sink output epochs are distinct from request/session generations. Local sink
+termination retires its output epoch before clearing its level, so an in-flight
+pose with an equal timestamp cannot reopen the mouth. Duplicate old cleanup
+cannot invalidate a newer output epoch. Termination invalidates its level immediately; the request adapter projects the
+logical terminal state after it knows whether a WAV failure falls back to legacy
+playback. This preserves one owner through fallback without reopening a terminal
+channel. Optional observation is forwarded by Console message requests, manual/auto
+playback events, hands-free utterances and guarded app-owned previews. The existing
+TTSPlaybackLifecycle projects confirmed playing/terminal status before invoking
+listeners; terminal acknowledgements settle their own channel even after a visible
+context becomes stale. Pause/resume comes only from real legacy-player state and
+never enters the admission lifecycle. Legacy output remains status-only.
+
+ConsoleMessageController retains one current presentation with a host-issued
+profile/session/message owner and a read-time validator. A replacement visible
+channel invalidates older admission; profile/session changes hide it. Hands-free
+captures reply/sequencer/session/character identity synchronously before scheduling
+its worker, revalidates around awaits and provider admission, and preserves current
+voice=None/resolution=None selection plus cooldown bypass. Completion remains
+exactly once and waits for native drain; stale/duplicate sentence callbacks cannot
+change a replacement's counters. Guarded previews use existing destination and
+selected-character resolution, with exact lifecycle Stop on cancellation. No new
+speech coordinator, conversation message or player is introduced. The living portrait and fixed radio telemetry read that exact owned channel;
+the existing avatar/Console clocks drive them without a second audio coordinator.
+Stale or unavailable output timing closes the mouth and hides the level bar while
+retaining truthful transport status.
 
 ## Speak action (dataflow)
 
@@ -130,3 +194,10 @@ ADR-023 (TTS adapter registry + audio.cpp runtime boundary), ADR-028 (character 
 3. Streaming holds the provider lease through playback; reconfiguration can be delayed by one utterance.
 4. Chatterbox's child process silences stdout/stderr before imports and speaks JSON on the dup'ed fd — any library print corrupts the protocol.
 5. Voice bundles are parsed with manual ZIP structs (member order, caps, 100× expansion ratio) — hostile-archive admission, not `zipfile` defaults.
+
+Native completion also respects the final bounded valid DAC interval, with or
+without portrait observation. CoreAudio qualification found finished callbacks about
+24 ms ahead of that interval's end. Invalid native timing retains acknowledgement
+fallback; amplitude-analysis errors cannot alter completion authority. The existing
+notification queue tracks deferred close and preserves settle/Stop/replacement
+contracts. See the dated Console radio qualification record for measured limits.

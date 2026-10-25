@@ -48,6 +48,12 @@ Video adds cooperative cancel (threaded only to adapters that support it) and a 
 
 Both result and error callbacks carry the actual originating Worker. Immediately before UI publication, `_publish_generation` rejects canceled workers and detached screens. A newer Generate cancels the old exclusive worker, and explicit cancellation also prevents publication without a replacement. The worker may finish its existing provider/decode work; retirement adds no UI-thread join. TASK-36698 covers actual palette, provider, decode and queued publication boundaries under ADR-176/033.
 
+## Portrait authoring entry point
+
+Personas uses the shared image-generation validation boundary for reviewed local
+portrait components; see “Reviewed character performance generation” below. The
+original six-independent-edit path is historical and has been replaced by ADR-243.
+
 ## The video store
 
 `VideoStore` is an ephemeral, message-keyed file store under `<user_data_dir>/generated_videos/<message_id>/<slug>.<validated-ext>`:
@@ -61,6 +67,42 @@ Both result and error callbacks carry the actual originating Worker. Immediately
 2. The chat seam offloads to a thread; `build_request` produces the frozen contract.
 3. `run_generation` validates and dispatches to the adapter (HTTP poll APIs or a local subprocess).
 4. Artifacts persist: images → attachments + sidecar → inline card / variant set; videos → `VideoStore.save` → marker + metadata → card or tombstone.
+
+## Reviewed character performance generation
+
+The Personas controller delegates to `UI/Persona_Modules/portrait_composition_generation.py`.
+It uses the existing configured registry, capability resolver, `build_request` and
+`run_generation` choke point. Users save three source-bound regions first, then
+confirm exactly three sequential reference-image requests: eyelids, small mouth and
+open mouth. All use the identical prepared reference; its file ID retains the original
+source digest, including for animated-source frame zero. No alternate provider,
+backend-native mask requirement or automatic paid retry is introduced.
+
+Requests validate before consent/reset. After consent and fresh source/settings/config
+checks, a full batch installs a validated rest-only candidate before its first request.
+Each valid same-size response is feathered once into its region and assembled into
+an immutable candidate; prior batch slots cannot satisfy readiness. A failed component
+keeps only current-batch successes. A selected component retry updates its dependent
+eye/mouth roles once, retaining unaffected encoded frames exactly; failure preserves
+the previous snapshot. Group staging checks snapshot identity and source/profile/
+editor/settings/config across awaits. Reopened components come only from invariant-
+validated applied provenance and saved settings, never inferred manual-frame lineage.
+
+Only explicit Apply publishes frames and provenance. Successful manual Import/Clear
+switches to ordinary six-frame mode; cancelled/invalid imports retain lineage. Review
+pairs is a static in-app matrix/crop viewer consuming original normalized PNGs, with
+sequential shared-budget decoding and a 1-megapixel raster cap. Detail copies common
+source boxes without resampling; the mosaic renderer's `native` grid preserves that
+sampling while terminal glyph colors remain approximations. Numeric/keyboard pan
+covers larger regions. Review has no transport, audio, write or required-acknowledgement
+side effect. Both portrait modals clear retired artwork and defer their exact close
+when another modal covers them.
+
+An explicitly confirmed fixed-text TTS sample uses the selected local CharacterRef,
+effective destination fingerprint and `speak_guarded_utterance`. Its disposable
+presentation is read only by that draft's preview; no message or auto-speak preference
+is created. Cancel waits for the exact sample's Stop acknowledgement; screen retirement
+drains the owning task. Static/Reduce motion keeps manual still review available.
 
 ## Failure behaviors
 

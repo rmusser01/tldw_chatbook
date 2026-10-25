@@ -1500,3 +1500,91 @@ async def test_sentence_sequencer_wired_through_speak_utterance_survives_a_mid_u
     )
     assert sequencer.drained is True, "the sequencer must not stall after the barge-in"
     assert drained_calls == [True]
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check", ["presentation", "cleanup", "superseded"])
+async def test_guarded_legacy_utterance_owns_delivery_and_cleanup(
+    handler, monkeypatch, check
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook import app_speech
+    from tldw_chatbook.Audio.speech_presentation import (
+        SpeechPresentation,
+        SpeechPresentationOwner,
+    )
+
+    class GuardedService(_FakeService):
+        async def synthesize_default(self, *, admission_authorizer=None, **kwargs):
+            return await super().synthesize_default(**kwargs)
+
+    handler._tts_service = GuardedService(
+        _FakeResponse([b"ID3", b"audio"], audio_format="mp3", sample_rate=None)
+    )
+    player = _FakeLegacyPlayer(finishes_after_polls=2)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: player
+    )
+    speech = SpeechPresentation(
+        SpeechPresentationOwner("request", object(), "session", 1, 7, "reply", 1)
+    )
+    observed, outcomes, created = [], [], []
+    current = [True]
+    transport = SpeechPresentation.set_transport
+
+    def observe_transport(channel, state):
+        transport(channel, state)
+        if channel is speech and channel.read() is not None:
+            observed.append(channel.read().state)
+
+    monkeypatch.setattr(SpeechPresentation, "set_transport", observe_transport)
+    create = handler._create_tts_artifact
+
+    def remember_artifact(audio_format):
+        path = create(audio_format)
+        created.append(path)
+        return path
+
+    monkeypatch.setattr(handler, "_create_tts_artifact", remember_artifact)
+    cleanup = handler._cleanup_audio_file
+
+    async def immediate_cleanup(message_id, delay=0, **kwargs):
+        await cleanup(message_id, delay=0, **kwargs)
+
+    monkeypatch.setattr(handler, "_cleanup_audio_file", immediate_cleanup)
+    post = handler.post_message
+    app = SimpleNamespace(loguru_logger=tts_events_module.logger)
+
+    async def deliver(message):
+        await post(message)
+        if isinstance(message, TTSCompleteEvent):
+            await app_speech._deliver_tts_complete_event(app, message)
+            if check == "superseded":
+                current[0] = False
+
+    monkeypatch.setattr(handler, "post_message", deliver)
+    await handler.speak_utterance(
+        "Guarded.",
+        on_finished=outcomes.append,
+        presentation=speech,
+        validator=lambda: current[0],
+    )
+    await asyncio.gather(*tuple(handler._pending_legacy_cleanup_timers))
+    errors = [
+        event.error
+        for event in handler.messages
+        if isinstance(event, TTSCompleteEvent) and event.error
+    ]
+    assert not errors, errors
+    if check == "presentation":
+        assert "playing" in observed and outcomes == [True]
+        assert len(player.play_calls) == 1
+    elif check == "cleanup":
+        assert outcomes == [True] and created
+        assert not handler._audio_files and not handler._audio_file_owners
+        assert all(not path.exists() for path in created)
+    else:
+        assert outcomes == [False] and not player.play_calls
+        assert not handler._audio_files and all(not path.exists() for path in created)

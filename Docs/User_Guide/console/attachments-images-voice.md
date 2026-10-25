@@ -100,6 +100,23 @@ action row:
 - **Save Image** — writes the message's images to disk; the default folder
   is `save_location` under `[chat.images]` in config.toml (`~/Downloads`).
 
+### Character radio portrait
+
+Open **Context → Character** to see the active character's portrait inside a
+recessed frame, with its identity above and voice status below. **Ready**,
+**Preparing voice**, **Transmitting**, **Paused** and **Voice unavailable**
+follow the character's owned speech activity. The level bar uses fresh measured
+output; silence empties it, and unavailable timing hides it while retaining
+status. Normal layouts reserve its row, so speech does not move the controls.
+Compact layouts omit the bar first. Authored image colors and the current theme
+are preserved; no radio noise or continuous static is added.
+
+Prepared living portraits use audio-reactive mouth poses plus independent blinking
+and subtle idle movement. Reduce motion, Static and existing animation/reaction
+preferences still apply. Click the portrait for its full-size viewer; the existing
+reaction picker still selects expressions. Prepare/import or generate the six poses
+under [Personas → Living portrait](../roleplay-chat-dictionaries/characters-and-personas.md).
+
 ### Generating images — `/generate-image`
 
 Type `/generate-image [:backend] [@style] <prompt>` in the composer to run

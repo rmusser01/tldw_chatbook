@@ -1592,7 +1592,13 @@ def build_console_controllers(
         sync_native_ui=lambda: screen._sync_native_console_chat_ui(),
         notify=lambda *args, **kwargs: screen.app_instance.notify(*args, **kwargs),
     )
+    from ...Widgets.Console.portrait_radio import update_portrait_radio
+
     screen._character = ConsoleCharacterController(
+        render_radio=lambda snapshot, **kwargs: update_portrait_radio(
+            screen, snapshot, **kwargs
+        ),
+        speech_presentation=lambda: screen._message.current_speech_presentation(),
         app_config_accessor=(
             lambda: getattr(screen.app_instance, "app_config", {}) or {}
         ),
@@ -2271,6 +2277,11 @@ def build_console_controllers(
     #: boundary this controller draws around the realtime engine.
     screen._hands_free = ConsoleHandsFreeController(
         screen,
+        bind_speech_presentation=(
+            lambda presentation, validator: screen._message.bind_speech_presentation(
+                presentation, validator
+            )
+        ),
         app_instance=screen.app_instance,
         composer_accessor=lambda: screen._console_composer_or_none(),
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),

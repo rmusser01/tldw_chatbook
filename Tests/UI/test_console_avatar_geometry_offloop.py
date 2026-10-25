@@ -31,9 +31,14 @@ from Tests.UI.test_console_character_avatar import (  # noqa: F401 -- pytest fix
     _set_active_console_character,
     avatar_db,
     console_screen_with_db_and_pilot,
+    owned_console_apps,
 )
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
+
+# Track the constructor namespace used by the reused fixture.
+_character_screen = console_screen_with_db_and_pilot
+pytestmark = pytest.mark.bootstrap_profile
 
 #: A high-resolution character card. The Console render cache caps decoded
 #: avatars at IMAGE_DECODE_MAX_DIMENSION (1024), so this is the production
@@ -153,7 +158,7 @@ def _watch_mosaic_thread(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_geometry_replacement_renders_the_avatar_off_the_loop(
-    console_screen_with_db_and_pilot,  # noqa: F811
+    console_screen_with_db_and_pilot,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A viewport-driven avatar replacement must not resample on the loop."""
@@ -180,7 +185,7 @@ async def test_geometry_replacement_renders_the_avatar_off_the_loop(
 
 @pytest.mark.asyncio
 async def test_avatar_still_paints_the_fitted_portrait_after_the_move(
-    console_screen_with_db_and_pilot,  # noqa: F811
+    console_screen_with_db_and_pilot,
 ) -> None:
     """Off-loop rendering must not cost the user the portrait itself."""
 
@@ -197,8 +202,8 @@ async def test_avatar_still_paints_the_fitted_portrait_after_the_move(
     box = rail.character_avatar_box
     assert box is not None and box != (0, 0)
     # The mounted widget carries the fitted box, and a real portrait: the
-    # coloured mosaic paints the image in BACKGROUND colour, so `str()` of it
-    # is all spaces -- the pixels live in the segment styles.
+    # coloured mosaic carries pixels in segment styles. NO_COLOR instead
+    # carries luminance in shade glyphs; verify the actual selected renderer.
     assert image.styles.width.value == box[0]
     assert image.styles.height.value == box[1]
     rendered = image.renderable
@@ -207,7 +212,10 @@ async def test_avatar_still_paints_the_fitted_portrait_after_the_move(
         for _text, style, _control in rendered.render(screen.app.console)
         if style is not None and style.bgcolor is not None
     }
-    assert len(backgrounds) > 1, backgrounds
+    if screen.app.no_color:
+        assert len(set(str(rendered)) - {" ", "\n"}) > 1
+    else:
+        assert len(backgrounds) > 1, backgrounds
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +225,7 @@ async def test_avatar_still_paints_the_fitted_portrait_after_the_move(
 
 @pytest.mark.asyncio
 async def test_a_resample_finishing_after_the_viewport_moved_paints_nothing(
-    console_screen_with_db_and_pilot,  # noqa: F811
+    console_screen_with_db_and_pilot,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A stale-size render completing late must never reach the DOM.
@@ -267,7 +275,7 @@ async def test_a_resample_finishing_after_the_viewport_moved_paints_nothing(
 
 @pytest.mark.asyncio
 async def test_a_superseded_pass_does_not_blank_the_live_avatar(
-    console_screen_with_db_and_pilot,  # noqa: F811
+    console_screen_with_db_and_pilot,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A pass that loses the race must leave the mounted portrait alone.
@@ -316,7 +324,7 @@ async def test_a_superseded_pass_does_not_blank_the_live_avatar(
 
 @pytest.mark.asyncio
 async def test_teardown_with_a_resample_in_flight_is_clean(
-    console_screen_with_db_and_pilot,  # noqa: F811
+    console_screen_with_db_and_pilot,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unmounting mid-render must not fail a worker or raise into the app."""
@@ -375,7 +383,7 @@ async def test_teardown_with_a_resample_in_flight_is_clean(
 
 @pytest.mark.asyncio
 async def test_app_exit_with_a_resample_in_flight_raises_nothing(
-    console_screen_with_db_and_pilot,  # noqa: F811
+    console_screen_with_db_and_pilot,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Quitting mid-render must not surface a WorkerFailed (the 21122 shape)."""

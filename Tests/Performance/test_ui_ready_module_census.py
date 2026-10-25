@@ -189,6 +189,9 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Empty Console has neither persisted markers nor assistant token rates.
+    "tldw_chatbook.Chat.console_change_review_read",
+    "tldw_chatbook.Chat.console_token_rate",
     # TASK-22504: the 2,260-LOC voice-input module is first-voice-use work;
     # the three Console_Modules seams and the composer's STATE_* constants
     # lazy-load it, and the app's speech-stack diagnostic waits for ready.

@@ -66,7 +66,16 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Character_Chat.portrait_compositing import (
+        PortraitCompositionRecipe,
+    )
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        PerformanceFrame,
+        PerformanceSource,
+        PortraitPerformanceRecord,
+    )
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.portrait_region_settings import PortraitRegionSettings
     from tldw_chatbook.Library.library_artifacts_state import (
         ArtifactKey,
         ArtifactOrderKey,
@@ -79,7 +88,6 @@ if TYPE_CHECKING:
         ChatSyncDeleteIntentRecord,
         ChatSyncIntentRecord,
     )
-
 from loguru import logger
 
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
@@ -809,7 +817,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 82  # ADR-239 immutable Canvas sibling sequences.
+    _CURRENT_SCHEMA_VERSION = 84  # ADR-243 source-bound portrait regions and provenance.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8112,6 +8120,51 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v83_to_v84(self, conn: sqlite3.Connection) -> None:
+        """Install independent source-bound regions and optional applied provenance."""
+        self._require_migration_entry_version(conn, 83, "V83→V84")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v83_to_v84_portrait_regions.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V83→V84"
+                )
+                changed = cursor.execute(
+                    "UPDATE db_schema_version SET version=84 WHERE schema_name=? AND version=83",
+                    (self._SCHEMA_NAME,),
+                )
+                if changed.rowcount != 1:
+                    raise SchemaError("V83→V84 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
+            raise SchemaError(f"Migration V83→V84 failed: {type(exc).__name__}") from exc
+
+
+    def _migrate_from_v82_to_v83(self, conn: sqlite3.Connection) -> None:
+        """Install source-bound local portrait sets without sync triggers."""
+        self._require_migration_entry_version(conn, 82, "V82→V83")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v82_to_v83_portrait_performance.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V82→V83"
+                )
+                changed = cursor.execute(
+                    "UPDATE db_schema_version SET version=83 WHERE schema_name=? AND version=82",
+                    (self._SCHEMA_NAME,),
+                )
+                if changed.rowcount != 1:
+                    raise SchemaError("V82→V83 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
+            raise SchemaError(f"Migration V82→V83 failed: {type(exc).__name__}") from exc
+
     def _migrate_from_v81_to_v82(self, conn: sqlite3.Connection) -> None:
         """Permit immutable sibling ties while preserving one root per Canvas."""
         self._require_migration_entry_version(conn, 81, "V81→V82")
@@ -8529,6 +8582,8 @@ DELETE FROM keywords
                     79: self._migrate_from_v79_to_v80,
                     80: self._migrate_from_v80_to_v81,
                     81: self._migrate_from_v81_to_v82,
+                    82: self._migrate_from_v82_to_v83,
+                    83: self._migrate_from_v83_to_v84,
                 }
 
                 if current_db_version == 0:
@@ -9228,6 +9283,136 @@ DELETE FROM keywords
                 f"Database error fetching character card ID {character_id}: exception_type={type(e).__name__}"
             )
             raise
+
+    def get_character_portrait_regions(
+        self, *, character_id: int, expression_key: str
+    ) -> "PortraitRegionSettings | None":
+        """Read independent settings, including stale source identity for re-selection."""
+        from .portrait_region_settings import get_regions
+
+        return get_regions(
+            self, character_id=character_id, expression_key=expression_key
+        )
+
+    def save_character_portrait_regions(
+        self,
+        source: "PerformanceSource",
+        recipe: "PortraitCompositionRecipe",
+        *,
+        expected_revision: int,
+    ) -> int:
+        """Save confirmed source-pixel regions without changing active poses."""
+        from .portrait_region_settings import save_regions
+
+        return save_regions(self, source, recipe, expected_revision=expected_revision)
+
+    def apply_character_portrait_performance(
+        self,
+        source: "PerformanceSource",
+        frames: tuple["PerformanceFrame", ...],
+        *,
+        expected_revision: int,
+        composition_recipe: "PortraitCompositionRecipe | None" = None,
+        expected_regions_revision: int | None = None,
+    ) -> int:
+        """Atomically replace six poses, fencing optional composition provenance."""
+        from .portrait_region_settings import apply_performance
+
+        return apply_performance(
+            self,
+            source,
+            frames,
+            expected_revision=expected_revision,
+            composition_recipe=composition_recipe,
+            expected_regions_revision=expected_regions_revision,
+        )
+
+    def get_character_portrait_performance(
+        self,
+        *,
+        character_id: int,
+        expression_key: str,
+    ) -> "PortraitPerformanceRecord | None":
+        """Read one consistent attachment/tombstone, even if its source is old."""
+        from tldw_chatbook.Character_Chat.portrait_performance import (
+            FRAME_ROLES,
+            PerformanceFrame,
+            PerformanceSource,
+            PortraitPerformanceRecord,
+        )
+
+        from .portrait_region_settings import optional_recipe
+
+        with self.transaction() as cursor:
+            row = cursor.execute(
+                """SELECT p.* FROM character_portrait_performances p
+                   JOIN character_cards c ON c.id=p.character_id AND c.deleted=0
+                   WHERE p.character_id=? AND p.expression_key=?""",
+                (character_id, expression_key),
+            ).fetchone()
+            if row is None:
+                return None
+            frames = cursor.execute(
+                "SELECT role,png,width,height,sha256 FROM character_portrait_performance_frames WHERE performance_id=?",
+                (row["id"],),
+            ).fetchall()
+            return PortraitPerformanceRecord(
+                PerformanceSource(
+                    row["character_id"],
+                    row["expression_key"],
+                    row["source_sha256"],
+                    row["source_kind"],
+                    tuple(json.loads(row["source_ref_json"])),
+                ),
+                row["revision"],
+                bool(row["active"]),
+                tuple(
+                    sorted(
+                        (PerformanceFrame(*frame) for frame in frames),
+                        key=lambda frame: FRAME_ROLES.index(frame.role),
+                    )
+                ),
+                optional_recipe(row["composition_recipe_json"]),
+            )
+
+    def remove_character_portrait_performance(
+        self,
+        source: "PerformanceSource",
+        *,
+        expected_revision: int,
+    ) -> int:
+        """Remove blobs atomically, preserving an increasing revision tombstone."""
+        from tldw_chatbook.Character_Chat.portrait_performance import (
+            PerformanceConflict,
+            _performance_write,
+            _preflight_source,
+            _source_stamp,
+        )
+
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("portrait_performance_revision_invalid")
+        stamp = _preflight_source(self, source)
+        with _performance_write(self) as cursor:
+            if _source_stamp(self, source) != stamp:
+                raise PerformanceConflict("portrait_performance_source_changed")
+            row = cursor.execute(
+                "SELECT id,revision,active FROM character_portrait_performances WHERE character_id=? AND expression_key=?",
+                (source.character_id, source.expression_key),
+            ).fetchone()
+            actual = 0 if row is None else row[1]
+            if actual != expected_revision:
+                raise PerformanceConflict("portrait_performance_revision_changed")
+            if row is None or not row[2]:
+                return actual
+            cursor.execute(
+                "DELETE FROM character_portrait_performance_frames WHERE performance_id=?",
+                (row[0],),
+            )
+            cursor.execute(
+                "UPDATE character_portrait_performances SET active=0,revision=?,composition_recipe_json=NULL WHERE id=?",
+                (actual + 1, row[0]),
+            )
+        return actual + 1
 
     # --- Reaction-avatar expression images (P3d) ---
 
