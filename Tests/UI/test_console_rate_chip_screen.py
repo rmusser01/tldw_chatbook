@@ -201,3 +201,78 @@ async def test_rate_readout_config_off_hides_and_resets():
             renderable.plain if hasattr(renderable, "plain") else str(line.render())
         )
         assert "tok/s" not in text
+        assert console._console_rate_tracker is None
+
+
+def test_rate_tracker_waits_for_an_assistant_and_resets_without_reallocation():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    chips = []
+    screen = SimpleNamespace(
+        _console_rate_tracker=None,
+        _console_rate_reading=None,
+        _show_console_rate=lambda: True,
+        _console_active_run_copy=lambda: "",
+        query_one=lambda *args: SimpleNamespace(
+            sync_rate_chip=lambda *values: chips.append(values)
+        ),
+    )
+    ChatScreen._sync_console_rate_chip(screen, [])
+    assert screen._console_rate_tracker is None
+    message = SimpleNamespace(
+        id="assistant",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="A streaming answer",
+        status="streaming",
+        usage=None,
+    )
+    ChatScreen._sync_console_rate_chip(screen, [message])
+    tracker = screen._console_rate_tracker
+    assert tracker is not None and screen._console_rate_reading is not None
+    ChatScreen._sync_console_rate_chip(screen, [])
+    assert (
+        screen._console_rate_tracker is tracker and screen._console_rate_reading is None
+    )
+    screen._show_console_rate = lambda: False
+    ChatScreen._sync_console_rate_chip(screen, [message])
+    assert (
+        screen._console_rate_tracker is tracker and screen._console_rate_reading is None
+    )
+    assert chips[-1] == (False, "", "")
+
+
+@pytest.mark.parametrize("enabled,reading", [(False, None), (False, object()), (True, None)])
+def test_run_copy_skips_rate_import_without_enabled_reading(monkeypatch, enabled, reading):
+    import builtins
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    rendered = []
+    screen = SimpleNamespace(
+        _pending_console_launch_context=None,
+        _build_console_control_state=lambda context: None,
+        _console_mode_summary=lambda state: "Console",
+        _native_run_status_copy=lambda: None,
+        _console_active_run_copy=lambda: "Streaming response.",
+        _console_rate_reading=reading,
+        _show_console_rate=lambda: enabled,
+        _console_chat_controller=None,
+        _console_chat_store=None,
+        query_one=lambda *args: SimpleNamespace(
+            update=lambda value: None,
+            sync_run_chip=lambda *values: rendered.append(values),
+        ),
+    )
+    original = builtins.__import__
+
+    def without_rate_helpers(name, *args, **kwargs):
+        assert not name.endswith("console_token_rate")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_rate_helpers)
+    ChatScreen._sync_console_mode_bar.__wrapped__(screen)
+    assert rendered == [(True, "Streaming response.")]

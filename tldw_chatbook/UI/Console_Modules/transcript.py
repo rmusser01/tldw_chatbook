@@ -160,13 +160,16 @@ class ConsoleChangeReviewProjection:
             return await self._prepare_current()
 
     async def _prepare_current(self) -> bool:
+        selected = self._selection()
+        runtime, coordinator, bridge, _unused_database, conversation_id, _unused_revision = selected
+        if conversation_id is None:
+            self._prepared_stock = False
+            return True
         from ...Chat.console_change_review_read import (
             MarkerReadObsolete,
             capture_marker_read,
         )
 
-        selected = self._selection()
-        runtime, coordinator, bridge, _unused_database, conversation_id, _unused_revision = selected
         read = capture_marker_read(runtime, coordinator, bridge, conversation_id)
         if read is None:
             self._prepared_stock = False

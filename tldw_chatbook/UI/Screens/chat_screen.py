@@ -300,12 +300,6 @@ from ...Chat.console_prefill import (
 )
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
-from ...Chat.console_token_rate import (
-    TokenRateReading,
-    TokenRateTracker,
-    format_rate_chip_settled,
-    merge_rate_into_run_copy,
-)
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
@@ -7034,7 +7028,7 @@ class ChatScreen(BaseAppScreen):
         # the viewed session's newest assistant row. Live counts use the
         # shared estimator; the settled figure upgrades to the provider's
         # reported output total when the message carries usage.
-        self._console_rate_tracker = TokenRateTracker(count_fn=estimate_tokens)
+        self._console_rate_tracker = None
         #: TASK-35100: this tick's tracker reading, stashed for the mode
         #: bar's run-chip merge (which syncs BEFORE the transcript sync and
         #: therefore consumes the previous tick's reading -- one 0.2s lag
@@ -17367,7 +17361,11 @@ class ChatScreen(BaseAppScreen):
         # rate would cross the chip's 34-cell cap and ellipsize the rate
         # into unreadability ("· 30..."). The reading is the previous tick's
         # (the transcript sync stashes it and runs later in the same tick).
-        if active_run_copy:
+        if (
+            active_run_copy
+            and self._show_console_rate()
+            and self._console_rate_reading is not None
+        ):
             # TASK-35160 review round 2: the merge decision is a pure
             # function (unit-pinned). Agent runs stay STREAMING through
             # tool rounds and approval parking, so the status alone does
@@ -17380,6 +17378,8 @@ class ChatScreen(BaseAppScreen):
             session_id = (
                 store.active_session_id if store is not None else None
             )
+            from ...Chat.console_token_rate import merge_rate_into_run_copy
+
             active_run_copy = merge_rate_into_run_copy(
                 active_run_copy,
                 reading,
@@ -17430,6 +17430,13 @@ class ChatScreen(BaseAppScreen):
                     message = candidate
                     break
             if message is not None:
+                from ...Chat.console_token_rate import (
+                    TokenRateTracker,
+                    format_rate_chip_settled,
+                )
+
+                if self._console_rate_tracker is None:
+                    self._console_rate_tracker = TokenRateTracker(count_fn=estimate_tokens)
                 content = (
                     message.variants.current.content
                     if getattr(message, "variants", None) is not None
@@ -17451,10 +17458,12 @@ class ChatScreen(BaseAppScreen):
             else:
                 # No assistant row in this session (fresh/other tab): the
                 # stashed reading belongs to a DIFFERENT session's stream.
-                self._console_rate_tracker.reset()
+                if self._console_rate_tracker is not None:
+                    self._console_rate_tracker.reset()
                 self._console_rate_reading = None
         else:
-            self._console_rate_tracker.reset()
+            if self._console_rate_tracker is not None:
+                self._console_rate_tracker.reset()
             self._console_rate_reading = None
         try:
             status_chips = self.query_one(

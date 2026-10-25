@@ -167,3 +167,25 @@ async def test_marker_projection_declines_before_capture_and_preserves_live_abi(
         monitoring.register_callback(tool, monitoring.events.PY_START, None)
         monitoring.free_tool_id(tool)
         database.close()
+
+
+async def test_no_conversation_does_not_import_stock_marker_reader(monkeypatch):
+    import builtins
+
+    from tldw_chatbook.UI.Console_Modules.transcript import (
+        ConsoleChangeReviewProjection,
+    )
+
+    runtime = SimpleNamespace(change_review_coordinator=None, agent_bridge=None)
+    projection = ConsoleChangeReviewProjection(
+        runtime_accessor=lambda: runtime, conversation_id_accessor=lambda: None
+    )
+    original = builtins.__import__
+
+    def without_reader(name, *args, **kwargs):
+        assert not name.endswith("console_change_review_read")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_reader)
+    assert await projection.prepare()
+    assert not projection._prepared_stock
