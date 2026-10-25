@@ -1,7 +1,7 @@
 ---
 id: TASK-36900
 title: Keep Watchlists navigation responsive during article body reads
-status: To Do
+status: In Progress
 created_date: 2026-10-25 19:33
 labels:
 - textual
@@ -11,6 +11,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3247.md
+assignee:
+- '@codex'
+updated_date: 2026-10-25 20:14
 ---
 
 ## Description
@@ -46,3 +49,15 @@ Reason: A contained message-handler/worker correction retaining existing screen 
 - [ ] #3 Late success or failure from superseded, departed-view, changed-backend/query/page or detached detail work cannot replace the current reader or mark an obsolete selection read through stale publication authority.
 - [ ] #4 Narrow list projections, shared row identity and one hydrated reader publication remain intact; mounted ordinary, overlapping, out-of-order, failure and teardown regressions pass with no background exceptions and all controlled holds released.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read the linked audit and existing ADRs; follow Docs/superpowers/plans/2026-10-25-quiz-start-and-reader-lifetimes.md.
+2. Add mounted regressions and retain RED evidence before implementing the bounded owner-lifetime repair.
+3. Run complete affected tests and targeted neighboring contracts, scoped lint/format, actual child report inspection and fresh Superpowers whole-branch review.
+4. Register cases in CI, document evidence, mark criteria Done after required gates; create PR against dev and address CI/review feedback.
+ADR required: no
+ADR path: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/042-watchlists-reader-first-ia.md
+Reason: bounded direct correction under existing ownership; no new service/storage contract.
+<!-- SECTION:PLAN:END -->

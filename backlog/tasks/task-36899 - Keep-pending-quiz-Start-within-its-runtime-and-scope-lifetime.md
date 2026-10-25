@@ -1,7 +1,7 @@
 ---
 id: TASK-36899
 title: Keep pending quiz Start within its runtime and scope lifetime
-status: To Do
+status: In Progress
 created_date: 2026-10-25 19:32
 labels:
 - textual
@@ -11,6 +11,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3247.md
+assignee:
+- '@codex'
+updated_date: 2026-10-25 20:13
 ---
 
 ## Description
@@ -46,3 +49,15 @@ Reason: A bounded publication correction under existing domain-screen and runtim
 - [ ] #3 Ordinary same-context Start/Submit and failure recovery remain usable, and any already-created remote attempt is described truthfully without claiming cancellation rolled it back.
 - [ ] #4 Mounted production-owner regressions with held responses cover runtime change, scope change and away/back transitions, including the real local SQLite submission boundary; ordinary completion and retry controls pass without background exceptions.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read the linked audit and existing ADRs; follow Docs/superpowers/plans/2026-10-25-quiz-start-and-reader-lifetimes.md.
+2. Add mounted regressions and retain RED evidence before implementing the bounded owner-lifetime repair.
+3. Run complete affected tests and targeted neighboring contracts, scoped lint/format, actual child report inspection and fresh Superpowers whole-branch review.
+4. Register cases in CI, document evidence, mark criteria Done after required gates; create PR against dev and address CI/review feedback.
+ADR required: no
+ADR path: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md
+Reason: bounded direct correction under existing ownership; no new service/storage contract.
+<!-- SECTION:PLAN:END -->
