@@ -56,6 +56,25 @@ retains the completed failed run, red/green controls, intermediate failures, whe
 identity and fresh zero-request inventory. No full suite was run. The published
 replacement head must pass its own complete hosted run before a green-CI claim.
 
+## Subsequent receipt-identity correction
+
+On `f442237200`, the contrast shard is green. Shard 11 instead stops at the
+extra `assert await pilot.click(button, ...)` added during the first correction.
+Textual captures a target before its own pre-mouse pauses and returns an object
+identity comparison; a recomposed receipt can be successfully clicked while
+that comparison returns False. A real recomposition during the first mouse pause
+reproduces the False result deterministically. Remove that incidental assertion,
+retain the actual pointer gesture and all Reader/canonical-id/saved-item outcome
+assertions, and cover ordinary, before-scroll and during-click replacement.
+
+The complete Library/census selection passes **82 tests**. The controlled late
+case starts red at the identity assertion and passes with the correct Reader
+and DB result after its removal. No production code, timing budget, mouse-event
+implementation or storage/admission guard changes in this correction; installed
+production-source identity from the prior checkpoint remains applicable.
+[Late-click evidence](../qa/portrait-compositing/2026-10-24/final-ci-corrections/late-receipt-identity.json)
+keeps that additional failed attempt distinct from the final assertions.
+
 ## Qualification remains explicit
 
 TASK-36555 remains In Progress, AC5 unchecked. Fresh inventory is SwarmUI-only,

@@ -21759,3 +21759,18 @@ to app-tier dialog CSS fixed the actual mounted output.
 **What to do.** Pair a parsed contrast sweep with a mounted keyboard-focus
 assertion under production CSS. Verify the winning outline and its rendered
 surface; a correct declaration in a losing tier proves no visible improvement.
+
+
+## Pilot click identity is not the result of a recomposing action
+
+**Incident (PR #3244, 2026-10-24).** The receipt test gained an assertion on
+`pilot.click(button)` after fixing its stale scroll target. CI rejected the
+click with False. Textual's `_post_mouse_events` captures a node before its
+pre-mouse pauses and compares object identity; a controlled receipt recompose
+in that pause also returns False while opening the correct Reader and saving
+the correct item.
+
+**What to do.** For a control that recomposes or unmounts during a gesture,
+assert the actual action's outcome rather than Pilot's node-identity return.
+Keep the real click and viewport/hit checks; do not replace the user action
+with a direct handler call.

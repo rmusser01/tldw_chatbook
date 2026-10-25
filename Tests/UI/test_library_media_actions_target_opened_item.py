@@ -460,9 +460,9 @@ async def test_speaker_rename_id_follows_the_reader_during_a_pending_selection()
         service.release(1)
 
 
-@pytest.mark.parametrize("replace_receipt", [False, True])
+@pytest.mark.parametrize("receipt_change", ["none", "before_scroll", "during_click"])
 async def test_receipt_open_in_library_then_l_saves_the_opened_item(
-    tmp_path, replace_receipt
+    tmp_path, receipt_change, monkeypatch
 ):
     """Fix round 1 (minor): the receipt-unmount focus path. A real tmp file
     through the real ingest coordinator and a real file-backed
@@ -514,7 +514,7 @@ async def test_receipt_open_in_library_then_l_saves_the_opened_item(
             screen, pilot, "#library-ingest-open-ingest-job-1"
         )
 
-        if replace_receipt:
+        if receipt_change == "before_scroll":
             screen.refresh(recompose=True)
             await pilot.pause()
             assert screen.query_one("#library-ingest-open-ingest-job-1") is not open_button
@@ -537,7 +537,27 @@ async def test_receipt_open_in_library_then_l_saves_the_opened_item(
             message="the live receipt button never became clickable",
         )
         button = screen.query_one("#library-ingest-open-ingest-job-1", Button)
-        assert await pilot.click(
+        if receipt_change == "during_click":
+            pause = pilot.pause
+            replaced = False
+
+            async def replace_before_mouse(*args, **kwargs):
+                nonlocal replaced
+                if not replaced:
+                    replaced = True
+                    screen.refresh(recompose=True)
+                    await pause()
+                    current = screen.query_one("#library-ingest-open-ingest-job-1", Button)
+                    assert current is not button
+                    current.focus(scroll_visible=False)
+                    current.scroll_visible(animate=False, immediate=True)
+                    await pause()
+                await pause(*args, **kwargs)
+
+            monkeypatch.setattr(pilot, "pause", replace_before_mouse)
+
+        # Pilot's return compares node identity; receipt replacement may still open the Reader.
+        await pilot.click(
             button, offset=(button.size.width // 2, button.size.height // 2)
         )
         canonical = f"local:media:{media_id}"
