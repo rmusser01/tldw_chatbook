@@ -1,7 +1,7 @@
 ---
 id: TASK-36728
 title: Keep inline reminder edits independent across reminder identities
-status: To Do
+status: In Progress
 created_date: 2026-10-25 03:46
 labels:
 - scheduling
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3243.md
+assignee:
+- '@codex'
+updated_date: 2026-10-25 17:44
 ---
 
 ## Description
@@ -45,3 +48,9 @@ Reason: Bounded correction within the existing inline-edit owner and mutation se
 - [ ] #3 Existing local/server validation, failure and retry, queued/offline and transfer restrictions remain intact; cancellation is never presented as proof of remote rollback.
 - [ ] #4 Deterministic mounted tests exercise the real reminder detail events, service and private SQLite with a held client await, cover cross-reminder overlap, same-reminder and serial controls, and observe settlement and user-visible failure outcomes.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read the task, existing scheduling owner, lessons and ADR context; reproduce pending cross-reminder edits through real mounted rows and service/private SQLite. 2. Add regressions for independent and same-reminder targets plus stale row feedback, serial success and failure/refusal. Observe expected RED before production changes. 3. Bind existing worker exclusivity to reminder identity plus field, and restrict row feedback to its captured target while preserving service/refresh semantics. 4. Run targeted new and affected existing tests and scoped lint/source guards; request fresh Superpowers branch review. 5. Record evidence, check all ACs and mark Done through CLI after verification. ADR required: no. ADR path: backlog/decisions/018-local-server-hybrid-scheduled-tasks.md; backlog/decisions/116-schedules-inspector-editing.md (Proposed context). Reason: bounded UI owner/publication correction, no service/storage/sync policy change. Full plan: Docs/superpowers/plans/2026-10-25-textual-reminder-and-quiz-followups.md.
+<!-- SECTION:PLAN:END -->

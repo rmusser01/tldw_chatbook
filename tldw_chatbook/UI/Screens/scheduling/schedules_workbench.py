@@ -3103,6 +3103,24 @@ class SchedulesWorkbench(BaseAppScreen):
             row.show_error("Scheduling service is unavailable; cannot save this edit.")
             return
 
+        def row_is_current() -> bool:
+            return row.is_attached and any(
+                isinstance(pane, TaskDetail)
+                and pane._current_task is not None
+                and pane._current_task.id == task.id
+                for pane in row.ancestors
+            )
+
+        def show_error(message: str) -> None:
+            if row_is_current():
+                row.show_error(message)
+            else:
+                self.notify(
+                    f"An earlier reminder edit failed: {message}",
+                    severity="error",
+                    markup=False,
+                )
+
         async def _edit_and_refresh() -> None:
             try:
                 outcome = await service.edit_reminder_fields(task.id, payload)
@@ -3115,7 +3133,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     task_id=task.id,
                     field=row.row_key,
                 )
-                row.show_error("Failed to save this edit.")
+                show_error("Failed to save this edit.")
                 return
             if outcome.status != "saved":
                 message = (
@@ -3126,20 +3144,18 @@ class SchedulesWorkbench(BaseAppScreen):
                     )
                     or "This edit could not be saved."
                 )
-                row.show_error(message)
+                show_error(message)
                 return
-            row.clear_error()
+            if row_is_current():
+                row.clear_error()
             self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _edit_and_refresh,
             exclusive=True,
-            # Per-ROW group (final review M12): one group for the whole
-            # KIND meant committing a second row's editor cancelled the
-            # first commit mid-flight -- possibly after its write landed,
-            # so the success repaint never ran. `exclusive=True` still
-            # holds, now within one row.
-            group=f"schedules-edit-reminder-field-{row.row_key}",
+            # A detail row is reused across reminders. Only a later edit of
+            # this same reminder and field may supersede the pending edit.
+            group=f"schedules-edit-reminder-{task.id}-{row.row_key}",
         )  # type: ignore[arg-type]
 
     @on(DefinitionFieldEditRequested)
