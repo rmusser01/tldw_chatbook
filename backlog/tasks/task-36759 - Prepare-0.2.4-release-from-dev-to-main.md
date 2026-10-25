@@ -8,7 +8,7 @@ assignee:
 labels:
 - release
 - packaging
-updated_date: 2026-10-25 17:45
+updated_date: 2026-10-25 17:59
 ---
 
 ## Description
@@ -20,9 +20,9 @@ Prepare the owner-confirmed 0.2.4 release from committed dev for review and prom
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Application, runtime, companion source, README, changelog, and current release documentation agree on 0.2.4 and summarize committed changes since 0.2.3.
-- [ ] #2 Release metadata, app-only, build, artifact, and installed-distribution gates are run; the owner-requested full test suite is attempted and all results and blockers are recorded accurately.
-- [ ] #3 Reviewable release-preparation and main-promotion draft PRs identify the source and remaining release gates; no production publication or merge is performed during preparation.
-- [ ] #4 Built wheel and sdist contain served mobile, authentication and QR runtime assets and their vendored notice; the release checker rejects missing web assets and both installed command help entry points succeed.
+- [x] #2 Release metadata, app-only, build, artifact, and installed-distribution gates are run; the owner-requested full test suite is attempted and all results and blockers are recorded accurately.
+- [x] #3 Reviewable release-preparation and main-promotion draft PRs identify the source and remaining release gates; no production publication or merge is performed during preparation.
+- [x] #4 Built wheel and sdist contain served mobile, authentication and QR runtime assets and their vendored notice; the release checker rejects missing web assets and both installed command help entry points succeed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,7 +41,13 @@ Reason: Continue the existing immutable-package and app-only release contracts; 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Prepared release-only metadata and documentation from dev 1850d2599c58af9a0c1a8721e6c0a31e431d92fa. Root/runtime/tuple/companion source versions, README and current app-only documentation agree on 0.2.4; the changelog summarizes committed changes since 0.2.3 and warns about schema 75 to 84. Existing ADR-032 and ADR-098 apply; no new ADR. Main is already an ancestor, preserving its fixes. Baseline and updated focused release/app-only tests both passed all 42 cases, the standalone app-only checker passed, and E9/F821 lint, ruff format and whitespace checks passed. PyPI and TestPyPI both report latest 0.2.3 with 0.2.4 absent. Owner-requested full-suite and installed-distribution runs are in progress; publication is not authorized by preparation.
+Prepared 0.2.4 from committed dev 1850d2599c58af9a0c1a8721e6c0a31e431d92fa, preserving the dirty primary checkout and all main commits. Synchronized root/runtime/tuple/companion source versions, README, changelog and current release documentation. The changelog covers the committed release delta and the schema 75-to-84 upgrade. A fresh install exposed eleven missing mobile/auth/QR web assets despite the old manifest gate passing; explicit package-data and both manifest contracts now include them and the exact vendored notice. Added real built-artifact coverage and wheel/sdist missing-mobile-page controls. ADR-032 and ADR-098 apply; no new ADR or dependency/runtime boundary change.
+
+Verification: baseline/updated metadata and app-only checks each passed 42 tests; final affected packaging/entry-point/notice checks passed 61 tests; the complete corrected installed-distribution gate passed all 231 tests in 551.06 seconds. The committed-source build at 465279e39e passed Twine and the expanded manifest checker. A fresh dependency-resolved Python 3.12 install passed pip check, reports 0.2.4 from site-packages, and both commands return help with exit 0 from separate empty private profiles. E9/F821, formatting, whitespace and Backlog guards pass; default lint has the same 13 pre-existing findings on unchanged dev, with no new findings.
+
+Owner-requested full suite stopped during collection: 11 errors and 18 collection skips, exit 2. Unchanged archived dev reproduces the same files and exceptions: nine stale/missing project-module/helper imports, plus two missing optional fido2 imports. No full-suite pass is claimed. The initial installed gate was superseded after discovering the asset gap; final results above are from the corrected candidate. Detailed commands, artifact SHA-256 values and local receipts are in Docs/superpowers/plans/2026-10-25-release-0.2.4.md. Recorded the manifest-enumeration gap and complete private-child isolation lesson in backlog/docs/lessons-testing-evidence.md.
+
+Draft preparation PR #3245 and dev-to-main promotion PR #3246 are attached. No merge, tag, release or publication occurred. Keep the task In Progress: inherited full-suite collection blockers, CI/Qodo current-head review and TestPyPI verification remain before explicit owner approval of main promotion and the protected PyPI environment.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
