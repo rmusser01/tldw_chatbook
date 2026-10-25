@@ -165,7 +165,6 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
     }
     PortraitCompositionReview .pairs-copy { height: $ds-height-auto; color: $ds-text-muted; }
     PortraitCompositionReview #portrait-pairs-canvas { width: $ds-width-full; height: $ds-height-fill; min-height: $ds-portrait-review-lines; }
-    PortraitCompositionReview #portrait-pairs-canvas:focus { outline: tall $ds-action-focus; }
     PortraitCompositionReview .pairs-pan { height: $ds-height-auto; width: $ds-width-full; }
     PortraitCompositionReview .pairs-coordinate { width: $ds-width-fill; height: $ds-height-auto; }
     PortraitCompositionReview Input.portrait-pairs-input { width: $ds-width-full; }

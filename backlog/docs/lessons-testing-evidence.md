@@ -21746,3 +21746,16 @@ worker tests passed.
 **What to do.** Capture owner arguments before `create_task` and validate them before
 native work as well as after awaits. Exercise the no-yield schedule-then-Cancel case;
 holding an already-running callback covers a different lifetime boundary.
+
+
+## A static focus rule can pass while the app paints a different rule
+
+**Incident (PR #3244, 2026-10-24).** Changing the pair viewer's widget-default
+focus token cleared all 89 static theme checks, but the mounted light-theme
+canvas still painted its old 1.03:1 outline: the app-tier `*:focus` outranked
+the widget tier regardless of selector specificity. Moving the targeted rule
+to app-tier dialog CSS fixed the actual mounted output.
+
+**What to do.** Pair a parsed contrast sweep with a mounted keyboard-focus
+assertion under production CSS. Verify the winning outline and its rendered
+surface; a correct declaration in a losing tier proves no visible improvement.

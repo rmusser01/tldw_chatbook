@@ -460,7 +460,10 @@ async def test_speaker_rename_id_follows_the_reader_during_a_pending_selection()
         service.release(1)
 
 
-async def test_receipt_open_in_library_then_l_saves_the_opened_item(tmp_path):
+@pytest.mark.parametrize("replace_receipt", [False, True])
+async def test_receipt_open_in_library_then_l_saves_the_opened_item(
+    tmp_path, replace_receipt
+):
     """Fix round 1 (minor): the receipt-unmount focus path. A real tmp file
     through the real ingest coordinator and a real file-backed
     ``MediaDatabase``; the receipt's "Open in Library" button is clicked
@@ -511,13 +514,32 @@ async def test_receipt_open_in_library_then_l_saves_the_opened_item(tmp_path):
             screen, pilot, "#library-ingest-open-ingest-job-1"
         )
 
+        if replace_receipt:
+            screen.refresh(recompose=True)
+            await pilot.pause()
+            assert screen.query_one("#library-ingest-open-ingest-job-1") is not open_button
+
         # The user's gesture: click the receipt's button (scrolled into view
         # first -- the queue sits under the form at 160x45), then press ``l``
         # while focus is still on a control the open is about to unmount.
-        open_button.scroll_visible(animate=False)
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.click("#library-ingest-open-ingest-job-1")
+        def receipt_is_visible() -> bool:
+            button = screen.query_one("#library-ingest-open-ingest-job-1", Button)
+            button.focus(scroll_visible=False)
+            button.scroll_visible(animate=False, immediate=True)
+            if not button.region or not screen.region.contains(*button.region.center):
+                return False
+            hit, _ = screen.get_widget_at(*button.region.center)
+            return button in hit.ancestors_with_self
+
+        await _wait_for_condition(
+            pilot,
+            receipt_is_visible,
+            message="the live receipt button never became clickable",
+        )
+        button = screen.query_one("#library-ingest-open-ingest-job-1", Button)
+        assert await pilot.click(
+            button, offset=(button.size.width // 2, button.size.height // 2)
+        )
         canonical = f"local:media:{media_id}"
         await _wait_for_condition(
             pilot,

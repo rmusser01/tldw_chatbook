@@ -2468,6 +2468,11 @@ WorkspaceCreateModal #workspace-create-error {
     color: $ds-status-error-readable;
 }
 
+
+PortraitCompositionReview #portrait-pairs-canvas:focus {
+    outline: tall $ds-active-fg;
+}
+
 /* ===== MODULE: components/_status.tcss ===== */
 
 

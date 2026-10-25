@@ -123,15 +123,34 @@ class ReviewApp(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
-async def test_mounted_static_review_pan_resize_and_close():
+@pytest.mark.parametrize("theme_name", ["textual-dark", "pastel_dreams"])
+async def test_mounted_static_review_pan_resize_and_close(theme_name):
     recipe, frames = fixture_frames()
     app = ReviewApp()
+    from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.theme = theme_name
     async with app.run_test(size=(80, 38)) as pilot:
         review = api().PortraitCompositionReview(frames, recipe, lambda: True)
         await app.push_screen(review)
         review.query_one("#portrait-pairs-region", Select).value = "mouth"
         await pilot.pause()
         await review.wait_for_render()
+        canvas = review.query_one("#portrait-pairs-canvas", Static)
+        canvas.focus()
+        await pilot.pause()
+        assert app.focused is canvas
+        assert canvas.styles.outline.top[0] == "tall"
+        from Tests.UI.test_theme_contrast import NON_TEXT, _ratio
+
+        assert (
+            _ratio(
+                canvas.styles.outline.top[1].hex, canvas.parent.styles.background.hex
+            )
+            >= NON_TEXT
+        )
         assert review._raster.crop_box is not None
         assert review.query_one("#portrait-pairs-x").content_size.width >= 8
         assert review.query_one("#portrait-pairs-y").content_size.width >= 8

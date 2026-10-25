@@ -1181,6 +1181,7 @@ def _focus_edge_floor(theme: Theme, edge: FocusEdge) -> tuple[float, str]:
     return lowest
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
 def test_focus_edges_clear_non_text_contrast_on_every_theme(theme: Theme) -> None:
     """TASK-36479 AC#2: every focus edge the app's CSS draws reads at 3:1

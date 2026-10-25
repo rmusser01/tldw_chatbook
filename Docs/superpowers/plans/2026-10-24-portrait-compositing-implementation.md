@@ -501,3 +501,18 @@ lineages, cancellation/refusal roll back byte-for-byte, and fresh wheels match a
 dev baseline comparisons remain documented. New-head hosted checks remain separate
 from local verification. TASK-36555 AC5 stays open: SwarmUI only, zero live image
 requests, no fallback and `live_qualified=false`; no new live TTS/hardware evidence.
+
+
+## Final hosted CI correction checkpoint
+
+Rebase onto the exact dev revision tested by the completed hosted run, retain
+its new contrast guard, repair the pair canvas in the app CSS tier, and make
+the real Library receipt-click test re-query/focus/scroll its live target after
+recomposition. Keep both ordinary/replaced receipt cases, all 89 theme checks,
+mounted light/dark focus assertions and the installed journey. Existing
+ADR-150/161/242/243 apply; no new ADR.
+
+[Final correction review](../reviews/2026-10-24-portrait-compositing-final-ci-corrections.md)
+and its bounded evidence distinguish the completed failed CI head from the
+replacement run. No full suite or new live TTS/hardware/image qualification;
+TASK-36555 AC5 stays open, with zero live image requests and no fallback.

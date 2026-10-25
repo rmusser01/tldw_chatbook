@@ -3090,7 +3090,6 @@ PortraitCompositionReview > VerticalScroll.portrait-pairs-dialog {
 }
 PortraitCompositionReview .pairs-copy { height: auto; color: $text-muted; }
 PortraitCompositionReview #portrait-pairs-canvas { width: 100%; height: 1fr; min-height: 13; }
-PortraitCompositionReview #portrait-pairs-canvas:focus { outline: tall $primary; }
 PortraitCompositionReview .pairs-pan { height: auto; width: 100%; }
 PortraitCompositionReview .pairs-coordinate { width: 1fr; height: auto; }
 PortraitCompositionReview Input.portrait-pairs-input { width: 100%; }
