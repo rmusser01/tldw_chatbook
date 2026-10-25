@@ -529,3 +529,16 @@ Reason: repair lifetime guards and reconcile reviewed inventories under existing
 4. Wait for all checks on the published head and inspect the complete required summary plus fresh review/thread feedback. Keep TASK-36555 AC5 open.
 
 [Source-check review](../reviews/2026-10-24-portrait-compositing-source-guard-corrections.md) records the reproductions, reviewed false positives and remaining live-provider gap.
+
+## Ready-for-review configuration correction
+
+ADR required: no
+ADR path: N/A
+Reason: routine scope repair for an existing reviewer, without changing organization or application policy.
+
+1. Record actual unavailable/skipped review outcomes; export the effective configuration rather than treating green/neutral labels as reviewed code.
+2. Add only a repository-local CodeRabbit path scope covering code, tests and docs. Validate with the official schema and Backlog hygiene, then publish.
+3. Confirm the resolved hosted scope and run a complete current-head review; verify findings before fixing them with targeted regressions. Retain actual coverage and CI evidence.
+4. Keep TASK-36555 AC5 and full live-provider UAT open. Qodo/Cubic limits and historical live-TTS evidence remain explicit.
+
+[Readiness review](../reviews/2026-10-24-portrait-automated-review-follow-up.md) records the failed attempts, root cause and exact scope of the correction.

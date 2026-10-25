@@ -1,0 +1,16 @@
+{
+  "schema_url": "https://coderabbit.ai/integrations/schema.v2.json",
+  "schema_sha256": "fe301cea52b41ad9ec84f2e508ca2d04bb7a6d3805d42e06f3d8cfa08d9943f0",
+  "config_sha256": "d79872cea8e67247f55f8d700e510d730b7b80d60406027696d3eef559360cc1",
+  "validated": true,
+  "scope": "all repository paths subject to CodeRabbit default ignored binary/generated paths",
+  "shared_organization_settings_modified": false,
+  "paid_overages_enabled": false,
+  "pre_change_public_head": "9b7bcef6435447adde432af6649f9e81705da04e",
+  "pre_change_changed_files": 252,
+  "pre_change_code_review_coverage": false,
+  "full_uat_complete": false,
+  "live_qualified": false,
+  "remote_red_log_sha256": "3f9ef0e403096a748684ef37bcc02650bef1415cccfd7280720eec8df47e10a9",
+  "local_red_log_sha256": "c248ed0576e680b83707f3d5f59eb827818a31e502cbbf1510dba56322753d5a"
+}
