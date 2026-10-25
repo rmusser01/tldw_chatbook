@@ -67,6 +67,28 @@ Two paths, never both for one response: **live PCM streaming** through `Streamin
 
 Auto-speak is fail-closed: unknown session, hands-free active, or a missing/differing destination fingerprint all suppress speech; per-conversation consent is stored as session metadata (destination SHA-256 fingerprint, consent version).
 
+## Foreground Speech Recognition capture
+
+The Speech Lab's `ImprovedDictationWindow` owns its lazy dictation service.
+Its idempotent `cleanup()` revokes transcript, state, error and command callbacks
+before invoking the existing nonjoining `abandon()` for active or failed-start
+processing. STTS view replacement invokes this cleanup seam; direct removal and
+shutdown also run it before `on_unmount()` awaits pending settings writes.
+Processor callbacks use the widget message pump to publish on the UI thread and
+recheck retirement there, so an already-entered callback also loses publication
+authority. Saved callbacks cannot update retired controls or a replacement view.
+Start and completed Stop advance capture authority so queued updates cannot cross
+into a restarted capture. Stop renders its complete returned transcript after the
+service clears private buffers. A paused capture resumes into the same normal
+Stop path so it returns its transcript and releases the recorder. Later cleanup
+does not stop the recorder again. An unopened view never constructs a service
+(TASK-36693; ADR-025/033).
+
+The Dictation action buttons support focused Space and inherited Enter. The
+child consumes each recognized `Button.Pressed` after handling it so STTS cannot
+manually forward the same bubbled event back to the child. Unrecognized and
+container-owned controls retain their normal route (TASK-36694; ADR-025/031).
+
 ## Dictation (dataflow)
 
 1. The Console mic button starts a streaming dictation session (16 kHz mono PCM, bounded 60 s / 1.92 MiB).

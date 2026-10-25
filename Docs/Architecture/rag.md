@@ -46,6 +46,12 @@ Console send-time retrieval calls `LibraryLocalRagSearchService.prewarm()` under
 8. Incremental state lives in `<user_data_dir>/rag_indexing.db` (`indexed_items` keyed `(item_id, item_type)` with `last_modified`; WAL, thread-local connections). Vectors live in ChromaDB; source content stays in the media/ChaCha DBs.
 9. Backfill reconciles tracked-but-deleted media, then batches all sources, resumable via the same incremental skip.
 
+## Chunking Lab sample imports
+
+`UI/Screens/chunking_lab_screen.py` owns sample-file and explicit-excerpt reads; `UI/Chunking_Lab_Modules/sample_region.py` tracks accepted editor changes before their messages bubble. Each read is bound to its originating session, sample identity, request and editor revision. The existing canonical edit queue checks that authority before computation and immediately before publication, so a later edit, clear or file selection keeps its text and Undo baseline. Rendered echoes also preserve accepted keys whose Changed message has not reached the screen yet.
+
+Untouched reads retain exact text and provenance. Missing, oversized or invalid UTF-8 input keeps authored state and the existing SQLite recovery path. This follows ADR-118/033; TASK-36695 adds mounted controls for both read kinds, queued delivery and recovery.
+
 ## Rerankers
 
 Families: cross-encoder (local, offline — loads with `local_files_only=True`; a missing model degrades to retrieval order rather than downloading mid-search; a chat-model name in the config falls back to a measured default), plus pointwise (one scoring request per candidate), pairwise (repeated comparison requests while merging), and listwise (one ranking request per search). These counts describe uncached scoring/ranking operations before retries; pointwise caching can avoid requests and `top_k_to_rerank` caps the pool. Construction is via `create_reranker_from_config`; the profile must carry the reranking section or rerankers silently disappear (see gotchas).

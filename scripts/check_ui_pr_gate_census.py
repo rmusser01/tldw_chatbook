@@ -516,7 +516,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # discovery/shortfall-list guard (Tests/UI/test_theme_contrast.py; no
 # mount, no config read, ~8 s locally) -- so no existing entry changes
 # shard: 762 -> 764.
-MINIMUM_FILES = 764
+# TASK-36693 adds all fifteen mounted retirement/publication and Stop cases.
+# TASK-36694 adds all thirteen ordinary button/delivery controls.
+
+# Final TASK-36695/36698 review adds four positive/pruning controls.
+MINIMUM_FILES = 845
 
 
 def read_census(path: Path) -> list[str]:

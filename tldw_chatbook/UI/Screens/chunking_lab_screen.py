@@ -35,6 +35,7 @@ from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
 from tldw_chatbook.UI.Chunking_Lab_Modules.sample_region import (
     SAMPLE_BYTES,
     SampleRegion,
+    SampleTextArea,
     read_sample_excerpt,
     read_sample_file,
     sample_source_label,
@@ -251,6 +252,8 @@ class ChunkingLabScreen(BaseAppScreen):
         self._edit_task = None
         self._render_generation = 0
         self._input_generation = 0
+        self._sample_load_generation = 0
+        self._sample_input_revision = 0
         self._rendered_session = None
         self._results_cache = {}
         self._result_epoch = None
@@ -437,27 +440,31 @@ class ChunkingLabScreen(BaseAppScreen):
             if value["role"] == "B"
         )
 
-    def queue_edit(self, operation, *args, **kwargs) -> None:
+    def queue_edit(self, operation, *args, applicable=None, **kwargs) -> None:
         """Queue a delta, never a stale whole-session computation."""
         if self._initializing or self._leaving or self.coordinator is None:
             return
         self._observe_result_revisions()
         self._input_generation += 1
-        self._edits.append(partial(operation, *args, **kwargs))
+        self._edits.append((partial(operation, *args, **kwargs), applicable))
         if self._edit_task is None or self._edit_task.done():
             self._edit_task = asyncio.create_task(self._apply_edits())
 
     async def _apply_edits(self) -> None:
         while True:
             while self._edits:
-                edit = self._edits.popleft()
+                edit, applicable = self._edits.popleft()
                 while True:
+                    if applicable is not None and not applicable():
+                        break
                     before = self.coordinator.session
                     if self.coordinator.guarded:
                         await asyncio.sleep(0.01)
                         continue
                     try:
                         changed = await asyncio.to_thread(edit, before)
+                        if applicable is not None and not applicable():
+                            break
                         if self.coordinator.session is not before:
                             continue
                         self._observe_result_revisions()
@@ -482,6 +489,7 @@ class ChunkingLabScreen(BaseAppScreen):
     @on(SampleRegion.Changed)
     def sample_changed(self, event: SampleRegion.Changed) -> None:
         event.stop()
+        self._sample_input_revision = event.revision
         self.queue_edit(
             lambda session: lab_state.replace_sample(
                 session, event.text, {"kind": "paste"}
@@ -592,8 +600,10 @@ class ChunkingLabScreen(BaseAppScreen):
         }
         # Never replace visible newer keystrokes with a delayed preparation.
         editing = self._edit_task is not None and not self._edit_task.done()
+        sample_editor = self.query_one("#lab-sample-text", SampleTextArea)
         if (
             inputs == self._input_generation
+            and sample_editor.sample_revision == self._sample_input_revision
             and not self._edits
             and (edit_complete or not editing)
         ):
@@ -606,6 +616,7 @@ class ChunkingLabScreen(BaseAppScreen):
             with self.query_one(SampleRegion).prevent(TextArea.Changed):
                 if editor.text != sample:
                     editor.load_text(sample)
+                    self._sample_input_revision = sample_editor.sample_revision
             self.query_one(EditorRegion).present(draft, validation, document)
         self.query_one(SampleRegion).disabled = (
             self.coordinator.guarded or self._leaving
@@ -1145,6 +1156,14 @@ class ChunkingLabScreen(BaseAppScreen):
 
     async def file_operation(self, action: str, choice: dict) -> None:
         """Execute one explicit user-selected bounded local file operation off-loop."""
+        if action in {"sample-file", "excerpt"}:
+            # A newer request revokes this intent even if its read later fails.
+            self._sample_load_generation += 1
+            load_generation = self._sample_load_generation
+            editor = self.query_one("#lab-sample-text", SampleTextArea)
+            revision = editor.sample_revision
+            owner = self.coordinator
+            epoch = owner.session.epoch
         await self.drain_edits()
         selected = choice["path"]
         if action == "restore":
@@ -1175,6 +1194,20 @@ class ChunkingLabScreen(BaseAppScreen):
             await self._refresh_session()
             return
         if action in {"sample-file", "excerpt"}:
+            original_sample = owner.session.samples[owner.session.view["sample_hash"]]
+
+            def applicable():
+                current = owner.session
+                return (
+                    self.is_mounted
+                    and not self._leaving
+                    and self.coordinator is owner
+                    and current.epoch == epoch
+                    and load_generation == self._sample_load_generation
+                    and editor.sample_revision == revision
+                    and current.samples[current.view["sample_hash"]] is original_sample
+                )
+
             text, source = (
                 await asyncio.to_thread(
                     read_sample_excerpt,
@@ -1185,8 +1218,12 @@ class ChunkingLabScreen(BaseAppScreen):
                 if action == "excerpt"
                 else await asyncio.to_thread(read_sample_file, selected)
             )
+            if not applicable():
+                return
+            # Recheck on the UI loop after the real queued transition computes.
             self.queue_edit(
-                lambda session: lab_state.replace_sample(session, text, source)
+                lambda session: lab_state.replace_sample(session, text, source),
+                applicable=applicable,
             )
             await self.drain_edits()
         elif action in {"export-recovery", "export-template"}:

@@ -82,6 +82,18 @@ def read_sample_excerpt(selected: str, start: int, end: int) -> tuple[str, dict]
     }
 
 
+class SampleTextArea(TextArea):
+    """Count accepted mutations synchronously, before Changed can bubble."""
+
+    sample_revision = 0
+
+    def post_message(self, message: Message) -> bool:
+        posted = super().post_message(message)
+        if posted and isinstance(message, TextArea.Changed):
+            self.sample_revision += 1
+        return posted
+
+
 class SampleRegion(Vertical):
     """Sample editor emits copied edit requests; the screen owns transitions."""
 
@@ -92,8 +104,9 @@ class SampleRegion(Vertical):
     """
 
     class Changed(Message):
-        def __init__(self, text: str):
+        def __init__(self, text: str, revision: int):
             self.text = text
+            self.revision = revision
             super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -102,7 +115,7 @@ class SampleRegion(Vertical):
             "Paste text below, or use Files / Recovery to load UTF-8 text.",
             markup=False,
         )
-        yield TextArea(id="lab-sample-text", soft_wrap=True)
+        yield SampleTextArea(id="lab-sample-text", soft_wrap=True)
         yield Static(
             "2 MiB UTF-8 maximum · full text and results stay in local recovery",
             markup=False,
@@ -111,4 +124,6 @@ class SampleRegion(Vertical):
     @on(TextArea.Changed, "#lab-sample-text")
     def sample_changed(self, event: TextArea.Changed) -> None:
         event.stop()
-        self.post_message(self.Changed(event.text_area.text))
+        self.post_message(
+            self.Changed(event.text_area.text, event.text_area.sample_revision)
+        )

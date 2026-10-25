@@ -3,10 +3,11 @@
 Improved dictation interface with privacy settings and better error handling.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 from pathlib import Path
 from datetime import datetime
 import asyncio
+import threading
 import time
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
@@ -54,6 +55,12 @@ def dictation_export_directory() -> Path:
         The profile-owned Dictation export directory.
     """
     return get_user_data_dir() / "exports" / "dictation"
+
+
+class _DictationActionButton(Button):
+    """Activate focused Dictation controls with Space and inherited Enter."""
+
+    BINDINGS = [Binding("space", "press", "Press button", show=False)]
 
 
 class ImprovedDictationWindow(Widget):
@@ -207,6 +214,8 @@ class ImprovedDictationWindow(Widget):
 
         # Lazy service - not initialized until needed
         self.dictation_service = None
+        self._retired = False
+        self._capture_generation = 0
 
         # Transcript management
         self.transcript_segments = []
@@ -249,14 +258,20 @@ class ImprovedDictationWindow(Widget):
 
                     # Control buttons
                     with Horizontal():
-                        yield Button(
+                        yield _DictationActionButton(
                             "🎤 Start Dictation",
                             id="dictation-toggle-btn",
                             variant="primary",
                         )
-                        yield Button("⏸️ Pause", id="dictation-pause-btn", disabled=True)
-                        yield Button("🗑️ Clear", id="dictation-clear-btn")
-                        yield Button("🔧 Troubleshoot", id="troubleshoot-btn")
+                        yield _DictationActionButton(
+                            "⏸️ Pause", id="dictation-pause-btn", disabled=True
+                        )
+                        yield _DictationActionButton(
+                            "🗑️ Clear", id="dictation-clear-btn"
+                        )
+                        yield _DictationActionButton(
+                            "🔧 Troubleshoot", id="troubleshoot-btn"
+                        )
 
                 # Sidebar
                 with ScrollableContainer(classes="dictation-sidebar"):
@@ -369,9 +384,15 @@ class ImprovedDictationWindow(Widget):
                     # Export section
                     with Vertical(classes="control-section"):
                         yield Label("Export", classes="section-title")
-                        yield Button("📋 Copy to Clipboard", id="copy-button")
-                        yield Button("💾 Save as Text", id="save-text-button")
-                        yield Button("📝 Save as Markdown", id="save-md-button")
+                        yield _DictationActionButton(
+                            "📋 Copy to Clipboard", id="copy-button"
+                        )
+                        yield _DictationActionButton(
+                            "💾 Save as Text", id="save-text-button"
+                        )
+                        yield _DictationActionButton(
+                            "📝 Save as Markdown", id="save-md-button"
+                        )
 
     def on_mount(self):
         """Initialize on mount."""
@@ -483,6 +504,11 @@ class ImprovedDictationWindow(Widget):
             self._export_as_text()
         elif button_id == "save-md-button":
             self._export_as_markdown()
+        else:
+            return
+        # STTS forwards bubbled presses to its active child; handled actions
+        # already ran here and must not be delivered a second time.
+        event.stop()
 
     def _finish_mounting(self) -> None:
         """Stop treating control changes as mount noise."""
@@ -545,8 +571,35 @@ class ImprovedDictationWindow(Widget):
         self._settings_dirty = False
         await asyncio.to_thread(self._write_settings_snapshot, snapshot)
 
+    def cleanup(self) -> None:
+        """Retire this foreground capture without waiting for transcription."""
+        if self._retired:
+            return
+        # Revoke saved callback references before abandon can notify, and before
+        # on_unmount yields to a pending settings write.
+        self._retired = True
+        self.is_dictating = False
+        service = self.dictation_service
+        if service is None:
+            return
+        for callback in (
+            "on_partial_transcript",
+            "on_final_transcript",
+            "on_state_change",
+            "on_error",
+            "on_command",
+        ):
+            setattr(service, callback, None)
+        processor = service.processing_thread
+        # A failed Start may own a processor even though is_dictating is False.
+        # A completed explicit Stop is already idle and must not stop twice.
+        if service.state != DictationState.IDLE or (
+            processor is not None and processor.is_alive()
+        ):
+            service.abandon()
+
     async def on_unmount(self) -> None:
-        """Flush a pending debounced settings write.
+        """Retire capture and flush a pending debounced settings write.
 
         Fires both when this view is switched away from (`STTS_Window`'s
         `content_container.remove_children()`) and when the app quits while
@@ -555,6 +608,7 @@ class ImprovedDictationWindow(Widget):
         write is already in flight, waits for it rather than dispatching a
         second writer against the same config file.
         """
+        self.cleanup()
         if self._settings_save_timer is not None:
             self._settings_save_timer.stop()
             self._settings_save_timer = None
@@ -639,6 +693,8 @@ class ImprovedDictationWindow(Widget):
         if not self._initialize_service():
             return
 
+        self._capture_generation += 1
+
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
         toggle_btn.label = "🛑 Stop Dictation"
@@ -673,7 +729,10 @@ class ImprovedDictationWindow(Widget):
         if not self.dictation_service:
             return
 
+        if self.dictation_service.state == DictationState.PAUSED:
+            self.dictation_service.resume_dictation()
         result = self.dictation_service.stop_dictation()
+        self._capture_generation += 1
 
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
@@ -685,6 +744,10 @@ class ImprovedDictationWindow(Widget):
         pause_btn.label = "⏸️ Pause"
 
         self.is_dictating = False
+        # Stop owns the completed result after service privacy cleanup. Queued
+        # processor updates from this capture must not overwrite that result.
+        self.transcript_text = result.transcript
+        self.query_one("#transcript-display", TextArea).load_text(result.transcript)
         self.duration = result.duration
         self.word_count = len(result.transcript.split()) if result.transcript else 0
         self._update_stats()
@@ -693,27 +756,61 @@ class ImprovedDictationWindow(Widget):
 
         self._show_status("Dictation stopped", "info")
 
+    def _dispatch_dictation_callback(
+        self, callback: Callable[..., None], *args: Any
+    ) -> bool:
+        """Allow publication only on this live widget's UI message loop."""
+        generation = self._capture_generation
+        if self._retired:
+            return False
+        if threading.get_ident() != self._thread_id:
+            # Nonblocking: explicit Stop may be joining this processor. Re-enter
+            # the callback on the UI loop so retirement is checked there too.
+            self.call_later(
+                self._publish_dictation_callback, generation, callback, args
+            )
+            return False
+        return True
+
+    def _publish_dictation_callback(
+        self, generation: int, callback: Callable[..., None], args: tuple[Any, ...]
+    ) -> None:
+        """Publish a queued update only while its foreground capture still owns it."""
+        if self._retired or generation != self._capture_generation:
+            return
+        callback(*args)
+
     def _on_partial_transcript(self, text: str):
         """Handle partial transcript updates."""
+        if not self._dispatch_dictation_callback(self._on_partial_transcript, text):
+            return
         self._update_transcript_display(text, is_partial=True)
 
     def _on_final_transcript(self, text: str):
         """Handle final transcript segments."""
+        if not self._dispatch_dictation_callback(self._on_final_transcript, text):
+            return
         self._add_transcript_segment(text)
 
     def _on_state_change(self, state: str):
         """Handle dictation state changes."""
+        if not self._dispatch_dictation_callback(self._on_state_change, state):
+            return
         self.dictation_state = state
         state_display = self.query_one("#state-display", Static)
         state_display.update(f"State: {state}")
 
     def _on_error(self, error: Exception):
         """Handle dictation errors."""
+        if not self._dispatch_dictation_callback(self._on_error, error):
+            return
         self._show_status(f"Error: {error}", "error")
         logger.error(f"Dictation error: {error}")
 
     def _on_command(self, command: str):
         """Handle voice commands."""
+        if not self._dispatch_dictation_callback(self._on_command, command):
+            return
         self.post_message(VoiceCommandEvent(command=command, raw_text=command))
         logger.info(f"Voice command detected: {command}")
 

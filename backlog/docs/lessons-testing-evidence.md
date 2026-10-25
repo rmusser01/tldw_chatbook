@@ -21719,3 +21719,18 @@ and ticks through the real gate.
 ### PR #3228: verify the live base ref before calling a PR current
 
 At final delivery of TASK-36454 through TASK-36458, the completed c3d727a95e run had all required checks green. Both the GraphQL baseRefOid and REST pull-request base.sha still reported1381e70735, so comparing that recorded SHA showed a clean ancestor. The live git/ref/heads/dev endpoint instead reportedae85e59e8f, and compare/dev...the-branch showed25 commits behind with actual B2a conflicts. The final mergeability read caught the discrepancy before handoff. Fetch the target branch or read its live Git ref when establishing current-base integration; the PR's recorded base SHA is insufficient evidence. Preserve the earlier green run as evidence for its exact source, then qualify the resolved combined source separately.
+
+## Private-child teardown errors can be hidden by the parent JUnit count (post-PR3228 audit, 2026-10-24)
+
+During the Chunking Lab book audit, the private-profile parent reported 2 tests, 1 failure and 0 errors. The later-edit child had both the intended retention assertion failure and 1 teardown error: native-worker custody prevented config retirement. Reading only the parent totals would have mislabeled that as a clean expected-red run. An observation-only retry retained the teardown error; adding a worker-manager drain instead raised WorkerCancelled and masked the product exception. The [audit receipts](../../Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228.md) retain the ordinary clean control, actual before/after witness and both child outcomes.
+
+Before claiming a private-profile batch has no setup or teardown errors, inspect its child JUnit records as well as the parent summary. Keep a qualified product witness separate from lifecycle uncertainty; do not infer clean retirement from a parent failure-only count or from an attempted drain.
+
+
+## TASK-36696: mounted once is not current attachment
+
+During the MCP pending-file-read repair, a guard used `panel.is_mounted` to authorize completion. Review checked installed Textual8.2.8 and a real removal probe: this flag remains true after `await panel.remove()`, while querying its removed editor raises `NoMatches`. The explicit Cancel test passed because Cancel separately revoked the request. Real `MCPServersMode.hide_form()` and `show_import()` removal paths did not post Cancel, so both new controls reproduced `WorkerFailed(NoMatches)` after the held real read completed.
+
+The repair checks current attachment and pruning together with owner request/editor revisions. Both direct-retirement controls and ordinary/Cancel controls pass. When qualifying an asynchronous widget publication, exercise removal through the real owner as well as the Cancel gesture; an ever-mounted flag cannot establish current publication authority.
+
+**TASK-36698 follow-up.** A final Image Gen review found a second interval: native removal marks the screen `_pruning` before its own Unmount cancels workers, while child teardown can already detach result widgets. A deterministic real-worker regression held a status child's Unmount, witnessed the screen still attached and worker uncanceled, and released queued success/error publication. Both variants changed the retired status before the shared pruning guard; both pass afterward. This is a contained status/log defect, not a demonstrated app crash. Test publication during removal as well as after detachment; current attachment alone does not exclude native teardown.

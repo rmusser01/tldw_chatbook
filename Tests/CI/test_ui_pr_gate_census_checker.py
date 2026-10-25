@@ -498,6 +498,12 @@ def test_dead_defines_test_is_gone():
 #: counts top-level functions only, so it refuses a test class in a split file
 #: rather than let the class's methods go unlisted.
 SPLIT_CENSUS_FILES = (
+    "Tests/UI/test_image_gen_demo_request_lifetime.py",
+    "Tests/UI/test_mcp_import_validation_recovery.py",
+    "Tests/UI/test_mcp_import_pending_file_drafts.py",
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py",
+    "Tests/UI/test_dictation_button_delivery.py",
+    "Tests/UI/test_dictation_view_retirement.py",
     "Tests/UI/test_settings_model_defaults_rows.py",
     "Tests/UI/test_settings_connect_rows.py",
     "Tests/UI/test_settings_connect_tab_budget.py",
@@ -515,9 +521,9 @@ def _case_count(function: ast.AST) -> int:
             and getattr(decorator.func, "attr", "") == "parametrize"
         ):
             values = decorator.args[1]
-            assert isinstance(values, (ast.List, ast.Tuple)), (
-                f"{function.name}: list it by function, its cases are not a literal list"
-            )
+            assert isinstance(
+                values, (ast.List, ast.Tuple)
+            ), f"{function.name}: list it by function, its cases are not a literal list"
             count *= len(values.elts)
     return count
 
@@ -534,9 +540,7 @@ def test_a_split_census_file_keeps_every_test_gated_once(path):
         for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name.startswith("Test")
     ]
-    assert not classes, (
-        f"{path} defines test classes {classes}: rename it or write its tests as functions"
-    )
+    assert not classes, f"{path} defines test classes {classes}: rename it or write its tests as functions"
     functions = {  # pytest's default python_functions: the "test" prefix
         node.name: node
         for node in tree.body
@@ -567,9 +571,9 @@ def test_a_split_census_file_keeps_every_test_gated_once(path):
         # Listed by case: each id must be one pytest makes, and all of them listed.
         assert cases, f"{selector} is not in the census, so no lane runs it"
         for case in cases:
-            assert checker.resolve_node(root / path, case.split("::", 1)[1]) is None, (
-                case
-            )
+            assert (
+                checker.resolve_node(root / path, case.split("::", 1)[1]) is None
+            ), case
         assert len(set(cases)) == _case_count(function), f"{selector} misses a case"
         listed += len(set(cases))
     assert listed == len(selected), "a selector names no test this file defines"
