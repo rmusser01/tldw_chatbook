@@ -16,7 +16,7 @@
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 
-**Status:** Implementation in progress. Tasks 1–2 passed independent review; targeted evidence and inherited-check limits are recorded in TASK-36759/36760. Tasks 3–11 remain pending. Planning validation alone is not runtime evidence.
+**Status:** Implementation in progress. Tasks 1–3 passed independent task review; targeted evidence and inherited-check limits are recorded in their Backlog records and execution ledger. Tasks 4–11 remain pending. Final shared-mobile qualification and phone/VPN receipt remain open.
 
 ```text
 ADR required: no
@@ -247,7 +247,7 @@ Add `note_changed(sequence: int) -> None` as the buffer's bounded wake signal: o
 - `ServedConsoleHost.attach_terminal(browser_session_id: str, width: int, height: int) -> TerminalAttachment` is async. Attachment exposes `generation: str`, async `send_bytes(data: bytes)`, `resize(width: int, height: int)`, `detach()`. Every method verifies the current attachment identity.
 - `ConsoleWebDriver` extends the installed `WebDriver.on_meta` seam and adds `reattach(width: int, height: int, generation: str) -> None` on the App thread. It restores modes and schedules a full repaint without starting another input thread.
 
-- [ ] **Step 1: Add the stale-attachment regression.** In the new host test module, provide a local `RecordingAppService` with async `start/stop/send_bytes/send_meta/set_terminal_size`, an output callback and lists of received operations. Construct the host through a fixture `recording_host` using that service; this is a unit seam, not real-process qualification.
+- [x] **Step 1: Add the stale-attachment regression.** In the new host test module, provide a local `RecordingAppService` with async `start/stop/send_bytes/send_meta/set_terminal_size`, an output callback and lists of received operations. Construct the host through a fixture `recording_host` using that service; this is a unit seam, not real-process qualification.
 
 ```python
 async def test_old_attachment_cannot_resize_or_detach_successor(recording_host):
@@ -264,7 +264,7 @@ async def test_old_attachment_cannot_resize_or_detach_successor(recording_host):
 ```
 
 Declare `StaleTerminalAttachment` in `served_console_hosts.py`, and `current_attachment` as the host's read-only current-attachment property. Add concurrent `get_or_start` and slow/dead-socket tests. Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_hosts.py -q` and observe RED.
-- [ ] **Step 2: Retain AppService and continuously drain output.** `handle_websocket` attaches to a host and its `finally` detaches only that exact attachment. Remove per-socket `AppService.stop`. AppService callbacks publish to a bounded attachment queue without awaiting a browser; queue pressure detaches/resets the terminal subscriber while the AppService continues draining. Reuse the existing subclass/environment seam and keep one child start task per admitted identity.
+- [x] **Step 2: Retain AppService and continuously drain output.** `handle_websocket` attaches to a host and its `finally` detaches only that exact attachment. Remove per-socket `AppService.stop`. AppService callbacks publish to a bounded attachment queue without awaiting a browser; queue pressure detaches/resets the terminal subscriber while the AppService continues draining. Reuse the existing subclass/environment seam and keep one child start task per admitted identity.
 
 ```python
 # The WebSocket handler's ownership boundary:
@@ -276,7 +276,7 @@ finally:
 ```
 
 Add `_process_attached_terminal(request, websocket, attachment) -> None` to the mixin as the existing authenticated input loop with generation-checked sends/resizes. Session revocation closes that browser's attachments/subscriptions and Canvas scopes, not the child. Reserve saved-conversation hydration under the host and register the persistent ID on save.
-- [ ] **Step 3: Implement an explicit render boundary.** Send a `console_reattach` meta packet carrying generation and dimensions. The driver posts work to the App thread; emit `console_attachment_begin` before restoring alternate-screen/mouse/bracketed-paste/cursor/sync state, apply dimensions, force full compositor invalidation, then emit matching `console_attachment_ready` after paint. The parent drops stale/detached output until the matching begin boundary; input stays disabled until matching ready. Do not re-emit the startup `__GANGLION__` framing sentinel or call `start_application_mode` again.
+- [x] **Step 3: Implement an explicit render boundary.** Send a `console_reattach` meta packet carrying generation and dimensions. The driver posts work to the App thread; emit `console_attachment_begin` before restoring alternate-screen/mouse/bracketed-paste/cursor/sync state, apply dimensions, force full compositor invalidation, then emit matching `console_attachment_ready` after paint. The parent drops stale/detached output until the matching begin boundary; input stays disabled until matching ready. Do not re-emit the startup `__GANGLION__` framing sentinel or call `start_application_mode` again.
 
 ```python
 # On the owner thread, after validating the attachment generation:
@@ -290,8 +290,8 @@ self.flush()
 ```
 
 Route ordinary meta kinds through `super().on_meta`. Add a repo-owned driver subclass rather than editing `.venv` or vendor source. Test that input-thread start count stays one and that resize/repaint completion precedes readiness.
-- [ ] **Step 4: Join the actual host lifecycle to native shutdown.** On genuine parent/control loss close new admission and automatic wakes, invoke the existing bounded runtime shutdown and retain the execution lease through physical retirement. A replacement must remain blocked if the child survives or hangs. Server shutdown iterates retained hosts; explicit session close and native Stop retain their separate scopes. Do not convert a timer into proof of owner death.
-- [ ] **Step 5: Verify real retention and update changed old expectations.** Run the two new unit files plus `Tests/Chat/test_console_runtime_shutdown.py` and focused real-child cases in `Tests/Canvas/browser/test_canvas_served_flow.py`. Update the old tests named `test_terminal_websocket_echo_survives_private_control_channel_loss` and `test_hot_reload_branch_switch_exact_reopen_and_control_loss_keep_terminal`: genuine runtime-control loss now invokes bounded shutdown; disabling Canvas alone preserves runtime control. Replace two-browser/two-child assumptions with one terminal attachment plus independent phone clients while preserving Canvas cross-session refusal. Use the existing `start_live_served_stack` rather than a new server harness. Commit `feat: retain served Console hosts across browser disconnects` after scoped static checks.
+- [x] **Step 4: Join the actual host lifecycle to native shutdown.** On genuine parent/control loss close new admission and automatic wakes, invoke the existing bounded runtime shutdown and retain the execution lease through physical retirement. A replacement must remain blocked if the child survives or hangs. Server shutdown iterates retained hosts; explicit session close and native Stop retain their separate scopes. Do not convert a timer into proof of owner death.
+- [x] **Step 5: Verify real retention and update changed old expectations.** Run the two new unit files plus `Tests/Chat/test_console_runtime_shutdown.py` and focused real-child cases in `Tests/Canvas/browser/test_canvas_served_flow.py`. Update the old tests named `test_terminal_websocket_echo_survives_private_control_channel_loss` and `test_hot_reload_branch_switch_exact_reopen_and_control_loss_keep_terminal`: genuine runtime-control loss now invokes bounded shutdown; disabling Canvas alone preserves runtime control. Replace two-browser/two-child assumptions with one terminal attachment plus independent phone clients while preserving Canvas cross-session refusal. Use the existing `start_live_served_stack` rather than a new server harness. Commit `feat: retain served Console hosts across browser disconnects` after scoped static checks.
 
 ### Task 4: Command-owned phone input and native exact-target controls — TASK-36762
 
