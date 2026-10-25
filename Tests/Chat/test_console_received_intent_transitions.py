@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from contextlib import contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,10 @@ from Tests.Chat import test_console_initial_hook_review as review_controls
 from Tests.Chat import test_console_received_intent_custody as intake_controls
 from Tests.Chat.test_console_prompt_queue_coordinator import SequencedGateway
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleProviderSelection,
+    ConsoleStagedSource,
+)
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -433,3 +437,284 @@ async def test_legacy_custom_queue_old_signature_still_uses_original_admission(
     assert calls == [(session.id, "legacy captured queue input", before.revision)]
     assert result.snapshot.total_count == before.total_count + 1
     assert store.session_draft(session.id) == "legacy captured queue input"
+
+
+def _command_owner(case):
+    from tldw_chatbook.Chat.console_remote_commands import (
+        REVISION_FIELDS,
+        ConsoleRemoteCommands,
+    )
+    from tldw_chatbook.Chat.console_remote_models import (
+        ConsoleHostIdentity,
+        ConsoleTarget,
+    )
+
+    host = ConsoleHostIdentity(server_epoch="epoch", console_id="console")
+    target = ConsoleTarget(
+        **host.model_dump(),
+        session_id=case.session.id,
+        incarnation_id=case.session.incarnation_id,
+    )
+    revisions = {key: getattr(case.session, key) for key in REVISION_FIELDS}
+    return ConsoleRemoteCommands(case.runtime, host), target, revisions
+
+
+def _configure_command_case(case, tmp_path):
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+    case.store.replace_session_settings(
+        case.session.id,
+        ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+    )
+    case.controller.prompt_history = PromptHistory(tmp_path / "command-history.jsonl")
+    case.store.replace_session_trace_privacy_override(
+        case.session.id,
+        capture_enabled=False,
+        pii_redaction_enabled=None,
+        expected_policy_revision=case.store.capture_policy_state(
+            case.session.id
+        ).policy_revision,
+    )
+    gateway = SequencedGateway()
+    case.controller.provider_gateway = gateway
+    return gateway
+
+
+@pytest.mark.parametrize("native_change", [None, "settings", "binding"])
+async def test_command_native_capture_retains_desktop_and_refuses_scope_races(
+    received_workspace, monkeypatch, tmp_path, native_change
+):
+    from Tests.Chat.test_console_received_intent_inputs import _attachment
+
+    case = received_workspace
+    gateway = _configure_command_case(case, tmp_path)
+    commands, target, revisions = _command_owner(case)
+    store, session, runtime = case.store, case.session, case.runtime
+    store.set_session_draft(session.id, "phone correction")
+    attachment = _attachment("desktop-only")
+    store.add_pending_attachment(session.id, attachment)
+    store.set_session_one_shot_prefill(session.id, "desktop prefill")
+    staged = object()
+    runtime.stage_console_staged_evidence(staged)
+    store.workspace_context = replace(
+        store.workspace_context,
+        staged_sources=(ConsoleStagedSource("desktop-rag", "private", "note"),),
+    )
+    original_capture = case.controller.capture_turn_configuration_snapshot
+    entered, release = asyncio.Event(), asyncio.Event()
+    captured = []
+
+    async def held_capture(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        configuration = await original_capture(*args, **kwargs)
+        captured.append(configuration)
+        return configuration
+
+    monkeypatch.setattr(
+        case.controller, "capture_turn_configuration_snapshot", held_capture
+    )
+    result = await commands.execute(
+        "send",
+        target,
+        {"text": "phone correction", "expected_revisions": revisions},
+        "phone-turn",
+    )
+    assert result == {
+        "state": "pending",
+        "native_id": "phone-turn",
+        "reason": "Preparing",
+    }
+    record = runtime._turn_custody["phone-turn"]
+    try:
+        await _wait_for_seam(record, entered)
+        assert record.request is None and not record.inputs.durable_accepted
+        assert not store.messages_for_session(session.id)
+        store.set_session_draft(session.id, "phone correction", authored_token=(77, 1))
+        desktop = store.create_session(session_id="desktop-view", ephemeral=True)
+        store.switch_session(desktop.id)
+        newer_stage = object()
+        runtime.stage_console_staged_evidence(newer_stage)
+        if native_change == "settings":
+            store.replace_session_settings(
+                session.id, replace(session.settings, temperature=0.3)
+            )
+        elif native_change == "binding":
+            session.conversation_binding_revision += 1
+        for event in gateway.release:
+            event.set()
+        release.set()
+        outcome = await _outcome(record)
+    finally:
+        release.set()
+        for event in gateway.release:
+            event.set()
+    if native_change is None:
+        assert outcome.accepted
+        assert gateway.user_turns == ["phone correction"]
+        assert captured[0].provider_selection.workspace_context.staged_sources == ()
+        assert (
+            sum(
+                m.content == "phone correction" and m.role.value == "user"
+                for m in store.messages_for_session(session.id)
+            )
+            == 1
+        )
+    else:
+        assert isinstance(outcome, RecoveryRequired)
+        assert not gateway.user_turns
+    assert store.session_draft(session.id) == "phone correction"
+    assert store.pending_attachments(session.id) == [attachment]
+    assert session.one_shot_prefill == "desktop prefill"
+    assert runtime.snapshot_console_staged_evidence()[0] is newer_stage
+    assert store.active_session_id == desktop.id
+
+
+@pytest.mark.parametrize("change_settings", [False, True])
+async def test_command_queue_preserves_desktop_riders_through_native_drain(
+    received_workspace, tmp_path, change_settings
+):
+    from Tests.Chat.test_console_received_intent_inputs import _attachment
+
+    case = received_workspace
+    gateway = _configure_command_case(case, tmp_path)
+    commands, target, revisions = _command_owner(case)
+    store, session, runtime = case.store, case.session, case.runtime
+    store.set_session_draft(session.id, "desktop draft")
+    attachment = _attachment("queue-desktop-only")
+    store.add_pending_attachment(session.id, attachment)
+    store.set_session_one_shot_prefill(session.id, "desktop prefill")
+    staged = object()
+    runtime.stage_console_staged_evidence(staged)
+    first = await commands.send(
+        target, "phone first", "phone-first", expected_revisions=revisions
+    )
+    record = runtime._turn_custody[first]
+    try:
+        await _wait_for_seam(record, gateway.started[0])
+        second = await commands.send(
+            target, "phone second", "phone-second", expected_revisions=revisions
+        )
+        second_record = runtime._turn_custody[second]
+        queued = await _outcome(second_record)
+        assert queued.applied
+        prompt = case.controller.prompt_queue_registry._states[session.id].waiting[0]
+        assert prompt.custody_request.input_origin == "command"
+        assert prompt.custody_request.one_shot_prefill is None
+        assert prompt.custody_request.command_id == "phone-second"
+        assert prompt.custody_request.command_inputs is not None
+        if change_settings:
+            store.replace_session_settings(
+                session.id, replace(session.settings, temperature=0.2)
+            )
+        for event in gateway.release:
+            event.set()
+        outcome = await _outcome(record)
+    finally:
+        for event in gateway.release:
+            event.set()
+    if change_settings:
+        assert isinstance(outcome, RuntimeError)
+        assert str(outcome) == "Console command target configuration changed."
+    else:
+        assert outcome.accepted
+    assert gateway.user_turns == (
+        ["phone first"] if change_settings else ["phone first", "phone second"]
+    )
+    assert store.session_draft(session.id) == "desktop draft"
+    assert store.pending_attachments(session.id) == [attachment]
+    assert session.one_shot_prefill == "desktop prefill"
+    assert runtime.snapshot_console_staged_evidence()[0] is staged
+
+
+async def test_command_settings_change_after_capture_refuses_native_promotion(
+    received_workspace, monkeypatch, tmp_path
+):
+    case = received_workspace
+    gateway = _configure_command_case(case, tmp_path)
+    commands, target, revisions = _command_owner(case)
+    case.store.set_session_draft(case.session.id, "desktop next")
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_resolve = gateway.resolve_for_send
+
+    async def held_resolve(selection):
+        result = await original_resolve(selection)
+        entered.set()
+        await release.wait()
+        return result
+
+    monkeypatch.setattr(gateway, "resolve_for_send", held_resolve)
+    turn_id = await commands.send(
+        target, "phone", "phone-promotion", expected_revisions=revisions
+    )
+    record = case.runtime._turn_custody[turn_id]
+    try:
+        await _wait_for_seam(record, entered)
+        assert record.request is not None and not record.inputs.durable_accepted
+        case.store.replace_session_settings(
+            case.session.id, replace(case.session.settings, temperature=0.2)
+        )
+        release.set()
+        outcome = await _outcome(record)
+    finally:
+        release.set()
+    assert isinstance(outcome, RuntimeError)
+    assert not gateway.user_turns
+    assert not record.inputs.durable_accepted
+    assert case.store.session_draft(case.session.id) == "desktop next"
+
+
+@pytest.mark.parametrize("onboarding_completed", [False, True])
+async def test_command_reroutes_natively_when_primary_finishes_during_queue_admission(
+    received_workspace, monkeypatch, tmp_path, onboarding_completed
+):
+    case = received_workspace
+    gateway = _configure_command_case(case, tmp_path)
+    case.controller.app.app_config.setdefault("console", {}).setdefault(
+        "onboarding", {}
+    )["first_send_completed"] = onboarding_completed
+    commands, target, revisions = _command_owner(case)
+    case.store.set_session_draft(case.session.id, "desktop next")
+    first = await commands.send(
+        target, "phone first", "phone-first", expected_revisions=revisions
+    )
+    first_record = case.runtime._turn_custody[first]
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_admission = case.controller.hook_admission_reason
+
+    async def held_admission():
+        reason = await original_admission()
+        entered.set()
+        await release.wait()
+        return reason
+
+    try:
+        await _wait_for_seam(first_record, gateway.started[0])
+        monkeypatch.setattr(case.controller, "hook_admission_reason", held_admission)
+        second = await commands.send(
+            target, "phone second", "phone-second", expected_revisions=revisions
+        )
+        second_record = case.runtime._turn_custody[second]
+        assert second_record.received_intent.queue_revision is not None
+        await _wait_for_seam(second_record, entered)
+        assert second_record.received_claim is None
+        gateway.release[0].set()
+        assert (await _outcome(first_record)).accepted
+        case.store.set_session_draft(case.session.id, "new desktop next")
+        gateway.release[1].set()
+        release.set()
+        outcome = await _outcome(second_record)
+        if onboarding_completed:
+            assert outcome.accepted
+        else:
+            # Native first-send persistence changes the config source mid-admission.
+            assert isinstance(outcome, RecoveryRequired)
+    finally:
+        release.set()
+        for event in gateway.release:
+            event.set()
+    assert gateway.user_turns == (
+        ["phone first", "phone second"] if onboarding_completed else ["phone first"]
+    )
+    assert case.store.session_draft(case.session.id) == "new desktop next"

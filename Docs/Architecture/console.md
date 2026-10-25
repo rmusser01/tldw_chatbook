@@ -154,3 +154,42 @@ marks the Console as tearing down, awaits the existing runtime disposal/shutdown
 and exits. Runtime physical cleanup retains the lease on failure or cancellation;
 the parent only permits a new host after observing actual process exit. Browser
 revocation and Canvas disable do not enter this native shutdown path.
+
+## Command-owned input and exact native controls (ADR-244)
+
+`Chat/console_remote_commands.py::ConsoleRemoteCommands` is the runtime command
+adapter for an existing `ConsoleHostIdentity` / `ConsoleTarget`. Its supported
+actions are `send`, `steer`, `redirect`, `stop`, `subagent_guidance` and
+`subagent_stop`. Unsupported actions refuse. This seam does not select a desktop
+tab or construct a second controller. Browser transport wiring and receipt
+observation are separate owners.
+
+Send requires text and all five last-confirmed target revisions:
+`settings_revision`, `generation_settings_revision`, `context_policy_revision`,
+`identity_revision` and `conversation_binding_revision`. It builds a
+`ConsoleSessionInputSnapshot` with `input_origin="command"` and a command ID,
+empty attachments/prefill, and no staged-RAG launch. Its native source witnesses
+remain currentness requirements; desktop typing, prefill, attachment edits and
+view changes cannot invalidate or clear this command. Composer snapshots retain
+the original complete input comparisons. The same received-turn slot is claimed
+with `draft_revision=None`, then the existing checked configuration, hook review,
+permissions, native preparation and atomic promotion run under runtime custody.
+The synchronous resident configuration proof precedes receipt; complete async
+capture still follows the existing Preparing claim. Settings/binding changes
+before promotion refuse stale input.
+
+Command origin and its repr-hidden native input witness follow
+`ConsoleTurnCustodyRequest` through the existing prompt queue; configuration
+changes while queued are rechecked before its claim and native promotion. Command requests capture no desktop prefill and bypass only the queue's
+composer rider checks; normal queue revision, context, permission, capacity and
+continuation ownership still apply. Native `preserve_composer` behavior protects
+drafts and acceptance callbacks through prepared continuations and durable
+acceptance. Buddy's existing composer guards remain unchanged.
+
+`send()` returns the custody turn ID while it is Preparing. `execute()` returns
+body-free `state`, optional `native_id`, and `reason`: Send is `pending`, guidance
+is `queued`, accepted Stop is `accepted`, and native refusal is `refused`.
+Neither queued guidance nor accepted Stop claims mailbox consumption or physical
+worker exit. Main controls use explicit-session `steer_run`, `redirect_run` and
+`stop_run`; existing active-tab methods delegate to those native controls. A
+remote Stop needs an exact existing turn or live run and cannot stop a successor.

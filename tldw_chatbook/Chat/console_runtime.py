@@ -2675,8 +2675,15 @@ class ConsoleRuntime:
         store = self._chat_store
         if store is None:
             raise RuntimeError("Console chat store is unavailable.")
+        if request.input_origin == "command" and (
+            request.command_inputs is None
+            or not store.session_inputs_are_current(request.command_inputs)
+        ):
+            raise RuntimeError("Console command target configuration changed.")
         claim = store.claim_received_turn(
-            request.session_id, request.turn_id, origin=origin,
+            request.session_id,
+            request.turn_id,
+            origin=origin,
             draft_revision=request.draft_revision,
         )
         if claim is None:
@@ -2901,6 +2908,7 @@ class ConsoleRuntime:
                         request.draft,
                         session_id=request.session_id,
                         origin=origin,
+                        preserve_composer=request.input_origin == "command",
                         queue_entry_id=queue_entry_id,
                         queue_authorization=queue_authorization,
                         wake_authorization=wake_authorization,

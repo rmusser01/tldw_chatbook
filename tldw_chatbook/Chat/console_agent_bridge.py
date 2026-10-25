@@ -9752,6 +9752,20 @@ class ConsoleAgentBridge:
 
     # -- rail reads -----------------------------------------------------
 
+    def current_primary_run_id(self, conversation_id: str) -> str | None:
+        """Qualify the memoized primary against its exact live native mailbox."""
+        run_id = self.live_primary_run_id(conversation_id)
+        service = self._fleet_services.get(conversation_id)
+        if service is None or run_id is None:
+            return None
+        with service._primary_steering_lock:
+            if (
+                self._fleet_services.get(conversation_id) is service
+                and run_id in service._primary_mailboxes
+            ):
+                return run_id
+        return None
+
     def live_primary_run_id(self, conversation_id: str) -> str | None:
         """task-31386: the primary run last bound or stepping in ``conversation_id``.
 
@@ -10176,7 +10190,13 @@ class ConsoleAgentBridge:
                 handles.append(handle)
         return handles
 
-    def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
+    def cancel_subagent(
+        self,
+        conversation_id: str,
+        handle_id: str,
+        *,
+        expected_run_id: str | None = None,
+    ) -> bool:
         """Cooperatively cancel ONE live child of this conversation's fleet.
 
         PR2b Task 5 (per-row cancel): delegates straight to
@@ -10199,6 +10219,15 @@ class ConsoleAgentBridge:
             published run's fleet is off) or `handle_id` is unknown/already
             terminal; `True` when a live handle was found and cancelled.
         """
+        if expected_run_id is not None:
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            handle = coordinator.get(handle_id) if coordinator is not None else None
+            if (
+                handle is None
+                or handle.run_id != expected_run_id
+                or handle.status in TERMINAL_RUN_STATUSES
+            ):
+                return False
         self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
         if service is not None and service.cancel_subagent(handle_id):
@@ -10278,7 +10307,14 @@ class ConsoleAgentBridge:
                 cancelled += 1
         return cancelled
 
-    def steer_subagent(self, conversation_id: str, row_id: str, text: str) -> bool:
+    def steer_subagent(
+        self,
+        conversation_id: str,
+        row_id: str,
+        text: str,
+        *,
+        expected_run_id: str | None = None,
+    ) -> bool:
         """Queue USER steering for ONE live child of this conversation's fleet.
 
         PR3b Task 3 (spec §6's second path into Task 1's per-child
@@ -10337,7 +10373,9 @@ class ConsoleAgentBridge:
         target = next((h for h in live if h.handle_id == row_id), None) or next(
             (h for h in live if h.run_id == row_id), None
         )
-        if target is None:
+        if target is None or (
+            expected_run_id is not None and target.run_id != expected_run_id
+        ):
             return False
         return coordinator.post_steering(
             target.handle_id, STEERING_SOURCE_USER, stripped

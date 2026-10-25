@@ -361,6 +361,8 @@ def _configuration_session_identity(session):
         session.workspace_id,
         session.ephemeral,
         session.identity_revision,
+        session.settings_revision,
+        session.context_policy_revision,
         session.generation_settings_revision,
         session.settings,
     )

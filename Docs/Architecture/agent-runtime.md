@@ -104,3 +104,30 @@ TASK-34406.2).
 3. Abandoned tool threads can still complete side effects after a timeout is reported.
 4. A sub-agent's DB row may still be `running` when `run_turn` returns — wait on `on_child_settled`.
 5. The `tool_call` run-log record is emitted before dispatch, so a blocked or crashed tool still leaves a durable trace.
+
+## Exact Console command targets (ADR-244)
+
+`ConsoleRemoteCommands` resolves the retained host and exact live session
+incarnation before using native controls. `ConsoleChatController` exposes
+`steer_run(session_id, text, expected_run_id=...)`, `redirect_run(...)` and
+`stop_run(session_id, expected_run_id=..., expected_turn_id=...)`. Active-tab
+wrappers retain their native behavior, including legacy preparation Stop;
+explicit remote Stop refuses an untargeted press. Stop uses the original native
+response-rule, received/prepared-turn, queued-continuation, physical callback,
+stream cancellation and durable settlement paths for that explicit session.
+
+The bridge's `live_primary_run_id` is a last-bound in-memory memo. It is useful
+for display/log routing but cannot prove current execution. The command control
+lookup additionally checks `current_primary_run_id`, qualifying the exact ID
+against the published native service's primary mailbox under its existing lock.
+A finished primary's memo cannot authorize stopping the next turn's preparation.
+Guidance retains the original mailbox's completion race refusal.
+
+Subagent commands require conversation ownership plus both handle and expected
+run. The bridge's existing `steer_subagent` and `cancel_subagent` accept an
+optional expected-run witness; existing native callers preserve their behavior.
+Guidance posts to the conversation coordinator's native user mailbox and returns
+queued; its later drain is the consumption boundary. Stop uses the owning
+service's existing cancel-event and approval-revocation path, including retained
+survivors. Finished/replaced targets refuse without relaunch. Subagent Redirect
+is unsupported.

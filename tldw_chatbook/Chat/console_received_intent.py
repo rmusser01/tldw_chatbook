@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from weakref import ReferenceType, ref
 
 if TYPE_CHECKING:
@@ -37,6 +37,8 @@ class ConsoleSessionInputSnapshot:
     _session_ref: ReferenceType[ConsoleChatSession] = field(repr=False)
     _settings: ConsoleSessionSettings | None = field(repr=False)
     _attachment_ids: tuple[str, ...] = field(repr=False)
+    input_origin: Literal["composer", "command"] = "composer"
+    command_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +201,20 @@ class ConsoleReceivedIntentInputMixin:
                     self._drain_agent_handoff_writer(pending)
                 )
 
+    def command_input_snapshot(
+        self: ConsoleChatStore, session_id: str, *, text: str, command_id: str
+    ) -> ConsoleSessionInputSnapshot:
+        """Capture command text and native scope without borrowing the composer."""
+        from .console_turn_preparation import _validate_identifier
+
+        if not isinstance(text, str):
+            raise TypeError("command text must be a string")
+        _validate_identifier(command_id, "command ID")
+        with self._preparation_lock:
+            return self._session_input_snapshot_locked(
+                session_id, text=text, command_id=command_id
+            )
+
     def session_input_snapshot(
         self: ConsoleChatStore, session_id: str
     ) -> ConsoleSessionInputSnapshot:
@@ -214,29 +230,35 @@ class ConsoleReceivedIntentInputMixin:
             KeyError: If the session is unknown.
         """
         with self._preparation_lock:
-            session = self._session_or_raise(session_id)
-            attachments = tuple(session.pending_attachments)
-            return ConsoleSessionInputSnapshot(
-                session_id=session.id,
-                incarnation_id=session.incarnation_id,
-                workspace_id=session.workspace_id,
-                settings_revision=session.settings_revision,
-                generation_settings_revision=session.generation_settings_revision,
-                context_policy_revision=session.context_policy_revision,
-                identity_revision=session.identity_revision,
-                conversation_binding_revision=session.conversation_binding_revision,
-                ephemeral=session.ephemeral,
-                draft=session.draft,
-                draft_revision=session.draft_revision,
-                attachments=attachments,
-                attachment_revision=session.attachment_revision,
-                one_shot_prefill=session.one_shot_prefill,
-                prefill_revision=session.one_shot_prefill_revision,
-                _store_ref=ref(self),
-                _session_ref=ref(session),
-                _settings=session.settings,
-                _attachment_ids=tuple(item.attachment_id for item in attachments),
-            )
+            return self._session_input_snapshot_locked(session_id)
+
+    def _session_input_snapshot_locked(self, session_id, *, text=None, command_id=None):
+        session = self._session_or_raise(session_id)
+        command = command_id is not None
+        attachments = () if command else tuple(session.pending_attachments)
+        return ConsoleSessionInputSnapshot(
+            session_id=session.id,
+            incarnation_id=session.incarnation_id,
+            workspace_id=session.workspace_id,
+            settings_revision=session.settings_revision,
+            generation_settings_revision=session.generation_settings_revision,
+            context_policy_revision=session.context_policy_revision,
+            identity_revision=session.identity_revision,
+            conversation_binding_revision=session.conversation_binding_revision,
+            ephemeral=session.ephemeral,
+            draft=text if command else session.draft,
+            draft_revision=0 if command else session.draft_revision,
+            attachments=attachments,
+            attachment_revision=0 if command else session.attachment_revision,
+            one_shot_prefill=None if command else session.one_shot_prefill,
+            prefill_revision=0 if command else session.one_shot_prefill_revision,
+            _store_ref=ref(self),
+            _session_ref=ref(session),
+            _settings=session.settings,
+            _attachment_ids=tuple(item.attachment_id for item in attachments),
+            input_origin="command" if command else "composer",
+            command_id=command_id,
+        )
 
     def session_inputs_are_current(
         self: ConsoleChatStore, snapshot: ConsoleSessionInputSnapshot
@@ -253,8 +275,7 @@ class ConsoleReceivedIntentInputMixin:
             session = _input_session_locked(self, snapshot)
             if session is None:
                 return False
-            pending = session.pending_attachments
-            return (
+            scope_current = (
                 session.workspace_id == snapshot.workspace_id
                 and session.settings is snapshot._settings
                 and session.settings_revision == snapshot.settings_revision
@@ -262,6 +283,14 @@ class ConsoleReceivedIntentInputMixin:
                 == snapshot.generation_settings_revision
                 and session.context_policy_revision == snapshot.context_policy_revision
                 and session.identity_revision == snapshot.identity_revision
+            )
+            if not scope_current:
+                return False
+            if snapshot.input_origin == "command":
+                return snapshot.command_id is not None
+            pending = session.pending_attachments
+            return (
+                snapshot.input_origin == "composer"
                 and session.draft_revision == snapshot.draft_revision
                 and session.draft == snapshot.draft
                 and session.attachment_revision == snapshot.attachment_revision
@@ -291,6 +320,7 @@ class ConsoleReceivedIntentInputMixin:
             session = _input_session_locked(self, snapshot)
             if (
                 session is None
+                or snapshot.input_origin != "composer"
                 or session.draft_revision != snapshot.draft_revision
                 or session.draft != snapshot.draft
             ):

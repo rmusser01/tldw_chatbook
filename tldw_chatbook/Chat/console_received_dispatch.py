@@ -160,6 +160,7 @@ def require_received_source(runtime, record, source, *, inputs=True):
         )
         or (
             inputs
+            and record.received_intent.inputs.input_origin == "composer"
             and (
                 runtime.snapshot_console_staged_evidence()[0]
                 is not record.received_intent.staged_evidence_launch
@@ -308,10 +309,15 @@ async def _run_received_intent_bound(runtime, record, source):
             require_received_source(runtime, record, source)
 
         kwargs["_before_admission"] = before_admission
+        if intent.inputs.input_origin == "command":
+            kwargs["_command_inputs"] = intent.inputs
         queued = await method(record.session_id, **kwargs)
         if queued.applied:
             try:
-                if store.commit_session_input_draft(intent.inputs):
+                if (
+                    intent.inputs.input_origin == "composer"
+                    and store.commit_session_input_draft(intent.inputs)
+                ):
                     runtime._project_received_input(record)
             except Exception:  # noqa: BLE001, S110 - presentation cannot retract an already accepted domain outcome.
                 # Queue admission already won; presentation cannot retract it.
@@ -323,7 +329,11 @@ async def _run_received_intent_bound(runtime, record, source):
         claim = store.claim_received_turn(
             record.session_id,
             record.turn_id,
-            draft_revision=intent.inputs.draft_revision,
+            draft_revision=(
+                intent.inputs.draft_revision
+                if intent.inputs.input_origin == "composer"
+                else None
+            ),
         )
         if claim is None:
             raise RuntimeError(
@@ -333,10 +343,14 @@ async def _run_received_intent_bound(runtime, record, source):
         runtime._note_received_admission_changed(store, record.session_id)
 
     require_received_source(runtime, record, source)
-    attachments = store.transfer_pending_attachments_to_turn(
-        record.session_id,
-        record.turn_id,
-        tuple(item.attachment_id for item in intent.inputs.attachments),
+    attachments = (
+        store.transfer_pending_attachments_to_turn(
+            record.session_id,
+            record.turn_id,
+            tuple(item.attachment_id for item in intent.inputs.attachments),
+        )
+        if intent.inputs.input_origin == "composer"
+        else ()
     )
     record.inputs.attachments = attachments
     record.inputs.staged_evidence_revision = intent.staged_evidence_revision
@@ -349,6 +363,11 @@ async def _run_received_intent_bound(runtime, record, source):
         one_shot_prefill=intent.inputs.one_shot_prefill,
         one_shot_prefill_revision=intent.inputs.prefill_revision,
         staged_evidence_launch=intent.staged_evidence_launch,
+        input_origin=intent.inputs.input_origin,
+        command_id=intent.inputs.command_id,
+        command_inputs=intent.inputs
+        if intent.inputs.input_origin == "command"
+        else None,
     )
     return await runtime._run_custodied_turn(
         record,
@@ -395,7 +414,11 @@ def accept_received_intent(
         claim = store.claim_received_turn(
             intent.session_id,
             intent.turn_id,
-            draft_revision=intent.inputs.draft_revision,
+            draft_revision=(
+                intent.inputs.draft_revision
+                if intent.inputs.input_origin == "composer"
+                else None
+            ),
         )
         if claim is None:
             raise RuntimeError(
@@ -450,6 +473,7 @@ def project_received_input(self, record) -> None:
     view = self.view
     if (
         intent is None
+        or intent.inputs.input_origin != "composer"
         or self._attached_generation != intent.view_attachment_generation
     ):
         return
@@ -483,7 +507,7 @@ def require_received_custody_current(self, record, controller) -> None:
 def publish_received_acceptance(self, record, controller) -> None:
     record.inputs.durable_accepted = True
     intent = record.received_intent
-    if intent is not None:
+    if intent is not None and intent.inputs.input_origin == "composer":
         try:
             store, claim = record.store, record.received_claim
             # Saved acceptance is a fact even when its original owner

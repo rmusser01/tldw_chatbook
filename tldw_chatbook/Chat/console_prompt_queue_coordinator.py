@@ -1430,7 +1430,9 @@ class ConsolePromptQueueCoordinator:
         if self._maintenance_paused:
             return self._maintenance_refusal(session_id)
 
-        if self._has_staged_rider(session_id):
+        if (
+            custody_request is None or custody_request.input_origin != "command"
+        ) and self._has_staged_rider(session_id):
             snapshot = self.registry.snapshot(session_id)
             return PromptQueueMutationResult(
                 status=QueueMutationStatus.INVALID,
@@ -1777,7 +1779,10 @@ class ConsolePromptQueueCoordinator:
                 chain.machine_receipt = None
                 chain.continuation_started = None
             self._changed(session_id)
-            if self._has_staged_rider(session_id):
+            if (
+                claim.prompt.custody_request is None
+                or claim.prompt.custody_request.input_origin != "command"
+            ) and self._has_staged_rider(session_id):
                 self._return_claim(
                     session_id,
                     claim.prompt.entry_id,
