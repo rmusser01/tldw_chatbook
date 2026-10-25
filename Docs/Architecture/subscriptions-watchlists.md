@@ -33,6 +33,23 @@ Three producers write `local_watchlist_runs`: scheduled checks (the handler rout
 
 Item search uses FTS5 only when the `_docsize` shadow coverage probe says the index is complete; on `sqlite3.OperationalError` (missing table or FTS5 compiled out) it falls back to AND-of-terms / OR-across-columns LIKE with escaped wildcards — "the search box must never raise into the reader". One search mode is pinned per page so counts, high-water marks, and rows agree. Delete triggers are membership-guarded so pre-migration rows get indexed on next update instead of raising "malformed"; a startup backfill worker tops the index up.
 
+## Reader detail work
+
+Article activation admits an exclusive screen-owned worker in the wc_item_detail
+group and immediately releases the screen message queue. The worker fetches only
+the selected body's detail, then checks selection generation, committed snapshot
+identity/generation, page, runtime backend, active section and screen attachment
+under the existing presentation lock. Section, backend and page intents and
+unmount retire its generation, including away/back transitions. An obsolete
+completion cannot mutate the shared row, publish error feedback or mark it read,
+even when its underlying DB thread finishes after cancellation.
+
+A current completion hydrates the existing shared row before one ContentPane.item
+publication and the normal mark-read action. Missing detail preserves any existing
+body; a current fetch failure keeps the established error feedback and retry path.
+List projections and cached immutable pages remain narrow and structurally shared.
+These are screen-local publication rules under ADR-011/033/042 (TASK-36900).
+
 ## Rule editor view state
 
 `RulesPane.watch_rules` updates table rows and empty guidance in place, preserving

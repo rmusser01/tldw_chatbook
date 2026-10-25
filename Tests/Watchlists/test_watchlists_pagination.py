@@ -936,6 +936,7 @@ async def test_selection_records_committed_query_while_detail_fetch_is_pending()
         screen._items_search_query = "pending"
         detail.set_result("Fetched")
         await task
+        await _wait_until(pilot, lambda: screen._selected_content_item is item)
 
         assert screen._selected_content_item is item
         assert screen._selected_content_page_key == committed_query.context_key
@@ -971,8 +972,12 @@ async def test_detail_result_cannot_select_from_replaced_snapshot():
         assert screen._items_snapshot is not old_snapshot
         assert [row["item_id"] for row in screen._loaded_items] == [9]
 
+        detail_workers = [
+            worker for worker in screen.workers if worker.group == "wc_item_detail"
+        ]
         detail.set_result("Fetched stale body")
         await selection
+        await screen.workers.wait_for_complete(detail_workers)
 
         content = screen.query_one("#watchlists-content-pane", ContentPane)
         assert screen._selected_content_item is None

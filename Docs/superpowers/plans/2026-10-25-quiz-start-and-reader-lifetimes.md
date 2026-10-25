@@ -46,16 +46,16 @@ Reason: direct bounded corrections under existing screen/runtime/snapshot owners
 **Files:** modify UI/Screens/watchlists_collections_screen.py; create Tests/UI/test_watchlists_reader_responsiveness.py. Parent updates Docs/Architecture/subscriptions-watchlists.md.
 **Interfaces:** existing ItemSelected -> controller.get_item_content; keep snapshot/page presentation-lock semantics and shared row identity.
 
-- [ ] Write mounted production-screen/private DB regressions: later item selection and enabled Sources navigation advance while B's body read remains held; ordinary control and superseded result/error protections.
-- [ ] Run against unchanged production and retain expected assertion failures.
-- [ ] Dispatch a dedicated explicitly named/exclusive detail-read worker from the handler. Capture monotonic selection authority and invalidate it on relevant lifecycle/context changes; guard error feedback and shared-row mutation at arrival.
-- [ ] Prove out-of-order/thread completion, page/query/backend/section away-back and unmount cannot publish or mark obsolete items read; retain one hydrated publication.
-- [ ] Run complete new file and relevant existing Reader/snapshot/detail tests, scoped lint/changed-range format. Return evidence and exact changed files; no Git/CI/task mutations.
+- [x] Write mounted production-screen/private DB regressions: later item selection and enabled Sources navigation advance while B's body read remains held; ordinary control and superseded result/error protections.
+- [x] Run against unchanged production and retain expected assertion failures.
+- [x] Dispatch a dedicated explicitly named/exclusive detail-read worker from the handler. Capture monotonic selection authority and invalidate it on relevant lifecycle/context changes; guard error feedback and shared-row mutation at arrival.
+- [x] Prove out-of-order/thread completion, page/query/backend/section away-back and unmount cannot publish or mark obsolete items read; retain one hydrated publication.
+- [x] Run complete new file and relevant existing Reader/snapshot/detail tests, scoped lint/changed-range format. Return evidence and exact changed files; no Git/CI/task mutations.
 
 ## Integration
 
-- [ ] Register new/extended cases in the required UI lane using the existing selector/census conventions; preserve shard count and budgets.
-- [ ] Run targeted integration tests and governance/static checks, inspect private child XML independently.
+- [x] Register new/extended cases in the required UI lane using the existing selector/census conventions; preserve shard count and budgets.
+- [x] Run targeted integration tests and governance/static checks, inspect private child XML independently.
 - [ ] Commit implementation; request one fresh whole-branch Superpowers review with task/plan/evidence and Review Focus.
 - [ ] Address Important/Critical findings with RED -> GREEN tests, revalidate targeted gates; mark task criteria/status Done via CLI only after definition of done is met.
 - [ ] Push, create PR against dev, attach it to this chat, inspect current-head CI execution/review threads and fix actionable feedback until checks finish.
