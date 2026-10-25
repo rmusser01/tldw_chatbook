@@ -15938,7 +15938,15 @@ class PersonasScreen(BaseAppScreen):
 
         # Apply state only after detached reads complete, with no await that
         # could let a newer editor session interleave halfway through.
+        portrait = getattr(self, "_portrait_performance_controller", None)
+        previous_session = self._character_editor_session_token() if portrait else None
         self._character_editor_generation += 1
+        if portrait is not None:
+            portrait.rebind_character_save(
+                self._editor_or_none(),
+                previous_session,
+                self._character_editor_session_token(),
+            )
         if reconciliation_authority is not None:
             reconciliation_authority = dataclasses.replace(
                 reconciliation_authority,
@@ -16017,6 +16025,10 @@ class PersonasScreen(BaseAppScreen):
                 self._character_save_inflight = False
                 return
         self._character_save_inflight = False
+        if portrait is not None:
+            await portrait.check_saved_source()
+            if not is_current():
+                return
         self._sync_title_and_console_actions()
         if saved_record is None:
             self._notify(

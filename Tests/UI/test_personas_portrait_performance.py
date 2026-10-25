@@ -584,3 +584,56 @@ async def test_external_change_rechecks_selection_after_source_read(
     await pending
     assert not reloads and not notices
     assert str(character_id) not in screen._console_changed_character_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artwork_changed", [False, True])
+@pytest.mark.parametrize("stale_session", [False, True])
+async def test_actual_save_reconciliation_preserves_only_same_source_draft(
+    personas_editor_with_saved_character,
+    tmp_path,
+    monkeypatch,
+    artwork_changed,
+    stale_session,
+):
+    import asyncio
+
+    from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
+
+    _, screen, db, character_id, editor = saved_source(
+        personas_editor_with_saved_character
+    )
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    path = tmp_path / "pose.png"
+    path.write_bytes(png("green"))
+    assert await controller.handle(
+        CharacterPerformanceRequested("import", role=FRAME_ROLES[1]), path=str(path)
+    )
+    draft = controller.draft
+    record = db.get_character_card_by_id(character_id)
+    update = (
+        {"image": png("blue")} if artwork_changed else {"description": "Saved text"}
+    )
+    assert db.update_character_card(character_id, update, record["version"])
+    monkeypatch.setattr(
+        ccp_character_handler, "fetch_character_by_id", db.get_character_card_by_id
+    )
+    screen._character_save_inflight = True
+    if stale_session:
+        screen._character_editor_generation += 1
+    generation = screen._character_editor_generation
+    pending = asyncio.create_task(controller.check_saved_source())
+    await asyncio.sleep(0.06)
+    try:
+        await screen._after_character_save(str(character_id), record["name"])
+    finally:
+        screen._character_save_inflight = False
+        await pending
+    controller._check_context()
+    assert screen._character_editor_generation == generation + 1
+    assert (controller.draft is None) == (artwork_changed or stale_session)
+    if not artwork_changed and not stale_session:
+        assert controller.draft is draft and FRAME_ROLES[1] in draft.staged_roles
+        assert controller._current(controller._authority)
+        assert editor.visual_identity_session_token == controller._authority.identity[5]

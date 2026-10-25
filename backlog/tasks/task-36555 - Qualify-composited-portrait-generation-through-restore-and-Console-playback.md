@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/243-source-bound-portrait-compositing.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 06:57
+updated_date: 2026-10-25 07:08
 ---
 
 ## Description
@@ -65,6 +65,7 @@ Review follow-up: preserve a staged portrait draft on external text-only card ch
 Review-scope follow-up: remove the temporary application/test allowlist after the hosted reviewer correctly identified its permanent exclusions. Keep path_filters ["**"] and complete bounded CLI application/test plus incremental post-fix batches; disclose hosted rate/file limits and Qodo/Cubic quotas. Verify the test-batch suggestions: bound the installed sample poll with diagnostics, restrict POSIX mode-bit assertion to POSIX, and reject the Python-version concern because requires-python is >=3.12.
 Post-fix batch found two additional refresh races: transient character Save must not destroy a source-current portrait draft; external-event handler must revalidate selection after awaiting source I/O. Add held-read/Save regressions, correct the shared refresh boundary, then rerun authoring checks and the bounded review. Diagnose CI UI-ready 1033 vs unchanged 1031 module cap against its exact merge; do not raise the ceiling.
 Boot failure attribution: exact CI merge 899c48bf (same 139333920d dev base) has 1033 ready modules; previous Linux and current local probe have 1031. Reconstructing the census isolates two scheduling-dependent residents: console_change_review_read and character_conversation_search. Under existing ADR-097, shed two first-use costs without changing ceilings: do not import the marker reader for a None conversation (it always declines), and create the token-rate tracker/import its formatter only for an assistant row/active run. Add real-boot absence pins plus first-use/reset and empty-projection import controls; run the affected behavior and boot budget checks. No new ADR.
+Final bounded review identified successful Save's own editor-generation advance: preserve a same-editor source-current draft only through the explicit trusted Save reconciliation, with exact prior session-token matching and post-Save source verification; old sessions/changed artwork must still retire. Add an actual _after_character_save regression rather than toggling only its in-flight flag. Also gate token-rate helper imports when the preference is off or no reading exists. Windows recovery failed the unchanged 30-second capture watchdog on c4ea; the exact local rebackup journey passes, so retain that evidence and require the new Windows CI result.
 <!-- SECTION:PLAN:END -->
 
 ## Final Summary

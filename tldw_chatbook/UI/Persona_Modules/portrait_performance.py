@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from loguru import logger
@@ -193,12 +193,40 @@ class PortraitPerformanceController:
                 "Review retired: saved artwork could not be checked. Draft retained; reopen to retry."
             )
 
+    def rebind_character_save(
+        self, editor: Any, previous_session: tuple | None, current_session: tuple | None
+    ) -> None:
+        """Carry the same draft through one explicit in-place Save generation."""
+        authority = self._authority
+        if (
+            authority is None
+            or authority.editor is not editor
+            or previous_session is None
+            or current_session is None
+            or current_session[0] != previous_session[0] + 1
+            or current_session[1:] != previous_session[1:]
+            or authority.identity[4] != previous_session
+            or authority.identity[5] != editor.visual_identity_session_token
+        ):
+            return
+        self._authority = replace(
+            authority,
+            identity=(
+                *authority.identity[:4],
+                current_session,
+                *authority.identity[5:],
+            ),
+        )
+
     async def check_saved_source(self) -> None:
         """Retain staged work across text-only updates; retire changed artwork."""
         authority, draft, epoch = self._authority, self.draft, self._epoch
         if authority is None or draft is None:
             return
         while self._epoch == epoch and self.draft is draft:
+            authority = self._authority
+            if authority is None:
+                return
             screen = self._screen()
             if screen is None:
                 return
@@ -209,7 +237,7 @@ class PortraitPerformanceController:
                 current = await self._source_current(authority, draft, epoch)
             except PerformanceConflict:
                 current = False
-            if screen._character_save_inflight:
+            if screen._character_save_inflight or self._authority is not authority:
                 continue
             if not current and self._epoch == epoch and self.draft is draft:
                 self.discard()
