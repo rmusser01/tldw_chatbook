@@ -2,6 +2,7 @@
 
 Date: 2026-10-15
 Status: Accepted (implements spec Docs/superpowers/specs/2026-10-15-served-mode-auth-and-mobile-surface-design.md §4; binding per spike Docs/superpowers/spikes/2026-10-15-mobile-engine-binding-spike.md)
+Superseded by: [ADR-244](244-shared-console-ownership-and-mobile-supervision.md) for separate mobile execution/storage (design only; implementation pending)
 Amended: 2026-10-16 (PR #3128 review — the engine runs over ISOLATED DBs at
   `user_data_dir()/mobile`, not the shared chat DB; see the amendment notes
   under Decision and Consequences)
