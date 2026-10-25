@@ -5,8 +5,9 @@ not feature qualification: full live-provider UAT has not been completed.
 
 ADR required: no
 ADR path: N/A
-Reason: repair the existing reviewer's repository-specific scope; no new reviewer,
-application boundary, runtime, shared organization setting or paid-review policy.
+Reason: routine review-scope and implementation corrections follow existing
+ADR-097/242/243; no new storage, provider, runtime or security boundary. Shared
+organization settings and paid-review policy are unchanged.
 
 ## Reproduced blocker and minimum repair
 
@@ -128,3 +129,11 @@ The bounded 15-file follow-up completed with two further findings, both reproduc
 ### Explicit successful-Save transition
 
 A further bounded review correctly identified the successful Save finisher advancing the editor generation while keeping the editor open. Its actual mounted reconciliation reproduced draft loss beyond the in-flight-flag controls. Rebind only the trusted finisher's exact prior token to its next generation, with identical editor, token tail and editor-load token; compare saved artwork after settling. Other source/authority fields remain unchanged, in-flight old operations keep their old fences, and old sessions cannot be adopted. The waiting source check follows this explicit authority replacement. Four actual-Save source/stale-session controls plus overlap/replacement checks pass nine cases; the initial failed attempt remains in red/green evidence.
+
+### Boot ratchet and final bounded review
+
+CI on merge `899c48bf` (same `139333920d` dev base) measured 1033 ready modules; prior Linux and current local runs measured 1031. Reconstructing the sets isolates scheduling-dependent `console_change_review_read` and `DB.character_conversation_search` as the two extra residents. Follow ADR-097 by shedding two first-use costs: absent-conversation marker projection skips an import whose capture always declines, and token-rate tracking/formatting waits for actual assistant content or an enabled available reading. New real-boot absence pins, import-denial controls, first-use/reset checks and mounted rate flows pass. All 29 boot ratchets pass without raising ceilings; local ready count is 1030/1031.
+
+The final bounded review from `37ed61380d` completed with **zero findings** after verifying both additional Save/read and rate-import corrections. The complete application/test batch chain covers all **54 changed application and 50 changed test paths**; documentation and QA artifacts are not claimed completely automated-reviewed. Current authoring/probe/installed/boot checks pass 44 tests in 104.58s, the rate/formatting checks pass 38 tests, and all 54 production files match the fresh installed wheel. Legacy differential lint adds no diagnostics.
+
+The c4ea Windows recovery failure was its unchanged 30-second capture watchdog, followed by secondary shutdown cancellation; the exact journey passes locally in 36.80s. Leave that deadline unchanged and inspect the final-head Windows result. Latest-head hosted CI remains pending at publication. All four original hosted review threads are resolved; Qodo/Cubic remain unavailable and the hosted follow-up request was rate-limited. Full live-provider UAT remains incomplete, AC5 stays open and zero configured live image requests were sent.

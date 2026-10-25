@@ -244,8 +244,12 @@ def test_rate_tracker_waits_for_an_assistant_and_resets_without_reallocation():
     assert chips[-1] == (False, "", "")
 
 
-@pytest.mark.parametrize("enabled,reading", [(False, None), (False, object()), (True, None)])
-def test_run_copy_skips_rate_import_without_enabled_reading(monkeypatch, enabled, reading):
+@pytest.mark.parametrize(
+    "enabled,reading", [(False, None), (False, object()), (True, None)]
+)
+def test_run_copy_skips_rate_import_without_enabled_reading(
+    monkeypatch, enabled, reading
+):
     import builtins
     from types import SimpleNamespace
 

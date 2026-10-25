@@ -1,0 +1,522 @@
+{
+  "hosted_review": {
+    "commit": "0cf888502e97dd8a28a467ecc8f7c230ba0688ba",
+    "review_id": 5641830589,
+    "selected_paths": 100,
+    "inline_findings": 4,
+    "resolved_threads": 4,
+    "post_fix_incremental_status": "rate_limited"
+  },
+  "application_batch": {
+    "source_head": "155ed23c8e",
+    "files": [
+      "tldw_chatbook/Audio/speech_presentation.py",
+      "tldw_chatbook/Audio/streaming_sink.py",
+      "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+      "tldw_chatbook/Character_Chat/expression_generation.py",
+      "tldw_chatbook/Character_Chat/portrait_compositing.py",
+      "tldw_chatbook/Character_Chat/portrait_performance.py",
+      "tldw_chatbook/Character_Chat/portrait_performance_authoring.py",
+      "tldw_chatbook/Chat/character_expression_playback.py",
+      "tldw_chatbook/Chat/portrait_performance_state.py",
+      "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "tldw_chatbook/DB/migrations/chachanotes_v82_to_v83_portrait_performance.sql",
+      "tldw_chatbook/DB/migrations/chachanotes_v83_to_v84_portrait_regions.sql",
+      "tldw_chatbook/DB/portrait_region_settings.py",
+      "tldw_chatbook/DB/recovery_core.py",
+      "tldw_chatbook/DB/recovery_core_schema.py",
+      "tldw_chatbook/DB/sql_validation.py",
+      "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+      "tldw_chatbook/Media_Creation/__init__.py",
+      "tldw_chatbook/UI/Console_Modules/character.py",
+      "tldw_chatbook/UI/Console_Modules/hands_free.py",
+      "tldw_chatbook/UI/Console_Modules/left_rail.py",
+      "tldw_chatbook/UI/Console_Modules/message.py",
+      "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "tldw_chatbook/UI/Persona_Modules/portrait_composition_generation.py",
+      "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+      "tldw_chatbook/UI/Persona_Modules/portrait_regions.py",
+      "tldw_chatbook/UI/Screens/chat_screen.py",
+      "tldw_chatbook/UI/Screens/personas_screen.py",
+      "tldw_chatbook/Utils/mosaic_render.py",
+      "tldw_chatbook/Widgets/Console/character_expression_avatar.py",
+      "tldw_chatbook/Widgets/Console/portrait_radio.py",
+      "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py",
+      "tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py",
+      "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py",
+      "tldw_chatbook/Widgets/Persona_Widgets/portrait_performance_editor.py",
+      "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py",
+      "tldw_chatbook/app_speech.py",
+      "tldw_chatbook/css/components/_dialogs.tcss",
+      "tldw_chatbook/css/core/_variables.tcss",
+      "tldw_chatbook/css/features/_console_panels.tcss",
+      "tldw_chatbook/css/screen_agentic_library.tcss",
+      "tldw_chatbook/css/screen_agentic_settings.tcss",
+      "tldw_chatbook/css/screen_feature_evals.tcss",
+      "tldw_chatbook/css/screen_feature_roleplay.tcss",
+      "tldw_chatbook/css/screen_feature_scheduling.tcss",
+      "tldw_chatbook/css/screen_feature_watchlists.tcss",
+      "tldw_chatbook/css/screen_feature_workflows.tcss",
+      "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss",
+      "tldw_chatbook/css/screen_modal_file_notes_history.tcss",
+      "tldw_chatbook/css/tldw_cli_modular.tcss",
+      "tldw_chatbook/css/widget_defaults_scoped.tcss",
+      "tldw_chatbook/css/widget_defaults_self.tcss"
+    ],
+    "findings": 11,
+    "log_sha256": "35deeb79a5764acaaf22523af6a29ff1ab67187baafc6a61a25d7df74c672895"
+  },
+  "test_batch": {
+    "source_head": "c4ea7272fc",
+    "files": [
+      "Tests/Actor_Packs/test_actor_pack_export.py",
+      "Tests/Audio/test_speech_presentation.py",
+      "Tests/Audio/test_streaming_sink.py",
+      "Tests/Audio/test_streaming_sink_presentation.py",
+      "Tests/Backup_Recovery/test_core_owners.py",
+      "Tests/Backup_Recovery/test_portrait_performance_restore.py",
+      "Tests/Backup_Recovery/test_response_rules_restore.py",
+      "Tests/ChaChaNotesDB/test_canvas_migration.py",
+      "Tests/ChaChaNotesDB/test_portrait_performance_migration.py",
+      "Tests/ChaChaNotesDB/test_portrait_performance_repository.py",
+      "Tests/ChaChaNotesDB/test_portrait_region_settings.py",
+      "Tests/ChaChaNotesDB/test_portrait_regions_migration.py",
+      "Tests/Character_Chat/test_character_backup_export_image.py",
+      "Tests/Character_Chat/test_expression_generation.py",
+      "Tests/Character_Chat/test_portrait_compositing.py",
+      "Tests/Character_Chat/test_portrait_performance.py",
+      "Tests/Character_Chat/test_portrait_performance_authoring.py",
+      "Tests/Character_Chat/test_portrait_performance_generation.py",
+      "Tests/Chat/test_portrait_performance_state.py",
+      "Tests/Chatbooks/test_local_chatbook_service_export.py",
+      "Tests/Performance/test_app_import_weight.py",
+      "Tests/ProductionApp/portrait_qualification_helpers.py",
+      "Tests/ProductionApp/test_backup_restore_end_to_end.py",
+      "Tests/ProductionApp/test_console_radio_portraits.py",
+      "Tests/ProductionApp/test_portrait_live_probe.py",
+      "Tests/Scripts/test_check_textual_worker_contract.py",
+      "Tests/TTS/test_buddy_guarded_speech.py",
+      "Tests/TTS/test_console_speak_autoplay.py",
+      "Tests/TTS/test_console_speech_presentation.py",
+      "Tests/TTS/test_console_speech_snapshot_admission.py",
+      "Tests/TTS_Events/test_spoken_feedback_streaming.py",
+      "Tests/TTS_Events/test_utterance_speech_entry.py",
+      "Tests/UI/test_console_avatar_geometry_offloop.py",
+      "Tests/UI/test_console_character_avatar.py",
+      "Tests/UI/test_console_character_avatar_copy_budget.py",
+      "Tests/UI/test_console_control_bar_coalescing.py",
+      "Tests/UI/test_console_hands_free_wiring.py",
+      "Tests/UI/test_console_portrait_performance.py",
+      "Tests/UI/test_console_radio_portrait.py",
+      "Tests/UI/test_library_media_actions_target_opened_item.py",
+      "Tests/UI/test_personas_expression_slots.py",
+      "Tests/UI/test_personas_portrait_performance.py",
+      "Tests/UI/test_personas_portrait_performance_generate.py",
+      "Tests/UI/test_portrait_composition_review.py",
+      "Tests/UI/test_portrait_region_editor.py",
+      "Tests/UI/test_theme_contrast.py",
+      "Tests/Utils/test_mosaic_render.py"
+    ],
+    "findings": 3,
+    "log_sha256": "4c9d17b89fc1a8d9d58aeb789d5171224a25764961106b2e1dca8bd9b2df46be",
+    "dispositions": [
+      "Bound guarded-sample wait with diagnostic assertion",
+      "Guard POSIX mode-bit assertion on Windows",
+      "Python-version concern does not apply: requires-python >=3.12"
+    ]
+  },
+  "post_fix_batch": "completed; latest bounded pass has no findings",
+  "schema_validation": {
+    "validated": true,
+    "schema_sha256": "fe301cea52b41ad9ec84f2e508ca2d04bb7a6d3805d42e06f3d8cfa08d9943f0",
+    "config_sha256": "295fca3e0d68c6389d694938ead6ffdbe3db1e393899113441e55955717a5e0e"
+  },
+  "checks": {
+    "graphics_red": {
+      "summary": "1 failed; permanent Preparing surface reproduced",
+      "log_sha256": "fda50ff20374a7c05a44a039646f6f4329c577790651c38d815173bf4088f0e3"
+    },
+    "graphics_green": {
+      "summary": "4 passed",
+      "log_sha256": "0017ff017c8d4df4088d8fc14398db2f20470e986f910c7c614a60cdf609199e"
+    },
+    "legacy_red": {
+      "summary": "3 failed: presentation, cleanup, supersession",
+      "log_sha256": "e63f4b3ee38d975ccd746a0921b4e30d6202129f5e67d18f7bf09cc7efcb9185"
+    },
+    "legacy_green": {
+      "summary": "3 passed",
+      "log_sha256": "190978ccb7fded13c33c0b8e36942d66da7067836936105aefe1605d7a8279ff"
+    },
+    "legacy_targeted": {
+      "summary": "58 passed",
+      "log_sha256": "bffda4a84eb1e871f17f59bae0e097d8b3a6b3745fbdeccf3bb8ab4062d0b1ee"
+    },
+    "handsfree_red": {
+      "summary": "entry/handler/completion stall reproduced; replacement control corrected before green",
+      "log_sha256": "09b2ff6d18090e0acd1936860179daa062ba31c592f63f9fa253c2480d9a7e57"
+    },
+    "handsfree_focused": {
+      "summary": "32 passed",
+      "log_sha256": "e472c21a420070a301f1c9915505d8b75a563e7039e023ab5f9ce60afab08c62"
+    },
+    "handsfree_baseline": {
+      "summary": "43 failed, 10 passed, 4 new regressions deselected with exact pre-fix worker",
+      "log_sha256": "2629ba5a3d105e30ccc80e2a86c7b0c40b02bb0ec3da65f1c1ba54e6a1d8e181"
+    },
+    "portrait_text_red": {
+      "summary": "1 failed, 1 passed: text-only loss vs artwork retirement",
+      "log_sha256": "1babfe0dfe737660c847ba74eecf7e0c362c69a1e64253ebf1bb6d6f7ff07aac"
+    },
+    "portrait_text_race": {
+      "summary": "1 passed",
+      "log_sha256": "1d6c3167169db3573eb9f3bc35bbead03f7ae838d8b6355aa2d12c0fa317d60a"
+    },
+    "portrait_final": {
+      "summary": "51 passed",
+      "log_sha256": "d8ad7867b0eda8129ce86168b9e0f17e57bb610ed2e8df4a1d20bdce31d67d0b"
+    },
+    "probe_and_installed_final": {
+      "summary": "11 passed in 37.33s",
+      "log_sha256": "574e061ef4f3c301b315fe852fe2064dd9e31e7970689e6c9ca2db7f99d6a812"
+    },
+    "refresh_races_red": {
+      "summary": "5 failed before fix",
+      "log_sha256": "abfb3993310e769309fea1e92b8b40d5b7db9831778fbc38dd1807c79694e08d"
+    },
+    "refresh_races_green": {
+      "summary": "8 passed",
+      "log_sha256": "d2b2b5c360fe229114352120f8e18e6904577da37b8c4cf3f69cd649bb920096"
+    },
+    "actual_save_red": {
+      "summary": "text-only Save draft loss reproduced",
+      "log_sha256": "63a5a934cc0d3b156444195b8966799b17f9623539c8cccc8064e666e7d8c26a"
+    },
+    "actual_save_green": {
+      "summary": "9 passed: actual Save, stale sessions, artwork, overlaps, replacement",
+      "log_sha256": "f54b5c5b3dd632a6778dbb2c5d7111e9bc892bd79199948e2234551db88d25a8"
+    },
+    "boot_deferral_red": {
+      "summary": "3 failed: absent-conversation import, deferred tracker state, boot absence",
+      "log_sha256": "920bf1873a8e68490cebee4fed326a340b12d0337720a61de6df948865521927"
+    },
+    "boot_deferral_behavior": {
+      "summary": "51 passed",
+      "log_sha256": "de58e441d580fa75891accd87addf6827d6c2548fea99b46ba4342d787bcca90"
+    },
+    "boot_ratchets_final": {
+      "summary": "29 passed; unchanged ceilings; local UI-ready 1030/1031",
+      "log_sha256": "af92eae6337cf2cada2d49c0e7e46a43a392567a29e13d0295c277c8420af1ce"
+    },
+    "disabled_rate_red": {
+      "summary": "3 failed before import guard",
+      "log_sha256": "3554f23b15534e54bdee029d7f61c1631604d5290148c6604d06b931f16384e6"
+    },
+    "rate_behavior_final": {
+      "summary": "38 passed",
+      "log_sha256": "9f646da3f1894cd408b64e6d91599c0961dfd56dd87347d294fcbb6ea1e86d7b"
+    },
+    "publish_installed_authoring_boot": {
+      "summary": "44 passed in 104.58s; 54 production files match installed wheel",
+      "log_sha256": "d7c3845af21b84e7687d175667ba0b0860617bb5b99e78500faaf6aa299c18a8"
+    },
+    "eval_rebackup_local": {
+      "summary": "exact Windows-failed recovery journey: 1 passed locally in 36.80s",
+      "log_sha256": "0cb665c9922a0a504d9184c1db6840bbbd7a8f71e9a28c828bd7f87659b890c3"
+    }
+  },
+  "legacy_differential_lint": [
+    {
+      "path": "Tests/Performance/test_ui_ready_module_census.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "Tests/ProductionApp/test_console_radio_portraits.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "Tests/ProductionApp/test_portrait_live_probe.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "Tests/TTS_Events/test_utterance_speech_entry.py",
+      "baseline": 3,
+      "current": 3,
+      "new": []
+    },
+    {
+      "path": "Tests/UI/test_console_hands_free_wiring.py",
+      "baseline": 6,
+      "current": 6,
+      "new": []
+    },
+    {
+      "path": "Tests/UI/test_console_marker_projection_fallback.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "Tests/UI/test_console_portrait_performance.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "Tests/UI/test_console_rate_chip_screen.py",
+      "baseline": 1,
+      "current": 1,
+      "new": []
+    },
+    {
+      "path": "Tests/UI/test_personas_portrait_performance.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+      "baseline": 59,
+      "current": 59,
+      "new": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/hands_free.py",
+      "baseline": 32,
+      "current": 32,
+      "new": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/transcript.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "baseline": 187,
+      "current": 186,
+      "new": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "baseline": 214,
+      "current": 214,
+      "new": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/character_expression_avatar.py",
+      "baseline": 0,
+      "current": 0,
+      "new": []
+    }
+  ],
+  "fresh_installed_production_files": 54,
+  "fresh_installed_mismatches": [],
+  "ci": "pending latest fix head; prior green results remain tied to their named heads",
+  "qodo": "unavailable: workspace credits exhausted",
+  "cubic": "unavailable: monthly line allowance exhausted",
+  "documentation_qa_artifacts_fully_automated_reviewed": false,
+  "full_uat_complete": false,
+  "live_qualified": false,
+  "live_configured_image_requests": 0,
+  "fallback_selected": false,
+  "latest_head_live_tts_rerun": false,
+  "historical_pocket_tts_source": "58ca4c1e06",
+  "independent_human_acceptance": false,
+  "shared_organization_settings_modified": false,
+  "paid_overages_enabled": false,
+  "follow_up_batches": [
+    {
+      "base_commit": "0cf888502e",
+      "findings": 2,
+      "reviewed_files": [
+        ".coderabbit.yaml",
+        "Docs/superpowers/reviews/2026-10-24-portrait-automated-review-follow-up.md",
+        "Tests/ProductionApp/test_console_radio_portraits.py",
+        "Tests/ProductionApp/test_portrait_live_probe.py",
+        "Tests/TTS_Events/test_utterance_speech_entry.py",
+        "Tests/UI/test_console_hands_free_wiring.py",
+        "Tests/UI/test_console_portrait_performance.py",
+        "Tests/UI/test_personas_portrait_performance.py",
+        "backlog/tasks/task-36555 - Qualify-composited-portrait-generation-through-restore-and-Console-playback.md",
+        "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+        "tldw_chatbook/UI/Console_Modules/hands_free.py",
+        "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "tldw_chatbook/UI/Screens/personas_screen.py",
+        "tldw_chatbook/Widgets/Console/character_expression_avatar.py"
+      ],
+      "log_sha256": "b5fc2614cced7aab62b5c3ae9495fd050a88ece13bf633f57f4c5426683e6b82",
+      "outcome": "completed"
+    },
+    {
+      "base_commit": "c4ea7272fc",
+      "findings": 2,
+      "reviewed_files": [
+        "Docs/superpowers/plans/2026-10-24-portrait-compositing-implementation.md",
+        "Docs/superpowers/reviews/2026-10-24-portrait-automated-review-follow-up.md",
+        "Tests/Performance/test_ui_ready_module_census.py",
+        "Tests/ProductionApp/test_console_radio_portraits.py",
+        "Tests/ProductionApp/test_portrait_live_probe.py",
+        "Tests/UI/test_console_marker_projection_fallback.py",
+        "Tests/UI/test_console_rate_chip_screen.py",
+        "Tests/UI/test_personas_portrait_performance.py",
+        "backlog/tasks/task-36555 - Qualify-composited-portrait-generation-through-restore-and-Console-playback.md",
+        "tldw_chatbook/UI/Console_Modules/transcript.py",
+        "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "tldw_chatbook/UI/Screens/personas_screen.py"
+      ],
+      "log_sha256": "5865812ec2e2e3a540183b313d7ab8a873b3204b8c589015fa65f66e6f18c818",
+      "outcome": "completed"
+    },
+    {
+      "base_commit": "37ed61380d",
+      "findings": 0,
+      "reviewed_files": [
+        "Docs/superpowers/plans/2026-10-24-portrait-compositing-implementation.md",
+        "Docs/superpowers/reviews/2026-10-24-portrait-automated-review-follow-up.md",
+        "Tests/Performance/test_ui_ready_module_census.py",
+        "Tests/ProductionApp/test_console_radio_portraits.py",
+        "Tests/ProductionApp/test_portrait_live_probe.py",
+        "Tests/UI/test_console_marker_projection_fallback.py",
+        "Tests/UI/test_console_rate_chip_screen.py",
+        "Tests/UI/test_personas_portrait_performance.py",
+        "backlog/tasks/task-36555 - Qualify-composited-portrait-generation-through-restore-and-Console-playback.md",
+        "tldw_chatbook/UI/Console_Modules/transcript.py",
+        "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "tldw_chatbook/UI/Screens/personas_screen.py"
+      ],
+      "log_sha256": "35363cdb94f1cb8d151c50c098846695c3ea86fb3afb14f795b926c6e4a11634",
+      "outcome": "completed"
+    }
+  ],
+  "subject_file_sha256": {
+    "Tests/Actor_Packs/test_actor_pack_export.py": "feae02c1be0312396620fd71ccae70b1791d7a55118629bec1c3d30dfda67b02",
+    "Tests/Audio/test_speech_presentation.py": "94064f6d59c04a366384231c0266ae94105cb69d0a1c4e1c57152252e382ef2b",
+    "Tests/Audio/test_streaming_sink.py": "2b206ae4a7068e15d7b573ca134e61c00fc813c5bcf44849547991c73254a28a",
+    "Tests/Audio/test_streaming_sink_presentation.py": "69aded671961d054480efdf5d2241f649d8a8bcf2718587c8a64998ecc393a06",
+    "Tests/Backup_Recovery/test_core_owners.py": "5e9e0cf651ed54f9cdc8f42235ffaad2f87cab6fa20011c999dd697184ed7e5b",
+    "Tests/Backup_Recovery/test_portrait_performance_restore.py": "8870f014e3b12890770f88b27f65273a9c987bfc7c6cab7b4912d3c5ae029f3e",
+    "Tests/Backup_Recovery/test_response_rules_restore.py": "7c0dca343eee12ccfcb41e4fe69c6ff061157e3de1e4d19b40eeb8a625a0cd46",
+    "Tests/ChaChaNotesDB/test_canvas_migration.py": "2e69ff06f4f86e22a8ebcc6441cec96b487e4109ee955b667262348ee6ab2281",
+    "Tests/ChaChaNotesDB/test_portrait_performance_migration.py": "964c342baae269b12a0d200bfc389cfce4f143f2fdefa4bfc3a71c29dede7a06",
+    "Tests/ChaChaNotesDB/test_portrait_performance_repository.py": "97e60d00cf3a0963641ab2553accaa2d0ee98d337023c01ef4d170fec462c09e",
+    "Tests/ChaChaNotesDB/test_portrait_region_settings.py": "83b508db07213c7f197220923c5119ac7f17a9e1411460064f11856c9e9cc943",
+    "Tests/ChaChaNotesDB/test_portrait_regions_migration.py": "f7d5e76c87035bc997e08637df872e8f2137854f486737604bbfb4ddaf0cd260",
+    "Tests/Character_Chat/test_character_backup_export_image.py": "54d6875129b7fbe1d3527f7b10b72ada3c48eceb85e79beb7b51c309a11f9d1c",
+    "Tests/Character_Chat/test_expression_generation.py": "b9cdc127ce5c2594ba218ce96cd36b9c5e03d316562acbf8483314c150d8c2ac",
+    "Tests/Character_Chat/test_portrait_compositing.py": "1990b59e52119c85fb2917cccb237abf36c83aca0563b3f0565240543848dbf9",
+    "Tests/Character_Chat/test_portrait_performance.py": "7f8035d9cfc1bf872e66655077030157f9aae702abba224c499caca3b5b5182b",
+    "Tests/Character_Chat/test_portrait_performance_authoring.py": "aee63daae8a2e9da37f2033ce6a7e54e11c369fb459cff6f59b0342f476586af",
+    "Tests/Character_Chat/test_portrait_performance_generation.py": "c4abc9c473f2b84b7ab660439eb475d7321e95388c24e9418dc5ff4dd59dc15d",
+    "Tests/Chat/test_portrait_performance_state.py": "3a12bf1e87c39993f8f24456653d6d0e7c43dd69c87f87885a43cf6902c5d9f9",
+    "Tests/Chatbooks/test_local_chatbook_service_export.py": "9332b283dfdbbec5803ca285494c3d27265ba2e07501002d68929c5da664e182",
+    "Tests/Performance/test_app_import_weight.py": "3a2fc739105137700ac6e8c53163575b88febd45c40e13d6f2bee1d192baac16",
+    "Tests/Performance/test_ui_ready_module_census.py": "6fe06f9cd91f1773c96ad1401da5bc479484f3597dbb0f969acce22a44159b56",
+    "Tests/ProductionApp/portrait_qualification_helpers.py": "eae89d654587eb2bc5365224b4b0ab7ad0b4ce5d0fb3b5f316cdd69c79afd76a",
+    "Tests/ProductionApp/test_backup_restore_end_to_end.py": "c596896a7b7f5d6acf53647a6416c31e8c71d870052f1d8d3132af0aab3e82c0",
+    "Tests/ProductionApp/test_console_radio_portraits.py": "25f3fab9695d45ce1a885978ea713d15cc4bb3e9886c9a1d7a2c8614becd19f7",
+    "Tests/ProductionApp/test_portrait_live_probe.py": "3e855b0f1cc2270abf6735cfd3ce43632fdf2dd36d88ed45053c0bdc61a73217",
+    "Tests/Scripts/test_check_textual_worker_contract.py": "8c3449cf05bfa7b623579082b8df9574f7e185e01c1272c1f746392c7fccab4d",
+    "Tests/TTS/test_buddy_guarded_speech.py": "239cc3a6af9ff06dc2a7f3285634b46f2cadba898d8f0bc42625cf234a47a3a9",
+    "Tests/TTS/test_console_speak_autoplay.py": "fc14b62ebf5eb432a15ddd6892718391399bf57a7819f759f4526eb8aff7fea2",
+    "Tests/TTS/test_console_speech_presentation.py": "f3f4bb598fba252c5aa79e863e4a3cf77f826c1607a613713241c32abd23c7e5",
+    "Tests/TTS/test_console_speech_snapshot_admission.py": "a5f9c48ba42bd2ca9d8f3a3ba2195f5b4d5bcf31f04c42726a4b958ab8fb8e10",
+    "Tests/TTS_Events/test_spoken_feedback_streaming.py": "fd8f784529a37f6f77ad6ccee29c46a41a87c98815e9afa324f9f4fc579fbcc1",
+    "Tests/TTS_Events/test_utterance_speech_entry.py": "3e4a96505ae1a8bffdd358c7c7506d8b84170ae3e8eb07981d53438ec60ce906",
+    "Tests/UI/test_console_avatar_geometry_offloop.py": "a499f8b7ca70180e84c4a6f628001acf8775bbf92f8d4c1e15c8d9ce5aebe67a",
+    "Tests/UI/test_console_character_avatar.py": "3f548c8dd7947666bc12978ad7c148949f96f5b1a37a1d78d69a4c1e40c82fd5",
+    "Tests/UI/test_console_character_avatar_copy_budget.py": "52e394d7432b3d5b46fd55afa697842a46c7ce4a7f6edc5e74bff72492cbfb81",
+    "Tests/UI/test_console_control_bar_coalescing.py": "d5a2a1fc30dae63023c856ab65873c23a5569fe6ec2f6098a8dfd0647c13e274",
+    "Tests/UI/test_console_hands_free_wiring.py": "6b48d3989dc56e06fd3ff3bbc737b985d0604b2443e64877c30b3f32c7e1bacf",
+    "Tests/UI/test_console_marker_projection_fallback.py": "87d7ead8a19c005c1e7ac35f899939c93f7d82c5d4ef992a945d57707290dd81",
+    "Tests/UI/test_console_portrait_performance.py": "6daca425afe9de9bd8d521126d1c9cff31752245ffab396cc68edbdddda8ae93",
+    "Tests/UI/test_console_radio_portrait.py": "6ba41c0826d4c7249e4412c700fb95d295f10c6354f047463b88350864667a76",
+    "Tests/UI/test_console_rate_chip_screen.py": "02195701c48b640802358ac9c6e204080065381958d5b51fd456169e8020aa39",
+    "Tests/UI/test_library_media_actions_target_opened_item.py": "dab451a6067abd852a978785d0ea92279c18db6de13f1915f0ffb8ce16e87bc5",
+    "Tests/UI/test_personas_expression_slots.py": "6efdcdddd21e8a494b944c8b40b6592a4ce11b4d4f73aab4ccc38869c30fec8c",
+    "Tests/UI/test_personas_portrait_performance.py": "dfb86715ae50cda864bf6c9956949b5d7d9e93fc89c6e774253bad98e0f6fddf",
+    "Tests/UI/test_personas_portrait_performance_generate.py": "d4bf0076bc40a5dcaf7d895e78cd5fd5693b6b27a3c4c0ffd59d7058a783776b",
+    "Tests/UI/test_portrait_composition_review.py": "a9cb50e1bb9ebc73d7a8d2d82ea3ed10400d46f65afa3ec7ccb1321c0a715d76",
+    "Tests/UI/test_portrait_region_editor.py": "b58b032e7df58040c9d9662b4def4ef7294a5d76a2d3bcefcb76c44d8fd1b207",
+    "Tests/UI/test_theme_contrast.py": "1be42de62fb367a8d76099b83244809993b0740b0808ef751468c168ea5b8d8f",
+    "Tests/Utils/test_mosaic_render.py": "0164517d2e4b8a09b2933e302cd457892230fbfa1ae00ec6a0662790e2b126e8",
+    "tldw_chatbook/Audio/speech_presentation.py": "d94f15502294469fb9250da955e597d51d6e451d12fb2b71efbe4ef83df1da94",
+    "tldw_chatbook/Audio/streaming_sink.py": "76780326c4777dd0522e3f093170a44b129888714576ed403255b4b13a141059",
+    "tldw_chatbook/Backup_Recovery/sqlite_validation.py": "81d6dd4533e06f84811ccb2fb1078aab5743e6b75cde6a914ded3ed248e27d85",
+    "tldw_chatbook/Character_Chat/expression_generation.py": "daf2d4f0a6a5d1ee1464642b8114d285045eecd81e2152f32ab0175bb7f45a25",
+    "tldw_chatbook/Character_Chat/portrait_compositing.py": "7233dd53ba2df3d06b86d269626ffa03c6f90f99b597fb024946d8973577f9c2",
+    "tldw_chatbook/Character_Chat/portrait_performance.py": "a794dbfd9ad2b8d643152d4ebe279f646c44ef9f68c4f0950738441401390dcd",
+    "tldw_chatbook/Character_Chat/portrait_performance_authoring.py": "82df90f4d8ee8898427526d560ab13d69338713aba2960380ecd92a979ddba2b",
+    "tldw_chatbook/Chat/character_expression_playback.py": "9c9ba98b14b7f4a2aa46c387ed37dd10567e74332af68736c8592073499621cb",
+    "tldw_chatbook/Chat/portrait_performance_state.py": "aa1e7b651e5136b5ace607097ed7044607c9172e4715a5c0146281eb2a90ed42",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": "8564e9ff217015cb9ab9ea941160ba34a5939f911cf2fbedb9ef362c9e0b7f7c",
+    "tldw_chatbook/DB/migrations/chachanotes_v82_to_v83_portrait_performance.sql": "dd91852a82cb6feaee86b3d446cdb2cd7102a4cacd41fc34db139cfeaa2d1853",
+    "tldw_chatbook/DB/migrations/chachanotes_v83_to_v84_portrait_regions.sql": "d14cc8659526c656df2fd8117c2ed20f8c65dad47990909944bd30a29e24e1d5",
+    "tldw_chatbook/DB/portrait_region_settings.py": "8543b2cd5cc9a29c36f5e2781aa1426897fb3e4ac7f699492d4a0fa5cccdac13",
+    "tldw_chatbook/DB/recovery_core.py": "3872a04de3130703c84fca73740b70d8d5eeb21b2b1ee1df40e1ae91cd5a096f",
+    "tldw_chatbook/DB/recovery_core_schema.py": "ac96481309910842edacd64abe13b9ca9cb7220133418db2e3c8e61eedd4cb82",
+    "tldw_chatbook/DB/sql_validation.py": "2a502590681089586df7b44ebe3b18ae1b803b0fed1236161f713bd36d81846a",
+    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": "2d6a84cf97c08ccca3cb609ebac445154497291fb226db23a17f64c5f1e88957",
+    "tldw_chatbook/Media_Creation/__init__.py": "7997e082dc31432dc9822a153b7b4025dedf0e2b3be7057d653894962171ed37",
+    "tldw_chatbook/UI/Console_Modules/character.py": "a92e92632c6bac00cf4f86ea05faaed2e488483a8575738ae20bd5153da081d7",
+    "tldw_chatbook/UI/Console_Modules/hands_free.py": "a10889181f0bf96d593ce9e7d3a048f55672203eadf6ef0b086e1feaa40b3a89",
+    "tldw_chatbook/UI/Console_Modules/left_rail.py": "980e880b2f609ccb537cb02832ddb45703410219f673f596bcc8d1563cce82d7",
+    "tldw_chatbook/UI/Console_Modules/message.py": "e49078168bbe4bfc6701fb7a80ffe561e4ddba01dbd63cfe5ae356eda9447aed",
+    "tldw_chatbook/UI/Console_Modules/transcript.py": "9bbb94977290489c6af0e3735e040a02f383515dff52334a757a561c73f5e6de",
+    "tldw_chatbook/UI/Console_Modules/wiring.py": "7e28cfa9efa3720cae297f4a8d204975f14828c63af427a48f07251999d6ca36",
+    "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py": "ce6fc980a9b5f75ccf5cf37def6d7e8df3266687e1fbdb3463022c3951a8fd53",
+    "tldw_chatbook/UI/Persona_Modules/portrait_composition_generation.py": "93d8b04b775ae754fa8261a086f535cfd9cacdd28c521a1974da2f438a4b10a0",
+    "tldw_chatbook/UI/Persona_Modules/portrait_performance.py": "0e12e7ec651061c5e4df8f738d17b8c32142fa1446d27c268ad5073e0f81e8b2",
+    "tldw_chatbook/UI/Persona_Modules/portrait_regions.py": "7403a6c9b910b07ef4abe1fd6651b57feb05fbd8c8a6cce4502bd037cd08140e",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "e7367d6bbd7c27d3a7f9444dca932bc51ffb41f613380a9674eef96b2e8f72ae",
+    "tldw_chatbook/UI/Screens/personas_screen.py": "006854aaabd21795e5d5f5edaa7a65aa8c5af4f1a43a2ea6b952d0ee42ba4589",
+    "tldw_chatbook/Utils/mosaic_render.py": "b87f203cd3d3da47c6d5b4b225c7399e8d4eb5853de5d5bbb2bd8294bacf6293",
+    "tldw_chatbook/Widgets/Console/character_expression_avatar.py": "8c22823533f2accb461c9cde140e642ea8de331d864bde4579d236f189a63b3b",
+    "tldw_chatbook/Widgets/Console/portrait_radio.py": "7bd93ccfe0735f4445ed685c2dbe6a5ce00a392d2c6566167a8346139ba23f46",
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py": "bf5e05b0361990cb6d16815f08ff6697ab7f7e49e7cc21350ff8fe834a19fe76",
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py": "b668352550fb9e705c8a95314dee63e1a11c8b731a8ce152fa9a8bac972cce00",
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py": "b958cd67f5ef3c2e513998c2aedfbef6f04d6c0f1437a61c0c4c463ae3b9eda6",
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_performance_editor.py": "3aa46029f995e9f71a94ae48f5f18db7220b89e9c247a416b60b523854242516",
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py": "b47df55c402a185326b2030cd35931174ed8f8b3ed139da21ac2a6105f73a7e9",
+    "tldw_chatbook/app_speech.py": "ae79743eac651bf5a54373fbe8a960b985f3e338ab61a12b3fb734d7a052b73b",
+    "tldw_chatbook/css/components/_dialogs.tcss": "0fbab409e4aaa799df1ba6c524bc1df998a134a9cdbe4283b0b6a8560a5466eb",
+    "tldw_chatbook/css/core/_variables.tcss": "1db06564f2023c0829433033258dc916d868510ef1ef3b0f0d32648e96a835cd",
+    "tldw_chatbook/css/features/_console_panels.tcss": "3e05ec27c76513c1a85c10ecab0e0697d3f193e8186f72026b01418ae7d5d744",
+    "tldw_chatbook/css/screen_agentic_library.tcss": "e62160439101347bb520625dcac19fb50924c39c0db7a9750eeb54ab7795c4cc",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "0732dd419fb03665d9d593b13ca7bfdddb51334635bce35a2a2a7da843a60085",
+    "tldw_chatbook/css/screen_feature_evals.tcss": "8fad238aaa58b64ccd1c78d9b816e0353dbdcd7de16068414914b670d1715df0",
+    "tldw_chatbook/css/screen_feature_roleplay.tcss": "53910cdb7747759b2f68bfb74af2f85401a720020c3212ccb41b598970c63962",
+    "tldw_chatbook/css/screen_feature_scheduling.tcss": "52f10741486c25234f5023b1d8df271a56e1232be4c70926ae5a67642aafb72c",
+    "tldw_chatbook/css/screen_feature_watchlists.tcss": "80f31905c9fb1ca6622f278077bd2e895b1dde16df76ed30c531dea0c3d5dffd",
+    "tldw_chatbook/css/screen_feature_workflows.tcss": "1e1f92e2070a7ef40e67db7011a1065146cc156f13eb9cf60ebde01c3f1cf6e0",
+    "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss": "db23f9bb8d64d5670c0c3611467096864adb9fe2b784a8e100a6bf2e418dd5db",
+    "tldw_chatbook/css/screen_modal_file_notes_history.tcss": "73859f09db56219d2c27e3f8a33b20c4f48296b3cc7582ffedf2d06793de31cd",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "61cf7bc43b71be78d838f74788206da7a60207e9a50deace7f98e00e0e815476",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "60f78d12c4df1b215da95b6f592e3d714068f55e5c48e116aeb1309eccfc0b9e",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "7bc425d2e88830485be7a8c176eeeb19bfdb6c2b38e9bc4283f6d6456d499ac1"
+  },
+  "changed_application_files": 54,
+  "changed_test_files": 50,
+  "ci_observations": {
+    "c4ea7272fc": "UI-ready module ceiling failed at 1033/1031; timing-dependent residents isolated, two first-use costs deferred. Windows recovery hit its unchanged 30s capture watchdog; TTS shutdown cancellation secondary. Latest CI required; no capture limit relaxed."
+  },
+  "post_review_only_code_change": "Formatting of the appended rate tests; production and test behavior unchanged.",
+  "initial_published_fix_head": "c4ea7272fcf2c96861d1834b9fa1dbe38bdb0ee4"
+}
