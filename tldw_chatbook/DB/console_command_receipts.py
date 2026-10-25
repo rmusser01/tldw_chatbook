@@ -186,7 +186,17 @@ class ConsoleCommandReceiptRepository:
                 ).fetchone()[0]
                 >= MAX_COMMAND_RECEIPTS
             ):
-                raise ConsoleReceiptCapacity("command_receipt_capacity")
+                # Old owner tickets cannot execute. Reclaim only one known handoff
+                # when pressure requires it, preserving the rest for review.
+                reclaimed = connection.execute(
+                    "DELETE FROM console_command_receipts WHERE command_id=("
+                    "SELECT command_id FROM console_command_receipts "
+                    "WHERE owner_epoch<>? AND state IN ('accepted','queued','applied','refused') "
+                    "ORDER BY updated_at,command_id LIMIT 1)",
+                    (receipt.owner_epoch,),
+                ).rowcount
+                if not reclaimed:
+                    raise ConsoleReceiptCapacity("command_receipt_capacity")
             connection.execute(
                 "INSERT INTO console_command_receipts VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (

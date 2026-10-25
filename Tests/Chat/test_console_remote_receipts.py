@@ -750,3 +750,53 @@ async def test_preclaim_pruning_recovers_only_expired_completed_capacity(
     with pytest.raises(ExpiredConsoleCommand):
         await owner.submit(first.token, {})
     assert commands.calls == 2
+
+
+@pytest.mark.parametrize("state", ["accepted", "queued", "applied", "refused"])
+async def test_duplicate_crossing_expiry_during_retention_never_dispatches_again(
+    receipt_owner, state
+):
+    owner, commands, _advance = receipt_owner
+    commands.result = {"state": state, "native_id": "native-a"}
+    ticket = owner.issue("send", target(), {})
+    original = await owner.submit(ticket.token, {})
+    readings = iter([original.expires_ns - 1, original.expires_ns])
+    owner.monotonic_ns = lambda: next(readings, original.expires_ns)
+    assert await owner.submit(ticket.token, {}) == original
+    assert owner.query(ticket.command_id) == original
+    assert commands.calls == 1
+
+
+@pytest.mark.parametrize("full_stop", [False, True])
+async def test_new_effect_crossing_expiry_inside_claim_is_refused(
+    receipt_owner, monkeypatch, full_stop
+):
+    from tldw_chatbook.DB import console_command_receipts as module
+
+    owner, commands, _advance = receipt_owner
+    if full_stop:
+        monkeypatch.setattr(module, "MAX_COMMAND_RECEIPTS", 0)
+    exact = target().model_copy(update={"run_id": "run-a"})
+    ticket = owner.issue("stop" if full_stop else "send", exact, {})
+    now = [1_000_000_000]
+    owner.monotonic_ns = lambda: now[0]
+    original_claim = owner.repository.claim
+
+    def claim_crossing_deadline(receipt):
+        try:
+            return original_claim(receipt)
+        finally:
+            now[0] = receipt.expires_ns
+
+    monkeypatch.setattr(owner.repository, "claim", claim_crossing_deadline)
+    with pytest.raises(ExpiredConsoleCommand):
+        await owner.submit(ticket.token, {})
+    assert commands.calls == 0
+    stored = owner.query(ticket.command_id)
+    if full_stop:
+        assert stored is None
+    else:
+        assert stored.state == "refused" and stored.reason == "command_expired"
+    with pytest.raises(ExpiredConsoleCommand):
+        await owner.submit(ticket.token, {})
+    assert commands.calls == 0

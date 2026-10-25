@@ -252,7 +252,12 @@ A losing answer returns refused, even when the same round is already resolved.
 Interrupted cross-database handoffs stay unknown unless an exact native observer supplies a later fact.
 `console.receipt.request` accepts exactly `command_id` and returns `receipt` or
 null; absence does not authorize replay. Prior-epoch receipts remain readable in
-the canonical profile while old tickets cannot execute.
+the canonical profile while old tickets cannot execute. At full capacity, a new
+claim can replace one oldest known prior-owner receipt; pending/unknown evidence
+is protected. Verification and same-owner pruning share one clock reading to
+preserve a duplicate at the expiry boundary. A new claimed command or capacity
+Stop fallback rechecks expiry immediately before its native handoff; time spent
+in repository work cannot extend its ticket.
 
 Snapshots include bounded `command_receipts` and `next_receipt_cursor` fields;
 pass the latter as `receipt_cursor` independently of transcript `cursor`.

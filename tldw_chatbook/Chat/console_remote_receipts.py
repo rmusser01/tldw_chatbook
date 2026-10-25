@@ -90,7 +90,9 @@ class ConsoleRemoteReceipts:
             encoded + "." + self._mac(b"ticket:", encoded.encode()), command_id
         )
 
-    def _verify(self, token: str, payload: dict) -> ConsoleCommandReceipt:
+    def _verify(
+        self, token: str, payload: dict, *, now_ns: int
+    ) -> ConsoleCommandReceipt:
         try:
             if not isinstance(token, str) or len(token) > 16384:
                 raise ValueError
@@ -105,7 +107,7 @@ class ConsoleRemoteReceipts:
                 for key in ("server_epoch", "console_id")
             ):
                 raise ExpiredConsoleCommand("command_expired")
-            if self.monotonic_ns() >= data["expires_ns"]:
+            if now_ns >= data["expires_ns"]:
                 raise ExpiredConsoleCommand("command_expired")
             if not hmac.compare_digest(
                 data["payload_fingerprint"], self._fingerprint(payload)
@@ -122,11 +124,16 @@ class ConsoleRemoteReceipts:
             raise ValueError("invalid_command_ticket") from error
 
     async def submit(self, ticket: str, payload: dict) -> ConsoleCommandReceipt:
-        receipt = self._verify(ticket, payload)
-        self.repository.prune_invalid(receipt.owner_epoch, self.monotonic_ns())
+        # Use the same admission instant for verification and retention: a duplicate
+        # must not prune its own receipt if the clock crosses expiry between them.
+        now_ns = self.monotonic_ns()
+        receipt = self._verify(ticket, payload, now_ns=now_ns)
+        self.repository.prune_invalid(receipt.owner_epoch, now_ns)
         try:
             claim = self.repository.claim(receipt)
         except ConsoleReceiptCapacity:
+            if self.monotonic_ns() >= receipt.expires_ns:
+                raise ExpiredConsoleCommand("command_expired") from None
             if (
                 receipt.action not in {"stop", "subagent_stop"}
                 or not isinstance(receipt.target, ConsoleTarget)
@@ -149,6 +156,16 @@ class ConsoleRemoteReceipts:
             )
         if not claim.inserted:
             return claim.receipt
+        # Sole dispatch ownership is established, but repository work may have
+        # consumed the remaining lifetime. No new native handoff may start then.
+        if self.monotonic_ns() >= receipt.expires_ns:
+            self.repository.transition(
+                receipt.command_id,
+                expected_state="pending",
+                state="refused",
+                reason="command_expired",
+            )
+            raise ExpiredConsoleCommand("command_expired")
         try:
             outcome = await self.commands.execute(
                 receipt.action, receipt.target, payload, receipt.command_id

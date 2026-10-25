@@ -112,7 +112,10 @@ An atomic `claim` returns explicit `inserted` ownership. A pending row does not
 permit dispatch. The internal total bound is 4,096 receipts: capacity refuses
 new non-idempotent effects. Pre-claim pruning can remove known acceptance,
 queue, application or refusal evidence only after expiry in that same owner
-clock domain; pending/unknown and prior-owner evidence stays queryable.
+clock domain. Prior-owner known outcomes remain queryable after restart; only
+at full capacity does a new claim atomically reclaim one oldest known prior-owner
+outcome to admit one command. Matching retries reclaim nothing. Pending/unknown
+and current-owner valid evidence are never reclaimed under pressure.
 A new served owner changes prior pending handoffs to `outcome_unknown`, without
 replaying them or changing the original native run/dispatch recovery facts.
 Unresolved reads use bounded keyset pages, including receipts for closed chats.

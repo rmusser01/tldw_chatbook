@@ -134,3 +134,99 @@ def test_expired_known_acceptance_can_prune_but_never_valid_evidence(repository)
         repository.claim(receipt(f"known-{index}", state=state))
     assert repository.prune_invalid(receipt().owner_epoch, 300) == 0
     assert repository.prune_invalid(receipt().owner_epoch, 301) == 4
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_full_prior_owner_known_receipts_reclaim_only_one_under_pressure(
+    repository, protected
+):
+    from tldw_chatbook.DB.console_command_receipts import MAX_COMMAND_RECEIPTS
+
+    current = ConsoleHostIdentity(server_epoch="successor", console_id="console")
+    protected_receipts = (
+        [
+            receipt("old-pending", state="pending"),
+            receipt("old-unknown", state="outcome_unknown"),
+            receipt(
+                "current-valid",
+                server_epoch=current.server_epoch,
+                target=current,
+                state="accepted",
+                expires_ns=999999,
+            ),
+        ]
+        if protected
+        else []
+    )
+    known_count = MAX_COMMAND_RECEIPTS - len(protected_receipts)
+    for index in range(known_count):
+        repository.claim(
+            receipt(
+                f"known-{index:04}",
+                state=("accepted", "queued", "applied", "refused")[index % 4],
+                updated_at="2026-10-25T00:00:00+00:00",
+            )
+        )
+    for item in protected_receipts:
+        repository.claim(item)
+    owner_epoch = receipt(
+        "new", server_epoch=current.server_epoch, target=current
+    ).owner_epoch
+    repository.invalidate_prior_owner(owner_epoch)
+    # Restart alone retains all known history for review, without interpreting old clocks.
+    with repository.runs_db.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM console_command_receipts"
+            ).fetchone()[0]
+            == MAX_COMMAND_RECEIPTS
+        )
+    assert repository.get("known-0000") is not None
+    new = receipt("new", server_epoch=current.server_epoch, target=current)
+    assert repository.claim(new).inserted
+    assert repository.get("known-0000") is None
+    assert repository.get("known-0001") is not None
+    with repository.runs_db.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM console_command_receipts"
+            ).fetchone()[0]
+            == MAX_COMMAND_RECEIPTS
+        )
+    assert not repository.claim(new).inserted
+    assert repository.get("known-0001") is not None  # Matching retries reclaim nothing.
+    with pytest.raises(ValueError, match="mismatch"):
+        repository.claim(replace(new, payload_fingerprint="b" * 64))
+    assert repository.get("known-0001") is not None
+    if protected:
+        assert repository.get("old-pending").state == "outcome_unknown"
+        assert repository.get("old-unknown").state == "outcome_unknown"
+        assert repository.get("current-valid").state == "accepted"
+
+
+def test_pressure_does_not_discard_uncertain_or_current_owner_receipts(
+    repository, monkeypatch
+):
+    from tldw_chatbook.DB import console_command_receipts as module
+
+    monkeypatch.setattr(module, "MAX_COMMAND_RECEIPTS", 3)
+    current = ConsoleHostIdentity(server_epoch="successor", console_id="console")
+    for item in (
+        receipt("old-pending"),
+        receipt("old-unknown", state="outcome_unknown"),
+        receipt(
+            "current-valid",
+            server_epoch=current.server_epoch,
+            target=current,
+            state="accepted",
+        ),
+    ):
+        repository.claim(item)
+    with pytest.raises(module.ConsoleReceiptCapacity):
+        repository.claim(
+            receipt("new", server_epoch=current.server_epoch, target=current)
+        )
+    assert all(
+        repository.get(key) is not None
+        for key in ("old-pending", "old-unknown", "current-valid")
+    )
