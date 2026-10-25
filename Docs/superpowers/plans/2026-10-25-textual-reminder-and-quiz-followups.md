@@ -56,9 +56,13 @@ Reason: localized UI scheduling and publication corrections; no storage, ownersh
 
 ## Integration and delivery
 
-- [ ] Append every new UI regression selector to the PR census without changing the existing prefix; register new split-file completeness requirements and raise only the literal census floor.
-- [ ] Run targeted census/queue/ID contracts, changed-source lint/format and required source guards; preserve existing budgets and coverage.
-- [ ] Generate the full branch review package and dispatch a fresh Superpowers reviewer. Resolve substantive findings with red/green evidence and record every scope ruling.
-- [ ] Finalize task acceptance criteria/notes/status through Backlog CLI once their definition of done is met.
+- [x] Append every new UI regression selector to the PR census without changing the existing prefix; register new split-file completeness requirements and raise only the literal census floor.
+- [x] Run targeted census/queue/ID contracts, changed-source lint/format and required source guards; preserve existing budgets and coverage.
+- [x] Generate the full branch review package and dispatch a fresh Superpowers reviewer. Resolve substantive findings with red/green evidence and record every scope ruling.
+- [x] Finalize task acceptance criteria/notes/status through Backlog CLI once their definition of done is met.
 - [ ] Rebase latest dev if necessary, push with an explicit lease, create and attach the PR against dev, and monitor natural CI/review feedback to green.
 - [ ] Save durable QA receipts, archive this plan's scratch ledger before its cleanup, and report PR/test outcomes and any rulings or deferred minors.
+
+## Review correction
+
+- [x] Pin actual Flashcards panel retirement and a replacement quiz panel before/after held Start settles, for shell and inner entries. Keep server completion truthful with its attempt ID; do not write a retired or replacement panel. Return navigation and a fresh explicit Start remain usable. This implements ADR-033 publication ownership and does not extend question-list TASK-34752.

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 from textual.message import Message
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp, BUNDLED_STYLESHEET
@@ -241,5 +241,70 @@ async def test_start_refusal_or_failure_allows_retry(request, entry, failure):
         assert (
             str(window.query_one("#quiz-attempt-status", Static).render())
             == "Question 1 of 1."
+        )
+        assert app._exception is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["shell", "inner"])
+@pytest.mark.parametrize(
+    "return_before_response", [False, True], ids=["return-after", "return-before"]
+)
+@private_profile_test
+async def test_start_completion_respects_replaced_quiz_panel(
+    request, entry, return_before_response
+):
+    client = Client()
+    app = Host(client)
+    async with app.run_test(size=(180, 80)) as pilot, release_on_exit(client):
+        screen, window = await open_quizzes(app, pilot)
+        original_answer = window.query_one("#quiz-answer-input", Input)
+        start_button(screen, entry).press()
+        await asyncio.wait_for(client.entered.wait(), 5)
+        held_workers = set(app.workers)
+        screen.query_one("#view-flashcards-btn", Button).press()
+        await until(
+            lambda: screen.current_section == "flashcards"
+            and not original_answer.is_attached
+        )
+        app.post_message(AuditPing())
+        await until(lambda: app.pings == 1)
+        if return_before_response:
+            screen.query_one("#view-quizzes-btn", Button).press()
+            # Initialization workers complete independently of the held Start worker.
+            await until(lambda: len(window.query("#quiz-answer-input")) == 1)
+            await until(lambda: not start_button(screen, entry).disabled)
+            await pilot.pause()
+            for worker in list(app.workers):
+                if worker not in held_workers:
+                    await worker.wait()
+            await pilot.pause()
+            replacement_answer = window.query_one("#quiz-answer-input", Input)
+            assert replacement_answer is not original_answer
+            replacement_answer.value = "replacement draft"
+            await pilot.pause()
+            assert replacement_answer.value == "replacement draft"
+            assert not client.release.is_set()
+        client.release.set()
+        await settle(app, pilot)
+        assert app._exception is None
+        assert client.calls == 1 and client.cancelled == 0
+        if return_before_response:
+            assert replacement_answer.value == "replacement draft"
+        assert any("21" in message and "panel" in message for message in app.notices)
+        if not return_before_response:
+            assert screen.current_section == "flashcards"
+            screen.query_one("#view-quizzes-btn", Button).press()
+            await settle(app, pilot)
+        assert window.quizzes_controller.current_attempt_id is None
+        start = start_button(screen, entry)
+        assert not start.disabled
+        start.press()
+        await settle(app, pilot)
+        assert window.quizzes_controller.current_attempt_id == "21"
+        assert client.calls == 2 and client.cancelled == 0
+        assert (
+            str(window.query_one("#quiz-attempt-question", Static).render())
+            == "Two plus two"
         )
         assert app._exception is None

@@ -1295,3 +1295,9 @@ Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_
 Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[request-inner]
 Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[policy-shell]
 Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[policy-inner]
+
+# TASK-36729 review: actual panel retirement and replacement before/after settlement.
+Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-after-shell]
+Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-after-inner]
+Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-before-shell]
+Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-before-inner]

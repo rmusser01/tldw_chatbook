@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from rich.markup import escape
 from rich.text import Text
 from textual.widgets import Input, Label, ListItem, ListView, Select, Static, TextArea
 
@@ -741,6 +742,7 @@ class StudyQuizzesController:
             f"quiz.attempt.create.{self._current_mode()}"
         ):
             return
+        answer_input = self.window.query_one("#quiz-answer-input", Input)
         self._attempt_start_pending = True
         try:
             try:
@@ -754,13 +756,18 @@ class StudyQuizzesController:
                 self._notify("Failed to start quiz attempt.", severity="error")
                 return
 
-            self.current_attempt_id = str(
-                attempt.get("backing_id") or attempt.get("id") or ""
-            )
+            attempt_id = str(attempt.get("backing_id") or attempt.get("id") or "")
+            if not answer_input.is_attached or self.window.current_view != "quizzes":
+                self._notify(
+                    f"Quiz attempt {escape(attempt_id)} started after its panel closed.",
+                    severity="information",
+                )
+                return
+            self.current_attempt_id = attempt_id
             self.current_attempt_questions = list(attempt.get("questions") or [])
             self.current_attempt_answers = []
             self.current_question_index = 0
-            self.window.query_one("#quiz-answer-input", Input).value = ""
+            answer_input.value = ""
 
             if not self.current_attempt_questions:
                 self.reset_attempt_panel("This quiz has no questions yet.")

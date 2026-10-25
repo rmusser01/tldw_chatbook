@@ -1,7 +1,7 @@
 ---
 id: TASK-36728
 title: Keep inline reminder edits independent across reminder identities
-status: In Progress
+status: Done
 created_date: 2026-10-25 03:46
 labels:
 - scheduling
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3243.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 17:44
+updated_date: 2026-10-25 18:17
 ---
 
 ## Description
@@ -43,10 +43,10 @@ Reason: Bounded correction within the existing inline-edit owner and mutation se
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 While an inline timezone save for reminder A is pending, an accepted timezone edit for distinct reminder B cannot silently cancel A; each accepted edit retains its original reminder ID and submitted value, or a truthful explicit refusal is shown.
-- [ ] #2 Ordinary serial edits still save both reminders, and a later intent for the same reminder and field cannot be overwritten by an older completion.
-- [ ] #3 Existing local/server validation, failure and retry, queued/offline and transfer restrictions remain intact; cancellation is never presented as proof of remote rollback.
-- [ ] #4 Deterministic mounted tests exercise the real reminder detail events, service and private SQLite with a held client await, cover cross-reminder overlap, same-reminder and serial controls, and observe settlement and user-visible failure outcomes.
+- [x] #1 While an inline timezone save for reminder A is pending, an accepted timezone edit for distinct reminder B cannot silently cancel A; each accepted edit retains its original reminder ID and submitted value, or a truthful explicit refusal is shown.
+- [x] #2 Ordinary serial edits still save both reminders, and a later intent for the same reminder and field cannot be overwritten by an older completion.
+- [x] #3 Existing local/server validation, failure and retry, queued/offline and transfer restrictions remain intact; cancellation is never presented as proof of remote rollback.
+- [x] #4 Deterministic mounted tests exercise the real reminder detail events, service and private SQLite with a held client await, cover cross-reminder overlap, same-reminder and serial controls, and observe settlement and user-visible failure outcomes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,3 +54,9 @@ Reason: Bounded correction within the existing inline-edit owner and mutation se
 <!-- SECTION:PLAN:BEGIN -->
 1. Read the task, existing scheduling owner, lessons and ADR context; reproduce pending cross-reminder edits through real mounted rows and service/private SQLite. 2. Add regressions for independent and same-reminder targets plus stale row feedback, serial success and failure/refusal. Observe expected RED before production changes. 3. Bind existing worker exclusivity to reminder identity plus field, and restrict row feedback to its captured target while preserving service/refresh semantics. 4. Run targeted new and affected existing tests and scoped lint/source guards; request fresh Superpowers branch review. 5. Record evidence, check all ACs and mark Done through CLI after verification. ADR required: no. ADR path: backlog/decisions/018-local-server-hybrid-scheduled-tasks.md; backlog/decisions/116-schedules-inspector-editing.md (Proposed context). Reason: bounded UI owner/publication correction, no service/storage/sync policy change. Full plan: Docs/superpowers/plans/2026-10-25-textual-reminder-and-quiz-followups.md.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Captured reminder identity now scopes worker exclusivity per field, so editing another reminder no longer cancels an accepted save. Completion feedback checks the currently displayed reminder; earlier success cannot clear another row's error, and earlier failure/refusal is reported globally when its row has been reused. Existing same-target supersession, validation, queued/offline and transfer behavior stays with SchedulingService. Changed schedules_workbench.py, mounted regression file and scheduling architecture docs. Verification: 8 new mounted cases plus 2 existing inline controls pass, zero skips/errors; expected RED observed first; scoped Ruff/format and source guards pass (unmodified Canvas pinned-runtime qualification is reserved for hosted CI). Fresh Superpowers review found no reminder issues. No new ADR: implements ADR-018; ADR-116 remains Proposed context. Evidence: Docs/superpowers/qa/2026-10-25-textual-reminder-and-quiz-followups.md. PR delivery and hosted checks are followed through in this request.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

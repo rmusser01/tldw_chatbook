@@ -520,8 +520,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36694 adds all thirteen ordinary button/delivery controls.
 
 # Final TASK-36695/36698 review adds four positive/pruning controls.
-# TASK-36728/36729 append eighteen mounted cases; existing shard slots stay fixed.
-MINIMUM_FILES = 863
+# TASK-36728/36729 append twenty-two mounted cases; existing shard slots stay fixed.
+MINIMUM_FILES = 867
 
 
 def read_census(path: Path) -> list[str]:
