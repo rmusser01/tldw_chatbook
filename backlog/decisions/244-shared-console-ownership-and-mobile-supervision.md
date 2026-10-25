@@ -1,6 +1,6 @@
 # ADR-244: Shared Console ownership and mobile agent supervision
 
-Status: Accepted in conversation (design only; written-spec review pending)
+Status: Accepted 2026-10-25 (design only; written review and six corrections complete)
 Date: 2026-10-25
 Related Task: [TASK-36728](../tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Spec: [Shared Console ownership and mobile supervision](../../Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md)
@@ -40,14 +40,20 @@ a second execution system behind an improved mobile UI.
 2. Keep execution in the existing Console runtime and domain owners. Retain one
    served child App/runtime per canonical profile/storage identity, containing
    that profile's open chats. A small served registry routes clients and live
-   chat identities. Hold a process execution fence before runtime construction
-   and run recovery. Native and served execution entry points must honor it;
-   non-owning readers cannot sweep another process's runs. No new agent engine,
-   job scheduler or mobile controller is introduced.
+   chat identities. The executing child/native process holds the OS-backed fence
+   for the actual secured `agent_runs.db` resource before execution-capable opens,
+   run recovery and dispatch. Profile tuples cannot partition a shared run file;
+   validate aliases and safe creation identity. The parent owns routing only.
+   Parent loss closes child admission and begins shutdown without releasing the
+   fence until physical retirement. Native/served entry points, explicit sweeps
+   and auxiliary execution writers must honor it; non-owning reads cannot sweep
+   or migrate another owner's store. No new engine or scheduler is introduced.
 3. Browser connections are revocable attachments. Retain the owning process and
-   output drain across disconnect, and perform a full reset/render handshake on
-   terminal reattachment. Permit one full-terminal input/viewport attachment per
-   Console at a time plus concurrent independent phone views. Stale attachments
+   output drain across disconnect, and restore terminal modes (mouse, bracketed
+   paste, cursor, alternate screen and sync) plus a full render on reattachment,
+   without restarting the driver input thread or agent. Permit one terminal
+   input/viewport attachment per Console at a time plus concurrent independent
+   phone views. Stale attachments
    cannot mutate or tear down their successor. Server shutdown and explicit
    native lifecycle actions retain their cancellation boundaries.
 4. Extend the existing authenticated mobile API and bounded process transport
@@ -59,17 +65,33 @@ a second execution system behind an improved mobile UI.
    and applicable run/handle/round/revision. Reuse native admission, queues,
    hooks, workspace authority, permissions, decision resolution and subagent
    mailboxes. Add explicit-target seams where native active-tab operations need
-   them; keep existing active-tab callers on the same underlying behavior.
+   them; keep existing active-tab callers on the same underlying behavior. Phone
+   Send owns immutable submitted text and checked target revisions. Extend native
+   admission without capturing, clearing or invalidating on desktop drafts,
+   attachments, prefill or staged RAG. Those phone composition features are not
+   introduced in this release; normal committed chat context still applies.
 6. Assign mutations stable command IDs and body-free receipts. Reconnection
    reconciles authoritative outcomes and a bounded snapshot/event boundary;
    it never blindly replays a mutation. Preserve unknown outcomes through owner
-   loss instead of claiming exactly-once external effects. Answer decisions once
-   through their native retained owner, including background/viewless rounds.
+   loss instead of claiming exactly-once external effects. Server-issued command
+   tickets bind action, target and epochs to an authenticated immutable five-minute
+   monotonic submission expiry. Keep deduplication evidence for valid tickets;
+   pruning never makes an expired ID executable. Retain unknown outcomes through
+   review/recovery and reuse native turn/round identities where sufficient.
+   Capacity pressure refuses new non-idempotent submissions without blocking
+   exact-target native Stop. Ticket expiry does not cancel accepted work. Answer
+   decisions once through their retained owner, including background/viewless rounds.
 7. Consolidate legacy mobile data using existing maintenance/capture/recovery
    machinery with explicit coverage of legacy stores and referenced files.
    Journal source/destination identities, conflict mappings, per-DB committed
    batches and final verification. Preserve complete history, references and
-   authority restrictions. Fence writes through interruption; cut over only
+   authority restrictions. Legacy source identity is physical, not implied by the
+   active configuration; review ambiguous destination attribution and claim each
+   source once with a receipt bound to its reviewed destination. Quarantine all
+   imported automatic-work/result-delivery authority, including completed runs
+   with undelivered results, until fresh native review. Preserve truthful statuses
+   and delivery stamps; ordinary startup recovery and new manual turns do not
+   approve imported chains. Fence writes through interruption; cut over only
    after verification. Keep originals as recovery copies; no automatic deletion
    or replay of imported pending agent work is authorized.
 8. Build on the existing `/m` page, auth and static assets. Open on Chats and
