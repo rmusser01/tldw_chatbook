@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from loguru import logger
 from textual import errors
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -60,6 +61,7 @@ class CharacterExpressionAvatar(Widget):
         self._fallback_decode_identity = fallback_decode_identity
         self._performance = performance
         self._read_speech = read_speech
+        self._speech_read_failed = False
         self._on_frame = on_frame
         self._preview_mode: str | None = None
         self._performance_clock: PortraitPerformanceClock | None = None
@@ -95,8 +97,12 @@ class CharacterExpressionAvatar(Widget):
     def compose(self) -> ComposeResult:
         surface = Static("Preparing expression…")
         self._surface = surface
-        surface.remove_class(*(name for name in surface.classes if name.startswith("h-")))
-        surface.remove_class(*(name for name in surface.classes if name.startswith("w-")))
+        surface.remove_class(
+            *(name for name in surface.classes if name.startswith("h-"))
+        )
+        surface.remove_class(
+            *(name for name in surface.classes if name.startswith("w-"))
+        )
         # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
         surface.set_styles(width=self._box[0], height=self._box[1])
         yield surface
@@ -282,14 +288,27 @@ class CharacterExpressionAvatar(Widget):
                                 )
 
                         self._graphics = FixedImage(image)
-                        self._graphics.remove_class(*(name for name in self._graphics.classes if name.startswith("h-")))
-                        self._graphics.remove_class(*(name for name in self._graphics.classes if name.startswith("w-")))
+                        self._graphics.remove_class(
+                            *(
+                                name
+                                for name in self._graphics.classes
+                                if name.startswith("h-")
+                            )
+                        )
+                        self._graphics.remove_class(
+                            *(
+                                name
+                                for name in self._graphics.classes
+                                if name.startswith("w-")
+                            )
+                        )
                         # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
                         self._graphics.set_styles(
                             width=self._box[0], height=self._box[1]
                         )
                         await self.mount(self._graphics)
                         if not self._current():
+                            self._graphics.image = None
                             return False
                         self._surface.display = False
                     else:
@@ -343,6 +362,11 @@ class CharacterExpressionAvatar(Widget):
         try:
             return self._read_speech()
         except (AttributeError, RuntimeError, TypeError, ValueError):
+            if self._current() and not self._speech_read_failed:
+                self._speech_read_failed = True
+                logger.debug(
+                    "Portrait speech read failed; using rest (category=reader_failed)."
+                )
             return None
 
     def _mouth(self, now: float) -> str:
@@ -414,11 +438,10 @@ class CharacterExpressionAvatar(Widget):
         self._last_tick = now
         if self._prepared is None:
             return
-        speech = self._speech()
         if isinstance(self._prepared, PreparedPerformance):
             if self._performance_disabled:
                 return
-            mouth = self._mouth(now)
+            mouth = "rest" if self._preview_mode == "idle" else self._mouth(now)
             pose = self._performance_clock.sample(mouth, now=self._elapsed_ms / 1000)
             preview_index = self._preview_index()
             key = (
@@ -440,6 +463,7 @@ class CharacterExpressionAvatar(Widget):
                     )
                     await self._paint(0, offset_px=None)
             return
+        speech = self._speech()
         if speech is not None and speech.state in {"preparing", "playing", "paused"}:
             self._last_tick = None
             if self._frame_index != 0:

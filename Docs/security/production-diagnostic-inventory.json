@@ -4286,6 +4286,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "cffdbfc70db7b4b48c6d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Console/character_expression_avatar.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "0b2624e9dfecb2836f43",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Console/console_command_popup.py",

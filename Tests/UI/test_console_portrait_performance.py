@@ -770,3 +770,96 @@ async def test_graphics_mount_finishes_when_preview_pose_changes(monkeypatch):
             1
         ].getpixel((3, 3))
     assert preparation_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_idle_preview_blinks_rest_mouth_despite_live_open_speech(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Widgets.Console import character_expression_avatar as renderer
+
+    app, snapshot = performance_app()
+    avatar = app.avatar
+    before = preparation_bytes()
+    async with app.run_test(size=(40, 16)) as pilot:
+        await wait_ready(avatar, pilot)
+        avatar._timer.stop()
+        sample_time = [time.monotonic()]
+        monkeypatch.setattr(
+            renderer, "time", SimpleNamespace(monotonic=lambda: sample_time[0])
+        )
+        avatar._read_speech = lambda: replace(
+            snapshot[0], observed_at=sample_time[0] - 0.001, mouth="open"
+        )
+        avatar.set_preview_mode("idle")
+        assert avatar._mouth(sample_time[0]) == "open"
+        await avatar._tick()
+        sample_time[0] += 7.1
+        await avatar._tick()
+        assert avatar._mouth(sample_time[0]) == "open"
+        assert avatar._frame_index == 3
+        assert avatar.current_image.getpixel((3, 3)) == avatar._prepared.frames[
+            3
+        ].getpixel((3, 3))
+    assert preparation_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_retired_graphics_mount_clears_frame_before_pose_closes(monkeypatch):
+    import asyncio
+
+    pytest.importorskip("textual_image.widget")
+    app, _snapshot = performance_app()
+    avatar = app.avatar
+    avatar._mode = "graphics"
+    avatar.set_preview_mode("rest")
+    current, mounted = [True], asyncio.Event()
+    avatar._is_current = lambda: current[0]
+    mount = avatar.mount
+
+    async def retire_after_mount(*children, **kwargs):
+        await mount(*children, **kwargs)
+        if avatar._graphics is not None and avatar._graphics in children:
+            current[0] = False
+            mounted.set()
+
+    monkeypatch.setattr(avatar, "mount", retire_after_mount)
+    before = preparation_bytes()
+    async with app.run_test(size=(40, 16)) as pilot:
+        await asyncio.wait_for(mounted.wait(), timeout=5)
+        await avatar._job
+        assert avatar._graphics is not None and avatar._graphics.image is None
+        await pilot.pause()
+    assert preparation_bytes() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", [True, False])
+async def test_speech_read_failure_logs_once_without_private_context(live):
+    from loguru import logger
+
+    app, _snapshot = performance_app()
+    avatar = app.avatar
+    seen = []
+    sink = logger.add(lambda message: seen.append(str(message)), level="DEBUG")
+    try:
+        async with app.run_test(size=(40, 16)) as pilot:
+            await wait_ready(avatar, pilot)
+            avatar._timer.stop()
+            seen.clear()
+
+            def failed_read():
+                raise ValueError("private portrait and speech context")
+
+            avatar._read_speech = failed_read
+            avatar._is_current = lambda: live
+            for _ in range(3):
+                assert avatar._speech() is None
+            errors = [line for line in seen if "reader_failed" in line]
+            assert len(errors) == int(live)
+            assert "private portrait and speech context" not in "".join(seen)
+            avatar._is_current = lambda: False
+            assert avatar._speech() is None
+            assert len([line for line in seen if "reader_failed" in line]) == int(live)
+    finally:
+        logger.remove(sink)
