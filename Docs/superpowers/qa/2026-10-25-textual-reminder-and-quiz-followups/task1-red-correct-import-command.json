@@ -1,0 +1,10 @@
+[
+  "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+  "-m",
+  "pytest",
+  "Tests/UI/test_schedules_reminder_edit_identity.py",
+  "-q",
+  "--tb=short",
+  "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\task1-red-correct-import\\pytest",
+  "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\task1-red-correct-import\\result.xml"
+]

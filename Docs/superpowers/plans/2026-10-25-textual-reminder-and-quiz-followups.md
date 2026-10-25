@@ -37,22 +37,22 @@ Reason: localized UI scheduling and publication corrections; no storage, ownersh
 **Files:** Modify `tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py`; create `Tests/UI/test_schedules_reminder_edit_identity.py`; update `Docs/Architecture/scheduling-workflows.md` and the task record.
 **Interfaces:** Consumes existing `ReminderFieldEditRequested(task, payload, row)` and `SchedulingService.edit_reminder_fields(task.id, payload)`. Produces the same service calls with independent worker ownership per reminder/field and feedback scoped to the captured target. No interface consumed by Task 2.
 
-- [ ] Write mounted real-service/private-SQLite tests for independent reminders, same-reminder latest intent, serial success and failure/refusal while the detail row changes. Assert literal persisted values and displayed errors, not worker group strings.
-- [ ] Run the new file on unchanged production code. Expected: independent-reminder and stale-feedback assertions fail; ordinary controls pass. Retain full output.
-- [ ] Include captured reminder identity in the existing worker group; scope row error/clear publication to the reminder currently displayed. Preserve existing refresh and service paths.
-- [ ] Run the whole new file and affected existing inline-edit controls; scoped lint/format and source guards. Expected: zero new failures; qualify inherited issues separately.
-- [ ] Record evidence/ADR links and commit this task's code, tests and documentation.
+- [x] Write mounted real-service/private-SQLite tests for independent reminders, same-reminder latest intent, serial success and failure/refusal while the detail row changes. Assert literal persisted values and displayed errors, not worker group strings.
+- [x] Run the new file on unchanged production code. Expected: independent-reminder and stale-feedback assertions fail; ordinary controls pass. Retain full output.
+- [x] Include captured reminder identity in the existing worker group; scope row error/clear publication to the reminder currently displayed. Preserve existing refresh and service paths.
+- [x] Run the whole new file and affected existing inline-edit controls; scoped lint/format and source guards. Expected: zero new failures; qualify inherited issues separately.
+- [x] Record evidence/ADR links and commit this task's code, tests and documentation.
 
 ### Task 2: TASK-36729 — responsive quiz Start
 
 **Files:** Modify `tldw_chatbook/UI/Screens/study_screen.py`, `tldw_chatbook/UI/Study_Window.py`, `tldw_chatbook/UI/Study_Modules/quizzes_handler.py`; create `Tests/UI/test_study_quiz_start_responsiveness.py`; update `Docs/Architecture/study.md` and the task record.
 **Interfaces:** Consumes the existing `StudyQuizzesController.start_attempt()` and `QuizScopeService.start_attempt(...)`. Produces identical attempt/session behavior with non-blocking shell dispatch and shared pending admission. Does not change Task 1 interfaces.
 
-- [ ] Write mounted production StudyScreen/StudyWindow tests at a held fake server API boundary: shell/inner navigation, repeated cross-entry gestures, ordinary success, refusal and failure/retry. Verify actual attempt state and current section.
-- [ ] Run the new regressions before production edits. Expected: shell navigation fails while the response is held; repeat/cancellation controls expose any existing admission gap.
-- [ ] Dispatch the shell continuation through a named screen-owned worker. Admit one attempt in the shared controller before its first await; do not cancel that admitted start through repeated inner worker dispatch. Release admission on settlement/failure/cancellation.
-- [ ] Run the whole new file plus existing quiz attempt retry and relevant Study shell tests, scoped lint/format and source guards. Expected: zero new failures.
-- [ ] Record evidence/ADR links and commit this task's code, tests and documentation.
+- [x] Write mounted production StudyScreen/StudyWindow tests at a held fake server API boundary: shell/inner navigation, repeated cross-entry gestures, ordinary success, refusal and failure/retry. Verify actual attempt state and current section.
+- [x] Run the new regressions before production edits. Expected: shell navigation fails while the response is held; repeat/cancellation controls expose any existing admission gap.
+- [x] Dispatch the shell continuation through a named screen-owned worker. Admit one attempt in the shared controller before its first await; do not cancel that admitted start through repeated inner worker dispatch. Release admission on settlement/failure/cancellation.
+- [x] Run the whole new file plus existing quiz attempt retry and relevant Study shell tests, scoped lint/format and source guards. Expected: zero new failures.
+- [x] Record evidence/ADR links and commit this task's code, tests and documentation.
 
 ## Integration and delivery
 

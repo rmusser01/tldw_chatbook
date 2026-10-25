@@ -22,6 +22,7 @@ class StudyQuizzesController:
     def __init__(self, window: "StudyWindow"):
         self.window = window
         self.app_instance = window.app_instance
+        self._attempt_start_pending = False
         self.current_attempt_id: Optional[str] = None
         self.current_attempt_questions: list[dict[str, Any]] = []
         self.current_attempt_answers: list[dict[str, Any]] = []
@@ -717,6 +718,9 @@ class StudyQuizzesController:
         self._notify_shell_state_changed()
 
     async def start_attempt(self) -> None:
+        if self._attempt_start_pending:
+            self._notify("A quiz attempt is already starting.")
+            return
         service = self._scope_service()
         if service is None:
             self._notify("Study quizzes backend is unavailable.")
@@ -737,32 +741,36 @@ class StudyQuizzesController:
             f"quiz.attempt.create.{self._current_mode()}"
         ):
             return
+        self._attempt_start_pending = True
         try:
-            attempt = await service.start_attempt(
-                mode=self._current_mode(),
-                **self._scope_arguments(),
-                quiz_id=quiz_id,
+            try:
+                attempt = await service.start_attempt(
+                    mode=self._current_mode(),
+                    **self._scope_arguments(),
+                    quiz_id=quiz_id,
+                )
+            except Exception:
+                logger.opt(exception=True).error("Failed to start quiz attempt")
+                self._notify("Failed to start quiz attempt.", severity="error")
+                return
+
+            self.current_attempt_id = str(
+                attempt.get("backing_id") or attempt.get("id") or ""
             )
-        except Exception:
-            logger.opt(exception=True).error("Failed to start quiz attempt")
-            self._notify("Failed to start quiz attempt.", severity="error")
-            return
+            self.current_attempt_questions = list(attempt.get("questions") or [])
+            self.current_attempt_answers = []
+            self.current_question_index = 0
+            self.window.query_one("#quiz-answer-input", Input).value = ""
 
-        self.current_attempt_id = str(
-            attempt.get("backing_id") or attempt.get("id") or ""
-        )
-        self.current_attempt_questions = list(attempt.get("questions") or [])
-        self.current_attempt_answers = []
-        self.current_question_index = 0
-        self.window.query_one("#quiz-answer-input", Input).value = ""
+            if not self.current_attempt_questions:
+                self.reset_attempt_panel("This quiz has no questions yet.")
+                return
 
-        if not self.current_attempt_questions:
-            self.reset_attempt_panel("This quiz has no questions yet.")
-            return
-
-        self._show_current_question()
-        self._sync_quiz_controls()
-        self._notify_shell_state_changed()
+            self._show_current_question()
+            self._sync_quiz_controls()
+            self._notify_shell_state_changed()
+        finally:
+            self._attempt_start_pending = False
 
     def _show_current_question(self) -> None:
         if not self.current_attempt_questions:

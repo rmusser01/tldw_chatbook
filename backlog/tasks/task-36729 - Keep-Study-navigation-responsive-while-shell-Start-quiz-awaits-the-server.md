@@ -1,7 +1,7 @@
 ---
 id: TASK-36729
 title: Keep Study navigation responsive while shell Start quiz awaits the server
-status: To Do
+status: In Progress
 created_date: 2026-10-25 03:47
 labels:
 - study
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-24-textual-book-after-pr3243.md
+assignee:
+- '@codex'
+updated_date: 2026-10-25 17:48
 ---
 
 ## Description
@@ -45,3 +48,9 @@ Reason: Bounded scheduling of the existing Start action within current screen/do
 - [ ] #3 The inner Start attempt path retains its current responsive behavior, and existing question-list, draft, panel-retirement and attempt ownership contracts remain unchanged.
 - [ ] #4 Mounted production-owner tests compare shell and inner Start under the same held service boundary, prove independent App-queue responsiveness, and retain ordinary completion and error controls.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reconfirm the shell handler and existing inner Start/controller/service contracts using the audit and ADRs. 2. Add actual mounted event tests at a held server-client boundary for responsive Dashboard navigation, repeated shell/inner Start admission, ordinary outcomes and failure/refusal/retry. Observe expected RED before production edits. 3. Move shell continuation into a named screen-owned worker and preserve one admitted pending attempt in the shared controller; repeated inner starts must not cancel it. 4. Run all new tests, existing attempt retry and relevant Study shell controls, scoped lint/format and source guards, then fresh Superpowers review. 5. Record evidence, check ACs and mark Done through CLI only when verification is complete. ADR required: no. ADR path: backlog/decisions/011-chatbook-workbench-ui-system.md; backlog/decisions/033-application-session-state-ownership.md. Reason: localized scheduling/admission within existing UI and service owners; no new storage/runtime/attempt ownership policy. Full plan: Docs/superpowers/plans/2026-10-25-textual-reminder-and-quiz-followups.md.
+<!-- SECTION:PLAN:END -->
