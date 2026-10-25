@@ -4554,3 +4554,15 @@ Check the final renderer and measured controls as well as intermediate image byt
 a correct exported raster alone does not prove an in-app detail viewer works.
 Evidence: `Docs/superpowers/qa/portrait-compositing/2026-10-24/`, including the retained
 raw rasters and actual modal screenshots; `Tests/Utils/test_mosaic_render.py`.
+
+## One rendered pixel can visibly move a small portrait (TASK-36699, 2026-10-25)
+
+**Incident.** The seven-character Pocket TTS preview used a ±1px whole-portrait
+idle shift on a 24×24 fallback. The comparison exporter scaled that displacement
+to ±16px in its 384px detail panel. The user rejected the result as pictures
+scrolling up and down; prior static-pair checks and timing review missed this.
+
+**What to do.** Review whole-image registration at the actual fallback resolution
+and at the exported viewing scale. Do not infer that a one-pixel shift is subtle.
+Keep codec portraits stationary; verify native painted pixels equal one of the
+prepared eye/mouth poses. An enlarged detail replay must not add displacement.

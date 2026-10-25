@@ -433,10 +433,10 @@ asset authority or permission model.
 
 | Observed state | Portrait | Radio status |
 | --- | --- | --- |
-| No owned speech | Mouth closed; blink and idle motion when enabled | Ready |
+| No owned speech | Mouth closed; blinking when enabled | Ready |
 | Text streaming without a speech request | Existing expression selection; no audio-driven mouth | Ready |
 | Owned TTS generating/queued | Current expression, closed mouth | Preparing voice |
-| Owned audio actually playing | Mouth follows output envelope; blink/idle continue | Transmitting |
+| Owned audio actually playing | Mouth follows output envelope; blinking continues | Transmitting |
 | Silence within playback | Mouth closed; no invented activity | Transmitting; empty meter |
 | Output underrun | Mouth closed until real samples resume | Transmitting; empty meter |
 | Confirmed pause | Mouth closed | Paused |
@@ -589,14 +589,16 @@ selection behavior; it does not establish audible hardware synchronization.
 
 ## Blinking, idle motion and lifecycle
 
-Mouth pose, blink phase and idle offset have independent clocks. A blink swaps
-to the closed-eye counterpart of the current mouth pose; changing mouth level
-does not restart blinking or idle motion. Initial blink spacing is irregular
-between 3 and 7 seconds, with a closed-eye hold using `$ds-duration-fast`. Idle
-movement is a smooth 6-second cycle with no more than one rendered-image pixel of
-offset inside a fixed canvas. Avoid moving the frame, controls or portrait fit.
-Declare missing interval/cycle/amplitude design tokens centrally; the audio
-processing constants above are not stylesheet values.
+Mouth pose and blink phase are independent. A blink swaps to the closed-eye
+counterpart of the current mouth pose; changing mouth level does not restart
+blinking. Initial blink spacing is irregular between 3 and 7 seconds, with a
+closed-eye hold using `$ds-duration-fast`. Keep the whole portrait stationary:
+`$ds-portrait-idle-offset-px` is zero. Idle life comes from blinking, without
+bobbing, panning, zooming or changing portrait fit. The prior one-pixel translation
+was rejected after the 2026-10-25 live-call preview (TASK-36699): one pixel at a
+24px fallback size was conspicuous, and enlarged comparison magnified it further.
+The existing cycle token/helper remains compatible but has zero default amplitude.
+Frame, controls and portrait fit remain fixed.
 
 Do not add a per-frame image decode or rail remount. Prepare frames off-thread,
 reuse the avatar's disposable presentation timer and existing generation fencing,

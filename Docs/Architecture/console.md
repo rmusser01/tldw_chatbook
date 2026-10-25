@@ -30,7 +30,8 @@ Character rail. `UI/Console_Modules/character.py` resolves local performance
 attachments off-thread on activation/source/invalidation changes; immutable spec
 identity includes profile and attachment revision/tombstone/absence. Visible frames
 read only the current owned speech snapshot, never streaming text or SQLite. Blink
-and fixed-canvas idle motion obey existing motion preferences. Source/profile/
+and blinking obey existing motion preferences. Whole-portrait translation is
+disabled by the zero idle-offset token (TASK-36699). Source/profile/
 session/renderer changes fence old preparation; unchanged forced refresh preserves
 the mounted animation. Live emote feed consumption is serialized independently of
 ordinary source requests, preserving each explicit beat. Cheap actor/session/manual/
