@@ -1,7 +1,7 @@
 ---
 id: TASK-36759
 title: Fence Console execution by the physical agent run store
-status: In Progress
+status: Done
 created_date: 2026-10-25 17:38
 dependencies:
 - TASK-36729
@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 19:29
+updated_date: 2026-10-25 19:33
 ---
 
 ## Description
@@ -28,10 +28,10 @@ Prevent native and served processes from competing for the same Console executio
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Exactly one executing process owns an admitted physical agent_runs.db, including missing-store creation and different chat filenames sharing its directory; unsafe aliases and lock failures refuse execution.
-- [ ] #2 The executing child or native App retains ownership through physical cleanup; parent death, missing heartbeats and a second process never authorize takeover.
-- [ ] #3 Run-store construction, explicit reconciliation, automatic recovery and auxiliary writers require the same execution authority; non-owning inspection cannot migrate, reconcile or write the store.
-- [ ] #4 Existing native Console callers keep their behavior under the owner, and real separate-process contention, retirement and read-only cases prove the boundary.
+- [x] #1 Exactly one executing process owns an admitted physical agent_runs.db, including missing-store creation and different chat filenames sharing its directory; unsafe aliases and lock failures refuse execution.
+- [x] #2 The executing child or native App retains ownership through physical cleanup; parent death, missing heartbeats and a second process never authorize takeover.
+- [x] #3 Run-store construction, explicit reconciliation, automatic recovery and auxiliary writers require the same execution authority; non-owning inspection cannot migrate, reconcile or write the store.
+- [x] #4 Existing native Console callers keep their behavior under the owner, and real separate-process contention, retirement and read-only cases prove the boundary.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,6 +62,7 @@ Verification: required targeted modules plus recovery-error coverage: 571 passed
 Acceptance criteria and status intentionally remain unchanged pending independent specification and quality review. Full suite, provider calls, real user data, pushes and merges were not run.
 Final static follow-up: all 218 changed/new Python sources parse; default Ruff reports 1,012 inherited diagnostics and zero new per-file findings against 1bb7c507. Runtime format_ratchet snapshot at that base and worktree verify pass after formatting touched blocks only. Final owner/runtime/mobile/connection-reuse selection: 23 passed in 9.02s. Full diagnostics and immutable format baseline are saved beside the implementation report.
 Review fix round 1: unpublished mobile engine initialization now rolls back real databases in reverse order and releases its execution lease only after successful retirement, enabling same-service retry after DB/bridge/controller construction failure. Runtime scratch/gateway cleanup propagates retirement outcomes; False, errors, cancellation or pending cleanup keep the fence. Clean restart/release remains covered. RED 8 failed/2 passed; final focused owner/rollback/retirement/bounded-shutdown/restart run 32 passed in 12.27s. Scoped Ruff has 39 inherited diagnostics and zero new; runtime format ratchet at reviewed commit 5b6ab0ebe4 passes. Details and exact commands appended to task-1-report.md. Task remains In Progress with AC unchecked pending re-review.
+Independent task review found two lifecycle gaps; commit be5e5fe corrected failed-startup rollback and required successful physical cleanup before lease release. Scoped re-review approved both findings with no new breakage. Required run: 571 passed, 2 skipped, 20 exact pre-existing private_sqlite failures; final fix selection: 32 passed. Full default Ruff retains inherited diagnostics with zero new per-file findings; committed format ratchets pass. macOS exercised; Linux/Windows and full fixture population remain unqualified. No full sweep. ADR-244 governs. One non-blocking eager Chat package import observation is deferred to final branch review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

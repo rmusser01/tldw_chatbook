@@ -16,7 +16,7 @@
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 
-**Status:** Written and self-reviewed; implementation tasks remain To Do. Planning validation checks examples and document integrity, not product runtime behavior.
+**Status:** Implementation in progress. Task 1 passed independent review; its targeted evidence and inherited-check limits are recorded in TASK-36759. Tasks 2–11 remain pending. Planning validation alone is not runtime evidence.
 
 ```text
 ADR required: no
@@ -111,7 +111,7 @@ Use the existing Ruff qualification toolchain for changed Python: `python -m ruf
 - Extend file-backed `AgentRunsDB` construction with `execution_owner: ConsoleExecutionOwner | None` and add `AgentRunsDB.open_read_only(db_path: Path) -> AgentRunsDB`. In-memory isolated DBs need no OS lease. Non-owning file reads skip schema initialization and reject every mutation/recovery entry.
 - Consumes existing `Utils.private_paths.open_private_lock_stream`, `verify_trusted_directory` and `Utils.platform_files.fcntl/os`. Keep execution ownership separate from maintenance admission and the warning-only `Utils/instance_lock.py` API.
 
-- [ ] **Step 1: Add a real competing-process regression.** Place the complete test below in the new test file; import `Path`, `subprocess`, `sys` and the two owner symbols. The child imports only the dependency-light owner module and inherits the test's isolated environment.
+- [x] **Step 1: Add a real competing-process regression.** Place the complete test below in the new test file; import `Path`, `subprocess`, `sys` and the two owner symbols. The child imports only the dependency-light owner module and inherits the test's isolated environment.
 
 ```python
 def test_other_process_cannot_execute_the_same_store(tmp_path):
@@ -137,8 +137,8 @@ def test_other_process_cannot_execute_the_same_store(tmp_path):
         pass
 ```
 
-- [ ] **Step 2: Run the regression before adding the owner.** Run `.venv/bin/python -m pytest Tests/Chat/test_console_execution_owner.py -q`; the new owner import must fail. Then add variants for two chat filenames in one parent, safe creation before the DB exists, a surviving child after parent death, actual holder death, and alias/unsupported-lock refusal. Use IPC entry/exit barriers, not sleeps, to establish contention.
-- [ ] **Step 3: Implement the retained OS lease and guard all disk execution opens.** Key by the secured physical parent plus fixed run-store leaf, verify the existing store when present, and reject aliases that do not preserve one authority. Use a stable private lock leaf beside that resource and never unlink it. Keep the acquired stream strongly referenced through physical teardown; lock-file/PID existence is informational only.
+- [x] **Step 2: Run the regression before adding the owner.** Run `.venv/bin/python -m pytest Tests/Chat/test_console_execution_owner.py -q`; the new owner import must fail. Then add variants for two chat filenames in one parent, safe creation before the DB exists, a surviving child after parent death, actual holder death, and alias/unsupported-lock refusal. Use IPC entry/exit barriers, not sleeps, to establish contention.
+- [x] **Step 3: Implement the retained OS lease and guard all disk execution opens.** Key by the secured physical parent plus fixed run-store leaf, verify the existing store when present, and reject aliases that do not preserve one authority. Use a stable private lock leaf beside that resource and never unlink it. Keep the acquired stream strongly referenced through physical teardown; lock-file/PID existence is informational only.
 
 ```python
 from tldw_chatbook.Utils.platform_files import fcntl
@@ -154,7 +154,7 @@ except BaseException:
 ```
 
 `lock_path` is derived only from that admitted resource. Translate genuine contention to Busy and all other lock/path failures to Unavailable. Do not copy the advisory helper's fail-open exception handling. Acquire before an execution-capable constructor, migration, orphan sweep or automatic recovery. `require_current` checks the original process and admitted identity; it is not a serializable boolean permission. Propagate that same owner into worktree recovery and retention writers. Do not release it while a retained worker/DB callback can still write.
-- [ ] **Step 4: Add and use the sweep-free read path.** Add the private SQLite read policy for the actual AgentRuns owner, use read-only connection mode without initialization, and reject writes rather than silently upgrading to an execution owner.
+- [x] **Step 4: Add and use the sweep-free read path.** Add the private SQLite read policy for the actual AgentRuns owner, use read-only connection mode without initialization, and reject writes rather than silently upgrading to an execution owner.
 
 ```python
 def _require_execution_owner(self):
@@ -166,7 +166,7 @@ def _require_execution_owner(self):
 ```
 
 Call this before constructor-side schema/reconciliation and explicit recovery/mutation paths. Audit `rg -n 'AgentRunsDB\(' tldw_chatbook Tests`; assign readers versus execution writers explicitly and update connected file-backed fixtures. Do not bypass the disk guard globally in conftest. The native App's empty runtime holder and ordinary saved-history reads do not acquire execution authority.
-- [ ] **Step 5: Verify native compatibility and commit.** Run the new test plus the five listed connected modules, `Tests/Chat/test_console_worktree_recovery_lifetime.py`, `Tests/DB/test_private_sqlite.py` and `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`. Assert read-only opens leave file/schema/run rows unchanged, failed contenders perform no sweep, and owner release follows physical cleanup. Apply scoped static checks, update docs/task notes, and commit `fix: fence Console execution by physical run store` using explicit file paths.
+- [x] **Step 5: Verify native compatibility and commit.** Run the new test plus the five listed connected modules, `Tests/Chat/test_console_worktree_recovery_lifetime.py`, `Tests/DB/test_private_sqlite.py` and `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`. Assert read-only opens leave file/schema/run rows unchanged, failed contenders perform no sweep, and owner release follows physical cleanup. Apply scoped static checks, update docs/task notes, and commit `fix: fence Console execution by physical run store` using explicit file paths.
 
 ### Task 2: Independent control lifetime and bounded projection recovery — TASK-36760
 
