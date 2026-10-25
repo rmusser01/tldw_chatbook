@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/243-source-bound-portrait-compositing.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 05:57
+updated_date: 2026-10-25 06:05
 ---
 
 ## Description
@@ -57,6 +57,7 @@ Final hosted CI: inspect failures from UI shards 11 and 15 on merge 3963966e (de
 Mounted contrast regression exposed app-tier *:focus overriding the widget-default pair-canvas outline. Keep one targeted focus owner in app-tier components/_dialogs.tcss, using $ds-active-fg; remove the shadowed widget-default declaration, rebuild generated sheets, and assert the real mounted outline in both light/dark themes as well as all 89 static theme checks. Keep the real receipt-click regression and profile ownership assertions; no relaxed contrast/debt-list entries or timing budgets.
 Required-summary follow-up: review all ten added diagnostic statements and regenerate the diagnostic-owner inventory only after checking that fixed messages/class labels contain no user content, provider payloads or credentials. Address all five W002 functions by retaining mounted control references across awaits and fencing publication; add held-work/subtree-replacement regressions. Review the 35 W003 rows against actual call sites: name-only callback/getattr over-approximation links unrelated roots to the same five portrait wait sites, whose only real entry is PersonasScreen.run_worker. If confirmed, annotate and pin exactly those false edges, preserving all existing worker rules and all genuine failures. Run the exact complete required source checks locally before another push and await all new CI; AC5 remains open.
 Ready-for-review follow-up: CodeRabbit effective configuration (issuecomment-6394106555) inherits only Docs/docs/**, Docs/Design/**, Docs/Product/** and Docs/Plans from Organization UI, so all 252 changed files were skipped. Operational red evidence includes incremental/full GitHub requests and current-CLI remote/local attempts reporting all files ignored. Add only a repository-local reviews.path_filters=['**'] override, validate it against CodeRabbit's official schema, publish and verify the resolved scope and real current-head review before fixing findings with targeted regressions. No new provider, runtime or shared organization policy: routine existing-reviewer configuration repair; ADR required no, ADR path N/A. Keep full live-provider UAT/AC5 open; Qodo credit and Cubic allowance failures remain explicit.
+The repository-wide include override resolved the inherited docs-only filter, but CodeRabbit then refused all 227 eligible files because its per-review cap is 100. Scope the hosted code-review pass explicitly to all 53 changed tldw_chatbook files, all 46 Tests files and .coderabbit.yaml (100 tracked paths, with normal binary ignores), without representing docs/backlog/QA evidence as automated-reviewed. Offered the user the every-file alternative and proceeded with the stated recommended code/test scope after the response window. The full 53-file application CLI batch is also running. Validate the scope/schema and actual current-head review; preserve the full-UAT/live-provider gap.
 <!-- SECTION:PLAN:END -->
 
 ## Final Summary

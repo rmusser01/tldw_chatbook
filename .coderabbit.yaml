@@ -1,3 +1,6 @@
+# Keep the application and test review within CodeRabbit's 100-file service cap.
 reviews:
   path_filters:
-    - "**"
+    - "tldw_chatbook/**"
+    - "Tests/**"
+    - ".coderabbit.yaml"

@@ -50,3 +50,20 @@ independent human acceptance. The configured image adapter remains unsupported f
 this reference path: zero live image requests, no fallback, `live_qualified=false`.
 TASK-36555 stays In Progress and AC5 remains unchecked. Existing ADR-242/243 and the
 qualification document retain those boundaries.
+
+## Review-size limit after scope repair
+
+The all-path override took effect: CodeRabbit advanced past the path-filter
+refusal, then rejected 227 eligible files against its 100-file per-review limit.
+The official schema exposes no file-limit adjustment. The current pass includes
+all 53 changed application files, all 46 test files and the reviewer configuration
+(100 tracked paths before normal binary ignores). Documentation, Backlog and QA
+artifacts are outside this hosted code-review pass; they must not be labeled as
+automated-reviewed. The earlier all-path receipt remains historical red evidence.
+
+A complete 53-file application batch also started through current CLI 0.9.1 and
+reported a reviewing heartbeat. This is a disclosed partial batch, not a full-PR
+result. The user was offered every-file coverage versus the recommended code/test
+pass; after the response window, proceeded with that stated recommendation.
+The final schema validation and exact selected/outside path lists are retained in
+`../qa/portrait-compositing/2026-10-24/review-readiness/code-test-scope.json`.
