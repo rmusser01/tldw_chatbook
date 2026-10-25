@@ -610,3 +610,46 @@ async def test_remote_question_preserves_native_choices_and_original_winner(
     finally:
         host.registries["question"].clear()
         host.payloads["question"].clear()
+
+
+def test_idle_native_rename_publishes_invalidation(remote_case):
+    projection, _host, target = remote_case
+    store = projection.runtime.chat_store
+    first = projection.poll_changes()
+    assert projection.poll_changes() is None
+
+    store.rename_session(target.session_id, "Renamed while idle")
+
+    second = projection.poll_changes()
+    assert second is not None and second > first
+    assert projection.subscribe(first).events[-1]["kind"] == "console.changed"
+    assert projection.snapshot(target)["chats"][0]["title"] == "Renamed while idle"
+    assert projection.poll_changes() is None
+
+
+def test_native_rename_during_capture_cannot_acknowledge_stale_metadata(
+    remote_case, monkeypatch
+):
+    projection, _host, target = remote_case
+    store = projection.runtime.chat_store
+    store.rename_session(target.session_id, "Before capture")
+    original = store.read_only_messages_for_session
+
+    def capture(session_id):
+        rows = original(session_id)
+        store.rename_session(session_id, "Renamed during capture")
+        return rows
+
+    monkeypatch.setattr(store, "read_only_messages_for_session", capture)
+    snapshot = projection.snapshot(target)
+    assert snapshot["chats"][0]["title"] == "Before capture"
+    assert snapshot["reset_required"]
+    projection.acknowledge_snapshot(snapshot["sequence"])
+    pending = projection.subscribe(snapshot["sequence"])
+    assert pending.reset_required and pending.sequence > snapshot["sequence"]
+
+    monkeypatch.setattr(store, "read_only_messages_for_session", original)
+    current = projection.snapshot(target)
+    assert current["chats"][0]["title"] == "Renamed during capture"
+    projection.acknowledge_snapshot(current["sequence"])
+    assert not projection.subscribe(current["sequence"]).reset_required

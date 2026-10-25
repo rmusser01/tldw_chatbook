@@ -165,6 +165,7 @@ class ConsoleRemoteProjection:
                 (
                     session.id,
                     session.incarnation_id,
+                    session.title,
                     store.display_projection_revision(session.id),
                     store.session_fingerprint(session.id),
                     tuple(getattr(session, key) for key in REVISION_FIELDS),
