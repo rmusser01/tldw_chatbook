@@ -1,6 +1,6 @@
 # ADR-244: Shared Console ownership and mobile agent supervision
 
-Status: Accepted 2026-10-25 (design only; written review and six corrections complete)
+Status: Accepted 2026-10-25 (design only; written review and corrections complete)
 Date: 2026-10-25
 Related Task: [TASK-36728](../tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Spec: [Shared Console ownership and mobile supervision](../../Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md)
@@ -26,6 +26,10 @@ WebSocket teardown stops the owning AppService child.
 `AgentRunsDB.reconcile_orphaned_runs` also assumes one app instance per data
 directory: its default constructor sweep can mark another process's live runs as
 errors. Consolidating paths without qualifying that recovery owner is unsafe.
+
+The private control broker also disconnects on event-queue overflow, while its
+relay drainer starts only on first mobile use. Applying owner-loss shutdown to
+that unchanged transport would stop healthy agents after ordinary event traffic.
 
 The storage split is an implementation divergence documented in ADR-234's
 2026-10-16 amendment. It must be corrected as part of this work, not retained as
@@ -61,6 +65,13 @@ a second execution system behind an improved mobile UI.
    availability is independent of Canvas enablement; Canvas capabilities retain
    their existing session fences and feature revocation. Mobile view selection
    never changes the desktop active tab as an implementation shortcut.
+   The served lifecycle starts private event draining before child publication
+   and retains it without phone subscribers or mobile-surface use. Projection
+   overflow drops/coalesces replaceable events and retains bounded reset state
+   until a current snapshot reconciles affected views. It cannot close the host
+   control channel, release its execution fence or trigger owner-loss shutdown.
+   Native decisions and command responses/receipts retain their authority;
+   genuine parent/control-channel loss still invokes bounded shutdown.
 5. Commands identify the owning epoch/runtime, exact chat/session incarnation
    and applicable run/handle/round/revision. Reuse native admission, queues,
    hooks, workspace authority, permissions, decision resolution and subagent
