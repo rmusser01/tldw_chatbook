@@ -2176,36 +2176,6 @@ class ConsoleHandsFreeController:
         reply then passes `quiet=True` and only logs.
         """
         session = dispatching_session
-        if self._console_hands_free is not session or (
-            validator is not None and not validator()
-        ):
-            # The loop that dispatched this utterance is gone (exited, or
-            # replaced by a re-entry); its sequencer was torn down with it,
-            # so there is nothing live to report into. Touch no session.
-            if presentation is not None:
-                presentation.set_transport("stopped")
-            return
-        handler = await self.app_instance._ensure_tts_handler()
-        if self._console_hands_free is not session or (
-            validator is not None and not validator()
-        ):
-            if presentation is not None:
-                presentation.set_transport("stopped")
-            return
-        if handler is None:
-            # PR #2638 Qodo #1: a missing TTS handler is a failure for THIS
-            # utterance like any other. Without recording it here, a reply
-            # whose handler never initializes drains with zero counted
-            # failures and never reaches `_maybe_escalate_all_failed_reply`
-            # -- a fully silent reply with no visible notice.
-            if presentation is not None:
-                presentation.set_transport("failed")
-            session.toast_shown_for_reply = True
-            session.utterances_failed += 1
-            session.sequencer.utterance_finished(False, token=token)
-            return
-        quiet = session.toast_shown_for_reply
-
         finished = False
 
         def _on_finished(ok: bool) -> None:
@@ -2213,16 +2183,37 @@ class ConsoleHandsFreeController:
             if finished:
                 return
             finished = True
-            current = self._console_hands_free
-            if current is not session or (validator is not None and not validator()):
-                # A different loop entry (or none at all) owns the screen's
-                # hands-free state now; this utterance's own sequencer/token
-                # bookkeeping is no longer live to report back into.
+            if (
+                self._console_hands_free is not session
+                or session.sequencer.current_utterance_token != token
+            ):
                 return
             if not ok:
                 session.toast_shown_for_reply = True
                 session.utterances_failed += 1
             session.sequencer.utterance_finished(ok, token=token)
+
+        if self._console_hands_free is not session or (
+            validator is not None and not validator()
+        ):
+            if presentation is not None:
+                presentation.set_transport("stopped")
+            _on_finished(False)
+            return
+        handler = await self.app_instance._ensure_tts_handler()
+        if self._console_hands_free is not session or (
+            validator is not None and not validator()
+        ):
+            if presentation is not None:
+                presentation.set_transport("stopped")
+            _on_finished(False)
+            return
+        if handler is None:
+            if presentation is not None:
+                presentation.set_transport("failed")
+            _on_finished(False)
+            return
+        quiet = session.toast_shown_for_reply
 
         await handler.speak_utterance(
             text,

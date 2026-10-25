@@ -2248,3 +2248,62 @@ def test_stale_utterance_worker_never_touches_a_replacement_session():
     assert replacement.utterances_dispatched == 0
     assert dispatching.utterances_failed == 0
     assert spoke == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["entry", "handler", "completion", "replaced_reply"])
+async def test_invalidated_presentation_settles_live_utterance(stage):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.reply_sentence_sequencer import SentenceSequencer
+
+    drained = []
+    sequencer = SentenceSequencer(
+        speak=lambda text: None,
+        stop_speech=lambda: None,
+    )
+    sequencer.on_drained = lambda: drained.append(True)
+    sequencer.feed("A complete sentence. ")
+    sequencer.reply_completed()
+    token = sequencer.current_utterance_token
+    session = hands_free_module.ConsoleHandsFreeSession(
+        controller=HandsFreeController(emit=lambda intent: None), sequencer=sequencer
+    )
+    current = stage != "entry"
+    calls = []
+
+    async def speak(text, *, on_finished, **kwargs):
+        nonlocal current
+        calls.append(text)
+        current = False
+        if stage == "replaced_reply":
+            sequencer.flush()
+            drained.clear()
+            sequencer.begin_reply()
+            sequencer.feed("Replacement sentence. ")
+            sequencer.reply_completed()
+        on_finished(False)
+        on_finished(False)
+
+    async def ensure():
+        nonlocal current
+        if stage == "handler":
+            current = False
+        return SimpleNamespace(speak_utterance=speak)
+
+    controller = SimpleNamespace(
+        _console_hands_free=session,
+        app_instance=SimpleNamespace(_ensure_tts_handler=ensure),
+    )
+    await hands_free_module.ConsoleHandsFreeController._speak_console_hands_free_utterance(
+        controller, "A complete sentence.", token, session, validator=lambda: current
+    )
+    if stage == "replaced_reply":
+        assert not sequencer.drained and not drained
+        assert session.utterances_failed == 0
+        sequencer.utterance_finished(True, token=sequencer.current_utterance_token)
+        assert drained == [True]
+    else:
+        assert sequencer.drained and drained == [True]
+        assert session.utterances_failed == 1
+        assert bool(calls) == (stage == "completion")
