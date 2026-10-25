@@ -21733,6 +21733,8 @@ During the MCP pending-file-read repair, a guard used `panel.is_mounted` to auth
 
 The repair checks current attachment and pruning together with owner request/editor revisions. Both direct-retirement controls and ordinary/Cancel controls pass. When qualifying an asynchronous widget publication, exercise removal through the real owner as well as the Cancel gesture; an ever-mounted flag cannot establish current publication authority.
 
+**PR #3244 follow-up.** Held portrait crop/preview work reproduced the same mounted-only failure: a removed bounds label still authorized raster publication. Capture the exact child controls before awaits and check their current attachment; the regression also removes preview, draft and sample controls and a Save validation label. All five paths reject late completion after detachment.
+
 **TASK-36698 follow-up.** A final Image Gen review found a second interval: native removal marks the screen `_pruning` before its own Unmount cancels workers, while child teardown can already detach result widgets. A deterministic real-worker regression held a status child's Unmount, witnessed the screen still attached and worker uncanceled, and released queued success/error publication. Both variants changed the retired status before the shared pruning guard; both pass afterward. This is a contained status/log defect, not a demonstrated app crash. Test publication during removal as well as after detachment; current attachment alone does not exclude native teardown.
 
 ## Capture queued coroutine ownership before scheduling (TASK-36554 correction, 2026-10-24)
@@ -21774,11 +21776,3 @@ the correct item.
 assert the actual action's outcome rather than Pilot's node-identity return.
 Keep the real click and viewport/hit checks; do not replace the user action
 with a direct handler call.
-
-### Removed Textual controls can still report mounted
-
-In PR #3244's held portrait-render regressions, checking `is_mounted` on the
-removed bounds/detail widgets still allowed a late raster publication under
-Textual 8.2.8. `is_mounted` retains its historical flag after removal; use
-`is_attached` for captured child controls when verifying their live DOM lifetime.
-The same tests reject late crop, preview, draft and sample work after detachment.

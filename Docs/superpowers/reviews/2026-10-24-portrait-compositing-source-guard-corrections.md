@@ -100,3 +100,20 @@ commands, outputs hashes and red/green summaries are retained in
 `../qa/portrait-compositing/2026-10-24/source-guard-corrections/`.
 
 The complete worker-checker module then passes all 364 cases in 35.66s.
+
+## Current-dev integration
+
+GitHub stopped registering Actions runs on `1e336401` because newer dev made the
+PR conflicting. Rebased onto `139333920d2a87cb011e4f3aa5f8319b59c44a5c`.
+Resolved two successive conflicts in media-generation documentation by keeping
+dev's new Image Gen worker-retirement section and the final compositing entry
+point; retained both sets of testing lessons. No production code conflicted.
+All four corrected portrait production modules are byte-identical to the
+verified pre-rebase source. Consolidated the duplicate mounted/attachment lesson
+with dev's independently recorded TASK-36696 incident, retaining both witnesses.
+
+After rebase, all 12 required-summary source commands pass again. The new
+wheel-installed authoring/Console journey passes in 42.98s and matches all 53
+changed production files. Fresh API reads show no submitted reviews, inline
+comments or review threads. The published head must still complete hosted CI;
+this local evidence does not substitute for that required result.
