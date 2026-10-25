@@ -1633,17 +1633,21 @@ class StudyScreen(BaseAppScreen):
         self.activate_section(section)
 
     @on(Button.Pressed, "#quiz-start")
-    async def handle_quiz_start(self) -> None:
+    def handle_quiz_start(self) -> None:
         study_window = self.study_window_widget
         if study_window is None:
             return
         self.activate_section("quizzes")
-        await study_window.quizzes_controller.start_attempt()
-        quiz_name = (
-            study_window.quizzes_controller.selected_quiz_label() or "Quiz session"
-        )
-        self._record_study_session(section="quizzes", topic=quiz_name)
-        self.sync_shell_from_window()
+
+        async def start_and_sync() -> None:
+            await study_window.quizzes_controller.start_attempt()
+            quiz_name = (
+                study_window.quizzes_controller.selected_quiz_label() or "Quiz session"
+            )
+            self._record_study_session(section="quizzes", topic=quiz_name)
+            self.sync_shell_from_window()
+
+        self.run_worker(start_and_sync(), group="study-shell-start-quiz")
 
     @on(Button.Pressed, "#quiz-open-in-chat")
     def handle_quiz_review_in_chat(self) -> None:

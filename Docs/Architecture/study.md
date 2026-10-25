@@ -51,6 +51,8 @@ Quiz/question creation in `UI/Study_Modules/quizzes_handler.py` captures raw aut
 
 Quiz final-answer submission in `StudyQuizzesController.submit_current_answer` builds its payload from earlier completed answers plus the current answer without adding that final answer to pending state before persistence succeeds. A definite pre-write failure therefore keeps the question editable; retry uses the current answer once, retaining earlier answers and ordinary grading/history behavior (TASK-36360).
 
+Quiz Start from the shell and inner panel runs in owner-bound workers. The shared quizzes controller admits one pending start before awaiting the service; repeated gestures cannot cancel or duplicate that request. Admission is released on settlement, failure or cancellation. Shell navigation remains usable during a pending server response, and completion does not change the selected section. Start captures the original answer widget: if its panel retires or is replaced, successful remote completion reports the created attempt ID in a notification without publishing into the new panel or claiming cancellation rolled it back (TASK-36729; ADR-011/033).
+
 ## Config
 
 No study-specific config section: local storage is the ChaChaNotes DB path (`chachanotes_db_path`, profile-overridable); server services build from the runtime API client provider. Services are wired once at app scope.

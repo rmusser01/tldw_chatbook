@@ -1179,7 +1179,6 @@ class StudyWindow(Container):
     def handle_start_quiz_attempt(self) -> None:
         self.run_worker(
             self.quizzes_controller.start_attempt(),
-            exclusive=True,
             group="study-start-quiz-attempt",
         )
 

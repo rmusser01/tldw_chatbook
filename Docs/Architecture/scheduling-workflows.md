@@ -129,3 +129,7 @@ subscriptions and linked reminders until persisted reconciliation is verified.
 Unclassified watchlists stay held if ownership could not be read; unrelated
 scheduler types and positively classified unrelated sources remain eligible.
 Held occurrences do not enter the run ledger or advance their due clock.
+
+## Inline reminder edit ownership
+
+Each Frequency edit captures its reminder ID, field and submitted value. Its exclusive workbench worker is scoped to that reminder and field, so changing another reminder cannot cancel the first save. Same-reminder later intent keeps the existing supersession behavior; cancelling a client await does not imply remote rollback. Completion refreshes authoritative data. It only clears or paints the inline error when the reused detail row still belongs to the captured reminder; a failure after selection moves is reported as an earlier edit failure instead of overwriting the current row (TASK-36728; ADR-018, Proposed ADR-116 context).

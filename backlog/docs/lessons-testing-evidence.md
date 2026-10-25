@@ -21776,3 +21776,8 @@ the correct item.
 assert the actual action's outcome rather than Pilot's node-identity return.
 Keep the real click and viewport/hit checks; do not replace the user action
 with a direct handler call.
+
+
+## Release held responses before leaving run_test (TASK-36729, 2026-10-25)
+
+The first quiz Start RED run stopped at the cross-entry duplicate assertion, but its held server response was released only by a finally outside `async with app.run_test()`. App teardown waited on the blocked screen handler before that outer finally could run. Four completed child results were valid; the batch was incomplete and was not counted. An inner async cleanup context now releases the response before the App context exits, including on assertion failure. The corrected unchanged-source batch finished with four expected failures and six passing controls. Put hold release inside the App context's exit order; an outer finally alone does not guarantee a mounted negative control can terminate.
