@@ -87,9 +87,10 @@ can reach admitted work; `_read_avatar_image_bytes(self, path)` has the correct
 bound signature. `PreparedExpression.close` empties frames and zeroes its byte
 reservation, so repeated close cannot double-release the shared budget. The
 proposed exclusive worker, staticmethod and non-idempotent-close fixes do not
-apply. External persisted changes must retire source-bound portrait drafts under
-ADR-242/243 even when ordinary card edits are retained; retaining that draft would
-violate its authority fence. Remaining TTS/geometry suggestions are still being
+apply. External artwork/authority changes must retire source-bound portrait drafts under
+ADR-242/243; subsequent hosted feedback correctly distinguished text-only card
+changes, which must retain source-current staged work. The mounted regression
+reproduced that loss and the follow-up fix checks the saved source before discard. Remaining TTS/geometry suggestions are still being
 verified; no blanket acceptance of conditional findings is claimed.
 
 ### Guarded legacy speech delivery and cleanup
@@ -99,3 +100,9 @@ The hosted review confirmed that guarded hands-free legacy artifacts were cached
 ### Hands-free invalidation and sequencer ownership
 
 A presentation validator may become false while its hands-free loop remains live. Finish that exact in-flight token as failed at entry, after handler initialization, or on completion; fence bookkeeping by both loop identity and current utterance token, including failure counters. The four-case regression covers all three invalidation stages plus an abandoned reply, duplicate callbacks and replacement isolation. The existing replacement-session control remains green. A broader run of this legacy wiring module exposed 43 unrelated baseline failures (mostly missing ADR-126 bootstrap-profile ownership, plus an older config mock signature); these are not reported as passing. Focused worker and sequencer checks are recorded separately.
+
+### Repository scope after hosted feedback
+
+The hosted 100-path pass completed at `0cf888502e97dd8a28a467ecc8f7c230ba0688ba` with four inline findings. It correctly noted that the temporary allowlist would permanently exclude workflows, tooling, manifests and governance. Restore the all-path override; keep source/test batches bounded through the CLI rather than narrowing future repository coverage. The already-completed hosted pass is historical coverage, not a promise that this large PR fits the hosted cap. Qodo/Cubic remain unavailable. Source/test CLI batches and post-fix verification remain required.
+
+The legacy hands-free module was rerun with its exact pre-fix worker from `2a810a6314`: the same 43 baseline failures reproduced (10 passed, 4 new tests deselected). Current focused worker/old-session controls plus the pure sequencer suite pass 32 checks. The broad legacy module is not claimed green.

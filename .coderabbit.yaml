@@ -1,6 +1,4 @@
-# Keep the application and test review within CodeRabbit's 100-file service cap.
+# Review the whole repository; large PRs require bounded review batches.
 reviews:
   path_filters:
-    - "tldw_chatbook/**"
-    - "Tests/**"
-    - ".coderabbit.yaml"
+    - "**"
