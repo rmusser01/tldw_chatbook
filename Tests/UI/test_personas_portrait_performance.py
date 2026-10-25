@@ -637,3 +637,31 @@ async def test_actual_save_reconciliation_preserves_only_same_source_draft(
         assert controller.draft is draft and FRAME_ROLES[1] in draft.staged_roles
         assert controller._current(controller._authority)
         assert editor.visual_identity_session_token == controller._authority.identity[5]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["refresh", "import"])
+async def test_invalid_saved_source_retires_draft_on_every_verification_path(
+    personas_editor_with_saved_character, monkeypatch, tmp_path, action
+):
+    from tldw_chatbook.UI.Persona_Modules import portrait_performance
+
+    _, screen, _, _, _ = saved_source(personas_editor_with_saved_character)
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+
+    def invalid_source(*args, **kwargs):
+        raise ValueError("portrait_performance_source_reference_invalid")
+
+    monkeypatch.setattr(
+        portrait_performance, "capture_performance_source", invalid_source
+    )
+    if action == "refresh":
+        await controller.check_saved_source()
+    else:
+        path = tmp_path / "pose.png"
+        path.write_bytes(png())
+        assert not await controller.handle(
+            CharacterPerformanceRequested("import", role=FRAME_ROLES[1]), path=str(path)
+        )
+    assert controller.draft is None

@@ -274,14 +274,21 @@ class PortraitPerformanceController:
         return await self._drain(work, task_name="personas-portrait-performance")
 
     def _source(self, authority: _Authority, requested: str):
-        source, data = capture_performance_source(
-            authority.db,
-            character_id=authority.character_id,
-            requested_state=requested,
-            manual_expression_key=None
-            if requested in {"idle", "thinking", "speaking", "error"}
-            else requested,
-        )
+        try:
+            source, data = capture_performance_source(
+                authority.db,
+                character_id=authority.character_id,
+                requested_state=requested,
+                manual_expression_key=None
+                if requested in {"idle", "thinking", "speaking", "error"}
+                else requested,
+            )
+        except PerformanceConflict:
+            raise
+        except ValueError as error:
+            raise PerformanceConflict(
+                "The saved artwork changed. Prepare it again."
+            ) from error
         return source, data, authority.db.get_local_authority_id()
 
     def _verify_source(
