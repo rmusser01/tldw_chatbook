@@ -2,6 +2,7 @@
 
 import json
 import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,8 @@ def test_opted_in_probe_preserves_evidence_without_claiming_visual_qualification
         assert "private-fixture-secret" not in script
         settings = root / "image-settings.toml"
         assert "private-fixture-secret" in settings.read_text()
-        assert settings.stat().st_mode & 0o777 == 0o600
+        if sys.platform != "win32":
+            assert settings.stat().st_mode & 0o777 == 0o600
         assert timeout == 900
         artifacts = root / "home/portrait-artifacts"
         artifacts.mkdir(parents=True)

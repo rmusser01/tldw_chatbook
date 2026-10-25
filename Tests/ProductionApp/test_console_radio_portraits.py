@@ -196,13 +196,16 @@ async def main():
   await ready(lambda:avatar.current_image is not None and avatar._visible())
   audio.allow_synthesis()
   observed=False;sample_trace=[]
-  while controller._busy:
-   snap=controller._presentation.read() if controller._presentation else None
-   if snap:
-    sample_trace.append((snap.state,snap.mouth,snap.timing_valid,avatar._frame_index,avatar._visible()))
-    if snap.state=='playing' and snap.timing_valid and snap.mouth!='rest' and avatar._frame_index>=0 and avatar._frame_index%3!=0:observed=True
-   await asyncio.sleep(.02)
-  assert observed and audio.synthesized,{'trace':sample_trace[-30:],'streams':len(audio.streams),'syntheses':len(audio.synthesized),'responses':audio.responses,'formats':audio.formats,'status':str(view.query_one('#portrait-performance-status').render())}
+  try:
+   async with asyncio.timeout(30):
+    while controller._busy:
+     snap=controller._presentation.read() if controller._presentation else None
+     if snap:
+      sample_trace.append((snap.state,snap.mouth,snap.timing_valid,avatar._frame_index,avatar._visible()))
+      if snap.state=='playing' and snap.timing_valid and snap.mouth!='rest' and avatar._frame_index>=0 and avatar._frame_index%3!=0:observed=True
+     await asyncio.sleep(.02)
+  except TimeoutError:pass
+  assert not controller._busy and observed and audio.synthesized,{'trace':sample_trace[-30:],'streams':len(audio.streams),'syntheses':len(audio.synthesized),'responses':audio.responses,'formats':audio.formats,'status':str(view.query_one('#portrait-performance-status').render())}
   evidence['guarded_sample_pcm_driven']=True
   app.post_message(NavigateToScreen('chat'));await ready(lambda:isinstance(app.screen,ChatScreen))
   chat=app.screen
