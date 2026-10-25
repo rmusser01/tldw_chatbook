@@ -733,4 +733,40 @@ async def test_personas_apply_and_remove_handoff_to_mounted_console(
         force=True
     )
     assert console._active_character_avatar.get("performance") is None
-    assert console._active_character_avatar["pil"].getpixel((3, 3)) == (255, 255, 0, 255)
+    assert console._active_character_avatar["pil"].getpixel((3, 3)) == (
+        255,
+        255,
+        0,
+        255,
+    )
+
+
+@pytest.mark.asyncio
+async def test_graphics_mount_finishes_when_preview_pose_changes(monkeypatch):
+    pytest.importorskip("textual_image.widget")
+    app, _snapshot = performance_app()
+    avatar = app.avatar
+    avatar._mode = "graphics"
+    avatar.set_preview_mode("rest")
+    mount = avatar.mount
+
+    async def change_pose_after_mount(*children, **kwargs):
+        await mount(*children, **kwargs)
+        if avatar._graphics is not None and avatar._graphics in children:
+            avatar.set_preview_mode("small")
+
+    monkeypatch.setattr(avatar, "mount", change_pose_after_mount)
+    before = preparation_bytes()
+    async with app.run_test(size=(40, 16)) as pilot:
+        await wait_ready(avatar, pilot)
+        avatar._timer.stop()
+        graphics = avatar._graphics
+        assert graphics is not None and not avatar._surface.display
+        await avatar._tick()
+        assert avatar._frame_index == 1
+        assert avatar._graphics is graphics
+        assert graphics.image is avatar.current_image
+        assert avatar.current_image.getpixel((3, 3)) == avatar._prepared.frames[
+            1
+        ].getpixel((3, 3))
+    assert preparation_bytes() == before

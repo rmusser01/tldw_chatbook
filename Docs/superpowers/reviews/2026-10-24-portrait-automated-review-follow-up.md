@@ -67,3 +67,27 @@ result. The user was offered every-file coverage versus the recommended code/tes
 pass; after the response window, proceeded with that stated recommendation.
 The final schema validation and exact selected/outside path lists are retained in
 `../qa/portrait-compositing/2026-10-24/review-readiness/code-test-scope.json`.
+
+## Application batch — first verified findings
+
+CodeRabbit CLI 0.9.1 reviewed the entire 53-file application subtree at `155ed23c8e`
+and emitted eleven findings. These are separate from the hosted 100-path pass.
+The graphics mount race is reproduced with a real graphics widget: change the
+manual preview role immediately after its actual mount, then observe the permanent
+Preparing surface. The regression fails before the fix and passes afterward.
+After an owner-current initial mount, finish hiding the surface and adopting its
+rest-pose buffer; the next tick paints the newly selected pose. Keep stale checks
+on threaded pose/pixel results and the owner check after mount. The four focused
+checks pass: new mounted race, stable graphics updates, late loud-to-silence
+rejection and exact six-role offline cycle, including shared-budget cleanup.
+
+Controller close is reusable (discard/drain, no terminal flag); the nonexclusive
+worker is intentionally serialized by `handle`'s admission gate so Stop/Cancel
+can reach admitted work; `_read_avatar_image_bytes(self, path)` has the correct
+bound signature. `PreparedExpression.close` empties frames and zeroes its byte
+reservation, so repeated close cannot double-release the shared budget. The
+proposed exclusive worker, staticmethod and non-idempotent-close fixes do not
+apply. External persisted changes must retire source-bound portrait drafts under
+ADR-242/243 even when ordinary card edits are retained; retaining that draft would
+violate its authority fence. Remaining TTS/geometry suggestions are still being
+verified; no blanket acceptance of conditional findings is claimed.

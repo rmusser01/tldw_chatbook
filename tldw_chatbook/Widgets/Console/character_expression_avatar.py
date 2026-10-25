@@ -289,7 +289,7 @@ class CharacterExpressionAvatar(Widget):
                             width=self._box[0], height=self._box[1]
                         )
                         await self.mount(self._graphics)
-                        if not self._current() or not self._pose_is_current(index):
+                        if not self._current():
                             return False
                         self._surface.display = False
                     else:
