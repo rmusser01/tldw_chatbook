@@ -1,7 +1,7 @@
 # Shared Console ownership and mobile agent supervision
 
 Date: 2026-10-25
-Status: Approved in conversation; written-spec review pending; implementation has not started
+Status: Reviewed and accepted 2026-10-25; six design-review corrections verified; implementation has not started
 Task: [TASK-36728](../../../backlog/tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Decision: [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
 
@@ -86,17 +86,32 @@ one for every phone or reconnect. Saved chats without a live served owner resume
 through normal Console hydration and admission, including dispatch recovery.
 Reading a saved conversation does not restart its agent.
 
-Canonical run-store safety also requires a process-owned execution fence, keyed
-by admitted canonical storage identity. Acquire it before constructing an
-execution runtime or reconciling its run DB, and retain it through owner cleanup.
-Both native and served execution entry points must honor this fence in the first
-release, although native remote attachment is deferred. A live native owner or
-second served server blocks competing execution for those stores; it is not
-silently taken over. Read-only access remains possible without recovery sweeps.
-Neither a heartbeat timeout nor absence from the served registry proves an owner
-dead. Qualify recovery with the process fence and existing dispatch evidence;
-non-owning DB opens must disable destructive reconciliation. Maintenance and
-schema migration retain their existing separate admission requirements.
+Canonical run-store safety requires an OS-backed process execution fence for the
+actual admitted `agent_runs.db` resource. Key it by the secured physical store,
+including safe creation identity when the DB does not yet exist, rather than a
+profile name or hash of the whole configured path tuple. Two differently named
+chat DBs in one directory share that sibling run store and must contend for the
+same fence. Validate aliases; refuse an alias that cannot be fenced consistently.
+
+The executing process owns the fence: the served child for served execution,
+the native App process for native execution. The web parent owns routing only;
+its disappearance must not release an executing child's authority. Acquire
+before any execution-capable run-store open, orphan reconciliation, automatic
+work recovery or dispatch, and retain through physical owner cleanup. An empty
+`ConsoleRuntime` holder or a read-only view need not acquire execution authority.
+Constructor flags alone are insufficient: explicit recovery and auxiliary run
+writers must honor the same owner check. Maintenance and schema migration keep
+their existing separate admission requirements.
+
+A live native owner or second served server prevents competing execution for
+that resource. Non-owning reads use a read-only path without schema migration or
+reconciliation. Neither a heartbeat timeout, parent death nor absence from the
+served registry proves the execution owner dead. A served child that loses its
+parent/control channel stops new admission and automatic wakes, begins existing
+bounded runtime shutdown, and retains the fence until its process/physical work
+has retired. A surviving or hung child keeps replacements blocked; no replacement
+server may steal its fence or sweep its runs. OS-released ownership after actual
+process death permits the existing uncertainty-aware recovery, never blind replay.
 
 Independently launched native processes are not yet registered remote controls.
 Do not advertise their persisted run rows as controllable live runs or
@@ -120,8 +135,12 @@ Move socket callbacks behind a retained transport attachment. Keep draining the
 child's output while no terminal is attached, without writing to a dead socket,
 blocking the app, or retaining an unbounded terminal-output history. A newly
 attached terminal receives a reset/full-render handshake at its dimensions
-before incremental updates. Replaying only the deltas produced during absence
-is insufficient. Phone transcript subscriptions do not resize the terminal.
+before incremental updates. Restore the driver's application/alternate-screen,
+mouse reporting, bracketed-paste, cursor and terminal-sync state in that handshake;
+these modes are otherwise emitted only at driver startup. Do not restart the
+driver's input thread or restart the agent to obtain this state. Replaying only
+the deltas produced during absence is insufficient. Phone transcript
+subscriptions do not resize the terminal.
 
 One retained Console has at most one full-terminal input/viewport attachment at
 a time. An authenticated replacement attachment invalidates and closes the old
@@ -159,14 +178,33 @@ metadata projections. Preserve current thinking/capture visibility policies.
 | Operation | Owning path and target |
 | --- | --- |
 | Open/create chat | Canonical Console session creation or saved hydration; atomic served ownership reservation. |
-| Send | Runtime-owned received-input/admission path, with the target session's settings, workspace and authored input snapshot. No mobile default provider/model or shortcut around hooks and preparation. |
+| Send | Runtime-owned admission with a command-owned phone input snapshot and the target session's checked settings/workspace. Reuse the existing session claim, preparation and dispatch owners without borrowing desktop composition. |
 | Main-agent Steer/Redirect/Stop | Existing controller behavior extended with explicit target session/incarnation and current run identity. Existing active-tab entry points delegate to the same underlying operation. |
 | Subagent guidance/Stop | Existing bridge/coordinator path, scoped to owning conversation and exact live handle/run. Historical or finished workers are read-only. |
 | Answer decision | Existing retained round resolver, scoped to owning runtime, session, run, kind and round ID. Includes approvals, agent questions and other pending native confirmations with a supported phone projection. |
 
 Remote preparation and dispatch must not temporarily switch global active-session
 state, borrow the desktop composer, clear its draft, or rebuild configuration
-from the phone's viewed chat. An unsupported decision remains visibly pending
+from the phone's viewed chat. The current `ConsoleSessionInputSnapshot` captures
+and validates the stored desktop draft/revision, attachments and one-shot prefill;
+its acceptance path clears that exact draft. It cannot be reused unchanged for
+independent phone text. Extend the existing input/admission seam with an immutable
+phone command snapshot carrying its exact session/incarnation, submitted text,
+command identity, and checked settings/context revisions. Revalidate session,
+configuration, permissions and admission under their existing owners; desktop
+typing alone must neither invalidate nor clear a received phone command.
+
+First-release phone Send has no attachments, one-shot prefill or staged RAG
+launch. Those desktop composition values remain untouched, including when a
+different chat is active. The target chat's committed context policy, history,
+native retrieval and checked generation settings still apply. Phone Send must
+not snapshot global desktop staging or use `set_session_draft` as a transport.
+Only the originating page consumes its exact accepted input; late acknowledgement
+must not clear newer edits on that page or any draft on another device. This is
+one new input origin into the existing claim/preparation/dispatch path, not a
+second controller or a relaxed bypass of native validation.
+
+An unsupported decision remains visibly pending
 with a reason and an Open terminal path; it is never silently denied or granted.
 Supported decisions use the same native answerability/timeout policy. Track
 answerable attachments so one device disconnecting cannot mark a decision
@@ -180,6 +218,25 @@ The same ID and same payload return the existing receipt; reuse with different
 content is refused. Receipts distinguish pending, accepted/queued, applied,
 refused and outcome-unknown. Accepted Stop or queued guidance does not claim
 physical cancellation or guidance consumption has already completed.
+
+Command IDs are server-issued submission tickets bound to the action, target,
+server/host epoch and an immutable monotonic expiry, five minutes from issue.
+Issue when the user submits; this is not a typing deadline, approval timeout or
+run budget. The issuer authenticates that binding even if a receipt is absent;
+the client cannot renew a ticket's deadline while keeping the same command ID.
+Expired or prior-epoch tickets can query outcomes but cannot issue an effect.
+Ticket expiry does not cancel an already accepted turn, Stop or queued guidance.
+
+Retain deduplication evidence for every still-valid ticket; never evict it to
+admit another effect. Capacity pressure refuses new non-idempotent submissions
+before dispatch. Reuse existing turn/queue/round outcomes as receipts where they
+already establish identity. Exact-target native Stop must remain available under
+receipt pressure: repeated Stop is the same cancellation request, not a new run
+or a reason to allocate an unbounded command history. Completed/refused receipt
+details may be pruned only after their ticket is invalid. Pending or unknown
+outcomes remain retained/referenced through native recovery or explicit review.
+After details are pruned, report expired/unavailable outcome; absence never means
+the command is fresh or safe to resend.
 
 Receipts needed across owner loss are durable, profile-local and body-free;
 command text follows existing transcript/steering capture policy. Retain a
@@ -252,7 +309,17 @@ Consolidation is part of this correction. Changing DB paths or retiring the old
 engine without preserving its data does not satisfy the design.
 
 1. **Preflight and fence.** Discover the exact legacy directory and canonical
-   destinations from admitted profile configuration. Stop new legacy-mobile
+   destination candidates from admitted configuration. Legacy source identity is
+   its physical directory/stores, not the configuration that starts first:
+   configurations can share `user_data_dir()/mobile` while independently
+   overriding canonical DB paths. Existing mobile records do not prove which
+   configuration owns each chat. Present the source, destination and preserved
+   scope for review; require an explicit destination decision when attribution
+   is ambiguous. Never silently assign mixed history to the current profile.
+   Claim the physical source once and bind the operation/cutover receipt to both
+   source identity/fingerprint and reviewed destination resources. Another
+   configuration must see that claim and cannot re-import or redirect it; a
+   changed source requires a fresh reviewed operation. Stop new legacy-mobile
    admission, let active work settle or require explicit Stop, and quiesce
    affected source/destination owners using existing maintenance admission.
    Never force-close a running writer or open legacy databases with constructors
@@ -274,8 +341,18 @@ engine without preserving its data does not satisfy the design.
    native invariant. Keep conflicting named workspaces distinct. Preserve
    exclusions, explicit restrictions, project-instruction control and relevant
    historical settings; do not import new grants, activate unreviewed roots or
-   turn data restoration into dispatch approval. Imported incomplete runs are
-   historical/recovery records, never live commands or automatic wake authority.
+   turn data restoration into dispatch approval. Quarantine all imported
+   automatic-work chains, wake/chat-start claims, goals and pending-result
+   delivery authority as review-required, including completed runs. A terminal
+   subagent with an undelivered result can otherwise trigger a provider follow-up
+   when normal startup recovery seeds results from history. Preserve original
+   run statuses, results, accounting and truthful delivery stamps; never forge
+   `wake_delivered_at` to suppress that work. Publish the quarantine atomically
+   with imported authority records and retain it across every journal resume
+   before runtime admission. Ordinary startup recovery is not fresh approval.
+   Release only through an explicit native review of the exact imported authority;
+   unsupported release stays paused. Reading imported history or sending a new
+   manual turn does not approve an old imported automatic chain.
 5. **Apply and resume.** Use existing owner transactions and a durable operation
    journal. Record source fingerprints, destination identity/revisions, mappings,
    committed batches, verification and cutover. Couple each batch's data and
@@ -304,8 +381,8 @@ guessing how an unsupported source should be transformed.
 
 | Component | Responsibility and limits |
 | --- | --- |
-| Served lifecycle/attachment owner | Retain one existing child execution host per canonical profile, hold its process execution fence, register live chats, attach terminal transport, drain detached output, fence stale attachments and close hosts on server shutdown. |
-| Existing Console runtime and domain owners | Admit authored inputs, resolve exact commands/decisions, execute agents/tools and persist outcomes. Add explicit-target seams here; do not add a parallel mobile state machine. |
+| Served lifecycle/attachment owner | Retain and route to one existing child host per canonical profile, await that child's run-store fence, attach terminal transport, drain detached output, fence stale attachments and close hosts on server shutdown. The parent does not hold the child's execution authority. |
+| Existing Console runtime and domain owners | Hold execution authority in the executing process; admit command-owned phone inputs through the existing session claim, resolve exact commands/decisions, execute agents/tools and persist outcomes. Add explicit-target seams here; do not add a parallel mobile state machine. |
 | Existing control transport and mobile API | Authenticate, validate bounded requests, route to the owning process, expose snapshots/events/receipts and apply backpressure. Runtime control is independent of Canvas enablement. |
 | Existing recovery subsystem plus consolidation adapter | Inventory/capture retired mobile data, map and apply records transactionally, recover interrupted work and publish verified cutover. It does not replay agent work. |
 | `/m` page | Render shared chat/run state, keep page-local navigation/drafts and submit explicit user commands. It owns presentation, not runtime lifecycle or permissions. |
@@ -331,6 +408,9 @@ contract is implemented and qualified; no speculative native daemon is added now
 | Competing decision answers | One resolver wins; later answers return already resolved/current state. |
 | Chat/worker finishes or changes before command | Refuse the stale target; do not retarget, relaunch or change desktop selection. |
 | Child or served-server death | Live controls unavailable; pending receipts may be unknown; normal durable recovery governs restart. |
+| Parent dies while child survives | Child closes admission and starts shutdown while retaining its run-store fence; a replacement cannot execute or reconcile that store until ownership actually retires. |
+| Expired command or pruned receipt | Outcome query only; do not renew the same ID, infer non-execution or dispatch it again. |
+| Shared legacy source with ambiguous destination | Hold the source claim and require reviewed destination mapping; no startup-profile default import. |
 | Interrupted consolidation | Storage admission remains fenced; resume/rollback the journaled operation without duplicate imports. |
 | Source conflict, unknown schema or missing dependency | Refuse cutover with the original data retained and an actionable issue. |
 
@@ -345,28 +425,49 @@ areas. Run the full test suite only if the user opts in.
   Assert the retired mobile engine and its DB constructors are not used.
 - Race native/served execution and two served servers against the same canonical
   stores. Prove one execution owner, no false orphan sweep by readers or rejected
-  contenders, and no takeover on a timeout. Exercise owner exit/crash recovery
-  separately from browser disconnection, including surviving accepted work.
+  contenders, and no takeover on a timeout. Include two chat DB filenames sharing
+  one sibling `agent_runs.db`, aliases, non-owning explicit recovery calls, and a
+  web-parent crash while its child remains alive. Prove the child's fence blocks
+  replacement/reconciliation until physical retirement. Exercise actual owner
+  exit/crash recovery separately from browser disconnection.
 - Start a real served child, run a controlled agent/tool sequence, close the
   desktop browser socket, reconnect via the phone and then terminal, and verify
-  the same process, session and run continue. Verify a full terminal redraw and
-  stale-attachment rejection. Separately test clean server teardown.
+  the same process, session and run continue. Verify a full terminal redraw,
+  mouse clicks, cursor/mode state, multiline bracketed paste and resize after
+  reattachment, without restarting the driver input thread. Test stale keys,
+  resize and cleanup rejection. Separately test clean server teardown.
 - Exercise two chats and multiple subagents concurrently. Read/steer/redirect/
   Stop exact supported targets from the phone; verify unrelated runs, desktop
   selection, settings and drafts are unchanged. Show queued versus consumed
   subagent guidance honestly and test the target finishing during submission.
+- Leave different unsent drafts on desktop and phone for the same chat, with
+  desktop attachments, prefill and staged RAG; submit and queue phone text while
+  desktop typing continues. Assert exact phone text once, unchanged desktop
+  composition, no borrowed attachment/context and no rejection caused only by
+  desktop draft edits. Revalidate genuine settings, binding and admission races;
+  a late phone receipt cannot clear newer phone edits.
 - Exercise background and viewless decisions, multiple answerable clients,
   competing resolutions, disconnect during a decision and Canvas disabled.
   Verify native permission, timeout, hook and project-instruction behavior.
 - Inject disconnects before admission, after admission and after effect but
   before acknowledgement. Reuse command IDs, change payload under the same ID,
   change owner epoch, overflow replay and race snapshot/subscription. Assert no
-  duplicate accepted mutation and no false success for an unknown outcome.
+  duplicate accepted mutation and no false success for an unknown outcome. Cover
+  ticket expiry, authenticated expiry tampering, valid-ticket retention under
+  pressure, querying after pruning, unknown-outcome retention and Stop while the
+  non-idempotent receipt budget is full. Accepted work survives ticket expiry.
 - Interrupt consolidation at each journal stage and between DB batches. Retry
   against populated canonical stores; cover conflicting IDs/workspaces, message
   branches, settings, exclusions, run parentage, artifacts, unsupported data,
   empty sources and repeat-after-cutover. Verify backup scope, source retention,
-  rollback, schema-catalog changes and recovered execution remains gated.
+  rollback, schema-catalog changes and recovered execution remains gated. Include
+  two configurations sharing one legacy source but selecting different canonical
+  DBs; require reviewed attribution and refuse a second destination claim. Import
+  a completed parent/child pair with an undelivered terminal child result and an
+  otherwise settled active automatic chain. Native startup/recovery and journal
+  resume must produce no automatic provider/tool call before explicit review,
+  while preserving truthful delivery history. A new manual turn does not release
+  the quarantined old chain.
 - Check phone-sized layouts, touch/keyboard access, soft-keyboard viewport,
   long/inert content, independent drafts/targets, offline display and sign-in
   recovery in the real served browser path. Emulated disconnection verifies the
@@ -387,7 +488,9 @@ ADR-094 accepted-turn ownership, ADR-126 recovery and ADR-150/161 design-languag
 boundaries remain governing.
 
 Architecture, phone workflow and consolidation/failure/verification sections were
-approved in conversation. The committed written spec is the next review gate.
-After that review, use the writing-plans skill to produce the implementation
-plan and atomic Backlog tasks. No production code, real user-data migration,
-provider call or runtime qualification is part of this design-writing task.
+approved in conversation. The user reviewed the written spec and approved all six
+source-backed corrections. Self-review and independent review found no remaining
+issues in those corrections; each has matching verification scenarios above.
+Next, use the writing-plans skill to produce the implementation plan and atomic
+Backlog tasks. No production code, real user-data migration, provider call or
+runtime qualification is part of this design-writing task.
