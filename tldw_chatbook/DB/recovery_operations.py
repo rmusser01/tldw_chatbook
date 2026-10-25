@@ -1629,3 +1629,36 @@ _AGENT_RUNS_SCHEMA += tuple(
     for version, catalog in _AGENT_RUNS_SCHEMA
     if version == 24
 )
+
+
+def legacy_mobile_declarations(config, *, source_dir: Path | None = None):
+    """Declare three fixed optional legacy files with native capture owners."""
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        LEGACY_STORES,
+        _resource_identity,
+    )
+    from tldw_chatbook.Backup_Recovery.profile_paths import legacy_mobile_dir
+
+    context = discovery_context(config)
+    source = legacy_mobile_dir(config) if source_dir is None else source_dir
+    absent = _resource_identity(source)[-1] == "absent"
+    config_id = storage_logical_id(context, "config")
+    keys = {
+        owner: storage_logical_id(context, owner, "legacy-mobile")
+        for _, owner in LEGACY_STORES
+    }
+    return tuple(
+        StorageItem(
+            owner,
+            keys[owner],
+            source / leaf,
+            "unused"
+            if absent
+            else _sqlite_inventory_status(
+                config, source / leaf, owner=owner, optional_default=True
+            ),
+            (config_id,)
+            + ((keys["db.chachanotes.primary"],) if owner == "db.agent_runs" else ()),
+        )
+        for leaf, owner in LEGACY_STORES
+    )

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, RLock
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from tldw_chatbook.Utils.platform_files import os
@@ -17,6 +18,9 @@ from .limits import ArchiveLimits
 from .native_files import create_private_directory, pinned_directory
 from .recovery_copies import hold_recovery_copy, list_recovery_copies
 from .service_storage import default_control_root, ensure_storage
+
+if TYPE_CHECKING:
+    from .mobile_consolidation import MobileConsolidationPreview
 
 __all__ = ["RecoveryService", "default_control_root", "issue_code"]
 
@@ -259,6 +263,14 @@ class RecoveryService:
         self._archives = {}
         self._workspaces = {}
         self._retained_workspaces = set()
+
+    def preview_mobile_consolidation(
+        self, source_config: Path, target_config: Path
+    ) -> "MobileConsolidationPreview":
+        """Observe legacy sources selected through the existing local config boundary."""
+        from .mobile_consolidation import preview_selected_mobile
+
+        return preview_selected_mobile(source_config, target_config)
 
     def _update(self, operation, **changes):
         with self._lock:

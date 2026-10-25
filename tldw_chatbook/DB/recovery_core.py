@@ -326,9 +326,15 @@ class _CoreAdapter:
         if item.owner != self.owner_id or not item.logical_id.startswith("profile:"):
             return ("invalid_dependency_context",)
         parts = item.logical_id.split(":")
-        if len(parts) != 3 or parts[2] != self.owner_id or not parts[1]:
+        legacy = len(parts) == 4 and parts[3] == "legacy-mobile"
+        if (
+            (len(parts) != 3 and not legacy)
+            or parts[2] != self.owner_id
+            or not parts[1]
+        ):
             return ("invalid_dependency_context",)
         prefix = "profile:" + parts[1] + ":"
+        suffix = ":legacy-mobile" if legacy else ""
         issues = self.validate(candidate)
         if issues:
             return issues
@@ -403,7 +409,7 @@ class _CoreAdapter:
                         ),
                     ):
                         if connection.execute(query).fetchone() is not None:
-                            key = prefix + owner
+                            key = prefix + owner + suffix
                             if (
                                 key not in item.dependencies
                                 or key not in candidates
@@ -423,7 +429,7 @@ class _CoreAdapter:
                                 if adapter.validate(candidates[key]):
                                     return ("dependency_unavailable",)
                 for owner, table, column, identity in references:
-                    key = prefix + owner
+                    key = prefix + owner + suffix
                     if owner == self.owner_id:
                         target = candidate
                     else:

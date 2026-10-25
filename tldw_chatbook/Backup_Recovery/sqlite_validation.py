@@ -307,7 +307,13 @@ class _Restrictions:
                 "foreign_key_check",
                 "data_version",
             }
-            metadata = {"table_xinfo", "index_list", "index_xinfo", "table_list"}
+            metadata = {
+                "table_xinfo",
+                "index_list",
+                "index_xinfo",
+                "table_list",
+                "foreign_key_list",
+            }
             permitted = (first in reads and second is None) or first in metadata
             permitted |= first == "trusted_schema" and second in ("OFF", "0")
             permitted |= (

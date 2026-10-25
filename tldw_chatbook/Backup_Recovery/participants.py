@@ -289,7 +289,11 @@ class _RepositoryParticipant:
 
 
 def _repository_types():
-    """Exact source-backed runtime declarations; subclasses confer no authority."""
+    """Exact source-backed runtime declarations; subclasses confer no authority.
+
+    Legacy mobile logical items retain these native owners. Their actual paths
+    receive the same connection retirement and maintenance admission as Console.
+    """
     from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
     from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 

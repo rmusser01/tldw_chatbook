@@ -114,6 +114,13 @@ _PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
 )
 
 _SQLITE_OWNER_POLICIES = {
+    "recovery.mobile.preview": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/mobile_consolidation",
+        _READ_ONLY_URI,
+        "Read-only legacy inventory over native checked SQLite snapshots.",
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "plugins.registry": SQLiteOwnerPolicy(
         "tldw_chatbook/Plugins/registry",
         _PRIVATE_MEMORY_AND_READ_ONLY,

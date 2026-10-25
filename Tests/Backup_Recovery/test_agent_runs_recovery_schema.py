@@ -347,3 +347,27 @@ def test_native_receipt_migration_rolls_back_table_before_version_stamp(
             ).fetchone()
             is None
         )
+
+
+def test_legacy_mobile_declaration_reuses_exact_agent_schema_policy(tmp_path):
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+    from tldw_chatbook.DB.recovery_operations import legacy_mobile_declarations
+
+    config = {
+        "general": {"users_name": "user"},
+        "paths": {"data_dir": str(tmp_path)},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(tmp_path / "config.toml", "test"),
+    }
+    runs = next(
+        item
+        for item in legacy_mobile_declarations(config)
+        if item.owner == "db.agent_runs"
+    )
+    assert runs.logical_id == "profile:test:db.agent_runs:legacy-mobile"
+    assert runs.path == tmp_path / "user" / "mobile" / "runs.db"
+    assert runs.status == "unused"
+    assert "profile:test:db.chachanotes.primary:legacy-mobile" in runs.dependencies
+    assert not runs.path.parent.exists()

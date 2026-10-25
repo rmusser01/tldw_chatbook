@@ -633,6 +633,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tldw-chatbook recovery", allow_abbrev=False)
     parser.add_argument("--control-root", type=_path)
     commands = parser.add_subparsers(dest="command", required=True)
+    mobile = commands.add_parser("consolidate-mobile", allow_abbrev=False)
+    mobile.add_argument("--source-config", type=_path, required=True)
+    mobile.add_argument("--target-config", type=_path, required=True)
+    mobile.add_argument("--preview", action="store_true", required=True)
     inspect = commands.add_parser("inspect", allow_abbrev=False)
     inspect.add_argument("archive", type=_path)
     inspect.add_argument("--ask-password", action="store_true")
@@ -844,6 +848,12 @@ def recovery_main(argv: Sequence[str] | None = None) -> int:
 
     service = RecoveryService(args.control_root or default_control_root())
     try:
+        if args.command == "consolidate-mobile":
+            preview = service.preview_mobile_consolidation(
+                args.source_config, args.target_config
+            )
+            _show(preview)
+            return 1 if preview.issues else 0
         if args.command == "inspect":
             return (
                 0

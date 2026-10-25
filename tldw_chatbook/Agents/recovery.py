@@ -22,6 +22,10 @@ from tldw_chatbook.Utils.platform_files import os
 
 class _RunLogs(_RawDeclaration):
     def discover(self, config):
+        return self.discover_for_stores(config)
+
+    def discover_for_stores(self, config, stores=None):
+        """Use the same installed log roots for explicitly reviewed legacy stores."""
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
         from tldw_chatbook.DB.recovery_operations import recovery_adapters
         from tldw_chatbook.Skills_Interop.recovery import default_script_output_root
@@ -29,9 +33,14 @@ class _RunLogs(_RawDeclaration):
         context = discovery_context(config)
         script_output = default_script_output_root(config)
         configured = setting(config, "tools", "file_sandbox_root")
-        default_root = user_data_dir(config) / "tool_sandbox"
+        default_root = (
+            stores["db.agent_runs"].path.parent.parent
+            if stores is not None
+            else user_data_dir(config)
+        ) / "tool_sandbox"
         selected_root = lexical_path(configured) if configured else default_root
         roots = {selected_root}
+        retained_roots = set()
         issues = []
         unused_runs = None
         bound_root = selected_root != default_root
@@ -40,12 +49,12 @@ class _RunLogs(_RawDeclaration):
         for owner, query in (
             (
                 "db.workspaces",
-                "SELECT locator FROM workspace_runtime_bindings WHERE binding_kind='local_filesystem'",
+                "SELECT locator FROM workspace_runtime_bindings WHERE binding_kind IN ('local_filesystem','local-filesystem')",
             ),
             ("db.agent_runs", "SELECT DISTINCT root FROM change_snapshots"),
         ):
             adapter = next(a for a in recovery_adapters() if a.owner_id == owner)
-            item = adapter.discover(config)[0]
+            item = stores[owner] if stores is not None else adapter.discover(config)[0]
             if owner == "db.agent_runs" and item.status == "unused":
                 unused_runs = item
                 continue
@@ -86,6 +95,8 @@ class _RunLogs(_RawDeclaration):
                         ):
                             raise ValueError("invalid_log_root")
                         roots.add(Path(row[0]))
+                        if stores is not None and owner == "db.agent_runs":
+                            retained_roots.add(Path(row[0]))
                         bound_root = True
             except (OSError, ValueError, sqlite3.Error):
                 issues.append(
@@ -116,6 +127,26 @@ class _RunLogs(_RawDeclaration):
             from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
             from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
 
+            if root in retained_roots:
+                retained = _inventory_root(root, owner=self.owner_id, external=False)
+                if retained.status != "included_directory":
+                    result.append(
+                        replace(
+                            retained,
+                            logical_id=storage_logical_id(
+                                context,
+                                self.owner_id,
+                                "legacy-root-"
+                                + _tree_member_id(
+                                    context, self.owner_id, root, root
+                                ).split(":")[-1],
+                            ),
+                            status="missing_required"
+                            if retained.status == "unused"
+                            else "unsupported",
+                        )
+                    )
+                    continue
             container = None
             leaves = set(names)
             if root == default_root and script_output is not None:

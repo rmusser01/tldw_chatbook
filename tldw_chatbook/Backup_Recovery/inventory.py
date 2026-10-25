@@ -515,6 +515,18 @@ def _service_control_exclusion() -> tuple[StorageItem, ...]:
     )
 
 
+def read_profile_config(selected: Path) -> dict:
+    """Read the existing strict config-selection boundary without bootstrap."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    with os.fdopen(os.open(selected, flags), "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("config_unavailable")
+        raw_config = tomllib.load(stream)
+        if DISCOVERY_CONTEXT_KEY in raw_config:
+            raise ValueError("reserved_context_key")
+        return _ProfileSelectors.model_validate(raw_config).model_dump()
+
+
 def discover(
     config_paths: tuple[Path, ...], *, selections: DiscoverySelections | None = None
 ) -> Inventory:
@@ -545,17 +557,8 @@ def discover(
         item = _source_item("config", config_id, selected, required=True)
         items.append(item)
         try:
-            # Refuse non-regular sources before open, including FIFOs. O_NONBLOCK
-            # avoids hanging if a selected path is replaced during discovery.
-            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
-            with os.fdopen(os.open(selected, flags), "rb") as stream:
-                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                    raise ValueError("config_unavailable")
-                raw_config = tomllib.load(stream)
-                if DISCOVERY_CONTEXT_KEY in raw_config:
-                    raise ValueError("reserved_context_key")
-                config = _ProfileSelectors.model_validate(raw_config).model_dump()
-                config[DISCOVERY_CONTEXT_KEY] = context
+            config = read_profile_config(selected)
+            config[DISCOVERY_CONTEXT_KEY] = context
             root = profile_paths.user_data_dir(config)
             selected_roots.add(root)
             declared = [item]
@@ -647,6 +650,18 @@ def discover(
                             external=True,
                         )
                     )
+            mobile_declared = any(
+                adapter.owner_id == "db.agent_runs" for adapter in adapters
+            ) and not any(path.is_symlink() for path in (root, *root.parents))
+            if mobile_declared:
+                from .mobile_consolidation import mobile_inventory
+
+                existing_ids = {item.logical_id for item in declared}
+                declared.extend(
+                    item
+                    for item in mobile_inventory(config)
+                    if item.logical_id not in existing_ids
+                )
             declared.extend(_sqlite_sidecars(declared, adapters))
             declared.extend(_planned_output_exclusion(context, declared, root))
             items[profile_start:] = declared
@@ -654,6 +669,9 @@ def discover(
             from tldw_chatbook.MCP.recovery_activation import inventory_container
 
             known.update(inventory_container(context, root))
+            # The legacy subtree is enumerated by its exact mobile declarations.
+            if mobile_declared:
+                known.add(profile_paths.legacy_mobile_dir(config))
             items.extend(_unknown_children(root, known, prefix))
         except (tomllib.TOMLDecodeError, UnicodeError):
             items.append(
@@ -729,6 +747,10 @@ def discover(
     cohort_issues = (*cohort_issues, *tts_issues)
     result = classify_entries(tuple(items))
     issues = set(result.issues) | set(cohort_issues)
+    if any(":legacy-mobile-issue-" in item.logical_id for item in items):
+        # Unlike ordinary unavailable optional owners, legacy content may never
+        # disappear through allow_partial capture. A fresh complete review is required.
+        issues.add("mobile_review_required")
     if any(item.logical_id.endswith(":parse_failure") for item in items):
         issues.add("config_parse_failure")
     if any(item.logical_id.endswith(":discovery_failure") for item in items):
@@ -801,6 +823,8 @@ def _merge_chachanotes_cohort(
         if any(len(identities) != 1 for identities in original.values()):
             return items, ("shared_identity_mismatch",)
         for index, item in enumerate(items):
+            if item.logical_id.endswith(":legacy-mobile"):
+                continue
             if item.owner not in owners or item.status != "included":
                 continue
             if item.owner == "db.chachanotes.primary" and item.shared_group is None:

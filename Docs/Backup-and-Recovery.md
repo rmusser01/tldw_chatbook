@@ -300,3 +300,30 @@ the [Python encryption correction](superpowers/specs/2026-09-12-python-backup-en
 and [release qualification plan](superpowers/plans/2026-09-07-backup-recovery-06-release-evidence.md).
 The [cross-platform correction](superpowers/specs/2026-09-12-cross-platform-backup-correction.md)
 updates the platform operations without changing those recovery workflows.
+
+## Preview legacy mobile history
+
+To inspect legacy mobile history before consolidation, run:
+
+```bash
+python -m tldw_chatbook.Backup_Recovery consolidate-mobile \
+  --source-config /absolute/source/config.toml \
+  --target-config /absolute/target/config.toml --preview
+```
+
+The preview lists the physical source, explicit canonical destination, counts,
+record identities, dependencies and backup scope. It does not import history or
+create missing databases. The source is the selected user's `mobile` directory;
+canonical database overrides do not relocate that legacy source. If several known
+configurations share it, the preview requires a destination review instead of
+assigning history to the launching profile. Matching titles do not establish that
+records are equivalent.
+
+Normal backup includes recognized legacy chat, workspace and run stores plus
+qualified referenced artifacts, using the existing coherent capture and
+credential policy. Unknown contents, unsupported schemas, missing dependencies or
+unsafe aliases must be resolved before capture; partial capture cannot silently
+omit blocked legacy history. File-backed note, dictionary or persona references
+without a qualified legacy binding remain blocked. Source runs and claims are
+never reconciled during preview or capture. This command currently supports
+preview only.

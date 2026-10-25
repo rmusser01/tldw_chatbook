@@ -74,3 +74,36 @@ ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), AD
 - [database-layer.md](./database-layer.md) — the stores being captured
 - [server-sync.md](./server-sync.md) — the separate server-sync account/key recovery
 - [notes-sync.md](./notes-sync.md) — the notes-sync recovery executor
+
+## Legacy mobile history preview (ADR-244)
+
+`mobile_consolidation.py` observes the three exact legacy files under
+`profile_paths.user_data_dir(config) / "mobile"`, independently of canonical DB
+overrides. The service and `consolidate-mobile --preview` CLI return immutable
+schema/count/identity/dependency metadata and capture/rollback scope. The read-only
+private SQLite role uses native checked snapshots, exact catalogs and bounded
+validation; it never constructs or reconciles a live legacy store. Unknown
+content, unsupported schemas, missing references and unsafe aliases block review.
+External note/dictionary/persona asset references without a qualified legacy
+owner binding also block; they are never discarded or guessed from path strings.
+Multiple known configs sharing one physical source require destination review.
+`identity_conflicts` lists exact overlapping destination primary-key tuples;
+collisions require explicit mapping and never establish equivalent content.
+
+The existing chat, workspace and AgentRuns owners declare `:legacy-mobile`
+logical records. Installed run-log discovery reads the explicitly reviewed legacy
+stores for retained artifact roots. Normal maintenance, WAL capture, credential
+policy, directory metadata and candidate validation remain authoritative. Legacy
+review failures remain blocking even for partial capture. The original stores,
+active chains, unfinished wake claims and undelivered results remain unchanged.
+
+`CanonicalConsoleStores.identity` hashes native-normalized absolute target paths;
+it is stable while expected absent parents or databases are created. It grants no
+ownership, alias waiver or write permission. `destination_witnesses` separately
+records each target and its complete ancestor chain as immutable tuples of
+`(absolute_path, device_or_none, inode_or_none, mode_or_none)`. A maintenance-owned
+apply must validate and journal every expected creation/replacement transition
+before accepting new witnesses. Unexpected changes require review. The source
+fingerprint includes strict physical evidence, admitted logical row digests and
+referenced artifact digests. Preview itself creates neither source nor target
+parents. No mobile import, profile cutover or authority activation occurs here.

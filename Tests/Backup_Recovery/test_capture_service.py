@@ -57,6 +57,10 @@ def _populate_required_dependencies(preview):
             store = cls(":memory:")
             with closing(sqlite3.connect(paths[owner])) as destination:
                 store._get_connection().backup(destination)
+        elif name == "agent_runs":
+            from Tests.agent_runs_owner import owned_agent_runs_db
+
+            store = owned_agent_runs_db(paths[owner])
         else:
             store = cls(paths[owner])
         store.close()
@@ -237,3 +241,54 @@ def test_budget_change_requires_preview_before_control_creation(tmp_path, monkey
             cancel=Event(),
         )
     assert not root.exists()
+
+
+def test_public_capture_includes_legacy_mobile_and_referenced_artifact(
+    tmp_path, monkeypatch
+):
+    """The public normal engine captures reviewed legacy participants coherently."""
+    import json
+    import sys
+
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import seed_legacy_mobile
+
+    module = sys.modules[__name__]
+    populate = _populate_required_dependencies
+    capture_native = capture
+    expected = {}
+
+    def populate_with_legacy(preview):
+        message = populate(preview)
+        source = next(
+            item.path.parent
+            for item in preview.items
+            if item.logical_id.endswith(":legacy-mobile")
+        )
+        expected.update(seed_legacy_mobile(source))
+        return message
+
+    def capture_with_assertions(*args, **kwargs):
+        result = capture_native(*args, **kwargs)
+        manifest = json.loads(result.manifest_bytes)
+        files = {row["logical_id"]: row for row in manifest["files"]}
+        legacy = [row for key, row in files.items() if key.endswith(":legacy-mobile")]
+        assert {row["owner_id"] for row in legacy} == {
+            "db.chachanotes.primary",
+            "db.workspaces",
+            "db.agent_runs",
+        }
+        artifact = next(
+            item
+            for item in result.inventory.items
+            if item.path == expected["artifact_file"]
+        )
+        assert (
+            result.root / files[artifact.logical_id]["payload"]
+        ).read_bytes() == expected["artifact_file"].read_bytes()
+        return result
+
+    monkeypatch.setattr(module, "_populate_required_dependencies", populate_with_legacy)
+    monkeypatch.setattr(module, "capture", capture_with_assertions)
+    test_public_config_capture_and_publication_without_profile_rebinding(
+        tmp_path, monkeypatch, False, False
+    )

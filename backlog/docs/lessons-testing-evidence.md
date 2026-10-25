@@ -20341,3 +20341,16 @@ failed drafts were valid or that any product input behavior was fixed.
 ## Worker failure injection must leave unrelated work running
 
 **PR3146 / TASK-34406.11,2026-10-17.** Required UI8 failed the close-tab retry journey because its run_worker replacement refused every group. A real tray-recompose callback submitted `console-workspace-context-legacy-aliases` while the patch was active; that injected exception killed Textual and the later tab geometry never settled, although the tab IDs matched. Force that original callback in the test, then refuse only the exact `console-close-session:<id>` submission and delegate other groups to the original bound method. RED reproduced the unrelated refusal; GREEN completed all6 original recovery journeys with the same real clicks, exact failure toast, retained tab, successful retry and10s bounds. Scope a failure to the operation whose recovery is being checked.
+
+
+## Close fixture execution owners before maintenance
+
+**TASK-36765, 2026-10-25.** A legacy mobile fixture created automatic-work and Goal
+ledgers, closed its AgentRunsDB, then attempted public capture. Native maintenance
+timed out after 60 seconds: cached ledger backreferences kept the database alive,
+so the shared test helper's weakref finalizer had not released its execution owner.
+Giving this uniquely owned fixture an explicit ConsoleExecutionOwner lifetime and
+closing every creator DB before that owner made the public capture/WAL/reference
+closure checks pass (4 tests in 28.27 seconds). Do not rely on garbage collection
+for fixtures promising closed writers, and do not bypass admission to hide a
+retained owner.
