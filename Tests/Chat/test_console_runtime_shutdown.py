@@ -1167,3 +1167,62 @@ async def test_execution_lease_survives_bounded_shutdown_with_physical_publisher
         await asyncio.to_thread(worker.join, 3)
         db.close()
         runtime._execution_owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "scratch_false",
+        "scratch_error",
+        "gateway_error",
+        "gateway_cancelled",
+        "gateway_pending",
+        "clean",
+    ],
+)
+async def test_execution_lease_requires_successful_physical_cleanup(
+    tmp_path, monkeypatch, outcome
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_owner import (
+        ConsoleExecutionBusy,
+        ConsoleExecutionOwner,
+    )
+
+    runtime = ConsoleRuntime(
+        SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / "chat.db"))
+    )
+    owner = runtime.ensure_execution_owner(tmp_path / "agent_runs.db")
+    if outcome.startswith("scratch_"):
+
+        def dispose_scratch():
+            if outcome == "scratch_error":
+                raise RuntimeError("injected scratch failure")
+            return False
+
+        monkeypatch.setattr(runtime._scratch_spaces, "dispose", dispose_scratch)
+
+    async def close_gateway():
+        if outcome == "gateway_error":
+            raise RuntimeError("injected gateway failure")
+        if outcome == "gateway_cancelled":
+            raise asyncio.CancelledError
+        if outcome == "gateway_pending":
+            await asyncio.Event().wait()
+
+    runtime._provider_gateway = SimpleNamespace(aclose=close_gateway)
+    try:
+        await runtime.dispose(
+            timeout_seconds=0.05 if outcome == "gateway_pending" else 2
+        )
+        if outcome == "clean":
+            with ConsoleExecutionOwner.acquire(tmp_path / "agent_runs.db"):
+                pass
+        else:
+            with pytest.raises(ConsoleExecutionBusy):
+                ConsoleExecutionOwner.acquire(tmp_path / "agent_runs.db")
+    finally:
+        owner.close()
+        await asyncio.sleep(0)

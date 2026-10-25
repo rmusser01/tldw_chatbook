@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 19:15
+updated_date: 2026-10-25 19:29
 ---
 
 ## Description
@@ -61,6 +61,7 @@ Verification: required targeted modules plus recovery-error coverage: 571 passed
 
 Acceptance criteria and status intentionally remain unchanged pending independent specification and quality review. Full suite, provider calls, real user data, pushes and merges were not run.
 Final static follow-up: all 218 changed/new Python sources parse; default Ruff reports 1,012 inherited diagnostics and zero new per-file findings against 1bb7c507. Runtime format_ratchet snapshot at that base and worktree verify pass after formatting touched blocks only. Final owner/runtime/mobile/connection-reuse selection: 23 passed in 9.02s. Full diagnostics and immutable format baseline are saved beside the implementation report.
+Review fix round 1: unpublished mobile engine initialization now rolls back real databases in reverse order and releases its execution lease only after successful retirement, enabling same-service retry after DB/bridge/controller construction failure. Runtime scratch/gateway cleanup propagates retirement outcomes; False, errors, cancellation or pending cleanup keep the fence. Clean restart/release remains covered. RED 8 failed/2 passed; final focused owner/rollback/retirement/bounded-shutdown/restart run 32 passed in 12.27s. Scoped Ruff has 39 inherited diagnostics and zero new; runtime format ratchet at reviewed commit 5b6ab0ebe4 passes. Details and exact commands appended to task-1-report.md. Task remains In Progress with AC unchecked pending re-review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

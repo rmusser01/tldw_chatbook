@@ -2452,3 +2452,119 @@ async def test_serve_wiring_attaches_relay_only_when_broker_exists(
     finally:
         await service.shutdown()
         await broker.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["CharactersRAGDB", "AgentRunsDB", "ConsoleAgentBridge", "ConsoleChatController"],
+)
+async def test_failed_engine_construction_retires_resources_and_can_retry(
+    tmp_path, monkeypatch, failure_stage
+):
+    import sqlite3
+
+    from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
+    from tldw_chatbook.Web_Server import mobile_service
+
+    service = MobileChatService(
+        data_dir=tmp_path / "mobile", provider_gateway=AgentModeGateway()
+    )
+    opened = []
+    closed = []
+    connections = []
+    for name in ("WorkspaceDB", "CharactersRAGDB", "AgentRunsDB"):
+        constructor = getattr(mobile_service, name)
+
+        def capture(*args, _constructor=constructor, _name=name, **kwargs):
+            db = _constructor(*args, **kwargs)
+            opened.append(db)
+            if _name == "CharactersRAGDB":
+                connections.append(db.get_connection())
+            close = db.close
+
+            def retire():
+                close()
+                closed.append(db)
+
+            monkeypatch.setattr(db, "close", retire)
+            return db
+
+        monkeypatch.setattr(mobile_service, name, capture)
+    original = getattr(mobile_service, failure_stage)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("injected initialization failure")
+
+    monkeypatch.setattr(mobile_service, failure_stage, fail)
+    try:
+        with pytest.raises(RuntimeError, match="injected initialization failure"):
+            service._build_engine()
+        assert service._engine is None
+        assert closed == list(reversed(opened))
+        for connection in connections:
+            with pytest.raises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1")
+        with ConsoleExecutionOwner.acquire(service._data_dir / "runs.db"):
+            pass
+        monkeypatch.setattr(mobile_service, failure_stage, original)
+        engine = await service._ensure_started()
+        assert engine is service._engine
+        assert engine.agent_runs_db.create_run(
+            conversation_id="retry", agent_kind="primary"
+        )
+    finally:
+        await service.shutdown()
+        for db in opened:
+            db.close()
+        # Failed pre-fix construction deliberately leaks the retained lease.
+        for owner in tuple(ConsoleExecutionOwner._live):
+            if owner._path == service._data_dir / "runs.db":
+                owner.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_keeps_lease_when_database_retirement_fails(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Chat.console_execution_owner import (
+        ConsoleExecutionBusy,
+        ConsoleExecutionOwner,
+    )
+    from tldw_chatbook.Web_Server import mobile_service
+
+    service = MobileChatService(
+        data_dir=tmp_path / "mobile", provider_gateway=AgentModeGateway()
+    )
+    constructor = mobile_service.WorkspaceDB
+    closers = []
+
+    def capture_workspace(*args, **kwargs):
+        db = constructor(*args, **kwargs)
+        close = db.close
+
+        def failed_close():
+            raise RuntimeError("injected retirement failure")
+
+        monkeypatch.setattr(db, "close", failed_close)
+        closers.append(close)
+        return db
+
+    def failed_bridge(*args, **kwargs):
+        raise RuntimeError("injected bridge failure")
+
+    monkeypatch.setattr(mobile_service, "WorkspaceDB", capture_workspace)
+    monkeypatch.setattr(mobile_service, "ConsoleAgentBridge", failed_bridge)
+    try:
+        with pytest.raises(RuntimeError, match="injected bridge failure"):
+            service._build_engine()
+        assert service._engine is None
+        with pytest.raises(ConsoleExecutionBusy):
+            ConsoleExecutionOwner.acquire(service._data_dir / "runs.db")
+    finally:
+        await service.shutdown()
+        for close in closers:
+            close()
+        for owner in tuple(ConsoleExecutionOwner._live):
+            if owner._path == service._data_dir / "runs.db":
+                owner.close()

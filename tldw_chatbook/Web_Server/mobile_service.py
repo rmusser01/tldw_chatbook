@@ -413,64 +413,82 @@ class MobileChatService:
     def _build_engine(self) -> None:
         """Construct the engine graph verbatim per the spike recipe."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        workspace_db = WorkspaceDB(
-            str(self._data_dir / "workspaces.db"), client_id="mobile-service"
-        )
-        registry = LocalWorkspaceRegistryService(workspace_db)
-        chat_db = CharactersRAGDB(str(self._data_dir / "chat.db"), "mobile-service")
-        conversation_service = ChatConversationService(chat_db)
-        store = ConsoleChatStore(
-            persistence=ChatPersistenceService(
-                chat_db,
-                workspace_registry=registry,
-            )
-        )
         from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
 
-        # The shared-runtime cutover retires this legacy engine.
+        # Constructors do not start turns. Until publication, this scope owns
+        # every DB and the lease, including on a failed graph initialization.
         execution_owner = ConsoleExecutionOwner.acquire(self._data_dir / "runs.db")
-        agent_runs_db = AgentRunsDB(
-            str(self._data_dir / "runs.db"),
-            client_id="mobile-service",
-            execution_owner=execution_owner,
-        )
-        bridge = ConsoleAgentBridge(
-            agent_runs_db=agent_runs_db,
-            store=store,
-            provider_gateway=self._gateway,
-        )
-        controller = ConsoleChatController(
-            store=store,
-            provider_gateway=self._gateway,
-            provider="openai",
-            model="gpt-4o-mini",
-            agent_bridge=bridge,
-            agent_runtime_enabled=True,
-            # Hooks admission owner, mirroring ConsoleRuntime's
-            # ``ensure_hook_permissions``: with hooks configured the send
-            # gate fails closed until the definitions are reviewed (mobile
-            # v1 has no hook-review surface), while an all-reviewed or
-            # hooks-free profile admits sends. No ``ensure_run_hooks`` is
-            # wired: mobile v1 does not fire run hooks (spike shape).
-            hook_permissions_accessor=lambda: self._ensure_hook_permissions(),
-        )
-        app_context = HeadlessAppContext(
-            workspace_registry_service=registry,
-            chachanotes_db=chat_db,
-            conversation_service=conversation_service,
-        )
-        controller.app = app_context
-        controller.set_pending_approval = self._on_pending_approval
-        self._engine = _Engine(
-            registry=registry,
-            workspace_db=workspace_db,
-            store=store,
-            agent_runs_db=agent_runs_db,
-            bridge=bridge,
-            controller=controller,
-            app_context=app_context,
-            conversation_service=conversation_service,
-        )
+        resources = []
+        try:
+            workspace_db = WorkspaceDB(
+                str(self._data_dir / "workspaces.db"), client_id="mobile-service"
+            )
+            resources.append(workspace_db)
+            registry = LocalWorkspaceRegistryService(workspace_db)
+            chat_db = CharactersRAGDB(str(self._data_dir / "chat.db"), "mobile-service")
+            resources.append(chat_db)
+            conversation_service = ChatConversationService(chat_db)
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    chat_db,
+                    workspace_registry=registry,
+                )
+            )
+            agent_runs_db = AgentRunsDB(
+                str(self._data_dir / "runs.db"),
+                client_id="mobile-service",
+                execution_owner=execution_owner,
+            )
+            resources.append(agent_runs_db)
+            bridge = ConsoleAgentBridge(
+                agent_runs_db=agent_runs_db,
+                store=store,
+                provider_gateway=self._gateway,
+            )
+            controller = ConsoleChatController(
+                store=store,
+                provider_gateway=self._gateway,
+                provider="openai",
+                model="gpt-4o-mini",
+                agent_bridge=bridge,
+                agent_runtime_enabled=True,
+                # Hooks admission owner, mirroring ConsoleRuntime's
+                # ``ensure_hook_permissions``: with hooks configured the send
+                # gate fails closed until the definitions are reviewed (mobile
+                # v1 has no hook-review surface), while an all-reviewed or
+                # hooks-free profile admits sends. No ``ensure_run_hooks`` is
+                # wired: mobile v1 does not fire run hooks (spike shape).
+                hook_permissions_accessor=lambda: self._ensure_hook_permissions(),
+            )
+            app_context = HeadlessAppContext(
+                workspace_registry_service=registry,
+                chachanotes_db=chat_db,
+                conversation_service=conversation_service,
+            )
+            controller.app = app_context
+            controller.set_pending_approval = self._on_pending_approval
+            engine = _Engine(
+                registry=registry,
+                workspace_db=workspace_db,
+                store=store,
+                agent_runs_db=agent_runs_db,
+                bridge=bridge,
+                controller=controller,
+                app_context=app_context,
+                conversation_service=conversation_service,
+            )
+        except BaseException:
+            retired = True
+            for resource in reversed(resources):
+                try:
+                    resource.close()
+                except Exception:  # retire the remaining resources
+                    retired = False
+                    logger.exception("mobile startup database close failed")
+            if retired:
+                execution_owner.close()
+            raise
+        self._engine = engine
         logger.info("mobile engine constructed over data_dir=%s", self._data_dir)
 
     def _ensure_hook_permissions(self):

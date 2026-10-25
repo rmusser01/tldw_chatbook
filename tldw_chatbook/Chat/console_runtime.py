@@ -6300,30 +6300,34 @@ class ConsoleRuntime:
                     "Console runtime: AgentRunsDB close failed at dispose."
                 )
 
-        async def dispose_scratch() -> None:
+        async def dispose_scratch() -> bool:
             try:
-                await asyncio.to_thread(self._scratch_spaces.dispose)
+                return await asyncio.to_thread(self._scratch_spaces.dispose) is True
             except Exception as exc:  # noqa: BLE001 - quit must continue
                 logger.warning(
                     "Console runtime: scratch cleanup failed at dispose category={}",
                     type(exc).__name__,
                 )
+                return False
 
-        async def close_gateway() -> None:
+        async def close_gateway() -> bool:
             close = getattr(gateway, "aclose", None)
             if not callable(close):
-                return
+                return True
             try:
                 if inspect.iscoroutinefunction(close):
-                    await close()
-                    return
-                result = await asyncio.to_thread(close)
-                if inspect.isawaitable(result):
-                    await result
+                    result = await close()
+                else:
+                    result = await asyncio.to_thread(close)
+                    if inspect.isawaitable(result):
+                        result = await result
+                return result is not False
             except Exception:  # noqa: BLE001 - quit must continue
                 logger.opt(exception=True).warning(
                     "Console runtime: provider gateway close failed at dispose."
                 )
+                return False
+
         try:
             totals = self.trace_compatibility_snapshot()
             logger.info(
@@ -6368,6 +6372,12 @@ class ConsoleRuntime:
             and not pending
             and not cleanup_pending
             and coordinator_retired
+            and all(
+                not task.cancelled()
+                and task.exception() is None
+                and task.result() is True
+                for task in cleanup_tasks
+            )
             and all(
                 not task.cancelled()
                 and task.exception() is None
