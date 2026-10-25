@@ -427,3 +427,71 @@ async def test_draft_render_drops_completion_after_controls_are_removed(
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artwork_changed", [False, True])
+@pytest.mark.parametrize("text_dirty", [False, True])
+async def test_external_card_change_preserves_only_current_portrait_draft(
+    personas_editor_with_saved_character, tmp_path, artwork_changed, text_dirty
+):
+    from tldw_chatbook.Character_Chat.character_events import CharacterCardChanged
+
+    app, screen, db, character_id, editor = saved_source(
+        personas_editor_with_saved_character
+    )
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    path = tmp_path / "mouth.png"
+    path.write_bytes(png("green"))
+    assert await controller.handle(
+        CharacterPerformanceRequested("import", role=FRAME_ROLES[1]), path=str(path)
+    )
+    draft = controller.draft
+    if text_dirty:
+        editor._area("description").text = "Keep my unsaved description"
+    await Pilot(app).pause()
+    record = db.get_character_card_by_id(character_id)
+    update = (
+        {"image": png("blue")}
+        if artwork_changed
+        else {"description": "External text"}
+    )
+    assert db.update_character_card(character_id, update, record["version"])
+    await screen._on_character_card_changed(CharacterCardChanged(character_id))
+    if artwork_changed:
+        assert controller.draft is None
+    else:
+        assert controller.draft is draft
+        assert FRAME_ROLES[1] in draft.staged_roles
+        if text_dirty:
+            assert editor._area("description").text == "Keep my unsaved description"
+
+
+@pytest.mark.asyncio
+async def test_late_saved_source_check_keeps_replacement_draft(
+    personas_editor_with_saved_character, monkeypatch
+):
+    import asyncio
+
+    from tldw_chatbook.Character_Chat.portrait_performance import PerformanceConflict
+
+    _, screen, _, _, _ = saved_source(personas_editor_with_saved_character)
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def changed_source(*args):
+        entered.set()
+        await release.wait()
+        raise PerformanceConflict("Saved artwork changed")
+
+    monkeypatch.setattr(controller, "_source_current", changed_source)
+    check = asyncio.create_task(controller.check_saved_source())
+    await entered.wait()
+    controller.discard()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    replacement = controller.draft
+    release.set()
+    await check
+    assert controller.draft is replacement

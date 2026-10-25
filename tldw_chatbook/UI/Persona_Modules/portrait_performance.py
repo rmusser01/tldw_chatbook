@@ -188,6 +188,18 @@ class PortraitPerformanceController:
                 "Review retired: saved artwork could not be checked. Draft retained; reopen to retry."
             )
 
+    async def check_saved_source(self) -> None:
+        """Retain staged work across text-only updates; retire changed artwork."""
+        authority, draft, epoch = self._authority, self.draft, self._epoch
+        if authority is None or draft is None:
+            return
+        try:
+            current = await self._source_current(authority, draft, epoch)
+        except PerformanceConflict:
+            current = False
+        if not current and self._epoch == epoch and self.draft is draft:
+            self.discard()
+
     def discard(self) -> None:
         """Fence in-flight work before dropping any draft or preview bytes."""
         self._epoch += 1

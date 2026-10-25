@@ -5509,10 +5509,12 @@ class PersonasScreen(BaseAppScreen):
                 or str(state.selected_entity_id) != str(message.character_id)
             ):
                 return
-            if getattr(self, "_portrait_performance_controller", None) is not None:
-                self._portrait_performance_controller.discard()
+            portrait = getattr(self, "_portrait_performance_controller", None)
+            if portrait is not None:
+                await portrait.check_saved_source()
             if (
-                state.has_unsaved_changes
+                (portrait is not None and portrait.draft is not None)
+                or state.has_unsaved_changes
                 or self._visual_identity_has_unsaved_authoring()
                 or self._persona_shared_visual_identity_has_unsaved_authoring()
                 or self._persona_visual_has_unsaved_authoring()

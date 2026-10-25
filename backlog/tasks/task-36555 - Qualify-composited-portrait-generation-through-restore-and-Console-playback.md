@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/243-source-bound-portrait-compositing.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 06:12
+updated_date: 2026-10-25 06:30
 ---
 
 ## Description
@@ -38,6 +38,7 @@ Verify the new workflow end to end and document which pairing, persistence and r
 - [x] #8 Interrupting opt-in qualification preserves recorded request/artifact evidence and an honest uncertainty report before private temporary cleanup and re-raising the interruption; incomplete logs are retained with an unknown count, and no retry or private-log/credential disclosure occurs.
 - [ ] #9 A repository-specific CodeRabbit review scope includes the PR's production code and tests; organization-wide defaults and paid-review limits remain unchanged, and actual review coverage or unavailable providers are documented.
 - [ ] #10 Automated application/test review findings are checked against actual contracts; reproduced bugs are corrected with targeted regressions, and false-positive or incompatible suggestions retain a documented rationale.
+- [ ] #11 External text-only character updates retain staged portrait work; changed artwork or authority still retires that draft.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,6 +61,7 @@ Required-summary follow-up: review all ten added diagnostic statements and regen
 Ready-for-review follow-up: CodeRabbit effective configuration (issuecomment-6394106555) inherits only Docs/docs/**, Docs/Design/**, Docs/Product/** and Docs/Plans from Organization UI, so all 252 changed files were skipped. Operational red evidence includes incremental/full GitHub requests and current-CLI remote/local attempts reporting all files ignored. Add only a repository-local reviews.path_filters=['**'] override, validate it against CodeRabbit's official schema, publish and verify the resolved scope and real current-head review before fixing findings with targeted regressions. No new provider, runtime or shared organization policy: routine existing-reviewer configuration repair; ADR required no, ADR path N/A. Keep full live-provider UAT/AC5 open; Qodo credit and Cubic allowance failures remain explicit.
 The repository-wide include override resolved the inherited docs-only filter, but CodeRabbit then refused all 227 eligible files because its per-review cap is 100. Scope the hosted code-review pass explicitly to all 53 changed tldw_chatbook files, all 46 Tests files and .coderabbit.yaml (100 tracked paths, with normal binary ignores), without representing docs/backlog/QA evidence as automated-reviewed. Offered the user the every-file alternative and proceeded with the stated recommended code/test scope after the response window. The full 53-file application CLI batch is also running. Validate the scope/schema and actual current-head review; preserve the full-UAT/live-provider gap.
 Automated source review produced 11 findings. Verify controller reuse/nonexclusive admission/helper signatures/source recapture and idempotent close before changing them. First reproduced defect: a preview role change during actual graphics mount leaves the Preparing surface permanently visible (new mounted regression fails). Preserve graphics pose ownership and hide the surface after successful owner-current mount; run graphics and performance regressions before moving to TTS lifecycle/sequencer findings. Review conditional fit-failure and draft-retention suggestions against validated input/source ownership contracts. Existing ADR-242/243 apply; routine bug fixes require no new ADR.
+Review follow-up: preserve a staged portrait draft on external text-only card changes, revalidate saved source off-thread, and retire only a changed source/authority. Cover both unchanged and changed artwork events with mounted regressions before continuing.
 <!-- SECTION:PLAN:END -->
 
 ## Final Summary
