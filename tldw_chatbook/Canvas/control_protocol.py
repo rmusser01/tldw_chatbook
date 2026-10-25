@@ -72,7 +72,7 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"child_id", "secret", "runtime_snapshot_id"}),
         frozenset(),
     ),
-    "auth.response": (frozenset({"status"}), frozenset()),
+    "auth.response": (frozenset({"status", "host_identity"}), frozenset()),
     "scope.snapshot.request": (frozenset(), frozenset()),
     "scope.snapshot.response": (
         frozenset(
@@ -252,6 +252,38 @@ def _validate_json(value: object, *, depth: int = 0) -> None:
     raise ControlProtocolError("invalid_payload_value")
 
 
+def _console_json_budget(value: object, remaining: int = 64 * 1024) -> int:
+    """Bound Console envelopes before JSON serialization allocates a frame."""
+    if isinstance(value, str):
+        remaining -= 2
+        for character in value:
+            ordinal = ord(character)
+            remaining -= (
+                6
+                if ordinal < 32 or ordinal > 127
+                else 2
+                if character in {'"', "\\"}
+                else 1
+            )
+            if remaining < 0:
+                break
+    elif isinstance(value, Mapping):
+        remaining -= 2
+        for key, child in value.items():
+            remaining = _console_json_budget(
+                child, _console_json_budget(key, remaining) - 2
+            )
+    elif isinstance(value, list):
+        remaining -= 2
+        for child in value:
+            remaining = _console_json_budget(child, remaining - 1)
+    else:
+        remaining -= len(str(value)) + 1
+    if remaining < 0:
+        raise ControlProtocolError("console_payload_too_large")
+    return remaining
+
+
 def _validate_payload(message_type: str, payload: object) -> Mapping[str, Any]:
     if not isinstance(payload, Mapping):
         raise ControlProtocolError("invalid_payload")
@@ -263,7 +295,18 @@ def _validate_payload(message_type: str, payload: object) -> Mapping[str, Any]:
     if keys - required - optional:
         raise ControlProtocolError("unknown_payload_field")
     copied = dict(payload)
+    if message_type == "auth.response":
+        from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+
+        try:
+            copied["host_identity"] = ConsoleHostIdentity.model_validate(
+                copied["host_identity"]
+            ).model_dump()
+        except (ValueError, TypeError) as error:
+            raise ControlProtocolError("invalid_host_identity") from error
     _validate_json(copied)
+    if message_type.startswith("console."):
+        _console_json_budget(copied)
     _validate_typed_fields(copied)
     for key in ("snapshot", "batch", "ticket", "receipt"):
         if (
@@ -766,7 +809,10 @@ class CanvasControlBroker:
                     "auth.response",
                     auth.request_id,
                     None,
-                    {"status": "accepted"},
+                    {
+                        "status": "accepted",
+                        "host_identity": self.console_identity(child_id).model_dump(),
+                    },
                 ),
             )
             while True:
@@ -905,6 +951,7 @@ class CanvasControlClient:
         self._host = host
         self._port = port
         self._child_id = child_id
+        self._host_identity = None
         self._secret = secret
         self._handler = handler or self._default_handler
         self._max_active_requests = max_active_requests
@@ -937,6 +984,13 @@ class CanvasControlClient:
         return cls(
             environment, runtime_snapshot_id=runtime_snapshot_id, handler=handler
         )
+
+    @property
+    def host_identity(self) -> ConsoleHostIdentity:
+        """Read the immutable parent-issued identity only after authentication."""
+        if self._host_identity is None:
+            raise ControlProtocolError("authentication_required")
+        return self._host_identity
 
     @property
     def child_id(self) -> str:
@@ -983,6 +1037,11 @@ class CanvasControlClient:
         ):
             await self._close_writer()
             raise ControlProtocolError("authentication_failed")
+        from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+
+        self._host_identity = ConsoleHostIdentity.model_validate(
+            response.payload["host_identity"]
+        )
         self._secret = ""
         self._disconnected.clear()
         self._reader_task = asyncio.create_task(

@@ -148,6 +148,14 @@ class ConsoleRemoteCommands:
             if type(payload) is not dict:
                 raise ValueError("Command payload must be an object.")
             _store, controller, session = self._resolve(target)
+            if action == "decision":
+                if set(payload) != {"kind", "answer"} or not isinstance(
+                    payload["kind"], str
+                ):
+                    raise ValueError("Decision requires kind and answer only.")
+                return controller._interrupt_host.resolve_remote_round(
+                    target, kind=payload["kind"], answer=payload["answer"]
+                )
             if action == "send":
                 if set(payload) != {"text", "expected_revisions"}:
                     raise ValueError("Send requires text and expected_revisions only.")

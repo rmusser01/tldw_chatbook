@@ -38,7 +38,13 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
         try:
             completed.result()
             if publisher is not None:
-                publisher.attach(run_state_source=self._served_relay_run_states)
+                publisher.attach(
+                    projection_source=lambda: (
+                        self.console_runtime.ensure_remote_projection(
+                            client.host_identity
+                        )
+                    )
+                )
             self._served_control_lifetime_task = app_globals["asyncio"].create_task(
                 _watch_served_control(self), name="served-control-lifetime"
             )
@@ -87,10 +93,93 @@ async def _watch_served_control(self: Any) -> None:
 
 async def _handle_served_control_request(self: Any, request: Any) -> Any:
     """Keep Console control independent of Canvas feature/scope availability."""
-    from .Canvas.control_protocol import ControlProtocolError
+    from .Canvas.control_protocol import (
+        CONTROL_PROTOCOL_VERSION,
+        ControlMessage,
+        ControlProtocolError,
+    )
 
     if request.message_type.startswith("console."):
-        raise ControlProtocolError("authority_unavailable")
+        from .Chat.console_remote_models import ConsoleTarget
+
+        runtime = getattr(self, "console_runtime", None)
+        client = getattr(self, "served_canvas_control", None)
+        if runtime is None or client is None:
+            raise ControlProtocolError("authority_unavailable")
+        projection = runtime.ensure_remote_projection(client.host_identity)
+
+        def reply(payload):
+            return ControlMessage(
+                CONTROL_PROTOCOL_VERSION,
+                request.message_type.replace(".request", ".response"),
+                request.request_id,
+                None,
+                payload,
+            )
+
+        def batch(after_sequence):
+            value = projection.subscribe(after_sequence)
+            return {
+                "sequence": value.sequence,
+                "reset_required": value.reset_required,
+                "events": list(value.events),
+            }
+
+        data = request.payload["request"]
+        try:
+            if request.message_type == "console.snapshot.request":
+                if set(data) - {"target", "cursor", "limit"}:
+                    raise ValueError("Unexpected snapshot fields.")
+                target = (
+                    ConsoleTarget.model_validate(data["target"])
+                    if data.get("target") is not None
+                    else None
+                )
+                return reply(
+                    {
+                        "snapshot": projection.snapshot(
+                            target,
+                            cursor=data.get("cursor"),
+                            limit=data.get("limit", 50),
+                        )
+                    }
+                )
+            if request.message_type == "console.events.request":
+                operation = data.get("operation", "read")
+                if operation == "read" and set(data) <= {"operation", "after_sequence"}:
+                    return reply({"batch": batch(data.get("after_sequence", 0))})
+                if operation in {"register", "disconnect"} and set(data) == {
+                    "operation",
+                    "client_id",
+                }:
+                    method = (
+                        projection.register_client
+                        if operation == "register"
+                        else projection.disconnect_client
+                    )
+                    method(data["client_id"])
+                elif operation == "acknowledge" and set(data) == {
+                    "operation",
+                    "sequence",
+                }:
+                    projection.acknowledge_snapshot(data["sequence"])
+                elif operation == "answerable" and set(data) == {
+                    "operation",
+                    "client_id",
+                    "target",
+                    "answerable",
+                }:
+                    projection.set_answerable(
+                        data["client_id"],
+                        ConsoleTarget.model_validate(data["target"]),
+                        answerable=data["answerable"],
+                    )
+                else:
+                    raise ValueError("Invalid Console subscription operation.")
+                return reply({"batch": batch(projection.events.read(0).sequence)})
+            raise ControlProtocolError("authority_unavailable")
+        except (ValueError, TypeError, KeyError) as error:
+            raise ControlProtocolError("invalid_console_request") from error
     return await self.served_canvas_handler.handle(request)
 
 
@@ -108,19 +197,9 @@ def _served_relay_run_states(self: Any) -> Any:
 
 
 def _served_relay_wrap_pending_approval(self: Any, original: Any) -> Any:
-    """Wrap one ``set_pending_approval`` binding for the relay (served only).
+    """Preserve the native binding; retained runtime state owns served projections."""
 
-    The Console screen routes its approval hook value through here at
-    the binding site (``console_view_hooks``). Native runs have no
-    publisher and get the original callable back untouched — including
-    identity — so nothing outside served mode changes behavior.
-    """
-
-    from .Web_Server.served_relay_publisher import wrap_pending_approval_hook
-
-    if self.served_relay_publisher is None:
-        return original
-    return wrap_pending_approval_hook(self.served_relay_publisher, original)
+    return original
 
 
 def _served_relay_decide(self: Any, round_id: Any, decisions: Any) -> bool:

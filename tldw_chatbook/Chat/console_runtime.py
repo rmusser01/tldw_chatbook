@@ -1096,6 +1096,7 @@ class ConsoleRuntime:
         self._agent_bridge: Any | None = None
         self._worktree_recovery = None
         self._execution_owner = None
+        self._remote_projection = None
         self._agent_runs_db: Any | None = None
         self._activity_receipts: Any | None = None
         self._activity_receipts_lock = RLock()
@@ -2248,6 +2249,43 @@ class ConsoleRuntime:
         store = self._chat_store
         sessions = store.sessions() if store is not None else ()
         return any(session.id == session_id for session in sessions)
+
+    def ensure_remote_projection(self, host_identity):
+        """Bind private served projection to the authenticated parent incarnation."""
+        from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+
+        from .console_remote_projection import ConsoleRemoteProjection
+
+        if self._disposed:
+            raise RuntimeError("Console owner is shutting down.")
+        if self._remote_projection is None:
+            self._remote_projection = ConsoleRemoteProjection(
+                self, host_identity, ConsoleEventBuffer()
+            )
+        elif self._remote_projection.host_identity != host_identity:
+            raise ValueError("Console host identity changed.")
+        return self._remote_projection
+
+    def remote_project_decisions(self, session_id: str) -> tuple[dict, ...]:
+        """Expose retained reviews that require the terminal without leaking bodies."""
+        with self._project_decision_lock:
+            return tuple(
+                {
+                    "kind": kind,
+                    "round_id": decision.decision_id,
+                    "run_id": None,
+                    "supported": False,
+                    "answerable": False,
+                    "reason": "Open terminal to review project instructions.",
+                    "action": "open_terminal",
+                }
+                for kind, decisions in (
+                    ("project_instruction_binding", self._project_binding_decisions),
+                    ("project_instruction_dispatch", self._project_dispatch_decisions),
+                )
+                for decision in decisions.values()
+                if decision.session_id == session_id and not decision.completed.is_set()
+            )
 
     def resolve_project_instruction_binding(
         self, decision_id: str, action: str, binding_id: str | None
@@ -5940,6 +5978,8 @@ class ConsoleRuntime:
         refuses work through its permanently-set cancellation Event, which
         is exactly the right answer at exit.
         """
+        if self._remote_projection is not None:
+            self._remote_projection.close()
         controller = self._chat_controller
         recovery_owner = None
         try:

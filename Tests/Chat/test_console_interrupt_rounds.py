@@ -397,3 +397,18 @@ def test_late_host_registration_respects_per_kind_tombstones(kind, check_revoked
         assert seams.mounted[kind] == [] and seams.badges == []
     else:
         assert any(seams.mounted[kind])
+
+
+def test_question_resolver_does_not_replace_an_already_set_native_event():
+    host = InterruptRoundHost(FakeSeamsFull())
+    state = {
+        "session_id": "sess-A",
+        "event": threading.Event(),
+        "decision": {"answers": []},
+    }
+    state["event"].set()
+    host.registries["question"]["question"] = state
+    host.resolve_pending_question(
+        [{"question": "late", "selected": ["answer"]}], "question"
+    )
+    assert state["decision"]["answers"] == []

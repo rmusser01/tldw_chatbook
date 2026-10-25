@@ -1261,3 +1261,18 @@ def test_runtime_holder_is_lazy_and_chat_names_share_execution_fence(tmp_path):
         asyncio.run(second.dispose())
     with ConsoleExecutionOwner.acquire(path):
         pass
+
+
+@pytest.mark.asyncio
+async def test_runtime_disposal_retires_remote_subscription_claims():
+    from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+
+    runtime = ConsoleRuntime(SimpleNamespace())
+    projection = runtime.ensure_remote_projection(
+        ConsoleHostIdentity(server_epoch="epoch", console_id="console")
+    )
+    projection.register_client("phone")
+    await runtime.dispose()
+    assert not projection._clients
+    with pytest.raises(RuntimeError):
+        runtime.ensure_remote_projection(projection.host_identity)

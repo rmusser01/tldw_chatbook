@@ -1,24 +1,10 @@
-"""Served-child publisher for the desktop→phone approval relay (ADR-236).
+"""Bounded served-child projection publisher (ADR-244).
 
-A textual-serve child App forwards its Console approval rounds and
-run-status transitions to the parent broker through the child's
-:class:`~tldw_chatbook.Canvas.control_protocol.CanvasControlClient`.
-The module is importable without a Textual app context: the app wires it,
-everything else talks to it through three fire-and-forget methods.
-
-Hard invariants (plan 2026-10-15-served-mobile-phase2c, Global
-Constraints):
-
-- Publishing must NEVER block or raise into a caller. Approval callbacks
-  run on the agent worker thread; run-status observation runs on the event
-  loop. Every method enqueues into a bounded thread-safe buffer, using one
-  coalesced ``call_soon_threadsafe`` wake. Overflow publishes a reset and a
-  single drainer task performs the async client send, swallowing and
-  logging (ids only) every exception.
-- The relay mirrors the TUI card lifecycle: ``approval_raised`` records the
-  mounted round, a ``None``-payload clear pops the newest mount and
-  publishes ``resolution="cleared"`` — the same one-deep card-slot
-  semantics the parent's mobile capture uses.
+The App polls retained runtime revision witnesses at the existing cadence and
+sends body-free invalidations through one bounded thread-safe queue and drainer.
+Projection pressure cannot own command responses or stop native work. Legacy
+approval/card methods remain compatibility helpers until the mobile cutover;
+served App wiring no longer uses mounted callbacks as its state source.
 """
 
 from __future__ import annotations
@@ -124,7 +110,10 @@ class ServedRelayPublisher:
     # ------------------------------------------------------------------ #
 
     def attach(
-        self, *, run_state_source: _RunStateSource | None = None
+        self,
+        *,
+        run_state_source: _RunStateSource | None = None,
+        projection_source: Callable[[], Any] | None = None,
     ) -> None:
         """Start the drainer (and optional run-status poller) on this loop.
 
@@ -150,7 +139,12 @@ class ServedRelayPublisher:
         self._drainer = asyncio.create_task(
             self._drain(), name="served-relay-publisher"
         )
-        if run_state_source is not None:
+        if projection_source is not None:
+            self._poller = asyncio.create_task(
+                self._poll_projection(projection_source),
+                name="served-console-projection",
+            )
+        elif run_state_source is not None:
             self._poller = asyncio.create_task(
                 self._poll_run_states(run_state_source),
                 name="served-relay-run-status",
@@ -298,6 +292,20 @@ class ServedRelayPublisher:
                     logger.warning("served relay send failed type=%s", message_type)
                 finally:
                     self._busy = False
+
+    async def _poll_projection(self, source: Callable[[], Any]) -> None:
+        while True:
+            await asyncio.sleep(self._poll_interval)
+            try:
+                projection = source()
+                if projection is not None:
+                    sequence = projection.poll_changes()
+                    if sequence is not None:
+                        self._enqueue("console.changed", {"sequence": sequence})
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - projection failures cannot stop control
+                logger.debug("served Console projection poll unavailable")
 
     async def _poll_run_states(self, source: _RunStateSource) -> None:
         while True:

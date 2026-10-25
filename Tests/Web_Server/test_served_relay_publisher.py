@@ -443,3 +443,20 @@ async def test_publisher_retains_only_bounded_mounted_round_metadata():
         )
     assert len(publisher._mounted_rounds) <= 2
     await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_projection_invalidations_need_no_mounted_approval_callback():
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client, poll_interval=0.001)
+    revisions = iter((1, None, None))
+    source = SimpleNamespace(poll_changes=lambda: next(revisions, None))
+    publisher.attach(projection_source=lambda: source)
+    try:
+        for _ in range(20):
+            await asyncio.sleep(0.002)
+            if client.frames:
+                break
+        assert client.frames == [("console.changed", {"sequence": 1})]
+    finally:
+        await publisher.aclose()

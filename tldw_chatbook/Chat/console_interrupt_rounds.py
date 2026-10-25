@@ -40,15 +40,16 @@ if TYPE_CHECKING:
         BuiltinToolGate,
         BuiltinToolProvider,
         LocalToolProvider,
+        ManagedSkillProposalGate,
         MCPPendingCall,
         MCPToolProvider,
-        ManagedSkillProposalGate,
         RawShellToolProvider,
         ToolCall,
         ToolReviewDecision,
         ToolReviewValue,
         VirtualCliProvider,
     )
+    from tldw_chatbook.Chat.console_remote_models import ConsoleTarget
 
 from loguru import logger
 
@@ -653,6 +654,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         self.read_hook_review_shutdown = read_hook_review_shutdown
         self.lock = threading.Lock()
         self._hook_interrupts: set[object] = set()
+        self._remote_outcomes: dict[tuple, dict] = {}
         self.registries: dict[str, dict[str, dict[str, Any]]] = {
             kind: {} for kind in KIND_SETTER_ATTRS
         }
@@ -684,6 +686,248 @@ class InterruptRoundHost(InitialHookReviewMixin):
         self._retained_decision_targets: dict[
             str, tuple[weakref.ReferenceType[Any], int, bool]
         ] = {}
+
+    def remote_rounds(self, session_id: str) -> tuple[dict, ...]:
+        """Allowlisted retained decision metadata, independent of mounted cards."""
+        import json
+
+        rows = []
+        sessions = getattr(self.read_controller_store(), "sessions", lambda: ())()
+        session = next((row for row in sessions if row.id == session_id), None)
+        incarnation = getattr(session, "incarnation_id", None)
+        # Payloads are retained native values; snapshot their ownership under the
+        # registry lock, then redact/format outside it so answers cannot block on JSON.
+        with self.lock:
+            captured = [
+                (
+                    kind,
+                    round_id,
+                    dict(state),
+                    dict(self.payloads[kind].get(round_id, {})),
+                )
+                for kind, states in self.registries.items()
+                for round_id, state in states.items()
+                if state.get("session_id") == session_id
+                and not state.get("settled")
+                and state.get("remote_incarnation_id") == incarnation
+                and not state["event"].is_set()
+            ]
+            rendered_rounds = {
+                rendered[3]
+                for target, _kinds, rendered in self._decision_views.values()
+                if target == session_id and rendered is not None
+            }
+        for kind, round_id, state, payload in captured:
+            supported = False
+            review = {}
+            if kind == "approval" and payload.get("calls"):
+                from .approval_review import approval_options, remote_argument_summary
+
+                try:
+                    calls = payload["calls"]
+                    supported = all(
+                        not call.get("full_command")
+                        and not (
+                            call.get("server_key") == "local:__local__"
+                            and call.get("tool_name") == "shell_exec"
+                        )
+                        for call in calls
+                    )
+                    if supported:
+                        review["calls"] = [
+                            {
+                                **{
+                                    key: call.get(key)
+                                    for key in (
+                                        "call_id",
+                                        "llm_name",
+                                        "tool_name",
+                                        "options",
+                                        "effects",
+                                        "reason",
+                                        "path_precheck_failed",
+                                    )
+                                },
+                                "options": [
+                                    value
+                                    for _label, value in approval_options(
+                                        call.get("options")
+                                    )
+                                ],
+                                "arguments_summary": remote_argument_summary(
+                                    call.get("arguments")
+                                ),
+                            }
+                            for call in calls
+                        ]
+                except Exception:  # noqa: BLE001 - untrusted review failures must hide raw data
+                    supported, review = False, {}
+            elif kind == "question" and payload.get("questions"):
+                from tldw_chatbook.Agents.ask_user_questions import validate_questions
+
+                try:
+                    review["questions"] = validate_questions(payload["questions"])
+                    supported = True
+                except ValueError:
+                    supported, review = False, {}
+            try:
+                if len(json.dumps(review).encode()) > 16000:
+                    supported, review = False, {}
+            except (TypeError, ValueError):
+                supported, review = False, {}
+            answerable = round_id in rendered_rounds
+            row = {
+                "kind": kind,
+                "round_id": round_id,
+                "run_id": state.get("run_id") or None,
+                "supported": supported,
+                "answerable": supported and answerable,
+                **review,
+            }
+            if not supported:
+                row.update(
+                    reason="This review requires the terminal.", action="open_terminal"
+                )
+            rows.append(row)
+        lock = self.read_controller__pending_chat_create_lock()
+        if lock is not None:
+            with lock:
+                rows.extend(
+                    {
+                        "kind": "chat_create",
+                        "round_id": round_id,
+                        "run_id": state.get("run_id") or None,
+                        "supported": False,
+                        "answerable": False,
+                        "reason": "This review requires the terminal.",
+                        "action": "open_terminal",
+                    }
+                    for round_id, state in self.read_controller__pending_chat_create_rounds().items()
+                    if state.get("session_id") == session_id
+                    and not state["event"].is_set()
+                )
+        return tuple(rows)
+
+    def set_remote_answerable(self, target: ConsoleTarget, *, answerable: bool) -> None:
+        """Reuse native rendered-card accounting for one exact live round."""
+        owner = ("remote", target)
+        if not answerable:
+            self.set_decision_view(owner, None)
+            return
+        session = next(
+            (
+                row
+                for row in self.read_controller_store().sessions()
+                if row.id == target.session_id
+            ),
+            None,
+        )
+        if session is None or session.incarnation_id != target.incarnation_id:
+            raise ValueError("Console target incarnation changed.")
+        row = next(
+            (
+                row
+                for row in self.remote_rounds(target.session_id)
+                if row["round_id"] == target.round_id and row["run_id"] == target.run_id
+            ),
+            None,
+        )
+        if row is None or not row["supported"]:
+            raise ValueError("Decision is no longer remotely answerable.")
+        self.set_decision_view(
+            owner, target.session_id, kinds=(row["kind"],), decision_id=target.round_id
+        )
+
+    def resolve_remote_round(
+        self, target: ConsoleTarget, *, kind: str, answer: dict
+    ) -> dict:
+        """Validate exact native scope before calling the original kind resolver."""
+        session = next(
+            (
+                row
+                for row in self.read_controller_store().sessions()
+                if row.id == target.session_id
+            ),
+            None,
+        )
+        if session is None or session.incarnation_id != target.incarnation_id:
+            raise ValueError("Console target incarnation changed.")
+        if target.round_id is None or target.handle_id is not None:
+            raise ValueError("An exact decision round is required.")
+        with self.lock:
+            key = (
+                target.session_id,
+                target.incarnation_id,
+                target.run_id,
+                kind,
+                target.round_id,
+            )
+            outcome = self._remote_outcomes.get(key)
+            if outcome is not None:
+                return dict(outcome)
+            state = self.registries.get(kind, {}).get(target.round_id)
+            if (
+                state is None
+                or state.get("remote_incarnation_id") != target.incarnation_id
+                or state.get("session_id") != target.session_id
+                or (state.get("run_id") or None) != target.run_id
+            ):
+                raise ValueError("Decision target is no longer current.")
+            if state.get("settled") or state["event"].is_set():
+                return {
+                    "state": "resolved",
+                    "native_id": target.round_id,
+                    "reason": state.get("terminal_reason") or "already_resolved",
+                }
+        row = next(
+            (
+                row
+                for row in self.remote_rounds(target.session_id)
+                if row["kind"] == kind and row["round_id"] == target.round_id
+            ),
+            None,
+        )
+        if row is None or not row["supported"]:
+            raise ValueError("Open terminal to answer this decision.")
+        if type(answer) is not dict:
+            raise ValueError("Decision answer must be an object.")
+        if kind == "approval":
+            if set(answer) != {"decisions"} or type(answer["decisions"]) is not dict:
+                raise ValueError("Expected exact approval decisions.")
+            allowed = {
+                call.get("call_id") or call["llm_name"]: set(call["options"] or [])
+                | {"deny"}
+                for call in row["calls"]
+            }
+            if set(answer["decisions"]) != set(allowed) or any(
+                type(value) is not str or value not in allowed[key]
+                for key, value in answer["decisions"].items()
+            ):
+                raise ValueError("Approval choices do not match the native review.")
+            self.resolve_pending_approval(answer["decisions"], round_id=target.round_id)
+        elif kind == "question":
+            from tldw_chatbook.Agents.ask_user_questions import validate_answers
+
+            if set(answer) != {"answers"}:
+                raise ValueError("Expected question answers.")
+            answers = validate_answers(answer["answers"])
+            if len(answers) != len(row["questions"]) or any(
+                response["question"] != question["question"]
+                or not set(response["selected"])
+                <= {option["label"] for option in question["options"]}
+                or (not question.get("multiSelect") and len(response["selected"]) > 1)
+                for response, question in zip(answers, row["questions"], strict=True)
+            ):
+                raise ValueError("Answers do not match the native question round.")
+            self.resolve_pending_question(answers, request_id=target.round_id)
+        else:
+            raise ValueError("Open terminal to answer this decision.")
+        self.set_remote_answerable(target, answerable=False)
+        return {
+            "state": "resolved",
+            "native_id": target.round_id,
+            "reason": state.get("terminal_reason") or "answered",
+        }
 
     def retain_decision_target(self, session_id: str) -> None:
         """An explicit Buddy opener makes this exact session's cards recoverable."""
@@ -809,7 +1053,16 @@ class InterruptRoundHost(InitialHookReviewMixin):
                             and (not session_id or session_id == active_session_id)
                         )
                         or any(
-                            session_id == target and kind in kinds
+                            session_id == target
+                            and kind in kinds
+                            and (
+                                _rendered is None
+                                or _rendered[3]
+                                == (
+                                    clock.payload.get("round_id")
+                                    or clock.payload.get("request_id")
+                                )
+                            )
                             for target, kinds, _rendered in self._decision_views.values()
                         )
                     ) and (not clock.requires_head or head is clock.payload)
@@ -993,6 +1246,13 @@ class InterruptRoundHost(InitialHookReviewMixin):
         Raises:
             KeyError: If ``kind`` has no host registry.
         """
+        sessions = getattr(self.read_controller_store(), "sessions", lambda: ())()
+        session = next(
+            (row for row in sessions if row.id == state.get("session_id")), None
+        )
+        state.setdefault(
+            "remote_incarnation_id", getattr(session, "incarnation_id", None)
+        )
         with self.lock:
             registry = self.registries[kind]
             run_id = state.get("run_id")
@@ -1241,6 +1501,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     add(session_id, round_id)
             if not retained_decision:
                 is_head = self.park_round_payload(kind, round_id, payload)
+        outcome = "unavailable"
         try:
             app = self.read_controller_app()
             park_toast = self.read_controller_park_pending_approval()
@@ -1350,6 +1611,35 @@ class InterruptRoundHost(InitialHookReviewMixin):
         finally:
             with self.lock:
                 self.registries[kind].pop(round_id, None)
+                if state.get("remote_incarnation_id"):
+                    key = (
+                        state.get("session_id"),
+                        state["remote_incarnation_id"],
+                        state.get("run_id") or None,
+                        kind,
+                        round_id,
+                    )
+                    self._remote_outcomes[key] = {
+                        "state": "unknown" if outcome == "unavailable" else "resolved",
+                        "native_id": round_id,
+                        "reason": state.get("terminal_reason") or outcome,
+                    }
+                    while len(self._remote_outcomes) > 256:
+                        self._remote_outcomes.pop(next(iter(self._remote_outcomes)))
+                remote_views = [
+                    owner
+                    for owner, (
+                        _session,
+                        _kinds,
+                        rendered,
+                    ) in self._decision_views.items()
+                    if isinstance(owner, tuple)
+                    and owner[0] == "remote"
+                    and rendered is not None
+                    and rendered[3] == round_id
+                ]
+            for owner in remote_views:
+                self.set_decision_view(owner, None)
             if retained_decision:
                 self.read_controller__forget_hidden_decision()(round_id)
             self._note_pending(kind, raised=False)
@@ -4774,10 +5064,17 @@ class InterruptRoundHost(InitialHookReviewMixin):
             return  # fail closed: a malformed resolve is dropped, never partially applied
         with self.lock:
             round_state = self.registries["question"].get(request_id)
-        if round_state is None:
-            return
-        round_state["decision"]["answers"] = clean_answers
-        round_state["event"].set()
+            if (
+                round_state is None
+                or round_state.get("settled")
+                or round_state["event"].is_set()
+            ):
+                return
+            round_state["settled"] = True
+            round_state["terminal_reason"] = "user"
+            round_state["decision"]["answers"] = clean_answers
+            event = round_state["event"]
+        event.set()
 
     def resolve_pending_skill_install(
         self, allow: bool, *, request_id: str | None

@@ -1012,3 +1012,59 @@ def test_console_private_method_envelopes_are_bounded_closed_and_refuse_unsuppor
             await broker.aclose()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        None,
+        {},
+        {"server_epoch": "epoch"},
+        {"server_epoch": "epoch", "console_id": "../bad"},
+        {"server_epoch": "epoch", "console_id": "console", "extra": "bad"},
+    ],
+)
+def test_auth_response_requires_strict_host_identity(identity):
+    with pytest.raises(ControlProtocolError):
+        _message("auth.response", {"status": "accepted", "host_identity": identity})
+
+
+def test_auth_response_requires_host_identity_field():
+    with pytest.raises(ControlProtocolError):
+        _message("auth.response", {"status": "accepted"})
+
+
+def test_authenticated_child_receives_parent_host_identity():
+    async def scenario():
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("identity-child")
+        client = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
+        try:
+            with pytest.raises(ControlProtocolError):
+                _ = client.host_identity
+            await client.start()
+            assert client.host_identity == broker.console_identity("identity-child")
+        finally:
+            await client.aclose()
+            await broker.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_console_envelope_rejects_oversize_before_encoding(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Canvas.control_protocol.json.dumps",
+        lambda *_args, **_kwargs: pytest.fail(
+            "oversize envelope reached serialization"
+        ),
+    )
+    with pytest.raises(ControlProtocolError, match="console_payload_too_large"):
+        _message("console.command.request", {"request": {"text": "x" * 65536}})
+
+
+def test_default_child_shutdown_response_keeps_its_exact_contract():
+    client = object.__new__(CanvasControlClient)
+    response = asyncio.run(client._default_handler(_message("shutdown.request", {})))
+    assert response.payload == {"status": "accepted"}
+    assert response.request_id == "request-1"

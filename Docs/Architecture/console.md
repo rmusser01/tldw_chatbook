@@ -160,7 +160,7 @@ revocation and Canvas disable do not enter this native shutdown path.
 `Chat/console_remote_commands.py::ConsoleRemoteCommands` is the runtime command
 adapter for an existing `ConsoleHostIdentity` / `ConsoleTarget`. Its supported
 actions are `send`, `steer`, `redirect`, `stop`, `subagent_guidance` and
-`subagent_stop`. Unsupported actions refuse. This seam does not select a desktop
+`subagent_stop`, plus exact retained `decision` answers. Unsupported actions refuse. This seam does not select a desktop
 tab or construct a second controller. Browser transport wiring and receipt
 observation are separate owners.
 
@@ -193,3 +193,43 @@ Neither queued guidance nor accepted Stop claims mailbox consumption or physical
 worker exit. Main controls use explicit-session `steer_run`, `redirect_run` and
 `stop_run`; existing active-tab methods delegate to those native controls. A
 remote Stop needs an exact existing turn or live run and cannot stop a successor.
+
+
+## Retained remote projection and decisions (TASK-36763, ADR-244)
+
+`Chat/console_remote_projection.py::ConsoleRemoteProjection` reads the existing
+runtime/store/round owners without a ChatScreen, changing selection, hydration,
+or provider construction. Discovery combines live identities with canonical saved
+conversation listings; an unhydrated live persisted target pages native metadata
+first, then canonical bounded history, including when fleet/decisions remain live.
+The history cursor fences that metadata and canonical content revisions; a change
+restarts from native metadata with reset. Saved-only history routing remains Task9.
+Each non-null target is checked against host, session incarnation and supplied
+turn/run/handle/round identities before reading and again before returning.
+
+Snapshot sections are `chats`, `messages`, `fleet`, `decisions`, and `recoveries`,
+with host identity, native `sequence`, `reset_required`, and `next_cursor`. Chat
+rows include the five command `expected_revisions`. Pages contain at most 100
+rows and 64 KiB; large message text continues at a character offset. Content/scope
+revision changes reset continuation. System/automatic instruction bodies, hidden
+thinking, quarantined generation text, provider credentials and full DB rows are
+excluded. Recovery and unfaithful reviews expose only pending/Open terminal state.
+
+`InterruptRoundHost.remote_rounds` snapshots native ownership under its lock and
+formats outside that lock. Ordinary tool approval summaries share the native
+pure `Chat/approval_review.py` destination-first, bounded redaction policy with
+the terminal card; phone serialization/redaction failure hides the review and
+refuses answers. Raw shell, hook/skill/worktree/chat-create and project instruction
+confirmations remain unsupported pending terminal reviews. Ordinary approvals
+and validated user questions resolve through their original kind-specific native
+resolvers; exact kind/session/incarnation/run/round scope and bounded completed
+outcomes preserve one original winner. No remote policy grants or hook bypasses
+are added.
+
+Answerability belongs to a registered live subscription and an exact rendered
+round. Registration is capped at 64 clients and rendered-round claims at 100.
+Snapshot reads grant no answerability. Disconnect releases only that client's
+claims, so another phone's visible round keeps its native human-input clock
+answerable. Resolution and runtime disposal remove claims; native clock refresh
+matches the rendered round, not merely the session/kind. Task9 supplies the
+parent-generated authenticated subscription IDs and disconnect/revocation wiring.

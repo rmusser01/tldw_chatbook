@@ -95,8 +95,9 @@ Private control protocol **3** is separate from HTTP `/api/v1/mobile` and browse
 
 Every method uses `.request`/`.response` suffixes. Existing recursive frame,
 value/depth/collection limits apply; extra outer fields and wrong container types
-refuse. Later native adapters strictly validate the inner arguments. These methods
-currently refuse `authority_unavailable` without constructing an engine.
+refuse. Native snapshot/event adapters strictly validate the inner arguments. Ticket,
+command and receipt methods still refuse `authority_unavailable` until their
+transport integration; no request constructs another engine.
 `console.changed` is body-free `{sequence: int >= 0, reset_required?: bool}` metadata.
 Correlated responses resolve directly through the pending request map; projections
 never own command outcomes, receipts or native approval resolution.
@@ -181,3 +182,49 @@ Evidence lives in `Tests/Web_Server/test_served_console_hosts.py`,
 normal runtime/admission/persistence with a deterministic provider. Passive xterm
 public-buffer observation verifies rendered output without changing the renderer;
 child receipts verify one input thread, resize, mouse and multiline paste.
+
+
+## Retained native read protocol (TASK-36763, private v3)
+
+Authenticated `auth.response` requires exactly `status` and `host_identity`;
+the broker supplies the frozen `{server_epoch, console_id}` identity. The child
+client exposes it read-only after authentication; missing/malformed identities
+fail closed before publisher or handler admission. It is never browser supplied.
+The served publisher now polls retained runtime revision witnesses at its existing
+cadence and emits body-free `console.changed`; mounted approval callbacks are no
+longer its projection source. Correlated responses retain their independent
+pending-request path. Console methods work when Canvas is disabled.
+
+Within the outer `{"request": {...}}`, snapshot accepts only optional `target`
+(null for discovery), `cursor` and `limit` (1–100, default 50). Event requests use
+these closed operation-specific fields:
+
+| Operation | Fields besides `operation` |
+| --- | --- |
+| `read` (default) | optional `after_sequence` (nonnegative integer, default 0) |
+| `register`, `disconnect` | `client_id` |
+| `answerable` | `client_id`, exact `target`, boolean `answerable` |
+| `acknowledge` | `sequence` (nonnegative integer) |
+
+Responses remain `{"snapshot": ...}` or `{"batch": {sequence, reset_required,
+events}}`, with `events` a JSON list. Registration is a private parent lifecycle
+operation, not browser authority. Task9 wires authenticated WebSocket/revocation
+lifetime and must mint a different ID per live subscription. The inner Console
+payload budget is checked before serialization; recursive/depth limits also apply.
+
+There are two distinct sequence domains. The child snapshot/batch sequence is
+its **native invalidation buffer** boundary, captured before reading detached
+native messages and lock-owned round/revision witnesses. A native witness change
+during capture publishes a new reset invalidation; the old capture cannot clear
+it. Only a completed page chain can nominate a child boundary for acknowledgment,
+and the native buffer clears a reset only if that boundary is still current.
+The child publisher frame's sequence is only a native invalidation hint.
+
+The parent's `ConsoleEventBuffer` sequence is the **transport receive cursor**;
+it advances independently when child frames arrive, including overflow reset
+frames. No Task5 code equates or acknowledges those two counters. Task9's HTTP
+snapshot adapter must register the parent cursor before requesting child capture,
+reconcile frames received during capture, and acknowledge only the reconciled
+parent boundary. A later transport cursor must never be copied from the child's
+snapshot `sequence` or acknowledged merely because capture returned. Native and
+transport sticky resets each retain their respective owner.
