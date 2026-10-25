@@ -21776,3 +21776,18 @@ the correct item.
 assert the actual action's outcome rather than Pilot's node-identity return.
 Keep the real click and viewport/hit checks; do not replace the user action
 with a direct handler call.
+
+## A passing manifest can omit a new runtime asset family (TASK-36869, 2026-10-25)
+
+The initial 0.2.4 build passed Twine and the old manifest checker, but a fresh
+wheel's `tldw-serve --help` crashed reading `static/mobile/index.html`.
+MANIFEST.in already included the web tree in the sdist; with
+`include-package-data = false`, the wheel's explicit package-data list still
+omitted eleven mobile/authentication/QR files. The enumerated checker omitted
+that family too. An actual built-artifact presence test and a mutation removing
+the mobile page both failed before the fix. Add runtime data to package-data
+and both checker contracts, retain required vendored notices under a narrow
+Markdown allowance, then exercise the installed entry point. An initial smoke
+with only XDG/config overrides was inconclusive; reuse the complete private-child
+environment helper to avoid inheriting the real profile. The corrected wheel
+passed both help commands from separate empty private profiles.

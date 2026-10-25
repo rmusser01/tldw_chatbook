@@ -172,6 +172,27 @@ CANVAS_GUIDE_RESOURCE_PATHS = {
     "tldw_chatbook/Canvas/static/mermaid-authoring.txt",
 }
 
+# Served login, device pairing and mobile assets are read from installed wheels.
+WEB_SERVER_RESOURCE_PATHS = {
+    f"tldw_chatbook/Web_Server/static/{name}"
+    for name in (
+        "served_shell.html",
+        "served_shell.css",
+        "served_shell.js",
+        "devices.js",
+        "passkeys.js",
+        "qrcodegen.js",
+        "VENDORED.md",
+        "mobile/index.html",
+        "mobile/app.css",
+        "mobile/app.js",
+        "mobile/manifest.webmanifest",
+        "mobile/icon-192.png",
+        "mobile/icon-512.png",
+        "mobile/apple-touch-icon.png",
+    )
+}
+
 # Built-in skills read at runtime by Skills_Interop.builtin_skills (TASK-32954).
 BUILTIN_SKILL_RESOURCE_PATHS = {
     "tldw_chatbook/assets/skills/character-creator/SKILL.md",
@@ -206,6 +227,7 @@ REQUIRED_SDIST_PATHS = (
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
     | CANVAS_GUIDE_RESOURCE_PATHS
+    | WEB_SERVER_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
 )
 
@@ -230,6 +252,7 @@ REQUIRED_WHEEL_PATHS = (
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
     | CANVAS_GUIDE_RESOURCE_PATHS
+    | WEB_SERVER_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
 )
 
@@ -527,6 +550,7 @@ def _validate_content(
                 and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
                 and name not in PIXEL_MIGU_RESOURCE_PATHS
                 and name not in CANVAS_GUIDE_RESOURCE_PATHS
+                and name not in WEB_SERVER_RESOURCE_PATHS
                 and name not in BUILTIN_SKILL_RESOURCE_PATHS
             ):
                 errors.append(f"{label}: forbidden development Markdown: {name}")

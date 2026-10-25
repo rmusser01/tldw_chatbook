@@ -1896,6 +1896,37 @@ def test_built_artifacts_match_distribution_contract(
     }
 
 
+def test_built_artifacts_include_web_server_static_assets(
+    built_distributions: BuiltDistributions,
+) -> None:
+    required = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (REPO_ROOT / "tldw_chatbook/Web_Server/static").rglob("*")
+        if path.is_file()
+    }
+    assert required
+    assert not required - _sdist_members(built_distributions.sdist)
+    assert not required - _wheel_members(built_distributions.wheel)
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_missing_mobile_page(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    missing = "tldw_chatbook/Web_Server/static/mobile/index.html"
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=[missing] if archive_kind == "wheel" else (),
+        drop_from_sdist=[missing] if archive_kind == "sdist" else (),
+    )
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("wheel_source", ["source", "sdist"])
 def test_installed_distribution_migrates_v35_database_to_current(
     built_distributions: BuiltDistributions,
