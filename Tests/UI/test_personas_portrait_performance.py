@@ -493,3 +493,94 @@ async def test_late_saved_source_check_keeps_replacement_draft(
     release.set()
     await check
     assert controller.draft is replacement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artwork_changed", [False, True])
+@pytest.mark.parametrize("stage", ["before", "during"])
+async def test_saved_source_check_waits_for_character_save(
+    personas_editor_with_saved_character, monkeypatch, artwork_changed, stage
+):
+    import asyncio
+
+    _, screen, db, character_id, _ = saved_source(personas_editor_with_saved_character)
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    draft = controller.draft
+    entered, release = asyncio.Event(), asyncio.Event()
+    native = controller._native
+
+    async def held_read(*args, **kwargs):
+        result = await native(*args, **kwargs)
+        entered.set()
+        await release.wait()
+        return result
+
+    if stage == "before":
+        screen._character_save_inflight = True
+    else:
+        monkeypatch.setattr(controller, "_native", held_read)
+    check = asyncio.create_task(controller.check_saved_source())
+    try:
+        if stage == "during":
+            await entered.wait()
+            screen._character_save_inflight = True
+            release.set()
+        await asyncio.sleep(0.06)
+        controller._check_context()
+        assert not check.done() and controller.draft is draft
+        record = db.get_character_card_by_id(character_id)
+        update = (
+            {"image": png("blue")} if artwork_changed else {"description": "Saved text"}
+        )
+        assert db.update_character_card(character_id, update, record["version"])
+    finally:
+        screen._character_save_inflight = False
+        release.set()
+        await check
+    assert (controller.draft is None) == artwork_changed
+    if not artwork_changed:
+        assert controller.draft is draft
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["character", "kind", "runtime"])
+async def test_external_change_rechecks_selection_after_source_read(
+    personas_editor_with_saved_character, monkeypatch, change
+):
+    import asyncio
+    from dataclasses import replace
+
+    from tldw_chatbook.Character_Chat.character_events import CharacterCardChanged
+
+    _, screen, _, character_id, _ = saved_source(personas_editor_with_saved_character)
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    entered, release = asyncio.Event(), asyncio.Event()
+    reloads, notices = [], []
+
+    async def held_check():
+        entered.set()
+        await release.wait()
+        controller.discard()
+
+    async def reload(*args, **kwargs):
+        reloads.append(args)
+
+    monkeypatch.setattr(controller, "check_saved_source", held_check)
+    monkeypatch.setattr(screen, "_select_character", reload)
+    monkeypatch.setattr(screen, "_notify", lambda *args: notices.append(args))
+    pending = asyncio.create_task(
+        screen._on_character_card_changed(CharacterCardChanged(character_id))
+    )
+    await entered.wait()
+    updates = {
+        "character": {"selected_entity_id": str(character_id + 1)},
+        "kind": {"selected_entity_kind": "persona"},
+        "runtime": {"runtime_source": "server"},
+    }
+    screen.state = replace(screen.state, **updates[change])
+    release.set()
+    await pending
+    assert not reloads and not notices
+    assert str(character_id) not in screen._console_changed_character_ids

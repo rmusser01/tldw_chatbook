@@ -29,6 +29,8 @@ from ...Widgets.Persona_Widgets.portrait_performance_editor import (
     PortraitPerformanceEditor,
 )
 
+_SAVE_SETTLE_POLL_SECONDS = 0.05
+
 
 @dataclass(frozen=True, slots=True)
 class _Authority:
@@ -126,6 +128,9 @@ class PortraitPerformanceController:
         authority = self._authority
         if authority is None:
             return
+        screen = self._screen()
+        if screen is not None and screen._character_save_inflight:
+            return
         if not self._current(authority):
             self.discard()
             return
@@ -193,12 +198,22 @@ class PortraitPerformanceController:
         authority, draft, epoch = self._authority, self.draft, self._epoch
         if authority is None or draft is None:
             return
-        try:
-            current = await self._source_current(authority, draft, epoch)
-        except PerformanceConflict:
-            current = False
-        if not current and self._epoch == epoch and self.draft is draft:
-            self.discard()
+        while self._epoch == epoch and self.draft is draft:
+            screen = self._screen()
+            if screen is None:
+                return
+            if screen._character_save_inflight:
+                await asyncio.sleep(_SAVE_SETTLE_POLL_SECONDS)
+                continue
+            try:
+                current = await self._source_current(authority, draft, epoch)
+            except PerformanceConflict:
+                current = False
+            if screen._character_save_inflight:
+                continue
+            if not current and self._epoch == epoch and self.draft is draft:
+                self.discard()
+            return
 
     def discard(self) -> None:
         """Fence in-flight work before dropping any draft or preview bytes."""

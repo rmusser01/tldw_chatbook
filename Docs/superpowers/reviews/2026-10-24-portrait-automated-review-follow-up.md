@@ -90,8 +90,8 @@ proposed exclusive worker, staticmethod and non-idempotent-close fixes do not
 apply. External artwork/authority changes must retire source-bound portrait drafts under
 ADR-242/243; subsequent hosted feedback correctly distinguished text-only card
 changes, which must retain source-current staged work. The mounted regression
-reproduced that loss and the follow-up fix checks the saved source before discard. Remaining TTS/geometry suggestions are still being
-verified; no blanket acceptance of conditional findings is claimed.
+reproduced that loss and the follow-up fix checks the saved source before discard. Final TTS/geometry dispositions are recorded below; no blanket acceptance of
+conditional findings is claimed.
 
 ### Guarded legacy speech delivery and cleanup
 
@@ -114,3 +114,13 @@ A mounted control reproduced text-only external card updates dropping a staged i
 ### Remaining source-batch suggestions
 
 The fit helper is arithmetic-only over validated source dimensions and a measured integer cell box; it performs no renderer I/O. Keep existing renderer failure fallback and clarify the builder docstring/return value rather than adding a blanket exception path around trusted geometry. `_prepared_base` uses the resolved expression key, and `source_from_resolution` canonicalizes that actual artwork (portrait to neutral, legacy/pack to resolved key and persisted references); requested/manual-state metadata is deliberately absent from PerformanceSource, so recapturing the same artwork does not change identity. Existing regions/source round trips cover the actual path. Repeated PreparedExpression.close clears frames and its byte reservation, so the alleged double-budget release does not apply.
+
+### Completed test batch and installed follow-up
+
+CLI 0.9.1 completed all 47 changed test files at `c4ea7272fc` and returned three minor suggestions. Bound the installed guarded-sample poll to 30 seconds while retaining its trace/status failure assertion; require busy to clear. Restrict the POSIX 0600 assertion to non-Windows platforms, retaining all evidence/privacy assertions everywhere. No compatibility rewrite is needed for asyncio.timeout: pyproject.toml requires Python >=3.12. Affected probe tests plus the fresh wheel-installed authoring/Console/reopen/Remove/reapply journey pass 11 checks in 37.33s, and all 53 changed production files match the installed wheel.
+
+CodeRabbit acknowledged all four hosted fixes and resolved their threads. A fresh hosted incremental request was rate-limited; a bounded CLI follow-up from the prior reviewed head is running. Qodo/Cubic remain unavailable. The all-path configuration validates against the current official schema. No full test sweep, current-head live image/TTS/device qualification or independent human UAT was performed. Verification hashes, reviewed path lists and exact limits are in `../qa/portrait-compositing/2026-10-24/review-readiness/review-follow-up-verification.json`.
+
+### Post-fix batch: additional refresh races
+
+The bounded 15-file follow-up completed with two further findings, both reproduced. Character Save temporarily makes operation authority unavailable; source revalidation now waits for Save to settle (also if Save begins during the read), while context polling preserves the draft during that transient state. It still compares saved artwork afterward and retires actual artwork changes. No generation/Apply admission gate was weakened. The event handler rereads selection after the await and returns if runtime source, entity kind or character ID changed. Five initial controls fail before the correction; all eight expanded Save/read, selection and replacement controls pass afterward.

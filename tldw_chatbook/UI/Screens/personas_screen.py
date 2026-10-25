@@ -5512,6 +5512,13 @@ class PersonasScreen(BaseAppScreen):
             portrait = getattr(self, "_portrait_performance_controller", None)
             if portrait is not None:
                 await portrait.check_saved_source()
+            state = self.state
+            if (
+                state.runtime_source != "local"
+                or state.selected_entity_kind != "character"
+                or str(state.selected_entity_id) != str(message.character_id)
+            ):
+                return
             if (
                 (portrait is not None and portrait.draft is not None)
                 or state.has_unsaved_changes
