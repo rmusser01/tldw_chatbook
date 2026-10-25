@@ -1,5 +1,5 @@
 ---
-id: TASK-36759
+id: TASK-36869
 title: Prepare 0.2.4 release from dev to main
 status: In Progress
 created_date: 2026-10-25 17:36

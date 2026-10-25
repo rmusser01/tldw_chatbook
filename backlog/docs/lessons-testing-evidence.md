@@ -21777,7 +21777,7 @@ assert the actual action's outcome rather than Pilot's node-identity return.
 Keep the real click and viewport/hit checks; do not replace the user action
 with a direct handler call.
 
-## A passing manifest can omit a new runtime asset family (TASK-36759, 2026-10-25)
+## A passing manifest can omit a new runtime asset family (TASK-36869, 2026-10-25)
 
 The initial 0.2.4 build passed Twine and the old manifest checker, but a fresh
 wheel's `tldw-serve --help` crashed reading `static/mobile/index.html`.

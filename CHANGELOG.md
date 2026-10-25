@@ -10,7 +10,7 @@ and this project adheres to Some kind of Versioning
 ## [0.2.4] - 2026-10-25
 
 Includes committed development changes since 0.2.3. Release preparation is
-tracked in TASK-36759; publication remains subject to the release gates.
+tracked in TASK-36869; publication remains subject to the release gates.
 
 ### Added
 - Console character radio portraits, a run status strip, native response rules,
