@@ -123,8 +123,12 @@ lifecycle state using its own cursor, drops decision projections on loss and
 refuses stale/replacement-child decisions even while its observer is paused.
 Per-browser projection queues also cap at 64; overflow retains one reset and
 suppresses further projections for that subscription. The existing phone status
-line reports unavailable and clears/fences approval cards until page refresh
-obtains a new subscription/current native state. This affects projection traffic
+line reports unavailable and clears/fences approval cards. A new subscription
+inherits any outstanding child projection reset even while the child is idle;
+page refresh cannot clear that warning or recover a missing native snapshot.
+The phone reports that current approvals cannot be verified. A subscription-only
+queue overflow may recover on page refresh when parent/native projections remain
+current. This affects projection traffic
 only; native execution, decisions and HTTP/control command responses retain their
 existing owners. The child publisher uses a bounded thread-safe deque, one
 coalesced loop wake and one async sender, with reset metadata on dropped history.

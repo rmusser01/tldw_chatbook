@@ -818,8 +818,9 @@
         state.approvals = [];
         renderApprovals();
         clearTimeout(state.statusTimer);
-        els.statusLine.textContent =
-          "Live updates unavailable. Refresh this page to reload current state.";
+        els.statusLine.textContent = payload.child_id
+          ? "Console updates unavailable. Current approvals cannot be verified."
+          : "Live updates unavailable. Refresh this page to reload current state.";
         els.statusLine.hidden = false;
         break;
       case "run_started":

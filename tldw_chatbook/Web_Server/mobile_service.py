@@ -1599,6 +1599,34 @@ class MobileChatService:
         )
         self._subscribers.add(queue)
         try:
+            if self._relay_broker is not None:
+                child_ids = (
+                    self._relay_child_ids()
+                    if self._relay_child_ids
+                    else self._relay_observed_buffers
+                )
+                for child_id in child_ids:
+                    try:
+                        reset_required = (
+                            self._relay_broker.console_events(str(child_id))
+                            .read(0)
+                            .reset_required
+                        )
+                    except ControlProtocolError:
+                        continue
+                    if reset_required:
+                        queue.put_nowait(
+                            MobileEvent(
+                                type="reset",
+                                session_id="",
+                                payload={
+                                    "child_id": str(child_id),
+                                    "reset_required": True,
+                                },
+                                seq=self._seq,
+                            )
+                        )
+                        break
             while True:
                 yield await queue.get()
         finally:

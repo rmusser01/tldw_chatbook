@@ -374,12 +374,21 @@ async def test_paused_mobile_subscription_retains_one_sticky_reset_and_bounded_m
         service._emit("delta", "chat-a", {"text": str(revision)})
     assert queue.empty()  # No stale projections resume before a fresh subscription.
     await events.aclose()
+    reopened = service.events()
+    first = asyncio.create_task(anext(reopened))
+    await asyncio.sleep(0)
+    service._emit("run_status", "chat-a", {"status": "current"})
+    assert (await asyncio.wait_for(first, 1)).type == "run_status"
+    await reopened.aclose()
     await service.shutdown()
 
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_phone_reset_clears_stale_approval_and_shows_unavailable(monkeypatch):
+@pytest.mark.parametrize("child_reset", [False, True])
+async def test_phone_reset_clears_stale_approval_and_shows_unavailable(
+    monkeypatch, child_reset
+):
     from pathlib import Path
 
     from playwright.async_api import async_playwright
@@ -410,9 +419,15 @@ async def test_phone_reset_clears_stale_approval_and_shows_unavailable(monkeypat
             await page.clock.install()
             await page.add_script_tag(content=assets.joinpath("app.js").read_text())
             await page.locator("#approvals-list button").wait_for(state="attached")
+            reset_payload = {"reset_required": True}
+            if child_reset:
+                reset_payload["child_id"] = "child-a"
             await page.evaluate(
-                """() => window.mobileSocket.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type:'reset', payload:{reset_required:true}, session_id:''})}))"""
+                """payload => window.mobileSocket.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type:'reset', payload, session_id:''})}))""",
+                reset_payload,
             )
+            notice = await page.locator("#status-line").inner_text()
+            assert ("Refresh this page" in notice) is not child_reset
             assert await page.locator("#approvals-list button").count() == 0
             assert (
                 "unavailable"
@@ -432,6 +447,32 @@ async def test_phone_reset_clears_stale_approval_and_shows_unavailable(monkeypat
                 "unavailable"
                 in (await page.locator("#status-line").inner_text()).lower()
             )
+            if child_reset:
+                page = await browser.new_page()
+                await page.set_content(assets.joinpath("index.html").read_text())
+                await page.evaluate(
+                    """payload => {
+                    window.fetch = async () => ({ok: true, json: async () => ({items: [], approvals: []})});
+                    window.WebSocket = class extends EventTarget {
+                        constructor() {
+                            super();
+                            queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type: 'reset', payload, session_id: ''})})));
+                        }
+                    };
+                }""",
+                    reset_payload,
+                )
+                await page.add_script_tag(content=assets.joinpath("app.js").read_text())
+                await page.locator("#status-line").wait_for(state="visible")
+                assert (
+                    "unavailable"
+                    in (await page.locator("#status-line").inner_text()).lower()
+                )
+                assert (
+                    "Refresh this page"
+                    not in await page.locator("#status-line").inner_text()
+                )
+                assert await page.locator("#approvals-list button").count() == 0
         finally:
             await browser.close()
 
@@ -479,5 +520,61 @@ async def test_overflow_does_not_hide_genuine_malformed_control_failure(forged):
         with pytest.raises(ControlProtocolError, match="child_not_connected"):
             await broker.request("child-a", "health.request", {}, timeout=1)
     finally:
+        await client.aclose()
+        await broker.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_late_subscriptions_inherit_idle_child_projection_loss(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Canvas.control_protocol import (
+        CanvasControlBroker,
+        CanvasControlClient,
+    )
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+
+    broker = CanvasControlBroker(runtime_snapshot_id="a" * 64, max_queued_events=2)
+    await broker.start()
+    launch = broker.issue_child("child-a")
+    client = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
+    service = MobileChatService(data_dir=tmp_path / "mobile", provider_gateway=None)
+    observed_reset = asyncio.Event()
+    emit = service._emit
+
+    def observe(type_, session_id, payload):
+        emit(type_, session_id, payload)
+        if type_ == "reset":
+            observed_reset.set()
+
+    async def already_started():
+        pass
+
+    monkeypatch.setattr(service, "_emit", observe)
+    monkeypatch.setattr(service, "_ensure_started", already_started)
+    subscriptions = []
+    try:
+        await client.start()
+        for _ in range(7):
+            await client.send_relay_event(
+                "relay.run.status", {"session_id": "chat-a", "status": "running"}
+            )
+        await broker.request("child-a", "health.request", {}, timeout=1)
+        service.attach_relay(broker, child_ids=lambda: ["child-a"])
+        await asyncio.wait_for(observed_reset.wait(), 1)
+        sequence = broker.console_events("child-a").read(0).sequence
+        # Both pages subscribe after the observer handled loss, with no new child event.
+        for _ in range(2):
+            events = service.events()
+            subscriptions.append(events)
+            reset = await asyncio.wait_for(anext(events), 0.2)
+            assert reset.type == "reset"
+            assert reset.payload == {"child_id": "child-a", "reset_required": True}
+            assert broker.console_events("child-a").read(0).sequence == sequence
+    finally:
+        for events in subscriptions:
+            await events.aclose()
+        await service.shutdown()
         await client.aclose()
         await broker.aclose()
