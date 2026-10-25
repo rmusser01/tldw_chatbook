@@ -379,7 +379,10 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
     async def _refresh_preview(self) -> None:
         while self._current():
             epoch = self._preview_epoch
-            source = self.query_one("#portrait-regions-source", Static)
+            source = next(iter(self.query("#portrait-regions-source")), None)
+            detail = next(iter(self.query("#portrait-regions-detail")), None)
+            if source is None or detail is None:
+                return
             box = (
                 max(1, source.content_size.width),
                 max(1, source.content_size.height),
@@ -398,12 +401,16 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
                     box,
                     self.app.console.no_color,
                 )
-                if not self._current():
+                if (
+                    not self._current()
+                    or not source.is_attached
+                    or not detail.is_attached
+                ):
                     return
                 if epoch == self._preview_epoch:
-                    overview, detail, self._transform = result
+                    overview, detail_text, self._transform = result
                     source.update(overview)
-                    self.query_one("#portrait-regions-detail", Static).update(detail)
+                    detail.update(detail_text)
                     return
             except (ValueError, OSError, ImportError, MemoryError):
                 if self._current():
@@ -427,6 +434,7 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
             for control in self.query("Input, Select, Checkbox, Button"):
                 control.disabled = True
             saved = False
+            validation = self.query_one("#portrait-regions-validation", Static)
             try:
                 saved = await self._save(
                     self._recipe(
@@ -439,12 +447,12 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
                     self.dismiss_safe_once_when_on_top(True)
             finally:
                 self._saving = False
-                if self._current():
+                if self._current() and validation.is_attached:
                     for control in self.query("Input, Select, Checkbox, Button"):
                         control.disabled = False
                     self._validate()
                     if not saved:
-                        self.query_one("#portrait-regions-validation", Static).update(
+                        validation.update(
                             "Regions could not be saved. If the source or settings changed, Cancel and Prepare again. Current artwork kept."
                         )
 
@@ -457,10 +465,10 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
         self._retired = True
         self._transform = None
         if self.is_mounted:
-            self.query_one("#portrait-regions-source", Static).update(
-                "Region editor retired."
-            )
-            self.query_one("#portrait-regions-detail", Static).update("")
+            for source in self.query("#portrait-regions-source"):
+                source.update("Region editor retired.")
+            for detail in self.query("#portrait-regions-detail"):
+                detail.update("")
             self.dismiss_safe_once_when_on_top(False)
 
     def on_unmount(self) -> None:

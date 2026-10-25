@@ -21774,3 +21774,11 @@ the correct item.
 assert the actual action's outcome rather than Pilot's node-identity return.
 Keep the real click and viewport/hit checks; do not replace the user action
 with a direct handler call.
+
+### Removed Textual controls can still report mounted
+
+In PR #3244's held portrait-render regressions, checking `is_mounted` on the
+removed bounds/detail widgets still allowed a late raster publication under
+Textual 8.2.8. `is_mounted` retains its historical flag after removal; use
+`is_attached` for captured child controls when verifying their live DOM lifetime.
+The same tests reject late crop, preview, draft and sample work after detachment.

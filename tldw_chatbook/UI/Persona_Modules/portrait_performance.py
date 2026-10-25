@@ -613,6 +613,7 @@ class PortraitPerformanceController:
         from ...Widgets.confirmation_dialog import ConfirmationDialog
 
         screen, view = self._screen(), self._view()
+        preview_mode = view.query_one("#portrait-performance-preview-mode", Select)
         draft.frames()
         ensure = getattr(screen.app_instance, "_ensure_tts_handler", None)
         if not callable(ensure):
@@ -665,6 +666,8 @@ class PortraitPerformanceController:
                 "The speech destination changed. Request and confirm a new sample."
             )
             return False
+        if not preview_mode.is_attached:
+            return False
         token = uuid4().hex
         self._presentation = SpeechPresentation(
             SpeechPresentationOwner(
@@ -677,7 +680,7 @@ class PortraitPerformanceController:
                 epoch,
             )
         )
-        view.query_one("#portrait-performance-preview-mode", Select).value = "speech"
+        preview_mode.value = "speech"
         await view.show_draft(
             draft,
             lambda: epoch == self._epoch and self._current(authority),
@@ -688,6 +691,14 @@ class PortraitPerformanceController:
             ),
             read_speech=self._presentation.read,
         )
+        if (
+            not preview_mode.is_attached
+            or epoch != self._epoch
+            or not self._current(authority)
+            or self.draft is not draft
+        ):
+            self._presentation = None
+            return False
         task = self._speech_task = asyncio.create_task(
             handler.speak_guarded_utterance(
                 "Hello. This is a portrait preview. Notice the pauses.",

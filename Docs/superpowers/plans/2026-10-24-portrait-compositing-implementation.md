@@ -516,3 +516,16 @@ ADR-150/161/242/243 apply; no new ADR.
 and its bounded evidence distinguish the completed failed CI head from the
 replacement run. No full suite or new live TTS/hardware/image qualification;
 TASK-36555 AC5 stays open, with zero live image requests and no fallback.
+
+## Required source-check corrections after hosted CI
+
+ADR required: no
+ADR path: N/A — existing ADR-029/150/161/242/243.
+Reason: repair lifetime guards and reconcile reviewed inventories under existing contracts.
+
+1. Reproduce each flagged post-await child-lifetime case, including Save, then capture controls before awaits and reject detached targets before publishing. Preserve consent, source/authority fencing and durable Save.
+2. Review statement-level diagnostic additions before regenerating their inventory; annotate only proven name-resolution false positives in W003, preserving every existing census row and the W002 ratchet.
+3. Run affected UI modules, checker regressions, every required-summary source check and a fresh installed journey. Rebase onto current dev to restore PR CI registration; resolve conflicts without dropping newer dev contracts.
+4. Wait for all checks on the published head and inspect the complete required summary plus fresh review/thread feedback. Keep TASK-36555 AC5 open.
+
+[Source-check review](../reviews/2026-10-24-portrait-compositing-source-guard-corrections.md) records the reproductions, reviewed false positives and remaining live-provider gap.

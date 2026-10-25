@@ -394,3 +394,36 @@ async def test_large_source_keeps_manual_authoring_and_removal_available(
         character_id=cid, expression_key="neutral"
     ).active
     assert db.get_character_card_by_id(cid)["image"] == original
+
+
+@pytest.mark.asyncio
+async def test_draft_render_drops_completion_after_controls_are_removed(
+    personas_editor_with_saved_character, monkeypatch
+):
+    import asyncio
+
+    _, screen, _, _, editor = saved_source(personas_editor_with_saved_character)
+    controller = screen._portrait_performance()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    view = editor.query_one(PortraitPerformanceEditor)
+    source = view.query_one("#portrait-performance-source-image")
+    entered, release = asyncio.Event(), asyncio.Event()
+    mount = source.mount
+
+    async def held_mount(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await mount(*args, **kwargs)
+
+    monkeypatch.setattr(source, "mount", held_mount)
+    task = asyncio.create_task(view.show_draft(controller.draft, lambda: True))
+    try:
+        async with asyncio.timeout(5):
+            await entered.wait()
+        await view.query_one("#portrait-performance-role").remove()
+        release.set()
+        await task
+        assert not view.query("#portrait-performance-staged")
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

@@ -356,8 +356,9 @@ async def test_missing_tts_or_refused_destination_preserves_full_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("remove_preview_control", [False, True])
 async def test_guarded_sample_uses_selected_character_and_disposable_observer(
-    personas_editor_with_saved_character, monkeypatch
+    personas_editor_with_saved_character, monkeypatch, remove_preview_control
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -409,10 +410,21 @@ async def test_guarded_sample_uses_selected_character_and_disposable_observer(
     monkeypatch.setattr(handler, "handle_tts_playback", cleanup)
 
     async def confirm(_dialog):
+        if remove_preview_control:
+            await (
+                controller._view()
+                .query_one("#portrait-performance-preview-mode")
+                .remove()
+            )
         return True
 
     monkeypatch.setattr(screen.app, "push_screen_wait", confirm)
-    assert await controller.handle(CharacterPerformanceRequested("sample"))
+    played = await controller.handle(CharacterPerformanceRequested("sample"))
+    if remove_preview_control:
+        assert not played and not captured and controller._presentation is None
+        identity.assert_not_awaited()
+        return
+    assert played
     args = identity.await_args.kwargs
     assert args["assistant_kind"] == "character"
     assert args["character_ref"].character_id == str(character_id)

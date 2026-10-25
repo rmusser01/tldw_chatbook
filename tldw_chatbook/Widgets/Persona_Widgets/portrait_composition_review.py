@@ -258,7 +258,10 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
     async def _refresh(self) -> None:
         while self._current():
             epoch = self._epoch
-            canvas = self.query_one("#portrait-pairs-canvas", Static)
+            canvas = next(iter(self.query("#portrait-pairs-canvas")), None)
+            bounds = next(iter(self.query("#portrait-pairs-bounds")), None)
+            if canvas is None or bounds is None:
+                return
             box = (
                 max(1, canvas.content_size.width),
                 max(1, canvas.content_size.height),
@@ -273,13 +276,17 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
                     self._pan,
                     self.app.console.no_color,
                 )
-                if not self._current():
+                if (
+                    not self._current()
+                    or not canvas.is_attached
+                    or not bounds.is_attached
+                ):
                     return
                 if epoch != self._epoch:
                     continue
                 self._raster = raster
                 canvas.update(text)
-                self.query_one("#portrait-pairs-bounds", Static).update(
+                bounds.update(
                     f"Common source crop: {raster.crop_box}; {raster.width}×{raster.height} review raster."
                     if raster.crop_box
                     else "Scaled overview. Choose an eye or mouth detail to inspect original source pixels."

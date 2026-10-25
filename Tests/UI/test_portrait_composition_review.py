@@ -204,7 +204,8 @@ def test_raster_encode_closes_matrix_and_releases_budget(monkeypatch, failure):
 
 
 @pytest.mark.asyncio
-async def test_closed_review_drops_held_crop_completion(monkeypatch):
+@pytest.mark.parametrize("retire", [True, False])
+async def test_closed_review_drops_held_crop_completion(monkeypatch, retire):
     import asyncio
     from threading import Event
 
@@ -226,7 +227,10 @@ async def test_closed_review_drops_held_crop_completion(monkeypatch):
         try:
             assert await asyncio.to_thread(entered.wait, 3)
             canvas = review.query_one("#portrait-pairs-canvas", Static)
-            review.retire()
+            if retire:
+                review.retire()
+            else:
+                await review.query_one("#portrait-pairs-bounds").remove()
             before = canvas.renderable
             release.set()
             await review.wait_for_render()

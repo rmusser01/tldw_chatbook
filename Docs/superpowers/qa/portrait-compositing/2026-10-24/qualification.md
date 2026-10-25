@@ -150,3 +150,13 @@ reproduced on dev remain recorded. Earlier rebase counts describe earlier source
 Fresh inventory remains SwarmUI-only, unsupported by the reference-image route:
 zero requests, no fallback, `live_qualified=false`. TASK-36555 AC5 remains unchecked.
 No full suite or new live provider/TTS/hardware qualification is claimed.
+
+## Required source-check corrections
+
+[Source-check review](../../../reviews/2026-10-24-portrait-compositing-source-guard-corrections.md)
+records the five reproduced child-lifetime fixes, reviewed diagnostics and 35
+individually annotated worker-name false positives. All 86 affected UI cases,
+12 required source checks and a fresh installed journey pass before the next
+dev rebase. `source-guard-corrections/` retains command/output digests. This
+deterministic installed evidence does not qualify a configured live image
+provider or rerun the historical Pocket TTS hardware qualification. AC5 stays open.

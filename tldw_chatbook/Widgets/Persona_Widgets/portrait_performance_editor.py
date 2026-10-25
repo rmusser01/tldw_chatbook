@@ -218,12 +218,12 @@ class PortraitPerformanceEditor(Vertical):
         self.applied = False
         self.compositing_available = False
         if self.is_mounted:
-            for selector in (
-                "#portrait-performance-source-image",
-                "#portrait-performance-preview",
+            for container in self.query(
+                "#portrait-performance-source-image, #portrait-performance-preview"
             ):
-                self.query_one(selector).remove_children()
-            self.query_one("#portrait-performance-slots", Static).update("")
+                container.remove_children()
+            for slots in self.query("#portrait-performance-slots"):
+                slots.update("")
             self.status("Draft discarded; current artwork kept.")
             self.set_busy(False)
 
@@ -263,18 +263,17 @@ class PortraitPerformanceEditor(Vertical):
                 button.disabled |= not self.applied
             if action == "cancel":
                 button.disabled = saving or (draft is None and not busy)
-        self.query_one("#portrait-performance-source", Input).disabled = (
-            busy or draft is not None
-        )
-        for selector in (
-            "#portrait-performance-role",
-            "#portrait-performance-component",
-            "#portrait-performance-preview-mode",
+        for control in self.query(
+            "#portrait-performance-source, #portrait-performance-role, "
+            "#portrait-performance-component, #portrait-performance-preview-mode"
         ):
-            self.query_one(selector, Select).disabled = busy
+            control.disabled = busy or (
+                control.id == "portrait-performance-source" and draft is not None
+            )
 
     def status(self, text: str) -> None:
-        self.query_one("#portrait-performance-status", Static).update(text)
+        for status in self.query("#portrait-performance-status"):
+            status.update(text)
 
     async def show_draft(
         self,
@@ -294,7 +293,6 @@ class PortraitPerformanceEditor(Vertical):
         self._draft = draft
         self._epoch += 1
         epoch = self._epoch
-        current = lambda: self._epoch == epoch and self._draft is draft and is_current()
         self.query_one("#portrait-performance-slots", Static).update(
             "  ·  ".join(
                 f"{role.replace('_', ' ')}: {'ready' if role in draft.staged_roles else 'missing'}"
@@ -303,6 +301,17 @@ class PortraitPerformanceEditor(Vertical):
         )
         source = self.query_one("#portrait-performance-source-image", Container)
         preview = self.query_one("#portrait-performance-preview", Container)
+        role = self.query_one("#portrait-performance-role", Select)
+        preview_mode = self.query_one("#portrait-performance-preview-mode", Select)
+        current = lambda: (
+            self.is_mounted
+            and all(
+                control.is_attached for control in (source, preview, role, preview_mode)
+            )
+            and self._epoch == epoch
+            and self._draft is draft
+            and is_current()
+        )
         await source.remove_children()
         await preview.remove_children()
         if not current():
@@ -323,7 +332,7 @@ class PortraitPerformanceEditor(Vertical):
         if not current():
             return
         complete = draft.can_apply
-        selected = self.query_one("#portrait-performance-role", Select).value
+        selected = role.value
         frame = draft.frame(selected)
         if not complete and frame is None:
             self.set_busy(self._busy)
@@ -335,9 +344,9 @@ class PortraitPerformanceEditor(Vertical):
             if complete
             else None
         )
-        mode = str(self.query_one("#portrait-performance-preview-mode", Select).value)
+        mode = str(preview_mode.value)
         index = FRAME_ROLES.index(mode) if mode in FRAME_ROLES else 0
-        self.query_one("#portrait-performance-preview-mode", Select).tooltip = (
+        preview_mode.tooltip = (
             None
             if motion
             else "Motion is disabled in Appearance. Select individual poses for a still preview."
@@ -353,11 +362,10 @@ class PortraitPerformanceEditor(Vertical):
             performance=record if motion else None,
             read_speech=read_speech,
         )
-        avatar.set_preview_mode(
-            str(self.query_one("#portrait-performance-preview-mode", Select).value)
-        )
+        avatar.set_preview_mode(str(preview_mode.value))
         await preview.mount(avatar)
-        self.set_busy(self._busy)
+        if current():
+            self.set_busy(self._busy)
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:

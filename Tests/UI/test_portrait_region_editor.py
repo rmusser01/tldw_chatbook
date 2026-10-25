@@ -411,8 +411,9 @@ def test_mask_preview_uses_original_crop_and_compositor_mask(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("retire", [True, False])
 async def test_retired_modal_drops_held_preview(
-    personas_editor_with_saved_character, monkeypatch
+    personas_editor_with_saved_character, monkeypatch, retire
 ):
     import asyncio
     from threading import Event
@@ -440,14 +441,19 @@ async def test_retired_modal_drops_held_preview(
         modal = app.screen
         source = modal.query_one("#portrait-regions-source", Static)
         preview = modal._preview_task
-        modal.action_cancel()
+        if retire:
+            modal.action_cancel()
+            assert not await task
+        else:
+            await modal.query_one("#portrait-regions-detail").remove()
         before = source.renderable
-        assert not await task
         release.set()
         await preview
         await Pilot(app).pause()
         assert (
-            modal._retired and modal._transform is None and source.renderable is before
+            modal._retired == retire
+            and modal._transform is None
+            and source.renderable is before
         )
     finally:
         release.set()
@@ -733,5 +739,56 @@ async def test_queued_dialog_validation_cannot_overwrite_discard_status(
         await check
         assert status.renderable == before
     finally:
+        await controller.close()
+        await action
+
+
+@pytest.mark.asyncio
+async def test_save_completion_drops_removed_validation_control(
+    personas_editor_with_saved_character, monkeypatch
+):
+    import asyncio
+
+    from textual.pilot import Pilot
+
+    app, screen, _, _, _, controller, recipe = await prepare(
+        personas_editor_with_saved_character
+    )
+    assert await controller._save_regions(
+        controller._authority, controller.draft, controller._epoch, recipe
+    )
+    action = asyncio.create_task(
+        screen.run_worker(
+            controller.handle(CharacterPerformanceRequested("regions"))
+        ).wait()
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    saving = None
+
+    async def held_save(_recipe):
+        entered.set()
+        await release.wait()
+        return False
+
+    try:
+        async with asyncio.timeout(5):
+            while not isinstance(app.screen, region_ui().PortraitRegionEditor):
+                await Pilot(app).pause()
+        modal = app.screen
+        monkeypatch.setattr(modal, "_save", held_save)
+        saving = asyncio.create_task(
+            modal._pressed(
+                Button.Pressed(modal.query_one("#portrait-regions-save", Button))
+            )
+        )
+        await asyncio.wait_for(entered.wait(), 5)
+        await modal.query_one("#portrait-regions-validation").remove()
+        release.set()
+        await saving
+        assert not modal._saving and not modal._retired
+    finally:
+        release.set()
+        if saving is not None:
+            await asyncio.gather(saving, return_exceptions=True)
         await controller.close()
         await action
