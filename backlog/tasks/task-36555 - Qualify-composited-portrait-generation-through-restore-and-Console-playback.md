@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/243-source-bound-portrait-compositing.md
 assignee:
 - '@codex'
-updated_date: 2026-10-25 00:13
+updated_date: 2026-10-25 03:05
 ---
 
 ## Description
@@ -52,6 +52,7 @@ Full-review correction:
 2. Preserve safe artifacts/count uncertainty before temporary cleanup, write the availability report, then re-raise interruption. Keep private transport logs/credentials out of evidence and subprocess arguments.
 3. Run all probe controls, final affected/installed/restore checks and lint/format; review all three corrections, update plan/task evidence and commit. Keep unavailable live qualification AC5 open and status In Progress.
 PR #3244 CI follow-up: reproduce and fix unchanged boot/CSS budgets and restricted historical portrait migrations; run targeted regression and installed checks. Existing ADR-097/242/243 apply, no new ADR. Keep AC5 open and retain the live-provider qualification gap.
+Final hosted CI: inspect failures from UI shards 11 and 15 on merge 3963966e (dev 6fcbded875 + fda2a3ee96). Bring in the newer dev contrast guard, reproduce its 29 portrait pair-canvas focus violations, reuse the existing contrast-safe boundary token, rebuild CSS and verify both contrast and mounted keyboard focus. Diagnose the unrelated receipt click against the exact dev source before correcting its rendered-target wait. Re-run relevant targeted checks, self-review, publish and wait for the complete replacement CI run. No new ADR: existing ADR-150/161/242/243 apply. Keep AC5 open, zero live image requests and the historical live-TTS qualification limits explicit.
 <!-- SECTION:PLAN:END -->
 
 ## Final Summary
