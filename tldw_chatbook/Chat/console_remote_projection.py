@@ -330,12 +330,30 @@ class ConsoleRemoteProjection:
                 )
         return rows
 
+    def _receipt_fields(self, cursor: str | None) -> dict:
+        receipts = self.runtime._remote_receipts
+        result = {"command_receipts": [], "next_receipt_cursor": None}
+        if receipts is None:
+            return result
+        page = receipts.repository.list_unresolved(cursor=cursor, limit=20)
+        for receipt in page.items:
+            row = receipt.public()
+            # Reserve most of the existing frame budget for native projection.
+            if len(_encoded([*result["command_receipts"], row])) > 16 * 1024:
+                break
+            result["command_receipts"].append(row)
+        if len(result["command_receipts"]) < len(page.items):
+            result["next_receipt_cursor"] = result["command_receipts"][-1]["command_id"]
+        else:
+            result["next_receipt_cursor"] = page.next_cursor
+        return result
+
     def _complete_capture(self, page: dict, token: str) -> dict:
         if self._native_token() != token:
             sequence = self.events.publish("console.changed", {"reset_required": True})
             self.events.note_changed(sequence)
             page["reset_required"] = True
-        elif page["next_cursor"] is None:
+        elif page["next_cursor"] is None and page["next_receipt_cursor"] is None:
             self._captured_boundary = page["sequence"]
         return page
 
@@ -364,7 +382,7 @@ class ConsoleRemoteProjection:
             )
         ).decode()
 
-    def _saved_snapshot(self, target, cursor, boundary):
+    def _saved_snapshot(self, target, cursor, boundary, receipt_fields):
         """Continue canonical history after native metadata; never hydrate to read."""
         _store, _controller, session = self._require_target(target)
         service = getattr(self.runtime.app, "local_chat_conversation_service", None)
@@ -414,6 +432,7 @@ class ConsoleRemoteProjection:
             self.host_identity.model_dump(),
             sequence=boundary.sequence,
             reset_required=reset,
+            **receipt_fields,
             chats=[],
             messages=[],
             fleet=[],
@@ -460,6 +479,7 @@ class ConsoleRemoteProjection:
         *,
         cursor: str | None = None,
         limit: int = 50,
+        receipt_cursor: str | None = None,
     ) -> dict:
         """Capture after registering a cursor; never acknowledge a concurrent change."""
         if self.runtime._disposed:
@@ -471,6 +491,7 @@ class ConsoleRemoteProjection:
         # This pre-capture boundary remains the answer even when native capture publishes.
         boundary = self.events.read(self.events.read(0).sequence)
         token = self._native_token()
+        receipt_fields = self._receipt_fields(receipt_cursor)
         cursor_reset = False
         if target is not None and cursor is not None:
             try:
@@ -480,7 +501,7 @@ class ConsoleRemoteProjection:
             except (ValueError, TypeError) as error:
                 raise ValueError("Invalid Console page cursor.") from error
             if isinstance(candidate, dict) and "saved" in candidate:
-                saved = self._saved_snapshot(target, cursor, boundary)
+                saved = self._saved_snapshot(target, cursor, boundary, receipt_fields)
                 if saved is not None:
                     return self._complete_capture(saved, token)
                 cursor, cursor_reset = None, True
@@ -538,6 +559,7 @@ class ConsoleRemoteProjection:
             self.host_identity.model_dump(),
             sequence=boundary.sequence,
             reset_required=reset,
+            **receipt_fields,
             chats=[],
             messages=[],
             next_cursor=None,

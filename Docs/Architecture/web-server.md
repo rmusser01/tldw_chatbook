@@ -228,3 +228,41 @@ reconcile frames received during capture, and acknowledge only the reconciled
 parent boundary. A later transport cursor must never be copied from the child's
 snapshot `sequence` or acknowledged merely because capture returned. Native and
 transport sticky resets each retain their respective owner.
+
+
+## Private Console command tickets and receipts (ADR-244)
+
+The child uses `ConsoleRemoteReceipts` around its existing
+`ConsoleRemoteCommands`. `console.ticket.request` accepts exactly
+`action`, `target`, `payload` inside `request` and returns `ticket` containing
+opaque `token` plus `command_id` before any effect. A fresh child-only HMAC key
+binds the immutable five-minute monotonic deadline, server and Console epochs,
+exact target/action and keyed payload fingerprint. It is independent of browser
+CSRF and child-launch secrets. Tickets never bypass native admission.
+
+`console.command.request` accepts exactly `ticket`, `payload`; its body-free
+`receipt` follows native outcomes. Send is pending/Preparing until native
+custody observes acceptance or queue admission. Queued guidance is not consumed;
+accepted Stop does not establish physical exit. Approval/question settlement
+records the winning command under the existing native lock and returns
+`accepted`/`answer_recorded`; a later native final outcome (after deadline,
+cancellation and revocation checks) advances it to `applied`, `refused` or
+`outcome_unknown`.
+A losing answer returns refused, even when the same round is already resolved.
+Interrupted cross-database handoffs stay unknown unless an exact native observer supplies a later fact.
+`console.receipt.request` accepts exactly `command_id` and returns `receipt` or
+null; absence does not authorize replay. Prior-epoch receipts remain readable in
+the canonical profile while old tickets cannot execute.
+
+Snapshots include bounded `command_receipts` and `next_receipt_cursor` fields;
+pass the latter as `receipt_cursor` independently of transcript `cursor`.
+Both page cursors must finish before the native snapshot is acknowledged.
+No subscription or reconnect automatically resends a command.
+
+At the 4,096-row bound, authenticated exact native Stop/subagent Stop can still
+request cancellation through the idempotent native path without allocating a
+row. Its transient result explicitly reports
+`stop_requested_exit_unconfirmed_receipt_unavailable_capacity` (or a refusal).
+Its query can return null. It is never reported as durable completion; clients
+must inspect native state and retain uncertainty instead of retrying on reconnect.
+The public API and client cutover remain separate implementation steps.

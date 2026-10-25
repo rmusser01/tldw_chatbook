@@ -1097,6 +1097,7 @@ class ConsoleRuntime:
         self._worktree_recovery = None
         self._execution_owner = None
         self._remote_projection = None
+        self._remote_receipts = None
         self._agent_runs_db: Any | None = None
         self._activity_receipts: Any | None = None
         self._activity_receipts_lock = RLock()
@@ -2266,6 +2267,39 @@ class ConsoleRuntime:
             raise ValueError("Console host identity changed.")
         return self._remote_projection
 
+    def ensure_remote_receipts(self, host_identity):
+        """Use the canonical native run store after its normal lazy admission."""
+        from .console_remote_commands import ConsoleRemoteCommands
+        from .console_remote_receipts import ConsoleRemoteReceipts
+
+        if self._disposed or self._agent_runs_db is None:
+            raise RuntimeError("Console receipt owner is unavailable.")
+        self._agent_runs_db._require_execution_owner()
+        if self._remote_receipts is None:
+            self._remote_receipts = ConsoleRemoteReceipts(
+                ConsoleRemoteCommands(self, host_identity),
+                self._agent_runs_db.command_receipts,
+                host_identity,
+            )
+        elif self._remote_receipts.host_identity != host_identity:
+            raise ValueError("Console host identity changed.")
+        return self._remote_receipts
+
+    def _observe_remote_custody(self, turn_id, *, state, native_id=None, reason=None):
+        receipts = self._remote_receipts
+        if receipts is None:
+            return
+        try:
+            receipts.observe(turn_id, state=state, native_id=native_id, reason=reason)
+            if self._remote_projection is not None:
+                sequence = self._remote_projection.events.publish("console.changed", {})
+                self._remote_projection.events.note_changed(sequence)
+        except Exception as error:  # noqa: BLE001 - a failed observer cannot retract native acceptance.
+            logger.warning(
+                "Console receipt observation failed (exception_type={})",
+                type(error).__name__,
+            )
+
     def remote_project_decisions(self, session_id: str) -> tuple[dict, ...]:
         """Expose retained reviews that require the terminal without leaking bodies."""
         with self._project_decision_lock:
@@ -2931,6 +2965,9 @@ class ConsoleRuntime:
             from .console_received_dispatch import publish_received_acceptance
 
             publish_received_acceptance(self, record, controller)
+            self._observe_remote_custody(
+                record.turn_id, state="accepted", native_id=record.turn_id
+            )
 
         async def submit() -> Any:
             require_received()
@@ -3186,8 +3223,19 @@ class ConsoleRuntime:
         if record is not None and record.task is not task:
             record = None
         accepted = False
+        receipt_state = "outcome_unknown"
+        receipt_native_id = turn_id
         try:
             result = task.result()
+            from .console_prompt_queue import PromptQueueMutationResult
+
+            if isinstance(result, PromptQueueMutationResult) and result.applied:
+                receipt_state = "queued"
+                receipt_native_id = result.entry_id or turn_id
+            elif bool(getattr(result, "accepted", False)):
+                receipt_state = "accepted"
+            else:
+                receipt_state = "refused"
             accepted = bool(getattr(result, "accepted", False))
         except asyncio.CancelledError:
             if (
@@ -3201,6 +3249,8 @@ class ConsoleRuntime:
             ):
                 self._record_turn_recovery(record)
         except BaseException as exc:
+            if isinstance(exc, _ConsoleTurnRefusedError):
+                receipt_state = "refused"
             if (
                 record is not None
                 and recover_before_acceptance
@@ -3223,6 +3273,16 @@ class ConsoleRuntime:
                 record is not None and record.inputs.durable_accepted
             )
             if record is not None:
+                self._observe_remote_custody(
+                    record.turn_id,
+                    state="accepted"
+                    if record.inputs.durable_accepted
+                    else receipt_state,
+                    native_id=receipt_native_id,
+                    reason="handoff_interrupted"
+                    if receipt_state == "outcome_unknown"
+                    else None,
+                )
                 self._release_custody(record.turn_id)
             if terminal_callback is not None:
                 try:

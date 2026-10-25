@@ -97,3 +97,22 @@ admission securely hardens a trusted owned legacy file to 0600; symlinks, multip
 links, foreign ownership and unsafe parents fail closed. A contender cannot
 harden, create or sweep the run store. Ownership is independent of maintenance
 admission, which continues to gate all native connections.
+
+
+## Console remote command evidence (ADR-244)
+
+AgentRuns v25 executes `agent_runs_v24_to_v25_console_command_receipts.sql`
+through the native owner and the exact backup migration registry. Its
+`command_receipts` repository uses the existing execution lease and SQLite
+transaction owner; read-only handles can query without migrating or sweeping.
+Rows contain identities, keyed payload fingerprints, monotonic issuance/expiry,
+native outcome state and fixed reason codes, never submitted text.
+
+An atomic `claim` returns explicit `inserted` ownership. A pending row does not
+permit dispatch. The internal total bound is 4,096 receipts: capacity refuses
+new non-idempotent effects. Pre-claim pruning can remove known acceptance,
+queue, application or refusal evidence only after expiry in that same owner
+clock domain; pending/unknown and prior-owner evidence stays queryable.
+A new served owner changes prior pending handoffs to `outcome_unknown`, without
+replaying them or changing the original native run/dispatch recovery facts.
+Unresolved reads use bounded keyset pages, including receipts for closed chats.

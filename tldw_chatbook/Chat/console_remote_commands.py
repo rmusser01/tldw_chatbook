@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -153,8 +154,30 @@ class ConsoleRemoteCommands:
                     payload["kind"], str
                 ):
                     raise ValueError("Decision requires kind and answer only.")
+                loop = asyncio.get_running_loop()
+
+                def on_outcome(outcome):
+                    state = (
+                        "applied"
+                        if outcome == "decided"
+                        else "outcome_unknown"
+                        if outcome == "unavailable"
+                        else "refused"
+                    )
+                    loop.call_soon_threadsafe(
+                        lambda: self.runtime._observe_remote_custody(
+                            command_id,
+                            state=state,
+                            native_id=target.round_id,
+                            reason="decision_" + outcome,
+                        )
+                    )
+
                 return controller._interrupt_host.resolve_remote_round(
-                    target, kind=payload["kind"], answer=payload["answer"]
+                    target,
+                    kind=payload["kind"],
+                    answer=payload["answer"],
+                    _on_outcome=on_outcome,
                 )
             if action == "send":
                 if set(payload) != {"text", "expected_revisions"}:

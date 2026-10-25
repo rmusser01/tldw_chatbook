@@ -277,6 +277,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (21, 22, _AGENT_RUNS_MIGRATION_21_22),
                 (22, 23, _AGENT_RUNS_MIGRATION_22_23),
                 (23, 24, GOAL_MIGRATION),
+                (24, 25, COMMAND_RECEIPT_MIGRATION),
             ),
         )
 
@@ -1319,7 +1320,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24),
+            (18, 21, 22, 23, 24, 25),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1607,5 +1608,24 @@ _AGENT_RUNS_SCHEMA += tuple(
 
 # ADR-207: v3 is an atomic provenance data migration, with unchanged exact DDL.
 # Keep every previously qualified physical lineage at both supported versions.
-_SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
-                              if version == 2) + _SUBSCRIPTIONS_SCHEMA
+_SUBSCRIPTIONS_SCHEMA = (
+    tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA if version == 2)
+    + _SUBSCRIPTIONS_SCHEMA
+)
+
+
+from .console_command_receipts import COMMAND_RECEIPT_MIGRATION
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (
+        25,
+        tuple(
+            sorted(
+                (*catalog, COMMAND_RECEIPT_MIGRATION[0]),
+                key=lambda sql: sql.replace("CREATE UNIQUE ", "CREATE ").split()[1:3],
+            )
+        ),
+    )
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 24
+)

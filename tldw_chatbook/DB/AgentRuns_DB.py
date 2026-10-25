@@ -322,7 +322,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 24
+    _CURRENT_SCHEMA_VERSION = 25
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-228): connections open through BaseDB's
@@ -418,6 +418,13 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         from .automatic_work import AutomaticWorkLedger
 
         return AutomaticWorkLedger(self)
+
+    @cached_property
+    def command_receipts(self):
+        """Retain remote command facts under this store's execution owner."""
+        from .console_command_receipts import ConsoleCommandReceiptRepository
+
+        return ConsoleCommandReceiptRepository(self)
 
     @cached_property
     def goal_runs(self):
@@ -982,6 +989,21 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (22)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (23)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (24)")
+            from .console_command_receipts import COMMAND_RECEIPT_MIGRATION
+
+            if (
+                conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+                < 25
+            ):
+                conn.execute("SAVEPOINT console_command_receipts_v25")
+                try:
+                    for statement in COMMAND_RECEIPT_MIGRATION:
+                        conn.execute(statement)
+                except BaseException:
+                    conn.execute("ROLLBACK TO SAVEPOINT console_command_receipts_v25")
+                    raise
+                finally:
+                    conn.execute("RELEASE SAVEPOINT console_command_receipts_v25")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection

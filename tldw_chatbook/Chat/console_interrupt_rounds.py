@@ -839,7 +839,12 @@ class InterruptRoundHost(InitialHookReviewMixin):
         )
 
     def resolve_remote_round(
-        self, target: ConsoleTarget, *, kind: str, answer: dict
+        self,
+        target: ConsoleTarget,
+        *,
+        kind: str,
+        answer: dict,
+        _on_outcome: Callable[[str], None] | None = None,
     ) -> dict:
         """Validate exact native scope before calling the original kind resolver."""
         session = next(
@@ -864,6 +869,14 @@ class InterruptRoundHost(InitialHookReviewMixin):
             )
             outcome = self._remote_outcomes.get(key)
             if outcome is not None:
+                if _on_outcome is not None:
+                    return {
+                        "state": "outcome_unknown"
+                        if outcome["state"] == "unknown"
+                        else "refused",
+                        "native_id": target.round_id,
+                        "reason": "already_resolved",
+                    }
                 return dict(outcome)
             state = self.registries.get(kind, {}).get(target.round_id)
             if (
@@ -875,9 +888,9 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 raise ValueError("Decision target is no longer current.")
             if state.get("settled") or state["event"].is_set():
                 return {
-                    "state": "resolved",
+                    "state": "refused" if _on_outcome is not None else "resolved",
                     "native_id": target.round_id,
-                    "reason": state.get("terminal_reason") or "already_resolved",
+                    "reason": "already_resolved",
                 }
         row = next(
             (
@@ -891,6 +904,14 @@ class InterruptRoundHost(InitialHookReviewMixin):
             raise ValueError("Open terminal to answer this decision.")
         if type(answer) is not dict:
             raise ValueError("Decision answer must be an object.")
+        recorded = False
+
+        def on_recorded(native_state):
+            nonlocal recorded
+            recorded = True
+            if _on_outcome is not None:
+                native_state["remote_receipt_outcome"] = _on_outcome
+
         if kind == "approval":
             if set(answer) != {"decisions"} or type(answer["decisions"]) is not dict:
                 raise ValueError("Expected exact approval decisions.")
@@ -904,7 +925,9 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 for key, value in answer["decisions"].items()
             ):
                 raise ValueError("Approval choices do not match the native review.")
-            self.resolve_pending_approval(answer["decisions"], round_id=target.round_id)
+            self.resolve_pending_approval(
+                answer["decisions"], round_id=target.round_id, _on_recorded=on_recorded
+            )
         elif kind == "question":
             from tldw_chatbook.Agents.ask_user_questions import validate_answers
 
@@ -919,10 +942,18 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 for response, question in zip(answers, row["questions"], strict=True)
             ):
                 raise ValueError("Answers do not match the native question round.")
-            self.resolve_pending_question(answers, request_id=target.round_id)
+            self.resolve_pending_question(
+                answers, request_id=target.round_id, _on_recorded=on_recorded
+            )
         else:
             raise ValueError("Open terminal to answer this decision.")
         self.set_remote_answerable(target, answerable=False)
+        if _on_outcome is not None:
+            return {
+                "state": "accepted" if recorded else "refused",
+                "native_id": target.round_id,
+                "reason": "answer_recorded" if recorded else "already_resolved",
+            }
         return {
             "state": "resolved",
             "native_id": target.round_id,
@@ -1502,6 +1533,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if not retained_decision:
                 is_head = self.park_round_payload(kind, round_id, payload)
         outcome = "unavailable"
+        outcome_confirmed = False
         try:
             app = self.read_controller_app()
             park_toast = self.read_controller_park_pending_approval()
@@ -1607,9 +1639,11 @@ class InterruptRoundHost(InitialHookReviewMixin):
                         outcome = "revoked"
             if on_outcome is not None:
                 on_outcome(outcome)
+            outcome_confirmed = True
             return outcome
         finally:
             with self.lock:
+                receipt_observer = state.pop("remote_receipt_outcome", None)
                 self.registries[kind].pop(round_id, None)
                 if state.get("remote_incarnation_id"):
                     key = (
@@ -1620,7 +1654,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                         round_id,
                     )
                     self._remote_outcomes[key] = {
-                        "state": "unknown" if outcome == "unavailable" else "resolved",
+                        "state": "unknown" if not outcome_confirmed else "resolved",
                         "native_id": round_id,
                         "reason": state.get("terminal_reason") or outcome,
                     }
@@ -1638,6 +1672,14 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     and rendered is not None
                     and rendered[3] == round_id
                 ]
+            if receipt_observer is not None:
+                try:
+                    receipt_observer(outcome if outcome_confirmed else "unavailable")
+                except Exception as error:  # noqa: BLE001 - receipt publication cannot interrupt native cleanup.
+                    logger.warning(
+                        "Console decision receipt callback failed (exception_type={})",
+                        type(error).__name__,
+                    )
             for owner in remote_views:
                 self.set_decision_view(owner, None)
             if retained_decision:
@@ -4904,7 +4946,11 @@ class InterruptRoundHost(InitialHookReviewMixin):
         return {"allow": bool(decision.get("allow", False))}
 
     def resolve_pending_approval(
-        self, decisions: dict[str, str], *, round_id: str | None
+        self,
+        decisions: dict[str, str],
+        *,
+        round_id: str | None,
+        _on_recorded: Callable[[dict], None] | None = None,
     ) -> None:
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
 
@@ -4976,7 +5022,11 @@ class InterruptRoundHost(InitialHookReviewMixin):
             return
         with self.lock:
             round_state = self.registries["approval"].get(round_id)
-            if round_state is None or round_state.get("settled"):
+            if (
+                round_state is None
+                or round_state.get("settled")
+                or round_state["event"].is_set()
+            ):
                 return
             round_state["settled"] = True
             round_state["terminal_reason"] = "user"
@@ -4992,6 +5042,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     for key, reason in answers.denial_reasons.items()
                     if key in round_state["names"]
                 }
+            if _on_recorded is not None:
+                _on_recorded(round_state)
             approval_event = round_state["event"]
         approval_event.set()
 
@@ -5037,7 +5089,11 @@ class InterruptRoundHost(InitialHookReviewMixin):
             round_state["event"].set()
 
     def resolve_pending_question(
-        self, answers: list[dict[str, Any]], request_id: str | None
+        self,
+        answers: list[dict[str, Any]],
+        request_id: str | None,
+        *,
+        _on_recorded: Callable[[dict], None] | None = None,
     ) -> None:
         """UI THREAD: hand the card's answers to the waiting worker thread.
 
@@ -5073,6 +5129,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
             round_state["settled"] = True
             round_state["terminal_reason"] = "user"
             round_state["decision"]["answers"] = clean_answers
+            if _on_recorded is not None:
+                _on_recorded(round_state)
             event = round_state["event"]
         event.set()
 

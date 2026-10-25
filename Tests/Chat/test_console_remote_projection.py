@@ -234,7 +234,7 @@ async def test_exact_remote_decision_reaches_original_round_once(remote_round):
         {"kind": "approval", "answer": {"decisions": {"write_file": "deny"}}},
         "first",
     )
-    assert result["state"] == "resolved"
+    assert result["state"] == "accepted"
     await commands.execute(
         "decision",
         target,
@@ -525,7 +525,7 @@ async def test_default_native_approval_choices_can_approve_once(remote_round):
         {"kind": "approval", "answer": {"decisions": {"write_file": "approve_once"}}},
         "approval-once",
     )
-    assert result["state"] == "resolved"
+    assert result["state"] == "accepted"
     with host.lock:
         state = host.registries["approval"].get(target.round_id)
     if state is not None:
@@ -604,8 +604,8 @@ async def test_remote_question_preserves_native_choices_and_original_winner(
 
         assert (await answer(["foreign-option"]))["state"] == "refused"
         assert not state["event"].is_set()
-        assert (await answer(["A"]))["state"] == "resolved"
-        assert (await answer(["B"]))["state"] == "resolved"
+        assert (await answer(["A"]))["state"] == "accepted"
+        assert (await answer(["B"]))["state"] == "refused"
         assert state["decision"]["answers"][0]["selected"] == ["A"]
     finally:
         host.registries["question"].clear()

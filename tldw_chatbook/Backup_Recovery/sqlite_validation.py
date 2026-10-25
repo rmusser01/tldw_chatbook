@@ -562,12 +562,35 @@ class _Restrictions:
             ):
                 return sqlite3.SQLITE_OK
             if self.migration_owner == "db.agent_runs":
-                from tldw_chatbook.DB.recovery_goal_schema import GOAL_AUTO_INDEXES, GOAL_TABLES
+                from tldw_chatbook.DB.recovery_goal_schema import (
+                    GOAL_AUTO_INDEXES,
+                    GOAL_TABLES,
+                )
 
-                if database == "main" and source is None and (
-                    action == sqlite3.SQLITE_CREATE_TABLE and first in GOAL_TABLES
-                    or action == sqlite3.SQLITE_CREATE_INDEX and (first, second) in GOAL_AUTO_INDEXES
-                    or action == sqlite3.SQLITE_CREATE_TRIGGER and first == "goal_launch_immutable" and second == "goal_runs"
+                if (
+                    database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in GOAL_TABLES
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and (first, second) in GOAL_AUTO_INDEXES
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER
+                        and first == "goal_launch_immutable"
+                        and second == "goal_runs"
+                    )
+                ):
+                    return sqlite3.SQLITE_OK
+                if (
+                    database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first == "console_command_receipts"
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first == "sqlite_autoindex_console_command_receipts_1"
+                        and second == "console_command_receipts"
+                    )
                 ):
                     return sqlite3.SQLITE_OK
                 allowed = (

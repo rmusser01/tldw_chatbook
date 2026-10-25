@@ -93,6 +93,8 @@ async def _watch_served_control(self: Any) -> None:
 
 async def _handle_served_control_request(self: Any, request: Any) -> Any:
     """Keep Console control independent of Canvas feature/scope availability."""
+    import asyncio
+
     from .Canvas.control_protocol import (
         CONTROL_PROTOCOL_VERSION,
         ControlMessage,
@@ -100,7 +102,7 @@ async def _handle_served_control_request(self: Any, request: Any) -> Any:
     )
 
     if request.message_type.startswith("console."):
-        from .Chat.console_remote_models import ConsoleTarget
+        from .Chat.console_remote_models import ConsoleHostIdentity, ConsoleTarget
 
         runtime = getattr(self, "console_runtime", None)
         client = getattr(self, "served_canvas_control", None)
@@ -127,8 +129,49 @@ async def _handle_served_control_request(self: Any, request: Any) -> Any:
 
         data = request.payload["request"]
         try:
+            if request.message_type in {
+                "console.ticket.request",
+                "console.command.request",
+                "console.receipt.request",
+                "console.snapshot.request",
+            }:
+                await asyncio.to_thread(runtime.ensure_activity_receipt_service)
+                if runtime._agent_runs_db is not None:
+                    receipts = runtime.ensure_remote_receipts(client.host_identity)
+                elif request.message_type != "console.snapshot.request":
+                    raise ControlProtocolError("authority_unavailable")
+            if request.message_type == "console.ticket.request":
+                if set(data) != {"action", "target", "payload"}:
+                    raise ValueError("Unexpected ticket fields.")
+                target_type = (
+                    ConsoleTarget
+                    if "session_id" in data["target"]
+                    else ConsoleHostIdentity
+                )
+                ticket = receipts.issue(
+                    data["action"],
+                    target_type.model_validate(data["target"]),
+                    data["payload"],
+                )
+                return reply(
+                    {"ticket": {"token": ticket.token, "command_id": ticket.command_id}}
+                )
+            if request.message_type == "console.command.request":
+                if set(data) != {"ticket", "payload"}:
+                    raise ValueError("Unexpected command fields.")
+                receipt = await receipts.submit(data["ticket"], data["payload"])
+                return reply({"receipt": receipt.public()})
+            if request.message_type == "console.receipt.request":
+                if set(data) != {"command_id"} or not isinstance(
+                    data["command_id"], str
+                ):
+                    raise ValueError("Unexpected receipt fields.")
+                receipt = receipts.query(data["command_id"])
+                return reply(
+                    {"receipt": receipt.public() if receipt is not None else None}
+                )
             if request.message_type == "console.snapshot.request":
-                if set(data) - {"target", "cursor", "limit"}:
+                if set(data) - {"target", "cursor", "limit", "receipt_cursor"}:
                     raise ValueError("Unexpected snapshot fields.")
                 target = (
                     ConsoleTarget.model_validate(data["target"])
@@ -141,6 +184,7 @@ async def _handle_served_control_request(self: Any, request: Any) -> Any:
                             target,
                             cursor=data.get("cursor"),
                             limit=data.get("limit", 50),
+                            receipt_cursor=data.get("receipt_cursor"),
                         )
                     }
                 )
