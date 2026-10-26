@@ -305,9 +305,11 @@ async def test_a_refused_escape_names_the_field_and_mentions_discard_only_when_s
     The status line is read first and the toast must repeat ITS sentence --
     the toast never retypes the reason. "Discard new note" is offered only
     while that control is painted: typing into a blank note hides it (the
-    note is no longer untouched), so only an untouched blank note can show
-    it. A refused leave keeps the editor open, and Backspace (a real key)
-    then lets the same Escape leave.
+    first genuine edit clears ``untouched_create_token``), so no user can
+    reach a veto with Discard shown today. The last arm pins that branch's
+    wiring on an untouched blank note with only the refusal injected. A
+    refused leave keeps the editor open, and Backspace (a real key) then
+    lets the same Escape leave.
     """
     host, seeded, toasts, _copies = _mounted(tmp_path, monkeypatch)
     async with host.run_test(size=SIZE) as pilot:

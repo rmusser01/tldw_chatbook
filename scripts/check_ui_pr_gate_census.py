@@ -1251,10 +1251,12 @@ MINIMUM_FILES = 2520
 # existing entry changes shard:
 # - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
 #   160x45 boots, ~26 s): 916 -> 917.
+# - task 6 fix round 1: Tests/UI/test_library_notes_focus_capture_and_export_
+#   outcomes.py (two 160x45 boots, ~27 s): 917 -> 918.
 # Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2457 + 1 = 2458.
-MINIMUM_FILES = 2458
+# moves; the floor is the measured entry count: 2457 + 2 = 2459.
+MINIMUM_FILES = 2459
 
 
 MINIMUM_FILES = 2038

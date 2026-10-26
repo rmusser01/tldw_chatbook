@@ -1315,7 +1315,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     #: Class-level so the WARNING is logged once, not once per note opened.
     _pending_lookup_warned: ClassVar[bool] = False
 
-    #: TASK-34000.29: set only while ``recompose`` is replacing a focused child.
+    #: TASK-34000.29: ``(pruned child, Textual's predicted landing)``, set
+    #: only while ``recompose`` is replacing a focused child.
     focus_before_prune: Any = None
 
     def __init__(
@@ -1516,14 +1517,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     focus_intent_generation = focus_intent_generation_getter()
         if self.is_attached and not self._pruning:
             self._children_ready = False
-        # TASK-34000.29 (N-12): the focused control this recompose is about to
-        # prune. Textual's reset then parks focus OUTSIDE the canvas (the
-        # Library grip) until the replay runs, and a Notes sync captured in
-        # that window read the landing -- no portable role, so its replay put
-        # focus on the region fallback. The capture reads this instead.
-        focused_child = self.app.focused
+        # TASK-34000.29 (N-12, ruling T6-a): the focused child this recompose
+        # prunes, and the landing Textual's reset will park focus on until the
+        # replay runs (the base class's pinned ``_predicted_reset_target``).
+        # A Notes sync captured in that window read the landing, which has no
+        # role, so its replay fell back to the region's default control. The
+        # capture uses the child instead, but only while focus is still on
+        # that landing. ``_focus_to_keep`` does not fit: it returns an anchor,
+        # not the control the role table reads.
+        try:
+            focused_child = self.screen.focused
+        except Exception:  # noqa: BLE001 - a detached canvas has no screen
+            focused_child = None
         self.focus_before_prune = (
-            focused_child
+            (focused_child, self._predicted_reset_target(focused_child))
             if focused_child is not None and self in focused_child.ancestors
             else None
         )
