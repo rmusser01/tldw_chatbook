@@ -561,7 +561,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #   carries ~10 pre-existing reds, so it cannot be listed whole. A node id is
 #   one entry, as a whole file is (an unbracketed id runs every parametrize
 #   case of that test): 911 -> 916.
-MINIMUM_FILES = 916
+# 2026-10-26, TASK-34000.29 (polish-1b batch), appended at the tail, so no
+# existing entry changes shard:
+# - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
+#   160x45 boots, ~26 s): 916 -> 917.
+MINIMUM_FILES = 917
 
 
 def read_census(path: Path) -> list[str]:

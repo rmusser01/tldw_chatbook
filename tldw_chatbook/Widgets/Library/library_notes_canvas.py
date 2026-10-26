@@ -1315,6 +1315,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     #: Class-level so the WARNING is logged once, not once per note opened.
     _pending_lookup_warned: ClassVar[bool] = False
 
+    #: TASK-34000.29: set only while ``recompose`` is replacing a focused child.
+    focus_before_prune: Any = None
+
     def __init__(
         self,
         list_state: LibraryNotesListState | None = None,
@@ -1513,7 +1516,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     focus_intent_generation = focus_intent_generation_getter()
         if self.is_attached and not self._pruning:
             self._children_ready = False
-        await super().recompose()
+        # TASK-34000.29 (N-12): the focused control this recompose is about to
+        # prune. Textual's reset then parks focus OUTSIDE the canvas (the
+        # Library grip) until the replay runs, and a Notes sync captured in
+        # that window read the landing -- no portable role, so its replay put
+        # focus on the region fallback. The capture reads this instead.
+        focused_child = self.app.focused
+        self.focus_before_prune = (
+            focused_child
+            if focused_child is not None and self in focused_child.ancestors
+            else None
+        )
+        try:
+            await super().recompose()
+        finally:
+            self.focus_before_prune = None
         if (
             not newest_focus_id
             or not self.is_attached

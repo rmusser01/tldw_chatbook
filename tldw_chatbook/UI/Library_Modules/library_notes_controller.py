@@ -1675,6 +1675,8 @@ class LibraryNotesController:
             token=self._library_notes_operation_counter,
             phase="running",
             region=region,
+            # Read before the apply below disables it (TASK-34000.29 N-12).
+            origin_control=getattr(self.focused, "id", "") or "",
         )
         self._library_notes_operation = operation
         self._apply_library_notes_operation_state()
@@ -1727,7 +1729,63 @@ class LibraryNotesController:
             return False
         self._library_notes_operation = terminal
         self._apply_library_notes_operation_state()
+        self._return_focus_to_library_notes_operation_origin(current)
         return True
+    def _cancel_library_notes_operation(
+        self, operation: LibraryNotesOperationState
+    ) -> bool:
+        """End the current token as the user's own cancel, not a failure.
+
+        TASK-34000.29 (N-12): a dismissed export dialog was finished as a
+        failure, so "Export failed — choose another destination and try
+        again." painted beside the "cancelled" toast. Clearing the token
+        leaves no operation status: the status line falls back to the
+        note's own saved state, and focus returns to the control that
+        started the operation, as after a finish.
+
+        Args:
+            operation: The token the caller claimed.
+
+        Returns:
+            Whether the token was current and its region still on screen.
+        """
+        current = self._library_notes_operation
+        if (
+            current is None
+            or current.token != operation.token
+            or current.kind != operation.kind
+        ):
+            return False
+        self._library_notes_operation = None
+        if current.region != self._library_notes_active_region():
+            return False
+        self._apply_library_notes_operation_state()
+        self._return_focus_to_library_notes_operation_origin(current)
+        return True
+    def _return_focus_to_library_notes_operation_origin(
+        self, operation: LibraryNotesOperationState
+    ) -> None:
+        """Focus -- never press -- the control that started ``operation``.
+
+        TASK-34000.29 (N-12). Called right after the apply that re-enabled
+        it, and synchronously: a canvas sync captured in between would
+        replay the stop Textual moved focus to when the control was disabled
+        (Delete, in Info) over a deferred restore. A control the apply has
+        not re-enabled yet (a deferred apply) is focused after the refresh.
+        """
+        if not operation.origin_control:
+            return
+        selector = f"#{operation.origin_control}"
+        try:
+            target = self.query_one(selector, Widget)
+        except (NoMatches, QueryError):
+            return
+        if not target.focusable:
+            self.call_after_refresh(self._focus_library_note_control, selector)
+            return
+        if self.focused is not target:
+            self._library_notes_programmatic_focus_target = target
+            self.set_focus(target, scroll_visible=False)
     def _apply_library_note_presentation_state(self) -> None:
         """Synchronize the mounted canvas without changing its composition."""
         if not self.is_mounted or self._library_note_session.snapshot is None:
@@ -1981,6 +2039,7 @@ class LibraryNotesController:
             # TASK-34000.28: the folder-conflict notice's Refresh control.
             "notice-refresh": "#library-notes-notice-refresh",
             "link-back": "#library-note-link-back",  # TASK-34000.28 N-21
+            "use-in-console": "#library-note-use-in-console",  # TASK-34000.29
         }.get(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
@@ -3592,6 +3651,7 @@ class LibraryNotesController:
         followed link came from; every other open passes none and clears it.
         """
         navigation_generation = self._supersede_library_notes_navigation()
+        self._reset_library_note_facts()
         self._notes_state.link_origin = link_origin
         self._library_note_session.close_session()
         self._clear_finished_library_notes_operation()
@@ -3609,6 +3669,34 @@ class LibraryNotesController:
         self._library_note_delete_origin_preview = False
         self._library_note_delete_origin_scroll = None
         self._library_note_editor_armed = False
+        self._apply_library_notes_stage_visibility()
+        self.run_worker(
+            self._refresh_library_note_detail(
+                note_id,
+                entry_origin=entry_origin,
+            ),
+            exclusive=True,
+            group="library_note_detail",
+        )
+        self._start_library_note_fact_loads(note_id)
+        self.run_worker(
+            self._locate_library_notes_tree_target(
+                note_id=note_id,
+                focus=False,
+                navigation_generation=navigation_generation,
+            ),
+            exclusive=True,
+            group="library_notes_locator",
+        )
+    def _reset_library_note_facts(self) -> None:
+        """Forget every per-note fact the previous note left behind.
+
+        TASK-34000.29 (N-26): the one reset for both ways a note opens --
+        ``_begin_library_note_load`` and ``LibraryScreen._create_library_
+        note`` -- so a created note never shows the last note's "Linked
+        from" rows or location, nor its link-back origin (TASK-34000.28).
+        """
+        self._notes_state.link_origin = None
         self._library_notes_backlinks = ()
         self._library_notes_backlinks_status = "loading"
         self._library_note_location = ("", "", False)
@@ -3619,15 +3707,12 @@ class LibraryNotesController:
         # the next note and arms Enter routing there.
         self._library_notes_link_picker_latch = None
         self._dismiss_library_note_link_picker(self._library_note_body_or_none())
-        self._apply_library_notes_stage_visibility()
-        self.run_worker(
-            self._refresh_library_note_detail(
-                note_id,
-                entry_origin=entry_origin,
-            ),
-            exclusive=True,
-            group="library_note_detail",
-        )
+    def _start_library_note_fact_loads(self, note_id: str) -> None:
+        """Start the backlink and location lookups for the open ``note_id``.
+
+        Both settle through the real queries (TASK-34000.29 N-26): a
+        brand-new note can already be linked to by a typed ``[[Title]]``.
+        """
         self.run_worker(
             self._load_library_note_backlinks(note_id),
             exclusive=True,
@@ -3637,15 +3722,6 @@ class LibraryNotesController:
             self._load_library_note_location(note_id),
             exclusive=True,
             group="library_note_location",
-        )
-        self.run_worker(
-            self._locate_library_notes_tree_target(
-                note_id=note_id,
-                focus=False,
-                navigation_generation=navigation_generation,
-            ),
-            exclusive=True,
-            group="library_notes_locator",
         )
     async def _load_library_note_backlinks(self, note_id: str) -> None:
         """Fill Info's "Linked from" list for one opening note (task-32145).

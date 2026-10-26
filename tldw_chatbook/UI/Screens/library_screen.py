@@ -925,7 +925,9 @@ def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
     same information reworded for a one-shot toast.
     """
     if kind is NoteFlushOutcomeKind.VALIDATION_VETO:
-        return "Can't leave yet — fix the title or press Discard new note."
+        # TASK-34000.29 (N-25): only reached when the veto carried no reason
+        # (``_library_note_exit_veto_toast`` repeats it when it does).
+        return "Can't leave yet — fix the field named in the status line."
     if kind is NoteFlushOutcomeKind.FAILED:
         return "Can't leave yet — the save failed; press Save to retry or Discard."
     if kind is NoteFlushOutcomeKind.CONFLICTED:
@@ -935,6 +937,31 @@ def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
     if kind is NoteFlushOutcomeKind.BLOCKED:
         return "Can't leave yet — another action is already in progress; wait for it to finish."
     return "Can't leave yet — the note changed while saving; try again."  # STALE
+
+
+def _library_note_exit_veto_toast(
+    outcome: NoteFlushOutcome, *, discard_visible: bool
+) -> str:
+    """The toast for a refused leave from the note editor (TASK-34000.29 N-25).
+
+    A validation veto repeats the save's own reason -- the sentence the status
+    line shows, which already names the field and the fix ("Title begins or
+    ends with whitespace — remove it to save."), so a keyword veto never
+    blames the title. "Discard new note" is offered only while that control
+    is on screen. Every other kind keeps its own sentence.
+
+    Args:
+        outcome: The typed barrier result the flush refused with.
+        discard_visible: Whether "Discard new note" is shown right now.
+
+    Returns:
+        The one-shot toast text.
+    """
+    reason = outcome.message.strip()
+    if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO and reason:
+        tail = " Or press Discard new note." if discard_visible else ""
+        return f"Can't leave yet — {reason.rstrip('.')}.{tail}"
+    return _library_note_editor_exit_veto_message(outcome.kind)
 
 
 def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
@@ -5297,6 +5324,8 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-sort": "sort",
             "library-notes-notice-refresh": "notice-refresh",  # TASK-34000.28
             "library-note-link-back": "link-back",  # TASK-34000.28 N-21
+            # TASK-34000.29 (N-12): focus returns here after Use in Console.
+            "library-note-use-in-console": "use-in-console",
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
@@ -5373,6 +5402,13 @@ class LibraryScreen(BaseAppScreen):
     ) -> LibraryNotesFocusIdentity:
         """Capture only portable focus, selection, and scroll values."""
         focused = self.focused
+        if not self._library_notes_semantic_role(focused):
+            # TASK-34000.29: a Notes recompose pruned the focused control and
+            # Textual parked focus on a landing with no role; the user's place
+            # is still the control being replaced (``focus_before_prune``).
+            for canvas_id in ("#library-note-work-pane", "#library-notes-canvas"):
+                canvas = self._library_layout_ref(canvas_id)
+                focused = getattr(canvas, "focus_before_prune", None) or focused
         region = self._library_notes_focus_region()
         stage = (
             self._library_notes_focus_stage(focused)
@@ -5380,6 +5416,21 @@ class LibraryScreen(BaseAppScreen):
             else self._notes_state.stage
         )
         role = self._library_notes_semantic_role(focused)
+        # TASK-34000.29 (N-12): a running operation disabled the control that
+        # started it, so Textual moved focus on (to Delete, in Info). The
+        # portable identity stays the ORIGIN's: a sync captured in that window
+        # (the export dialog's close resyncs the tree) must replay it, never
+        # the stop focus fell to (lessons-textual: fix the ROLE).
+        operation = self._notes_state.operation
+        if (
+            operation is not None
+            and operation.running
+            and operation.origin_control
+            and getattr(focused, "id", None) != operation.origin_control
+        ):
+            origin = self.query(f"#{operation.origin_control}")
+            if origin:
+                role = self._library_notes_semantic_role(origin.first()) or role
         snapshot = self._library_note_session.snapshot
         note_id = snapshot.note_id if snapshot is not None else None
         if note_id is None and region == "navigator":
@@ -22158,13 +22209,11 @@ class LibraryScreen(BaseAppScreen):
             return
         notify = getattr(self.app_instance, "notify", None)
         if not selected_path:
+            # TASK-34000.29 (N-12): a dismissed dialog is the user's cancel,
+            # not a failure -- the toast is its one signal.
             if callable(notify):
-                notify("Note export cancelled.", severity="information")
-            self._finish_library_notes_operation(
-                active_operation,
-                success=False,
-                failure_next_action="choose another destination and try again",
-            )
+                notify("Note export cancelled.", severity="information", markup=False)
+            self._notes_controller._cancel_library_notes_operation(active_operation)
             return
         try:
             validated_path = validate_path_simple(selected_path, require_exists=False)
@@ -31950,6 +31999,18 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_back(event)
 
+    def _library_note_discard_control_visible(self) -> bool:
+        """Whether "Discard new note" is on screen (TASK-34000.29 N-25).
+
+        The control keeps its cells and is hidden by visibility, never by
+        display (TASK-34000.8), so both are read.
+        """
+        try:
+            control = self.query_one("#library-note-discard-new", Widget)
+        except (NoMatches, QueryError):
+            return False
+        return bool(control.display and control.visible)
+
     async def _exit_library_note_editor_guarded(self) -> bool:
         """Shared Back exit: veto while dirty, else reset to list.
 
@@ -31989,8 +32050,12 @@ class LibraryScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
-                    _library_note_editor_exit_veto_message(note_flush.kind),
+                    _library_note_exit_veto_toast(
+                        note_flush,
+                        discard_visible=self._library_note_discard_control_visible(),
+                    ),
                     severity="warning",
+                    markup=False,
                 )
             return False
         navigation_generation = self._supersede_library_notes_navigation()
@@ -32636,6 +32701,8 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.notice = "Note created — select it from Notes to open."
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
 
+        # TASK-34000.29 (N-26): the open path's own per-note reset.
+        self._notes_controller._reset_library_note_facts()
         outcome = await self._library_note_session.open_session(
             created_id, untouched_create_token=active_token
         )
@@ -32670,7 +32737,6 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_filter_state = None
         self._notes_state.selected_note_id = created_id
         self._notes_state.view = "editor"
-        self._notes_state.link_origin = None  # TASK-34000.28: a plain open
         self._notes_state.load_state = "loaded"
         self._notes_state.load_message = ""
         self._notes_state.autosave_state = "idle"
@@ -32686,6 +32752,7 @@ class LibraryScreen(BaseAppScreen):
                 self._activate_database_note_work_session,
                 created_id,
             )
+            self._notes_controller._start_library_note_fact_loads(created_id)
         self._notes_state.pending_blank_gc_id = created_id if blank else None
         self._notes_state.session_blank_id = created_id if blank else None
         # (P0) A freshly created note's title is whatever the create seam

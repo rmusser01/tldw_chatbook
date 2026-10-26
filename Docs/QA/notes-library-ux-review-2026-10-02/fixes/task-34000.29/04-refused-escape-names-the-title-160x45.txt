@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Title begins or ends with whitespace — remove it to save. · Next: Fix the marked   │
+│   a  │ Library notes · Ready                                        │  o  field, or press Save to go to it.                                                  │
+│   v  │ Notes (122)                                                  │  t    ‹ Notes   Advisor meeting 2026-09-24                                             │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s                                                                                     │
+│      │ copy or keep a folder synced, choose Add from files.         │      In the Library database only — no file on disk                                    │
+│      │                                                              │     Title begins or ends with whitespace — remove it to save.                          │
+│      │ Filter                                                       │         Edit     Preview     Info                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Save     Use in Console                                                        │
+│      │ ▊ advisor meeting                                          ▎ │     Title                                                                              │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │                                                              │     ▊ Advisor meeting 2026-09-24                                                     ▎ │
+│      │    New     ○ Sort: Newest     Select                         │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │    Add from files…     Export                                │                                                                                        │
+│      │ Folders & placement                                          │      Title begins or ends with whitespace — remove it to save.                         │
+│      │    New folder     Add to folder     Move note                │     Keywords                                                                           │
+│      │    Remove placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ Sort unavailable — clear the filter                          │     ▊ meeting, thesis                                                                ▎ │
+│      │ filter: advisor meeting · 3 results                          │<--- ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      │   Clear filter                                               │     Body                                                                               │
+│      │  ▾ Meetings                                                  │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    Advisor meeting 2026-09-10 · Meetings · 2m                │     ▊ # Advisor meeting — 2026-09-24                                                 ▎ │
+│ ---> │    Advisor meeting 2026-09-24 · Meetings · 2m                │     ▊                                                                                ▎ │
+│      │  ▾ Projects                                                  │     ▊ Attendees: me, Dr. Okafor                                                      ▎ │
+│      │    ▾ Thesis                                                  │     ▊                                                                                ▎ │
+│      │      Thesis outline — retrieval-augmented tutoring · Proje…  │     ▊ ## Notes                                                                       ▎ │
+│      │                                                              │     ▊ - Chapter 2 is too broad; cut the history section.                             ▎ │
+│      │                                                              │     ▊ - Use the reranker results as the main table.                                  ▎ │
+│      │                                                              │     ▊                                                                                ▎ │
+│      │                                                              │     ▊ ## Action items     ╭──────────────────────────────────────────────────────────╮ │
+│      │                                                              │     ▊ - [ ] Trim lit revie│                                                          │ │
+│      │                                                              │     ▊ - [x] Send sweep res│ Can't leave yet — Title begins or ends with whitespace — │ │
+│      │                                                              │     ▊ - [ ] Draft method c│ remove it to save.                                       │ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│                                                          │ │
+│      │                                                              │                           ╰──────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────────────┘                                                                        60 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

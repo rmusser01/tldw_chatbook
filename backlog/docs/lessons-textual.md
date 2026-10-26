@@ -1787,6 +1787,39 @@ Pilot pins were green.
     CPU load; certain once the attempt is held). Landing at once, while the
     rows are known to be mounted, takes the race away.
 
+## A focus identity captured during a prune, or while a running action has disabled its button, names the wrong control (TASK-34000.29, 2026-10-26)
+
+Returning focus to Info's Export Markdown after a cancelled export passed 7
+runs in 8; the eighth left focus on the Info region. A cancelled export with
+no fix at all always left it on Delete.
+
+- **Two landings that are not the user's place.** (1) The running export
+  disables its own button; Textual blurs it, and focus moves to the next
+  enabled stop, Delete. (2) Closing the file dialog resumes Library, and the
+  resume starts a burst of Notes tree syncs. Each sync recomposes the Info
+  pane, which prunes the focused button, and Textual parks focus on the
+  Library grip until the replay runs.
+- **Any sync captured in either window records that landing as the user's
+  place.** Delete has a real role, so its replay put focus back on Delete.
+  The grip has no role, so its replay fell back to the Info region. An
+  explicit-`then` sync REPLACES the pending callback, so the earlier good
+  capture is lost. A `set_focus` wrapper plus a wrapper on
+  `_capture_library_notes_focus_identity` that prints role, focus and
+  operation phase showed it: `CAPTURE role='' focus=library-browse-items-grip`
+  ran right after the prune.
+- **Fix the capture, not the timing.** While an operation runs, the capture
+  takes the role of the operation's origin control. When live focus has no
+  role, the capture uses the control the in-flight recompose is pruning
+  (`LibraryNotesCanvas.focus_before_prune`). The return to the origin is also
+  synchronous (`set_focus`, marked programmatic), because a deferred focus
+  leaves a window for another capture. Mutation evidence: drop the operation
+  rule and the export arm fails every run; make the return deferred-only and
+  it fails 1 run in 2; drop the prune rule and it fails about 1 run in 8.
+- **Rule.** When a test of a focus return passes most runs but not all,
+  record every capture and every focus write before changing any timing.
+  The replay that wins is usually one captured in a window you did not know
+  about.
+
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 
 The real Persona service accepts `none` and `auto` as IDs. The workspace Select
