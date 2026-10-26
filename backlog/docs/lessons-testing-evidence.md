@@ -22038,3 +22038,10 @@ existing parent exactly once; the corrected packet was rerun with fresh private
 profiles. Normalize portable report paths before serializing or comparing them,
 and inspect the actual child reports when a collector disagrees with its inputs.
 Evidence: [post-merge audit](../../Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md).
+
+
+## Settled data and settled workers can still leave the authoring surface stale (PR #3251, 2026-10-26)
+
+**Incident.** PR #3251's metadata-only CI failed two previously passing UI assertions. Chunking Undo had already restored the canonical empty sample and cleared its Undo stack, yet the editor stayed at `x`: a coordinator status render rejected sample publication while the edit consumer was running, then its newer render generation invalidated that consumer's final echo. A controlled worker-first ordering retained the stale editor even after the ordinary worker/Pilot settle. The Library create-arrival test had a different gap: root slices were settled and replacement list children were attached, but a production-canvas probe measured their region as 0x0 until layout, so the compositor crop was empty.
+
+**What to do.** Diagnose canonical state and painted state separately at the failing boundary. A render generation is not proof another render fulfilled the same publication obligation; preserve newer-input/session/retirement fences while letting the final owned edit finish its echo. For compositor assertions, wait on an observable current paint boundary rather than a fixed pause after state/mount. Keep semantic assertions independent: the Library Unfiled-only negative control passed baseline paint readiness and still failed the original missing-folder assertion. These controlled observations explain mechanisms; they do not measure natural race frequency or certify full app/server behavior.

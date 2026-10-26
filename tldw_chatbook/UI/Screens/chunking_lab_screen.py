@@ -586,8 +586,10 @@ class ChunkingLabScreen(BaseAppScreen):
                         lab_state.is_result_stale, session, candidate_id
                     )
                 )
+        # The consumer owns its final authoring echo: a same-session status
+        # render may have deferred that echo while this edit task was running.
         if (
-            generation != self._render_generation
+            (generation != self._render_generation and not edit_complete)
             or session is not self.coordinator.session
             or not self.is_mounted
             or not self.query("#lab-message")

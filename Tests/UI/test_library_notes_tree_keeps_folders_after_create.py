@@ -150,8 +150,17 @@ async def _tree_settled(screen, pilot) -> None:
             return True
         return not folders.loading and folders.freshness != "uninitialized"
 
-    await _until(pilot, settled, "the root slices to settle", timeout=15.0)
-    await pilot.pause(0.1)
+    # A settled response schedules a canvas recompose; its mounted list
+    # can still have a zero region. Witness baseline paint in the same
+    # budget, leaving missing folders to the independent assertions below.
+    await _until(
+        pilot,
+        lambda: settled()
+        and bool(screen.query("#library-notes-list"))
+        and "▾ Unfiled" in _painted_list(screen.app, screen),
+        "the root slices to settle and the current Notes list to paint",
+        timeout=15.0,
+    )
 
 
 def _assert_folders_above_unfiled(painted: str, *, note_title: str = "") -> None:
