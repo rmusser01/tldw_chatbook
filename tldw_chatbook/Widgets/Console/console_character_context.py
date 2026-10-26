@@ -297,6 +297,11 @@ class ConsoleCharacterContext(Vertical):
             return
         focused = self.app.focused
         if focused is not None and self in focused.ancestors:
+            if focus is None:
+                # Focus entered the browser after this render was scheduled
+                # (a Roleplay/Library return focuses search as it opens the
+                # section, TASK-35970): keep it rather than prune it to None.
+                focus = self._focus_identity(focused)
             # Avoid Textual's automatic external fallback while pruning the
             # old node. A real subsequent external focus still advances intent.
             self.screen.set_focus(None)
