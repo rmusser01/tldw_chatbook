@@ -942,10 +942,12 @@ class WindowIntent:
     """A cursor move the items list owes the user once rows arrive (spec 1.5.6).
 
     ``reason`` is ``"end"`` (End past the loaded rows) or ``"id"`` (a row to
-    load, select or restore; ``target_id`` is its option id). Enter's "land on
-    the first match" (TASK-33910.35) is meant to be one more reason here.
-    ``read`` says a window was asked for it; ``fence`` is the list it belongs
-    to, set when the screen sees that request (None until then).
+    load, select or restore; ``target_id`` is its option id) or ``"first"``
+    (Enter in the search box: the cursor goes to the first match of the
+    searched list once its rows land, TASK-33910.35; ``fence`` is set when it
+    is owed and no window is asked for it). ``read`` says a window was asked
+    for it; ``fence`` is the list it belongs to, set when the screen sees
+    that request (None until then).
     """
 
     reason: str
@@ -1028,9 +1030,11 @@ class ListWindowState:
 
     def read_failed(self) -> None:
         """A window read failed or could not start: the request is answered,
-        and an End or a load-through that asked for a read is owed no more."""
+        and an End, a load-through or a first-match landing that waited for
+        the read is owed no more."""
         self.requested = False
-        if self.intent is not None and self.intent.read:
+        intent = self.intent
+        if intent is not None and (intent.read or intent.reason == "first"):
             self.intent = None
 
     def kind_switched(self) -> None:
@@ -1054,6 +1058,31 @@ class ListWindowState:
         if read:
             self.requested = True
         return self.intent
+
+    def owe_first(self, fence: ListFence) -> None:
+        """Enter in the search box: owe the cursor on ``fence``'s first match.
+
+        A newer move than any End or load-through owed, which it replaces.
+        No window is asked for: the searched list's own replace lands it.
+        """
+        self.intent = WindowIntent("first", fence=fence)
+
+    def landing_owed(self) -> bool:
+        """Whether the cursor is owed on a searched list's first match (Enter on the list is inert)."""
+        return self.intent is not None and self.intent.reason == "first"
+
+    def take_first(self, fence: ListFence) -> bool:
+        """Whether ``fence``'s list owes the first-match landing (it is then met or dropped)."""
+        intent = self.intent
+        if (
+            intent is None
+            or intent.reason != "first"
+            or intent.fence is None
+            or not same_list(intent.fence, fence)
+        ):
+            return False
+        self.intent = None
+        return True
 
     def asked_for(self, intent: WindowIntent | None, fence: ListFence) -> None:
         """The screen saw ``intent``'s request: it belongs to the list the user waits for."""
