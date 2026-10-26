@@ -240,11 +240,9 @@ def _launch_descriptor(profile_id: str, control_root: Path) -> _IsolatedProfile:
 
 
 def _launch_state(profile_id: str, control_root: Path):
-    """Read actual committed local association; a catalog is only a locator."""
+    """Read actual committed local association under ordinary launch admission."""
     from . import bootstrap
-    from .activation import ActivationStore, _private
-    from .journal import Journal, _evidence_digest, _Prepared, observe_artifact
-    from .profile_catalog import ProfileCatalog, _name
+    from .profile_catalog import ProfileCatalog
 
     catalog = ProfileCatalog(control_root)
     config, data = catalog.resolve(profile_id)
@@ -252,6 +250,47 @@ def _launch_state(profile_id: str, control_root: Path):
     allowed, reason = bootstrap.startup_permission(config, root)
     if not allowed:
         raise ValueError(reason)
+    return _verified_profile_state(
+        profile_id, control_root, catalog, config, data, root
+    )
+
+
+def _eval_metadata_descriptor(profile_id: str, control_root: Path):
+    """Read verified Evals metadata only in this mobile operation's native scope."""
+    from . import bootstrap
+    from .profile_catalog import ProfileCatalog
+    from .storage_admission import _mobile_discovery_pending
+
+    catalog = ProfileCatalog(control_root)
+    config, data = catalog.resolve(profile_id)
+    root = bootstrap.default_bootstrap_root()
+    allowed, reason = bootstrap.startup_permission(config, root)
+    if not allowed:
+        _, profiles, _ = bootstrap._control_records(root)
+        profile = bootstrap._binding(config, profiles, bootstrap._registry(root))
+        if (
+            reason != "recovery_pending"
+            or profile is None
+            or not _mobile_discovery_pending(root, profile["namespaces"], config)
+        ):
+            raise ValueError(reason)
+    result = _verified_profile_state(
+        profile_id, control_root, catalog, config, data, root
+    )
+    if not allowed and not _mobile_discovery_pending(
+        root, profile["namespaces"], config
+    ):
+        raise ValueError("recovery_pending")
+    return result[0]
+
+
+def _verified_profile_state(profile_id, control_root, catalog, config, data, root):
+    """Common native proof after an entry's distinct admission checks."""
+    from . import bootstrap
+    from .activation import ActivationStore, _private
+    from .journal import Journal, _evidence_digest, _Prepared, observe_artifact
+    from .profile_catalog import _name
+
     _, profiles, associations = bootstrap._control_records(root)
     registry = bootstrap._registry(root)
     profile = bootstrap._binding(config, profiles, registry)

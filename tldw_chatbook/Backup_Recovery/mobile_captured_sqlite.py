@@ -135,6 +135,74 @@ class _CapturedSQLite:
         _verify_candidate(self, restrictions, candidate, digest)
         return result
 
+    def schema_catalog(self):
+        """Return only exact fixed-family table/column metadata under live pins."""
+        self.check()
+        result, entries, size = [], 0, 0
+        members = tuple(sorted(self._connections.items()))
+        for _key, (_connection, restrictions, _tables, candidate, digest) in members:
+            if restrictions.expired():
+                raise ValueError("sqlite_resource_limit")
+            _verify_candidate(self, restrictions, candidate, digest)
+        for (purpose, family), (
+            connection,
+            restrictions,
+            tables,
+            candidate,
+            digest,
+        ) in members:
+            for table in sorted(tables):
+                cursor = connection.execute(
+                    'PRAGMA table_xinfo("' + table.replace('"', '""') + '")'
+                )
+                try:
+                    columns = tuple(row[1] for row in cursor if row[6] != 1)
+                finally:
+                    cursor.close()
+                entries += 1 + len(columns)
+                size += len(table.encode("utf-8")) + sum(
+                    len(value.encode("utf-8")) for value in columns
+                )
+                if (
+                    not columns
+                    or entries > sqlite_validation._CATALOG_LIMIT
+                    or size > sqlite_validation._CATALOG_BYTES
+                ):
+                    raise ValueError("sqlite_catalog_limit")
+                result.append((purpose, family, table, columns))
+        # No partially verified metadata escapes: every retained object and the
+        # full native capture/claim/selector scope are checked before any return.
+        for _key, (_connection, restrictions, _tables, candidate, digest) in members:
+            if restrictions.expired():
+                raise ValueError("sqlite_resource_limit")
+            _verify_candidate(self, restrictions, candidate, digest)
+        self.check()
+        return tuple(result)
+
+    def authority_reference(self, kind, reference_id):
+        """Prove one fixed captured raw reference without importing authority."""
+        from .mobile_captured_authority import _authority_reference
+
+        return _authority_reference(self, kind, reference_id)
+
+    def identity_plan(self):
+        """Reserve declared typed identities from this actual captured snapshot."""
+        from .mobile_identity_plan import _plan_identities
+
+        return _plan_identities(self)
+
+    def plan_manifest(self):
+        """Check fixed table/column ownership, retaining required pending handlers."""
+        from .mobile_plan_manifest import _plan_manifest
+
+        return _plan_manifest(self)
+
+    def workspace_plan(self):
+        """Transform Workspace rows without changing any captured or live owner."""
+        from .mobile_workspace_plan import _plan_workspaces
+
+        return _plan_workspaces(self)
+
     def retire(self):
         self.active = False
         for resource in reversed(tuple(self.resources)):
@@ -398,6 +466,7 @@ def _sqlite_reads(captured, *, password, cancel):
     )
     scope.active, scope.resources, scope.roots, scope.cancel = True, [], [], cancel
     scope._connections = {}
+    scope._canonical_archive = None
     scope.versions = ()
     session._scopes.append(scope)
     _local.mobile_sqlite_scope = scope
@@ -417,10 +486,10 @@ def _sqlite_reads(captured, *, password, cancel):
                     for row in session._scopes
                     if type(row) is _MobileCapturePartition
                     and row.purpose == purpose
-                    and row.claim is captured.claim
-                    and row.journal is captured.journal
                     and row.active
                     and not row.review_only
+                    and row.claim is captured.claim
+                    and row.journal is captured.journal
                 ]
                 if len(partitions) != 1 or partitions[0].destination != source.path:
                     raise ValueError("mobile_sqlite_partition_changed")
@@ -446,6 +515,8 @@ def _sqlite_reads(captured, *, password, cancel):
                     raise ValueError("mobile_sqlite_capture_changed")
                 document = ArchiveManifest.model_validate_json(sealed.manifest_bytes)
                 members = _members(scope, partition, document)
+                if purpose == "canonical":
+                    scope._canonical_archive = (partition, document, sealed)
                 for family, owner_id, expected, payload, candidate in _extract(
                     scope, sealed, members, root
                 ):

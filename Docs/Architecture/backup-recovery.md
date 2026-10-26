@@ -407,7 +407,44 @@ retains staged material and real maintenance exclusion; it never retries an
 ambiguous descriptor. Existing journal/bootstrap/selector guard lifetimes remain
 their native owners' responsibility and are not a new all-control-FD guarantee.
 
-This is extraction only. Typed identities/dispositions, Chat memory/dispatch,
-normalized traces/citations, nine-entity sync and integrated pure-plan validation
-remain later increments. Reads create no imported rows, authority holds, batch
-receipts or published history and confer no public apply/cutover success.
+### Private typed planning (I)
+
+The same authenticated reader exposes a no-argument `schema_catalog()` that
+batches immutable purpose/family/table/column metadata, with complete scope and
+retained-object checks around the operation. Its native cancellation, step,
+deadline, catalog and custody limits remain unchanged.
+`mobile_plan_manifest.py` assigns every exact installed table and column a fixed
+handler/disposition; populated unsupported obligations and required pending
+handlers refuse completion. The 230 literal table specifications cover the union
+of the admitted versions, rather than an assumed count for every partition.
+
+`identity_plan()` reserves immutable typed identities across the actual captured
+Chat, Workspace and AgentRuns members. Unused genuine IDs survive; collisions
+use native-valid deterministic IDs. Global memory/fleet sequence positions retain
+complete source order after the canonical allocator frontier. Profile-qualified
+citation composites remain original typed dependencies pending T's native
+namespace proof. Authenticated optional canonical AgentRuns absence supplies
+empty occupancy, without creating a target.
+
+`workspace_plan()` preserves original rows and projects named Workspace IDs,
+collision-safe names, memberships, RAG note references, settings and exact folder
+binding locators/metadata through those shared reservations. Default selection
+remains canonical. Malformed binding metadata, ambiguous Default content,
+unproven external Media references and nonempty handoff manifests produce exact
+body-free blockers. The DB-wide assistant-default backfill frontier is not copied;
+completion-state differences block only native-eligible imported Workspaces.
+Binding holds are a proposed set, never persisted or activated by this plan.
+
+`authority_reference()` proves existing Persona/permission-profile references
+using the same canonical captured raw owner/member and complete bytes, installed
+strict semantics and actual source/target ownership plus generation/activation
+provenance. It imports no raw authority. Newly owned streams, members and parent
+pins use actual custody; inherited native control readers retain their existing
+lifetimes. Evals' private passive metadata path recognizes only the actual issued
+mobile discovery scope for current `recovery_pending`; ordinary startup and
+profile-launch consumers still refuse that fence.
+
+Chat/trace/citation/sync/AgentRuns transformations and integrated plan validation
+remain required pending handlers. Planning creates no imported rows, authority
+holds, batch receipts or published history and confers no public apply/cutover
+success. The complete composed plan must be reviewed before owner writes.

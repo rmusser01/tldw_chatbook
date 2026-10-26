@@ -667,6 +667,8 @@ def _mobile_discovery_pending(root, names, selected):
         or type(scope.session) is not MaintenanceSession
     ):
         return False
+    if not any(issued is scope for issued in scope.session._scopes):
+        return False
     scope.check()
     session = scope.session
     journal = getattr(session, "_mobile_journal", None)
