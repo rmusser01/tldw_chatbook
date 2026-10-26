@@ -1441,13 +1441,15 @@ async def test_render_awaits_never_resume_a_stale_avatar_paint(
     original_reaction_update = reaction.update
     updates: list[str] = []
 
-    def update_name(value):
+    # The painter may pass Static.update's ``layout`` flag: the hidden name
+    # caption takes new copy without a layout (TASK-35970).
+    def update_name(value, **kwargs):
         updates.append("name")
-        return original_name_update(value)
+        return original_name_update(value, **kwargs)
 
-    def update_reaction(value):
+    def update_reaction(value, **kwargs):
         updates.append("reaction")
-        return original_reaction_update(value)
+        return original_reaction_update(value, **kwargs)
 
     monkeypatch.setattr(name, "update", update_name)
     monkeypatch.setattr(reaction, "update", update_reaction)
