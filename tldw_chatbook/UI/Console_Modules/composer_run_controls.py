@@ -464,7 +464,9 @@ def _project_console_received_input(self, session_id: str) -> None:
     observer = composer._authored_draft_observer
     composer._authored_draft_observer = None
     try:
-        composer.load_draft(store.session_draft(session_id))
+        # TASK-33620.15.8: this runs inside run start's post-commit step, so
+        # Send's readiness restyles wait for the composer's next callback.
+        composer.load_draft(store.session_draft(session_id), defer_action_state=True)
         self._session._console_visible_draft_revision = store.session_input_snapshot(
             session_id
         ).draft_revision

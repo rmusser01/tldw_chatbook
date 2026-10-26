@@ -526,7 +526,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-34000 P1-B batch (2026-10-25, rebased onto dev 7a5e2513c5) appends its
 # 6 lane files at the tail so no existing entry changes shard: .17, .14, .12,
 # .11 (two files), .71: 893 + 6 = 899.
-MINIMUM_FILES = 899
+# TASK-33620.15.8 (2026-10-23) appends 2 at the tail: the composer
+# state-restyle file (5 mounted tests, about 14 s locally) and one node, the
+# catalog fingerprint's first-read yield (about 4 s); the rest of its file is
+# TASK-33620.15.15's to place. Rebased 2026-10-25 onto dev's 899: 899 + 2 = 901.
+MINIMUM_FILES = 901
 
 
 def read_census(path: Path) -> list[str]:
