@@ -355,7 +355,7 @@ def _inspector_state(**overrides) -> ConsoleInspectorState:
     return ConsoleInspectorState(**values)
 
 
-async def test_inspector_change_lays_out_only_changed_fact_rows(monkeypatch) -> None:
+async def test_inspector_change_repaints_only_changed_fact_rows(monkeypatch) -> None:
     requests = _LayoutRequests(monkeypatch)
     summary = ConsoleSendAuthoritySummary(_inspector_state())
     async with _Host(summary).run_test(size=(80, 12)) as pilot:
@@ -376,12 +376,17 @@ async def test_inspector_change_lays_out_only_changed_fact_rows(monkeypatch) -> 
                 ConsoleDisplayRow("Provider", "blocked", status="blocked"),
             )
         )
+        run_row = summary.query_one("#console-send-authority-run")
+        region = run_row.region
         with requests.counting() as calls:
             summary.sync_state(blocked)
-        assert _names(calls) == ["Static#console-send-authority-run"]
-        assert str(summary.query_one("#console-send-authority-run").render()) == (
-            "Run: Blocked"
-        )
+        # TASK-36012: the changed fact repaints in its fixed one-row box with
+        # no layout at all (geometry A/B in
+        # test_console_send_transition_layout_requests.py).
+        assert _names(calls) == []
+        await pilot.pause()
+        assert str(run_row.render()) == "Run: Blocked"
+        assert run_row.region == region
 
 
 # -- ConsolePromptQueueRegion: Send-button fields the shelf does not draw --
