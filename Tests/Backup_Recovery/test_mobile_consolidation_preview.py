@@ -528,3 +528,99 @@ def test_case_alias_destination_candidates_refuse_missing_namespace_reuse(
         len({candidate.identity for candidate in preview.candidate_destinations}) == 2
     )
     assert not list(physical.iterdir())
+
+
+def test_preview_content_fingerprint_distinguishes_native_blob_and_text(tmp_path):
+    """SQLite TEXT affinity does not forbid BLOB history in the exact catalog."""
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import seed_legacy_mobile
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        _adapters,
+        _inspect_store,
+    )
+
+    source = tmp_path / "mobile"
+    seeded = seed_legacy_mobile(source)
+    database = source / "runs.db"
+    adapter = _adapters()["db.agent_runs"]
+    observed = []
+    for result in (b"a", "b'a'"):
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute(
+                "UPDATE agent_runs SET result=? WHERE id=?",
+                (result, seeded["child_run_id"]),
+            )
+            assert connection.execute(
+                "SELECT typeof(result) FROM agent_runs WHERE id=?",
+                (seeded["child_run_id"],),
+            ).fetchone()[0] == ("blob" if isinstance(result, bytes) else "text")
+        # Each call performs native exact-catalog, domain, FK and quick_check validation.
+        observed.append(_inspect_store(database, adapter)[-1])
+    assert observed[0] != observed[1]
+
+
+def test_sqlite_row_digest_keeps_native_types_and_float_values_distinct():
+    import sqlite3
+    from contextlib import closing
+
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import _sqlite_row_digest
+
+    with closing(sqlite3.connect(":memory:")) as connection:
+        row = connection.execute(
+            "SELECT NULL, 0, 0.0, '0', X'30', 1.0, 1.0000000000000002, -0.0"
+        ).fetchone()
+    digests = [_sqlite_row_digest((value,)) for value in row]
+    assert len(set(digests)) == len(row)
+    assert digests == [_sqlite_row_digest((value,)) for value in row]
+    assert _sqlite_row_digest(row) != _sqlite_row_digest(tuple(reversed(row)))
+
+
+def test_sqlite_row_digest_refuses_non_sqlite_scalars():
+    import pytest
+
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import _sqlite_row_digest
+
+    for value in (True, bytearray(b"a"), {"blob": "61"}, object()):
+        with pytest.raises(ValueError, match="mobile_unsupported_sqlite_value"):
+            _sqlite_row_digest((value,))
+
+
+def test_typed_source_fingerprint_is_stable_but_changes_with_same_stat_result(tmp_path):
+    import os
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import (
+        fingerprints,
+        seed_legacy_mobile,
+    )
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        preview_mobile_consolidation,
+    )
+
+    source = tmp_path / "mobile"
+    seeded = seed_legacy_mobile(source)
+    database = source / "runs.db"
+    destination = _stores(tmp_path)
+    observations = []
+    stamp = database.stat()
+    for result in (b"a", "b'a'"):
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute(
+                "UPDATE agent_runs SET result=? WHERE id=?",
+                (result, seeded["child_run_id"]),
+            )
+        os.utime(database, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        assert database.stat().st_size == stamp.st_size
+        before = fingerprints(source)
+        preview = preview_mobile_consolidation(source, destination)
+        again = preview_mobile_consolidation(source, destination)
+        assert not preview.issues
+        assert preview == again
+        assert fingerprints(source) == before
+        observations.append(preview)
+    assert observations[0].source_fingerprint != observations[1].source_fingerprint
+    assert observations[0].destination.identity == observations[1].destination.identity
+    assert observations[0].source_witnesses == observations[1].source_witnesses

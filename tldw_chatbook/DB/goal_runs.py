@@ -18,7 +18,8 @@ from tldw_chatbook.Agents.goal_models import (
     GoalSnapshot,
     IterationReport,
 )
-from tldw_chatbook.DB.automatic_work import _identity
+from tldw_chatbook.DB.automatic_work import AutomaticWorkRefused, _identity
+from tldw_chatbook.DB.mobile_import_authority import chain_allowed
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -30,6 +31,16 @@ class GoalRunsStore:
     def __init__(self, db: AgentRunsDB) -> None:
         self.db = db
         self.payload_limit = 128 * 1024 * 1024
+
+    def _require_current_authority(
+        self, conn: sqlite3.Connection, goal_id: str
+    ) -> None:
+        """Imported result identities are historical, including held allowance families."""
+        row = conn.execute(
+            "SELECT chain_id FROM goal_runs WHERE id=?", (goal_id,)
+        ).fetchone()
+        if row is not None and not chain_allowed(conn, row[0]):
+            raise AutomaticWorkRefused("import_review_required")
 
     def create(self, request: GoalRequest, *, launch_id: str) -> GoalSnapshot:
         """Allocate launch, conversation UUID and chain together or reuse identity."""
@@ -43,6 +54,7 @@ class GoalRunsStore:
                 "SELECT * FROM goal_runs WHERE launch_id=?", (launch_id,)
             ).fetchone()
             if existing:
+                self._require_current_authority(conn, existing["id"])
                 if existing["status"] == "removed":
                     raise ValueError("goal_payload_removed")
                 if (
@@ -101,6 +113,7 @@ class GoalRunsStore:
     def control(self, goal_id: str, *, stop: bool = False) -> GoalSnapshot:
         """Close successor admission without releasing the execution owner."""
         with self.db.automatic_work.transaction() as conn:
+            self._require_current_authority(conn, goal_id)
             goal = self.get(goal_id)
             if goal.status in {
                 "removed",
@@ -133,6 +146,7 @@ class GoalRunsStore:
     def settle_control(self, goal_id: str) -> GoalSnapshot:
         """Finalize controls only after the coordinator has drained physical work."""
         with self.db.automatic_work.transaction() as conn:
+            self._require_current_authority(conn, goal_id)
             goal = self.get(goal_id)
             if goal.status not in {"pause_requested", "stopping"}:
                 return goal
@@ -163,6 +177,7 @@ class GoalRunsStore:
         if pause_reason is not None:
             _identity(pause_reason)
         with self.db.automatic_work.transaction() as conn:
+            self._require_current_authority(conn, snapshot.id)
             changed = conn.execute(
                 "UPDATE goal_runs SET status=?, pause_reason=?, revision=revision+1, updated_at=? WHERE id=? AND revision=?",
                 (status, pause_reason, time.time(), snapshot.id, snapshot.revision),
@@ -201,6 +216,7 @@ class GoalRunsStore:
     def reserve_result(self, conn, goal, attempt_id: str) -> None:
         from tldw_chatbook.Agents.goal_iteration import GOAL_BYTES, RECORD_BYTES
 
+        self._require_current_authority(conn, goal.id)
         retained = conn.execute(
             "SELECT COALESCE(SUM(length(CAST(payload_json AS BLOB))),0) FROM goal_evidence WHERE goal_id=?",
             (goal.id,),
@@ -285,6 +301,7 @@ class GoalRunsStore:
             json.dumps(result_payload, sort_keys=True, default=str).encode()
         ).hexdigest()
         with self.db.automatic_work.transaction() as conn:
+            self._require_current_authority(conn, result.goal_id)
             row = conn.execute(
                 "SELECT * FROM goal_runs WHERE id=?", (result.goal_id,)
             ).fetchone()

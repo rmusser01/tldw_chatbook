@@ -282,3 +282,14 @@ and descriptor retirement remain physical requirements; ambiguous close retains
 the native maintenance quarantine. A prepared-only crash can register its exact
 pending fence after full revalidation; source claims and captures do not establish
 committed import batches.
+
+
+Reviewed mobile source row content is hashed with native SQLite scalar type tags
+in `mobile_consolidation._sqlite_row_digest`: NULL, integer, real (`float.hex`),
+text, and BLOB (hex bytes). Thus a native `agent_runs.result` BLOB and text with
+the same Python display cannot share a reviewed row digest. Unknown scalar types
+refuse inspection. Metadata digests, namespace IDs, physical witnesses and capture
+formats are unchanged. A pre-correction source proof that no longer matches is
+refused by the native preparation/recovery review; there is no lossy fallback or
+silent proof relabeling. Full mapped import and public cutover remain separate
+qualification gates.

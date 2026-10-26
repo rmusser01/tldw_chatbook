@@ -1649,3 +1649,34 @@ def test_excluded_citation_with_actual_manual_issues_refuses(
             for row in records
         )
         assert backend.values == original_keys and backend.deleted == []
+
+
+def test_native_preparation_refuses_pre_type_tagged_source_fingerprint(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery import bootstrap, mobile_consolidation
+
+    with monkeypatch.context() as old_encoder:
+        old_encoder.setattr(
+            mobile_consolidation,
+            "_sqlite_row_digest",
+            lambda values: mobile_consolidation._digest(tuple(values)),
+        )
+        with prepared(tmp_path, monkeypatch) as (
+            session,
+            journal,
+            config,
+            _,
+            old_review,
+            inventory,
+            authority,
+        ):
+            old_encoder.undo()
+            assert not old_review.issues
+            with pytest.raises(ValueError, match="mobile_.*changed"):
+                _prepare_review(session, journal, config, old_review, inventory)
+            with journal._locked(exclusive=False) as fd:
+                assert journal._records(fd) == []
+            assert bootstrap.startup_permission(config, authority.control_root.parent)[
+                0
+            ]

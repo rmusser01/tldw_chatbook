@@ -190,3 +190,39 @@ retirement. It provides no public import success, completion, rollback terminal 
 cutover. Cold source validation keeps Chat package server exports lazy so reading
 Goal models cannot bootstrap config inside recovery; explicit public service
 access preserves its normal runtime and admission behavior.
+
+### Imported Goal digest provenance and native mutation guards
+
+[ADR-227](227-native-console-goal-runs.md) binds a Goal request to its canonical
+serialized request hash. Consolidation maps only declared typed binding and
+owner references and recomputes that request hash using the native serializer.
+The original checkpoint fingerprint hashes the complete GoalIterationResult,
+which need not remain stored. The original artifact digest also identifies the
+source result review. Preserve both as historical provenance; rewriting saved
+checkpoint JSON cannot reconstruct either original execution or fresh approval.
+The owning import batch receipt must retain original and mapped request hashes
+and original digest/identity associations together with mapped records and holds.
+
+Exact imported Goal, chain and attempt holds prevent checkpoint acceptance,
+current completion verification, result approval, provisioning, resume and
+recovery/state transitions from reusing or rewriting that evidence. Guards belong
+at the actual native transactional owners, including direct GoalRunsStore callers,
+and at service callbacks before external effects. Pure history/evidence reads,
+unrelated fresh Goals/manual work and cancellation of unheld live work remain
+available. No hold-release or new result-review workflow is introduced.
+
+Source row fingerprints encode each actual SQLite scalar with its type: NULL,
+integer, real, text or BLOB. BLOB bytes use hex and real values use Python's stable
+hex float representation; unknown values refuse. Native AgentRuns result columns
+can contain BLOB or TEXT values with identical printed representations, despite
+passing exact schema/domain validation. Metadata digests and namespace identities
+keep their existing format. An old prepared source fingerprint that no longer
+matches requires native recovery/fresh review; it is never relabeled or accepted
+through a lossy compatibility fallback.
+
+Explicit native Goal payload erasure remains available under ADR-227's existing
+eligible-status, unsettled-root and immutable-launch trigger checks. It retains
+accounting/identity tombstones, every import hold and every batch receipt. Neither
+import nor automatic recovery invokes erasure. Later completed-cutover verification
+must respect native erased-payload tombstones and must never restore erased bodies
+from retained source archives merely to reproduce a historical receipt.

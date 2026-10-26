@@ -145,3 +145,30 @@ those held facts. A held prepared wake keeps its native per-conversation active
 attempt occupancy; a new manual turn can acquire independent fresh authority
 without releasing the imported attempt or delivering its result. See the exact
 owner APIs in [database-layer.md](./database-layer.md#imported-history-authority-adr-244).
+
+## Imported Goal evidence and mutation authority
+
+`DB/goal_runs.py::GoalRunsStore._require_current_authority` checks the existing
+native allowance-family import holds inside each Goal mutation transaction.
+Direct checkpoint writes, result reservations, provisioning, control settlement,
+and launch retries cannot turn retained imported evidence into current authority.
+`Agents/goal_run_service.py` also checks before current binding/evidence probes,
+quality review, completion checks and resume; recovery projection rechecks each
+Goal after the owner's audit so a later hold cannot be overwritten. Pure history,
+checkpoint and evidence reads remain available. Fresh unheld Goals and their
+exact live cancellation path retain normal behavior.
+
+The checkpoint `payload_hash` binds the original full iteration result; the
+checkpoint `artifact_digest` is the original native review identity. They remain
+historical provenance after consolidation, not approval of a mapped request.
+The mapper must separately retain original/mapped request hashes and original
+ID/digest associations in the same owning receipt (ADR-244, linked to ADR-227).
+
+Explicit `remove_payloads` retains its existing settled-state eligibility,
+`unsettled_root` check and native triggers. Eligible Goal/attempt-held history can
+be erased while retaining accounting identity, the removed tombstone, holds and
+batch receipts. A native chain hold sets `review_required`, so that chain is
+unsettled and erasure still refuses; no path clears the marker to force erasure.
+Import/recovery must never invoke erasure automatically or resurrect erased
+bodies from an archive merely to match an old receipt. No hold-release workflow
+is provided.

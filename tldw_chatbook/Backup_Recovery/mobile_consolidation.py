@@ -70,6 +70,25 @@ def _digest(value) -> str:
     ).hexdigest()
 
 
+def _sqlite_row_digest(values) -> str:
+    """Bind SQLite storage types as well as values in reviewed source content."""
+    encoded = []
+    for value in values:
+        if value is None:
+            encoded.append(("null", None))
+        elif type(value) is int:
+            encoded.append(("integer", value))
+        elif type(value) is float:
+            encoded.append(("real", value.hex()))
+        elif type(value) is str:
+            encoded.append(("text", value))
+        elif type(value) is bytes:
+            encoded.append(("blob", value.hex()))
+        else:
+            raise ValueError("mobile_unsupported_sqlite_value")
+    return _digest(encoded)
+
+
 @dataclass(frozen=True)
 class CanonicalConsoleStores:
     """Explicit physical destinations; identity is metadata, never permission."""
@@ -202,7 +221,7 @@ def _inspect_store(path, adapter, *, external_references=True):
             )
             content_digest.update(name.encode())
             for values in connection.execute(f"SELECT * FROM {quoted}" + order):
-                content_digest.update(_digest(tuple(values)).encode())
+                content_digest.update(_sqlite_row_digest(values).encode())
             for row in connection.execute(f"PRAGMA foreign_key_list({quoted})"):
                 edges.append((name, row[3], row[2], row[4]))
         if path.name == "runs.db":
