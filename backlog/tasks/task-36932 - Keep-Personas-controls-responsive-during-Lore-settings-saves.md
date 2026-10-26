@@ -1,7 +1,7 @@
 ---
 id: TASK-36932
 title: Keep Personas controls responsive during Lore settings saves
-status: In Progress
+status: Done
 created_date: 2026-10-25 23:38
 labels:
 - textual-book
@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
 assignee:
 - '@codex'
-updated_date: 2026-10-26 00:10
+updated_date: 2026-10-26 03:39
 ---
 
 ## Description
@@ -44,10 +44,10 @@ Reason: A screen-owned operation using the current Lore manager and draft contra
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 During a pending Lore settings save, unrelated enabled Personas rail controls and screen callbacks complete without waiting for the storage response.
-- [ ] #2 An admitted save retains the submitted Lore identity, version and payload; repeated activation does not create duplicate writes or silently retarget it.
-- [ ] #3 Save completion reports the actual result for the captured Lore book and cannot retarget or overwrite a replacement selection/panel; existing dirty-state and transition ownership remains intact.
-- [ ] #4 Mounted controlled slow-save and ordinary success/failure tests verify responsive admission and correct real SQLite results, without claiming natural latency from a synthetic hold.
+- [x] #1 During a pending Lore settings save, unrelated enabled Personas rail controls and screen callbacks complete without waiting for the storage response.
+- [x] #2 An admitted save retains the submitted Lore identity, version and payload; repeated activation does not create duplicate writes or silently retarget it.
+- [x] #3 Save completion reports the actual result for the captured Lore book and cannot retarget or overwrite a replacement selection/panel; existing dirty-state and transition ownership remains intact.
+- [x] #4 Mounted controlled slow-save and ordinary success/failure tests verify responsive admission and correct real SQLite results, without claiming natural latency from a synthetic hold.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,3 +64,21 @@ Reason: bounded implementation of existing UI/session/store ownership; no new co
 
 Implementation plan: Docs/superpowers/plans/2026-10-25-textual-followup-fixes.md (Task 3).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Lore Settings Save synchronously admits one screen-owned worker with the captured manager, book identity/version, payload, original record/panel and raw submitted controls. The handler releases the screen queue; completion preserves newer raw edits and rejects retired selections/panels, including after list refresh. Explicit pre-entry cancellation permits later retry, while running native persistence retains admission through physical settlement. Fixed worker name/description keep captured Lore text out of diagnostic metadata; a safe optional post-await library-pane query preserves completion safety without growing the worker census.
+
+Changed UI/Screens/personas_screen.py, UI/Persona_Modules/persona_save_completion.py, Widgets/Persona_Widgets/personas_lore_detail.py and Docs/Architecture/character-chat.md; added Tests/UI/test_personas_lore_save_responsiveness.py. Final safe-query source passes all 9 mounted cases and 9 actual private child reports; the existing optimistic-version regression also passed. Syntax and changed-block formatting pass with unchanged baseline E721 diagnostics. The Personas module ceiling was lowered to16818. Existing dirty/transition ownership is preserved.
+
+Reviewed all changed diagnostic statements: two moved save/reload warnings and one new ID-only presentation warning, without new name/body/secret/path/URL interpolation or sink changes. Regenerated Docs/security/production-diagnostic-inventory.json; exact diagnostic and Textual worker guards pass on the combined dev tree. Existing sanitization and diagnose=False remain intact.
+
+ADR required: no. Existing [ADR-007](../decisions/007-personas-workbench-route-consolidation.md), [ADR-011](../decisions/011-chatbook-workbench-ui-system.md) and [ADR-033](../decisions/033-application-session-state-ownership.md) govern this existing-boundary correction.
+
+Superpowers task, whole-branch, fix-wave and CI-delta reviews are complete with no open findings; Qodo was replaced as requested. Current implementation-head hosted CI is green: [40261190139](https://github.com/rmusser01/tldw_chatbook/actions/runs/40261190139); [40261190218](https://github.com/rmusser01/tldw_chatbook/actions/runs/40261190218). Its 17 UI shards executed all 36 new exact cases once; maximum wall time 1094s under the unchanged 1200s cap. The gate preserves all 899 live-dev selectors plus 36 new cases (floor935). Rebase onto dev e554f25812 preserved all nine reviewed source/test blobs.
+
+[Verification and explicit scope decisions](../../Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md) records exact targeted evidence and the retained baseline profile/bootstrap, Chat-size and initial Chunking timing qualifications. No full local suite or native/live-server qualification is claimed.
+
+[PR #3251](https://github.com/rmusser01/tldw_chatbook/pull/3251) targets dev.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

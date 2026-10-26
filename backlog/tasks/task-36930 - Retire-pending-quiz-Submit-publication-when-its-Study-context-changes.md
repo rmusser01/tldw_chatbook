@@ -1,7 +1,7 @@
 ---
 id: TASK-36930
 title: Retire pending quiz Submit publication when its Study context changes
-status: In Progress
+status: Done
 created_date: 2026-10-25 23:33
 labels:
 - textual-book
@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
 assignee:
 - '@codex'
-updated_date: 2026-10-26 00:06
+updated_date: 2026-10-26 03:37
 ---
 
 ## Description
@@ -44,10 +44,10 @@ Reason: A bounded correction to controller-local publication under existing runt
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A Submit response from a retired runtime, scope or attempt leaves the current attempt, question, status, controls and exact unsent answer unchanged.
-- [ ] #2 Runtime or scope away-and-back and answer-panel replacement do not restore an obsolete Submit response publication authority.
-- [ ] #3 Ordinary current-context grading/progression and the established definite pre-write failure/retry behavior remain usable without duplicate submission.
-- [ ] #4 Controlled mounted tests establish current-context success and obsolete success/failure behavior, with truthful feedback for any already completed prior-context operation and no claim of remote rollback.
+- [x] #1 A Submit response from a retired runtime, scope or attempt leaves the current attempt, question, status, controls and exact unsent answer unchanged.
+- [x] #2 Runtime or scope away-and-back and answer-panel replacement do not restore an obsolete Submit response publication authority.
+- [x] #3 Ordinary current-context grading/progression and the established definite pre-write failure/retry behavior remain usable without duplicate submission.
+- [x] #4 Controlled mounted tests establish current-context success and obsolete success/failure behavior, with truthful feedback for any already completed prior-context operation and no claim of remote rollback.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,3 +64,19 @@ Reason: bounded implementation of existing UI/session/store ownership; no new co
 
 Implementation plan: Docs/superpowers/plans/2026-10-25-textual-followup-fixes.md (Task 1).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Implemented Submit-owned publication authority across runtime/scope generations, attempt and retained question-list identity, and the original answer panel. Rechecks after Submit and its history await cover obsolete success and failure without replacing the current attempt, exact unsent draft, controls or status. Ordinary grading and definite pre-write retry semantics remain intact; feedback identifies the completed prior-context operation without claiming remote rollback.
+
+Changed UI/Study_Modules/quizzes_handler.py and Docs/Architecture/study.md; added Tests/UI/test_study_quiz_submit_lifetime.py. Final 15 mounted cases and 15 actual private-child reports pass, including history success/failure after retirement; 11 adjacent Start/retry children and 12 Study keyword/contract guards passed. Scoped lint/format checks introduce no new findings.
+
+ADR required: no. Existing [ADR-011](../decisions/011-chatbook-workbench-ui-system.md) and [ADR-033](../decisions/033-application-session-state-ownership.md) govern this bounded controller/session correction. No new service, state or architecture boundary.
+
+Superpowers task, whole-branch, fix-wave and CI-delta reviews are complete with no open findings; Qodo was replaced as requested. Current implementation-head hosted CI is green: [40261190139](https://github.com/rmusser01/tldw_chatbook/actions/runs/40261190139); [40261190218](https://github.com/rmusser01/tldw_chatbook/actions/runs/40261190218). Its 17 UI shards executed all 36 new exact cases once; maximum wall time 1094s under the unchanged 1200s cap. The gate preserves all 899 live-dev selectors plus 36 new cases (floor935). Rebase onto dev e554f25812 preserved all nine reviewed source/test blobs.
+
+[Verification and explicit scope decisions](../../Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md) records exact targeted evidence and the retained baseline profile/bootstrap, Chat-size and initial Chunking timing qualifications. No full local suite or native/live-server qualification is claimed.
+
+[PR #3251](https://github.com/rmusser01/tldw_chatbook/pull/3251) targets dev.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

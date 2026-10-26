@@ -1,7 +1,7 @@
 ---
 id: TASK-36931
 title: Keep Watchlists inbox SQLite work off the UI event loop
-status: In Progress
+status: Done
 created_date: 2026-10-25 23:37
 labels:
 - textual-book
@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
 assignee:
 - '@codex'
-updated_date: 2026-10-26 01:38
+updated_date: 2026-10-26 03:38
 ---
 
 ## Description
@@ -43,10 +43,10 @@ Reason: Use existing controller/store boundaries and preserve policy gates plus 
 <!-- SECTION:DESCRIPTION:END -->
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 File-backed inbox list, mark-read and dismiss operations leave the UI loop responsive during controlled slow reads or competing SQLite writes.
-- [ ] #2 Ordinary mark-read and dismiss operations persist the intended notification state and refresh through the established inbox loader ownership.
-- [ ] #3 Existing policy refusals, corrupt/unavailable-store feedback and nonfatal worker behavior remain intact, without reporting a failed mutation as successful.
-- [ ] #4 Targeted coverage verifies file-backed responsiveness and compatible in-memory behavior without violating SQLite connection ownership or weakening lifecycle guards.
+- [x] #1 File-backed inbox list, mark-read and dismiss operations leave the UI loop responsive during controlled slow reads or competing SQLite writes.
+- [x] #2 Ordinary mark-read and dismiss operations persist the intended notification state and refresh through the established inbox loader ownership.
+- [x] #3 Existing policy refusals, corrupt/unavailable-store feedback and nonfatal worker behavior remain intact, without reporting a failed mutation as successful.
+- [x] #4 Targeted coverage verifies file-backed responsiveness and compatible in-memory behavior without violating SQLite connection ownership or weakening lifecycle guards.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,3 +63,19 @@ Reason: bounded implementation of existing UI/session/store ownership; no new co
 
 Implementation plan: Docs/superpowers/plans/2026-10-25-textual-followup-fixes.md (Task 2).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Canonical bound list/read/dismiss calls on the exact file-backed notifications repository now run through the existing finite-worker ownership helper. In-memory, custom synchronous and awaitable stores retain their caller-thread/loop contracts; policy gates and nonfatal error handling are preserved. Each admitted screen mutation keeps its completion-to-refresh path using noncancelling workers, while the shared loader retains latest-wins ownership. This bounded admission correction addresses the whole-branch review's native-write/awaiter cancellation race.
+
+Changed UI/Subscription_Modules/notifications_inbox_controller.py, the two mutation admissions in UI/Screens/watchlists_collections_screen.py and Docs/Architecture/notifications.md; added Tests/UI/test_notifications_inbox_responsiveness.py. All 12 final cases pass (6 actual mounted private children plus 6 contracts), alongside 11 existing controller/store/nonfatal cases and 7 native finite-worker lifecycle outcomes. Real SQLite two-row A-held/B-commits-first regressions for Mark read and Dismiss failed at the intended stale-table assertion before the two-line fix and pass after it. Screen length is unchanged; no new lint diagnostics. The historical source-path typo is corrected. TASK-33283 retains pane rebuilding/focus ownership.
+
+ADR required: no. Existing [ADR-011](../decisions/011-chatbook-workbench-ui-system.md), [ADR-033](../decisions/033-application-session-state-ownership.md) and [ADR-042](../decisions/042-watchlists-reader-first-ia.md) apply; no storage, connection or service boundary changes.
+
+Superpowers task, whole-branch, fix-wave and CI-delta reviews are complete with no open findings; Qodo was replaced as requested. Current implementation-head hosted CI is green: [40261190139](https://github.com/rmusser01/tldw_chatbook/actions/runs/40261190139); [40261190218](https://github.com/rmusser01/tldw_chatbook/actions/runs/40261190218). Its 17 UI shards executed all 36 new exact cases once; maximum wall time 1094s under the unchanged 1200s cap. The gate preserves all 899 live-dev selectors plus 36 new cases (floor935). Rebase onto dev e554f25812 preserved all nine reviewed source/test blobs.
+
+[Verification and explicit scope decisions](../../Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md) records exact targeted evidence and the retained baseline profile/bootstrap, Chat-size and initial Chunking timing qualifications. No full local suite or native/live-server qualification is claimed.
+
+[PR #3251](https://github.com/rmusser01/tldw_chatbook/pull/3251) targets dev.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

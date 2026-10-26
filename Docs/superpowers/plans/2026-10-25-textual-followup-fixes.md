@@ -43,7 +43,7 @@ Reason: existing-boundary correction.
 - [x] Implement the bounded correction in `tldw_chatbook/UI/Study_Modules/quizzes_handler.py` using the established local pattern.
 - [x] Run `Tests/UI/test_study_quiz_submit_lifetime.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
 - [x] Run scoped ruff/format checks, update `Docs/Architecture/study.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
-- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
+- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files, then obtains task-scoped review of the immutable revision.
 
 ### Task 2: TASK-36931 Watchlists inbox store dispatch
 
@@ -62,7 +62,7 @@ Reason: existing-boundary correction.
 - [x] Implement the bounded correction in `tldw_chatbook/UI/Subscription_Modules/notifications_inbox_controller.py` using the established local pattern.
 - [x] Run `Tests/UI/test_notifications_inbox_responsiveness.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
 - [x] Run scoped ruff/format checks, update `Docs/Architecture/notifications.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
-- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
+- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files, then obtains task-scoped review of the immutable revision.
 
 ### Task 3: TASK-36932 Personas Lore save operation
 
@@ -81,14 +81,14 @@ Reason: existing-boundary correction.
 - [x] Implement the bounded correction in `tldw_chatbook/UI/Screens/personas_screen.py` using the established local pattern.
 - [x] Run `Tests/UI/test_personas_lore_save_responsiveness.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
 - [x] Run scoped ruff/format checks, update `Docs/Architecture/character-chat.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
-- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
+- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files, then obtains task-scoped review of the immutable revision.
 
 
 ## Delivery checks
 
 - [x] Finish the fresh whole-branch Superpowers review and address actionable findings.
-- [ ] Create and attach the PR against dev; verify hosted CI and current-head review feedback.
-- [ ] Complete task acceptance criteria and Implementation Notes via Backlog CLI after CI.
+- [x] Create and attach the PR against dev; verify hosted CI and current-head review feedback.
+- [x] Complete task acceptance criteria and Implementation Notes via Backlog CLI after CI.
 
 Verification record: `Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md`.
 
