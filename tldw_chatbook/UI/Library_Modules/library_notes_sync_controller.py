@@ -959,6 +959,52 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
+    def begin_add_from_files(self) -> bool:
+        """Start Add from files on the chooser; keep a step that is still running.
+
+        TASK-34000.17 (review finding N-17): the phase was ``choose`` exactly
+        once, at construction. Nothing returned to it -- ``abandon_setup``
+        releases the provisional root and ``return_to_roots`` lands on the
+        root list -- so after an activation, a check that found nothing, a
+        failed Recovery or a configure form left with ‹ Notes, the next Add
+        from files reopened on that leftover page for the rest of the session.
+        This is the one entry that means "start Add from files".
+
+        Returns:
+            True when the chooser was installed and published. False while a
+            check or activation is running (AC#2): that step is kept and its
+            own progress is what the canvas paints; nothing is published.
+        """
+
+        if self._state.phase in {"checking", "activating"}:
+            return False
+        # The same epoch advance ``abandon_setup`` and ``return_to_roots``
+        # make, so a late result from the abandoned walk cannot land on the
+        # fresh chooser. It also drops the Receipts rows and the Resolution
+        # history page (``_invalidate_receipt_history``), as every other exit
+        # does -- both are re-read when Manage sync folders opens.
+        self._begin_unbound_lifecycle()
+        self._review_plan = None
+        # The chooser snapshot, keeping the durable things Manage sync folders
+        # shows: the root rows, their paging and the write receipts. The
+        # snapshot's own validation rules out a typo'd phase. Availability is
+        # re-read from the runtime, as ``choose_relationship`` and
+        # ``refresh_roots`` read it, so a runtime that became ready since the
+        # last chooser is offered rather than remembered as inert.
+        self._state = replace(
+            initial_lasting_sync_snapshot(
+                lasting_available=(
+                    self._runtime.snapshot().status in _SETUP_READY_STATUSES
+                )
+            ),
+            roots=self._state.roots,
+            root_page=self._state.root_page,
+            root_page_count=self._state.root_page_count,
+            write_receipts=self._state.write_receipts,
+        )
+        self._publish()
+        return True
+
     def choose_relationship(self, relationship: str) -> str:
         """Choose one-time import or the gated lasting setup before any picker."""
 

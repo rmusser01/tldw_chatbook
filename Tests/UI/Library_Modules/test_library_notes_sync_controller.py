@@ -15,6 +15,8 @@ from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     root_status_label,
     LastingSyncApplyBlocker,
+    LastingSyncHistory,
+    LastingSyncWriteReceipt,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictApplyResult,
@@ -1103,6 +1105,66 @@ async def test_not_configured_refresh_keeps_setup_available() -> None:
     controller.refresh_roots()
 
     assert controller.snapshot.lasting_available is True
+
+
+async def test_configured_runtime_still_starting_is_not_offered_as_ready() -> None:
+    """TASK-34000.71 AC#5: a profile WITH roots whose start is in flight.
+
+    The lazy no-root fix must not be bought by widening the setup gate:
+    "starting" stays outside ``_SETUP_READY_STATUSES``, so a configured
+    user's in-flight boot start is reported honestly (not ready, with the
+    not-ready copy on press), and the option is offered once it settles.
+    """
+
+    from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+        _SETUP_READY_STATUSES,
+    )
+
+    assert "starting" not in _SETUP_READY_STATUSES
+    runtime = _Runtime()
+    root = NotesSyncRootRuntimeSnapshot("root-" + "a" * 40, "up_to_date", "none")
+    current = NotesSyncRuntimeSnapshot("starting", "wait", (root,))
+    runtime.snapshot = lambda: current
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    assert controller.snapshot.lasting_available is False
+    assert controller.begin_add_from_files() is True
+    assert controller.snapshot.lasting_available is False
+
+    assert controller.choose_relationship("keep_synced") == "choose"
+    assert controller.snapshot.phase == "choose"
+    assert (
+        controller.snapshot.status_line
+        == "Keeping a folder synced isn't ready on this profile yet."
+    )
+
+    # The start settles: the next chooser re-reads it as ready.
+    current = NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+    assert controller.begin_add_from_files() is True
+    assert controller.snapshot.lasting_available is True
+    assert controller.choose_relationship("keep_synced") == "configure"
+
+
+async def test_failed_runtime_start_shows_the_honest_copy_not_an_inert_option() -> (
+    None
+):
+    """TASK-34000.71 AC#4: a start that FAILS is the TASK-21249 state, named."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot("failed", "review_settings")
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    assert controller.snapshot.lasting_available is False
+    assert controller.choose_relationship("keep_synced") == "choose"
+    assert (
+        controller.snapshot.status_line
+        == "Lasting folder sync could not start. Review settings and restart."
+    )
 
 
 async def test_conflict_selection_stages_without_runtime_and_survives_paging() -> None:
@@ -3875,3 +3937,92 @@ async def test_a_migration_review_with_a_refused_candidate_holds_activate_and_na
     assert ("activate_root", "root-1", TOKEN) not in runtime.calls
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.status_line == expected_line
+
+
+@pytest.mark.parametrize(
+    "phase", ("configure", "review", "receipt", "history", "roots")
+)
+async def test_begin_add_from_files_resets_every_settled_phase(
+    phase: str,
+) -> None:
+    """TASK-34000.17: one entry means "start Add from files".
+
+    The phase used to be ``choose`` exactly once, at construction; every
+    settled phase a previous walk left behind (the receipt, the configure
+    form, ``roots`` after "Nothing to review." or a failed Recovery, the
+    history page) was what the next Add from files reopened on. Resetting
+    keeps the durable things the roots list shows -- the root rows, their
+    paging and the write receipts -- and advances the lifecycle epoch so a
+    late result from the abandoned walk cannot land on the fresh chooser.
+    The Resolution history page and the Receipts rows are lifecycle-scoped
+    (``_invalidate_receipt_history`` drops them on every unbound lifecycle,
+    ``abandon_setup`` and ``return_to_roots`` included), so this entry resets
+    them like every other exit rather than resurrecting a page the lifecycle
+    just invalidated.
+    """
+
+    runtime = _Runtime()
+    published: list[str] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: published.append(snapshot.phase),
+    )
+    controller.refresh_roots()
+    history = LastingSyncHistory("root-1", (), 2, False, False)
+    receipts = (LastingSyncWriteReceipt("12:00", "Updated file", "a.md", "A"),)
+    controller._state = replace(  # noqa: SLF001 - the phase a walk left behind
+        controller.snapshot,
+        phase=phase,
+        status_line="Sync root activated.",
+        receipt_line="3 applied · listed under Receipts",
+        history=history,
+        write_receipts=receipts,
+        root_page=1,
+        root_page_count=1,
+    )
+    roots = controller.snapshot.roots
+    assert roots, "the fake runtime seeds one root"
+    epoch_before = controller._lifecycle_epoch  # noqa: SLF001
+    published.clear()
+
+    assert controller.begin_add_from_files() is True
+
+    snapshot = controller.snapshot
+    assert snapshot.phase == "choose"
+    assert snapshot.status_line == "Nothing chosen yet."
+    assert snapshot.receipt_line == ""
+    assert snapshot.roots == roots
+    assert snapshot.root_page == 1
+    assert snapshot.root_page_count == 1
+    assert snapshot.history == LastingSyncHistory()
+    assert snapshot.receipts == ()
+    assert snapshot.write_receipts == receipts
+    assert snapshot.lasting_available is True
+    assert published == ["choose"]
+    assert controller._lifecycle_epoch > epoch_before  # noqa: SLF001
+
+
+@pytest.mark.parametrize("phase", ("checking", "activating"))
+async def test_begin_add_from_files_keeps_a_running_step(phase: str) -> None:
+    """TASK-34000.17 AC#2: a check or activation still running is shown, not reset."""
+
+    runtime = _Runtime()
+    published: list[str] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: published.append(snapshot.phase),
+    )
+    controller._state = replace(  # noqa: SLF001 - a step in flight
+        controller.snapshot, phase=phase, status_line="Checking changes…"
+    )
+    epoch_before = controller._lifecycle_epoch  # noqa: SLF001
+    published.clear()
+
+    assert controller.begin_add_from_files() is False
+
+    assert controller.snapshot.phase == phase
+    assert controller.snapshot.status_line == "Checking changes…"
+    assert published == []
+    assert controller._lifecycle_epoch == epoch_before  # noqa: SLF001

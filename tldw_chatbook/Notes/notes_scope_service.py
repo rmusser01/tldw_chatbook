@@ -2067,6 +2067,46 @@ class NotesScopeService:
             limit,
         )
 
+    async def list_note_link_candidates(
+        self,
+        *,
+        scope: ScopeType | str,
+        query: str,
+        exclude_note_id: str,
+        user_id: Optional[str] = None,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        """List the notes the ``[[`` picker may link to (TASK-34000.11).
+
+        Args:
+            scope: The note scope to read; only ``ScopeType.LOCAL_NOTE``
+                carries the ``note://`` link form.
+            query: The text typed after ``[[`` (may be empty: the most
+                recently modified notes are offered).
+            exclude_note_id: The open note, never offered to itself.
+            user_id: The local user whose database to read.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows, best match first.
+
+        Raises:
+            ValueError: If the scope is not local -- the same refusal
+                ``list_note_backlinks`` gives, for the same reason.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise ValueError("Link candidates are only listed for local notes.")
+        return await asyncio.to_thread(
+            lambda: self.local_notes_service.list_note_link_candidates(
+                self._require_user_id(user_id),
+                query=query,
+                exclude_note_id=exclude_note_id,
+                limit=limit,
+            )
+        )
+
     async def count_notes(
         self,
         *,

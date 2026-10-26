@@ -111,6 +111,11 @@ class _Host(App[None]):
     ) -> None:
         self.messages.append(message)
 
+    def on_library_notes_add_from_files_canvas_manage_roots_requested(
+        self, message
+    ) -> None:
+        self.messages.append(message)
+
 
 class _HostWithExternalControl(_Host):
     def compose(self) -> ComposeResult:
@@ -295,6 +300,99 @@ async def test_receipt_keeps_durable_status_and_back_visible() -> None:
         await pilot.pause()
         assert "1 applied · listed under Receipts" in _frame(app)
         assert app.query_one("#notes-sync-back", Button)
+
+
+@pytest.mark.parametrize("size", ((60, 20), (120, 36)))
+async def test_an_unhandled_phase_renders_the_chooser_with_a_way_back(
+    size: tuple[int, int],
+) -> None:
+    """TASK-34000.17 AC#5/AC#3: ``roots`` (and any phase the body chain does
+    not name) is the chooser, never a heading over nothing.
+
+    The review's capture verify/nl-v-n-17/13: after a check that ended in
+    "Nothing to review." the page was "Add files to Library notes." and the
+    status line -- no Import once, no Keep synced, no ‹ Notes, nothing
+    focused.
+    """
+
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="roots",
+        status_line="Nothing to review.",
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        for selector in ("#notes-add-import-once", "#notes-add-keep-synced", "#notes-sync-back"):
+            assert app.query(selector), f"{selector} missing for phase roots:\n{_frame(app)}"
+        # Availability is the label: the inert chooser's button stays pressable
+        # (so it can explain the gate) and wears a "○" prefix instead.
+        assert str(app.query_one("#notes-add-import-once", Button).label) == "Import once"
+        assert (
+            str(app.query_one("#notes-add-keep-synced", Button).label)
+            == "Keep a folder synced"
+        )
+        frame = _frame(app)
+        assert "Import once" in frame
+        assert "Keep a folder synced" in frame
+        assert "‹ Notes" in frame
+        app.query_one(LibraryNotesAddFromFilesCanvas).focus_first_safe_control()
+        await _wait_for(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "notes-add-import-once",
+            message=f"phase roots focused {app.focused!r}, not Import once",
+        )
+
+
+async def test_the_history_page_offers_notes_and_the_receipt_offers_manage_sync_folders() -> (
+    None
+):
+    """TASK-34000.17 AC#3/AC#4: every settled bar has ‹ Notes; the receipt
+    routes onward to Manage sync folders."""
+
+    history = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="history",
+        review=_conflict_review(),
+        history=LastingSyncHistory("root-1", (), 1, False, False),
+    )
+    app = _Host(history)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#notes-sync-history-return", Button)
+        assert app.query_one("#notes-sync-back", Button), (
+            f"the history bar has no ‹ Notes:\n{_frame(app)}"
+        )
+        app.query_one(LibraryNotesAddFromFilesCanvas).focus_first_safe_control()
+        await _wait_for(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "notes-sync-history-return",
+            message=f"phase history focused {app.focused!r}, not Return",
+        )
+
+    receipt = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="receipt",
+        review=_conflict_review(),
+        status_line="Sync root activated.",
+        receipt_line="3 applied · listed under Receipts",
+    )
+    app = _Host(receipt)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        manage = app.query_one("#notes-sync-manage-roots", Button)
+        assert str(manage.label) == "Manage sync folders"
+        assert "Manage sync folders" in _frame(app)
+        assert app.query_one("#notes-sync-back", Button)
+        manage.press()
+        await _wait_for(
+            pilot,
+            lambda: any(
+                isinstance(m, LibraryNotesAddFromFilesCanvas.ManageRootsRequested)
+                for m in app.messages
+            ),
+            message="Manage sync folders posted no ManageRootsRequested",
+        )
 
 
 @pytest.mark.parametrize("size", ((60, 20), (120, 36)))

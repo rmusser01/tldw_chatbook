@@ -1611,6 +1611,7 @@ class TldwCli(
         self._notes_sync_runtime_owner: "NotesSyncRuntimeOwner | None" = None
         self._notes_sync_runtime_owner_lock = threading.Lock()
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
+        self._notes_sync_runtime_lazy_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         self._recover_inflight_transfers_task: asyncio.Task[None] | None = None
         # Kanban trio (server/local/scope) is built lazily on first access

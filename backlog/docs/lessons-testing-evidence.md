@@ -12663,6 +12663,27 @@ plan assertion in the suite was captured without it. Do not add it as a
 side effect of an unrelated change.
 ---
 
+## A MATCH-driven FTS5 step is printed as `SCAN <fts> VIRTUAL TABLE INDEX 0:M<n>` -- assert the `M` flag, not the absence of `SCAN` (TASK-34000.12, 2026-10-22)
+
+**Incident.** The task brief's plan budget for the new Notes-filter CTE said
+"no step starts with `SCAN notes_fts`". Probed on the venv's SQLite 3.49.1
+before writing the test: `EXPLAIN QUERY PLAN` prints the FTS5 leg of
+`... WHERE notes_fts MATCH ?` as `SCAN notes_fts VIRTUAL TABLE INDEX 0:M2`
+even though it is driven by the MATCH index. The brief's assertion could
+never pass, on any SQLite: for a virtual table the planner always says
+`SCAN`, and the index it chose is the `INDEX <n>:<flags>` suffix. The `M`
+in the flags is the MATCH constraint (FTS5's xBestIndex sets it); a true
+full scan of the FTS table prints the same prefix with no `M`.
+
+**What to do.** For a virtual-table step, assert on the flags, not the verb:
+every step naming the FTS table contains `VIRTUAL TABLE INDEX 0:M`, and the
+negative control is the same statement with the MATCH replaced by a
+non-indexable predicate, which prints the prefix without `M`. Keep the
+`sqlite_stat1`-absence assertion in front of it (entries above): the flag
+is still read off the stats-free plan users run.
+
+---
+
 ## A subsystem can have several migration entry points, and the product may not use the one you were pointed at (TASK-21130, 2026-08-23)
 
 **What happened.** The finding cited `TTS/profile_schema.py:1439,1468` —

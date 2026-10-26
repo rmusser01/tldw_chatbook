@@ -523,7 +523,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36728/36729 append twenty-two mounted cases; existing shard slots stay fixed.
 # TASK-36899 adds eight context lifetime/error controls without moving existing slots.
 # TASK-36900 adds eighteen real Reader/DB lifetime and pending-keyboard controls.
-MINIMUM_FILES = 893
+# TASK-34000 P1-B batch (2026-10-25, rebased onto dev 7a5e2513c5) appends its
+# 6 lane files at the tail so no existing entry changes shard: .17, .14, .12,
+# .11 (two files), .71: 893 + 6 = 899.
+MINIMUM_FILES = 899
 
 
 def read_census(path: Path) -> list[str]:

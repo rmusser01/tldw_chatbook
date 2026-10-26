@@ -73,7 +73,10 @@ def test_list_state_filtered_empty_does_not_claim_the_source_is_empty():
 
     assert state.header_copy == "Notes (2)"
     assert state.status_copy == "filter: [draft] <plan> · 0 results"
-    assert state.empty_copy == "No notes match “[draft] <plan>”. Clear the filter."
+    assert state.empty_copy == (
+        "No notes match “[draft] <plan>” in titles, bodies or keywords. "
+        "Try fewer words, or clear the filter."
+    )
     assert state.empty_kind == "filter-empty"
     assert state.total_count == 2
     assert state.result_count == 0

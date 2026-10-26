@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N    N   Library notes · Manage sync folders                                                                             │
+│ │ Navigation       Collapse      │  a    o   Sync root activated.                                                                                            │
+│ │     Import…                    │  v    t   Sync A                                                                                                          │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e   ✓ Up to date as of 18:24 · Next: Check changes                                                                  │
+│ │ ▊ Search Library…        ▎▊x▎  │       s     Check changes                                                                                                 │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │             Pause                                                                                                         │
+│ │                                │             ○ Retarget unavailable — not in this release                                                                  │
+│ │ ─────────────────────────────  │             ○ Disconnect unavailable — not in this release                                                                │
+│ │ Browse                    ▾    │                                                                                                                           │
+│ │    Media (23) — your files     │                                                                                                                           │
+│ │    Conversations (0)           │           Sync B                                                                                                          │
+│ │  ▸ Notes (129)                 │           ✓ Up to date as of 18:25 · Next: Check changes                                                                  │
+│ │    Prompts (0) — reuse         │             Check changes                                                                                                 │
+│ │    Skills (1) — AI add-ons     │<---         Pause                                                                                                         │
+│ │    Collections (0)             │             ○ Retarget unavailable — not in this release                                                                  │
+│ │    Search / RAG — find all     │             ○ Disconnect unavailable — not in this release                                                                │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Artifacts                 ▾    │                                                                                                                           │
+│ │    All artifacts               │     --->  VSync                                                                                                           │
+│ │    Chatbooks                   │           ✕ Blocked · Next: Review settings                                                                               │
+│ │    Reports                     │             ○ Retarget unavailable — not in this release                                                                  │
+│ │    Dreams                      │             Check changes                                                                                                 │
+│ │ ─────────────────────────────  │             Pause                                                                                                         │
+│ │ Create                    ▾    │<---         ○ Disconnect unavailable — not in this release                                                                │
+│ │    New note                    │                                                                                                                           │
+│ │    New prompt                  │                                                                                                                           │
+│ │    New skill                   │           Receipts                                                                                                        │
+│ │ ─────────────────────────────  │           2026-10-22 18:25 · Created note from file · a.md · a                                                            │
+│ │ Study                     ▾    │           2026-10-22 18:25 · Created note from file · c.md · c                                                            │
+│ │    Study decks (0)             │           2026-10-22 18:25 · Created note from file · b.md · b                                                            │
+│ │    Flashcards due: 0           │           2026-10-22 18:21 · Created note from file · b.md · b                                                            │
+│ │    Quizzes (0)                 │           2026-10-22 18:21 · Created note from file · a.md · a                                                            │
+│ │ ─────────────────────────────  │           2026-10-22 18:21 · Created note from file · c.md · c                                                            │
+│ │ Import / Export           ▾  ▆ │                                                                                                                           │
+│ │    Import…                     │                                                                                                                           │
+│ │  ▾ scroll for more             │           Retarget/Disconnect unavailable — not in this release; nothing on disk or in Notes changes.                     │
+│ └────────────────────────────────┘            ┃ ‹ Notes ┃                                                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter run action | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

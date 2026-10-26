@@ -85,6 +85,20 @@ FAST_LANE_TARGETS = (
     # them; real tmp SQLite through the real creator and importer, about
     # four seconds.
     "Tests/Chatbooks/test_chatbook_keywords_round_trip.py",
+    # TASK-34000.12: the Library Notes list filter's matching rule as a
+    # table (any order, a partial last word, quotes for a phrase, FTS
+    # operators never honoured); pure, no Hypothesis, under a second.
+    "Tests/Utils/test_notes_filter_match.py",
+    # TASK-34000.11: a typed [[Title]] records a backlink only for exactly
+    # one live title match; the [[ picker's candidates and pure helpers
+    # (real tmp SQLite, no Hypothesis -- the properties sit in the
+    # `_properties.py` sibling outside this lane); about three seconds.
+    "Tests/Notes/test_note_links_typed_titles.py",
+    # TASK-34000.11 final fix round (I-2): the Preview link policy as a pure
+    # table over ``Notes/note_link_policy`` -- refused schemes, control and
+    # bidi characters, the case-insensitive scheme, the scheme-less href
+    # (no app import, no Hypothesis; well under a second).
+    "Tests/Notes/test_note_link_policy.py",
     # TASK-34000.25: the ``[<title>](media://<uuid>)`` source line a note
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).

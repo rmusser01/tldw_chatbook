@@ -657,7 +657,12 @@ def build_library_notes_list_state(
             empty_kind = "source-empty"
         elif filter_note:
             filter_copy = ellipsize_note_title_cells(filter_note, 32)
-            empty_copy = f"No notes match “{filter_copy}”. Clear the filter."
+            # TASK-34000.12: name what was searched (titles, bodies and
+            # keywords) and offer a next step; the Clear filter button stays.
+            empty_copy = (
+                f"No notes match “{filter_copy}” in titles, bodies or keywords. "
+                "Try fewer words, or clear the filter."
+            )
             empty_kind = "filter-empty"
     return LibraryNotesListState(
         rows=rows,

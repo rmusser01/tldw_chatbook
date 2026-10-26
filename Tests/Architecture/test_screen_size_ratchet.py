@@ -1045,7 +1045,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: instead of parking entry focus on the live filter (M5):
     #: 37630 -> 37635 (measured). Methods unchanged at 1354.
     # TASK-36454..36458: completion helpers and pure option projection reduce this owner.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37542, 1354),
+    #: 2026-10-24, TASK-34000 P1-B rebased onto dev 96cae7eec0 (owner decision,
+    #: expand-the-limits rule): P1-B's .17/.14/.12/.11/.71 screen work on top of
+    #: dev's decomposed screen: 37542 -> 37759 lines, 1354 -> 1361 methods (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37759, 1361),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
