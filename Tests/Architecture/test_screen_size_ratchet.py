@@ -141,8 +141,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-23 after rebasing onto dev 5b5920b8e2+ (the cadence's
     #: +3 landed via #3191): 24321/736, this branch's exact measurement.
     #: Rebased 2026-10-25 onto dev 7a5e2513c5, which measures 24345 against
-    #: its own 24344 row (9688ac373f's line, TASK-36960): this row stays dev's
-    #: row - 23 (the branch's net removal) and does not absorb dev's line.
+    #: its own 24344 row (the +1 overrun dev commit 9688ac373f, PR #3244,
+    #: left without moving the row): this row stays dev's row - 23 (the branch's
+    #: net removal) and does not absorb dev's line. Re-checked on dev
+    #: e554f25812, which does not touch chat_screen.py.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
