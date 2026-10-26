@@ -154,6 +154,7 @@ MAX_PASS_ADDED_MODULES = 558
 #: before this change; `library_screen` then drops 44 lines
 #: (the timer landing becomes a one-shot pending landing). Modules unchanged
 #: (556), pinned at the measurement.
+#: 2026-10-26 TASK-34000.28/.40 polish-1a + TASK-34000.29 polish-1b Task 6: 425,347 -> 425,892 (paired arms; dev 424,643 + 1,159, then ddb9693e3b + 90) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 MAX_PASS_ADDED_LOC = 426_388
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
