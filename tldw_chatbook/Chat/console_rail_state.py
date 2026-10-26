@@ -201,6 +201,57 @@ class ConsoleRailState:
     tasks_open: bool = True
 
 
+#: (DOM selector, label field, badge field) for each rail's collapsed handle.
+_RAIL_HANDLE_COPY_FIELDS = (
+    ("#console-context-rail-handle", "left_label", "left_badge"),
+    ("#console-inspector-rail-handle", "right_label", "right_badge"),
+)
+
+
+def console_rail_handle_copy(
+    state: ConsoleRailState,
+) -> tuple[tuple[str, str, str], ...]:
+    """Return ``(selector, label, badge)`` for each rail handle.
+
+    Args:
+        state: The effective rail state.
+
+    Returns:
+        One row per handle, Context first.
+    """
+    return tuple(
+        (selector, getattr(state, label), getattr(state, badge))
+        for selector, label, badge in _RAIL_HANDLE_COPY_FIELDS
+    )
+
+
+def console_rail_handle_copy_only_changed(
+    previous: ConsoleRailState | None, current: ConsoleRailState
+) -> bool:
+    """True when two rail states differ only in the handles' label or badge.
+
+    TASK-36012: a run's start and end change the Inspector handle's badge
+    (``running``) and nothing else. That copy moves no rail, section or
+    column, so it needs the handles repainted, not the whole rail cascade
+    (which re-hid every Inspector row and asked for two rail layouts).
+
+    Args:
+        previous: The state last applied, or None before the first apply.
+        current: The incoming state.
+
+    Returns:
+        True only for a real change confined to handle copy.
+    """
+    if previous is None or previous == current:
+        return False
+    copy_fields = {
+        name: getattr(current, name)
+        for _selector, label, badge in _RAIL_HANDLE_COPY_FIELDS
+        for name in (label, badge)
+    }
+    return replace(previous, **copy_fields) == current
+
+
 def _sanitize_key_part(value: Any) -> str:
     text = "" if value is None else str(value).strip()
     sanitized = _INVALID_KEY_RUN_RE.sub("_", text).strip("_")

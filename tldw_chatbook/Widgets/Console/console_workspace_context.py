@@ -11,6 +11,7 @@ from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.compose import compose
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static
@@ -44,6 +45,7 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )
+from .compose_delta import plan_in_place_delta
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -432,6 +434,10 @@ _ROW_BOTTOM_MARGIN = 1
 # state-change recompose (observed as a collapse failing to render) and, in
 # any environment where the gutter CSS is absent, oscillate the relabel.
 _RELABEL_MIN_WIDTH_DELTA = 2
+#: Controls the screen mounts into the tray outside ``compose`` (the
+#: transitional legacy "New conversation" alias,
+#: ``ChatScreen._sync_console_legacy_workspace_context_aliases``).
+_OUT_OF_BAND_CHILD_IDS = frozenset({"console-new-workspace-conversation"})
 
 
 def _conversation_activity_text(row) -> str:
@@ -795,6 +801,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # the screen-side equality skip never re-arms.
             self.state = state
             return
+        if self._patch_in_place(state):
+            return
         self.state = state
         self.styles.min_height = 0
         scroll_parent = self._nearest_scroll_parent()
@@ -803,6 +811,78 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    def _patch_in_place(self, state: ConsoleWorkspaceContextState) -> bool:
+        """Apply a delta that moves no box to the mounted rows, without a rebuild.
+
+        TASK-36012. A send's start and end flip one row's "Running"
+        attention: its action icon (a fixed-width slot), a colour class and
+        two tooltips. The recompose that used to follow re-mounted every row,
+        and each mount cost a whole-screen layout (plus the legacy alias
+        re-mount and two section reconciles): three extra full reflows at a
+        send's start, two at its end. ``plan_in_place_delta`` patches only a
+        delta whose two composes have the same shape, styles and inputs, on a
+        tray whose DOM is proved to show its current state (the same proof
+        ``_can_skip_recompose`` uses); anything else rebuilds as before.
+
+        Args:
+            state: The incoming display state.
+
+        Returns:
+            True when the mounted rows now show ``state``.
+        """
+        if (
+            not getattr(self, "_console_workspace_context_synced", False)
+            or self._composed_row_signature is None
+            or self._composed_fixed_signature is None
+            or getattr(self, "_recompose_required", False)
+            or self.recompose_in_flight
+            or not self.is_mounted
+            or not self.children
+        ):
+            return False
+        if self._mounted_signatures(self._composed_fixed_signature) != (
+            self._composed_row_signature,
+            self._composed_fixed_signature,
+        ):
+            return False
+        shown = self._state
+        record = (
+            self._composed_row_signature,
+            self._composed_fixed_signature,
+            self._composed_state_reads,
+            self._composed_publication_state,
+        )
+        writes = None
+        try:
+            before = compose(self)
+            self._state = state
+            # Composed last, so the recorded signatures and reads describe
+            # the state the patched tree shows.
+            after = compose(self)
+            writes = plan_in_place_delta(
+                [
+                    child
+                    for child in self.children
+                    if child.id not in _OUT_OF_BAND_CHILD_IDS
+                ],
+                before,
+                after,
+            )
+        finally:
+            if writes is None:
+                self._state = shown
+                (
+                    self._composed_row_signature,
+                    self._composed_fixed_signature,
+                    self._composed_state_reads,
+                    self._composed_publication_state,
+                ) = record
+        if writes is None:
+            return False
+        for write in writes:
+            write()
+        return True
 
     async def wait_for_publication(self) -> bool:
         """Await refresh and the existing mounted-DOM proof, not state assignment.
