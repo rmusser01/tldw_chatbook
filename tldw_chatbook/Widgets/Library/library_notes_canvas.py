@@ -964,6 +964,15 @@ class NoteEditorTextArea(DetachSafeTextArea):
     #: to a box laid out for a terminal that no longer exists.
     link_picker_terminal: tuple[int, int] | None = None
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # TASK-34000.28 (N-32, fix round 1): F6 leaves the body for the next
+        # pane instead of selecting the line (Textual's own TextArea f6).
+        # Imported here, not at module level (ADR-097 boot budget).
+        from tldw_chatbook.Widgets.text_area_pane_key import release_pane_key
+
+        release_pane_key(self)
+
     class LinkPickerKey(Message):
         """One of ``LINK_PICKER_KEYS`` pressed while the picker is open."""
 

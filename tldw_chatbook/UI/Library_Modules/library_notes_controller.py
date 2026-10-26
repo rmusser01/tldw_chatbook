@@ -6506,7 +6506,7 @@ class LibraryNotesController:
         await self._open_library_export_canvas(ExportScope(kind="notes"))
     @on(Button.Pressed, ".library-notes-folder-row")
     def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:
-        """Expand or collapse one real folder through stable folder identity."""
+        """Select one real folder and expand or collapse it (Enter or a click)."""
         event.stop()
         folder_id = str(getattr(event.button, "folder_id", "") or "")
         if not folder_id:
@@ -6514,6 +6514,18 @@ class LibraryNotesController:
         self._library_notes_tree_selected_placement_id = str(
             getattr(event.button, "placement_id", "") or ""
         )
+        self._toggle_library_notes_folder(folder_id)
+
+    def _toggle_library_notes_folder(self, folder_id: str) -> None:
+        """Expand or collapse one folder -- expansion state only.
+
+        TASK-34000.28 fix round 1 (I-3): split out of the press handler so
+        Right/Left can toggle without SELECTING. Selection retargets the
+        folder toolbar's Rename / Move / Remove; a navigation key must not.
+
+        Args:
+            folder_id: The folder's stable identity (never the Unfiled group).
+        """
         if folder_id in self._library_notes_tree_expanded_ids:
             self._library_notes_tree_expanded_ids.remove(folder_id)
             _sync_library_canvas(self, "notes")
@@ -6537,11 +6549,13 @@ class LibraryNotesController:
         TASK-34000.28 (N-22). The screen's ``on_key`` asks this for a focused
         ``library-notes-folder-row`` outside select mode.
 
-        Toggling goes through the row's OWN press, so
-        ``handle_library_notes_folder_row`` stays the one toggle path: it
-        changes ``tree_expanded_ids`` and the selected placement -- view
-        facts, memory-only -- and never a note or a folder. Left on an
-        already-collapsed row moves focus to the parent folder row (the
+        Toggling goes through ``_toggle_library_notes_folder``, the same
+        expand/collapse step Enter and a click use, but NOT the row's press:
+        fix round 1 (I-3) -- the press also SELECTS the folder, which
+        retargeted the folder toolbar's Rename / Move / Remove from the
+        keyboard walk alone. Only ``tree_expanded_ids`` changes here (a view
+        fact, memory-only); never the selection, a note or a folder. Left on
+        an already-collapsed row moves focus to the parent folder row (the
         nearest earlier sibling with a smaller ``tree_depth``) and toggles
         nothing; a collapsed root has nowhere to climb and the key is simply
         claimed.
@@ -6562,10 +6576,10 @@ class LibraryNotesController:
         expanded = folder_id in self._library_notes_tree_expanded_ids
         if key == "right":
             if not expanded:
-                row.press()
+                self._toggle_library_notes_folder(folder_id)
             return True
         if expanded:
-            row.press()
+            self._toggle_library_notes_folder(folder_id)
             return True
         parent = _previous_folder_row_above(row)
         if parent is not None:

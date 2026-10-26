@@ -2,9 +2,11 @@
 
 The real ``TldwCli``: the app's own non-priority F6 binding (ADR-031,
 untouched), the ``TextualAppGuards`` (``DetachedFocusGuard`` first) and
-Textual's ``TextArea`` f6 -> ``select_line`` binding are all in the path.
-LibraryScreen now declares ``f6`` as a priority binding beside ``shift+f6``,
-so the key resolves before the focused widget sees it.
+Textual's ``TextArea`` are all in the path. LibraryScreen declares no ``f6``
+of its own (dev's pin ``test_library_keeps_f6_owned_by_the_app_global_
+binding``); instead the note body releases ``TextArea``'s own f6 ->
+``select_line`` binding (``Widgets/text_area_pane_key.release_pane_key``,
+fix round 1, I-1), so the key travels up to the app-global binding.
 
 One real-app boot (about 7 s locally, 2026-10-24). It sits outside the PR
 lane census because ``test_library_notes_tree_keys.py`` -- the lane file for
@@ -38,8 +40,9 @@ async def test_f6_from_the_note_body_moves_focus_without_selecting_text(
     """AC#9: F6 in the body leaves the editor; nothing is selected or changed.
 
     The real ``TldwCli``: the app's own non-priority F6 binding (ADR-031,
-    untouched) and the app-wide guards are in the path. Base: Textual's
-    ``TextArea`` f6 binding selects line 2 and focus stays on the body.
+    untouched) is what moves focus, through the app-wide guards. Base:
+    Textual's ``TextArea`` f6 binding selects line 2 and focus stays on the
+    body.
     """
     _no_autosave(monkeypatch)
     events: list = []

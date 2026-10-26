@@ -1786,6 +1786,38 @@ nor doing it *before* the snapshot landed.
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
 
+## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix round 1, 2026-10-25)
+
+Enter on the Notes tree's "more" pager loaded the next page and left focus in
+the filter, where the next printable key typed into it. The hand-off that
+should have focused the first added row already existed, and its mounted
+Pilot pins were green.
+
+- **Trace (a `set_focus` wrapper plus an `on_descendant_focus` wrapper that
+  records `focus_intent_generation`).** The loading-state recompose pruned the
+  focused pager. Textual's `Screen._reset_focus` then moved focus to the
+  Library grip. The screen counted that `DescendantFocus` as the user's own
+  move (generation 25 → 26). That vetoed both the canvas's pager retention
+  and the page's hand-off, and the identity restore fell back to the filter.
+- **Why the pins stayed green.** Every widget has its own message pump, so
+  the screen can read a queued `DescendantFocus` while another widget's
+  recompose is still mounting. The existing pins (a folder pager in
+  `LibraryHarness`) won the race: the canvas's `_after_recompose` ran first.
+  The root pager under the production stylesheet, at load ~35, lost it on
+  every run.
+- **Fix.** `LibraryScreen._reset_focus` now records where the reset landed,
+  and `on_descendant_focus` leaves that landing out of the intent count. A
+  press-time record also lets the pager's hand-off survive the prune, without
+  relying on focus staying on a pruned widget. That record is keyed on the
+  widget focus was parked on, not on the generation alone. The
+  generation-only first cut stole a user's own move to the filter, because
+  in `LibraryHarness` that move never bumped the generation
+  (`test_mounted_pager_completion_does_not_steal_moved_focus[success]`).
+- **Rule.** Any "has the user moved focus since X?" counter must exclude
+  Textual's reset after a removal. Every recompose that prunes the focused
+  control produces one, and it is indistinguishable from a click unless you
+  mark it.
+
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 
 The real Persona service accepts `none` and `auto` as IDs. The workspace Select
