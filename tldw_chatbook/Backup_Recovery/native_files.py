@@ -14,13 +14,15 @@ from .qualification import _qualified_identity, native_identity, qualified_for
 
 
 @contextmanager
-def pinned_directory(root: Path) -> Iterator[int]:
+def pinned_directory(root: Path, *, _custody=None) -> Iterator[int]:
     """Pin a trusted absolute directory with no symlink components."""
     if not root.is_absolute() or ".." in root.parts:
         raise OSError("absolute_directory_required")
     if not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY")):
         raise OSError("native_nofollow_unavailable")
     fd = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    if _custody is not None:
+        _custody.fds.append(fd)
     try:
         for component in root.parts[1:]:
             info = os.fstat(fd)
@@ -31,7 +33,9 @@ def pinned_directory(root: Path) -> Iterator[int]:
             child = os.open(
                 component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
             )
-            os.close(fd)
+            if _custody is not None:
+                _custody.fds.append(child)
+            _close_owned(fd, _custody)
             fd = child
         info = os.fstat(fd)
         if info.st_uid not in (0, os.geteuid()) or (
@@ -40,12 +44,17 @@ def pinned_directory(root: Path) -> Iterator[int]:
             raise OSError("unsafe_directory")
         yield fd
     finally:
-        os.close(fd)
+        _close_owned(fd, _custody)
 
 
-def create_private_directory(destination: Path) -> None:
+def create_private_directory(destination: Path, *, _custody=None) -> None:
     """Create one new owner-private directory under a pinned existing parent."""
-    with pinned_directory(destination.parent) as parent:
+    pinned = (
+        pinned_directory(destination.parent)
+        if _custody is None
+        else pinned_directory(destination.parent, _custody=_custody)
+    )
+    with pinned as parent:
         os.mkdir(destination.name, mode=0o700, dir_fd=parent)
         flush_directory(parent)
 
@@ -75,7 +84,15 @@ def _rename_new(
     rename_noreplace(source_parent, source, target_parent, target)
 
 
-def _flush_private_tree(fd: int, device: int) -> None:
+def _close_owned(fd, custody):
+    if custody is None:
+        os.close(fd)
+    else:
+        custody.close_descriptor(fd)
+        custody.fds.remove(fd)
+
+
+def _flush_private_tree(fd: int, device: int, *, _custody=None) -> None:
     """Flush only owned no-follow objects on one volume, leaves before parents."""
     info = os.fstat(fd)
     if info.st_uid != os.geteuid() or info.st_dev != device:
@@ -91,10 +108,12 @@ def _flush_private_tree(fd: int, device: int) -> None:
     os.fchmod(fd, 0o700)
     for name in os.listdir(fd):
         child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        if _custody is not None:
+            _custody.fds.append(child)
         try:
-            _flush_private_tree(child, device)
+            _flush_private_tree(child, device, _custody=_custody)
         finally:
-            os.close(child)
+            _close_owned(child, _custody)
     flush_directory(fd)
 
 
@@ -103,6 +122,7 @@ def publish_new(
     destination: Path,
     *,
     parent_identities: tuple[tuple[int, int], tuple[int, int]] | None = None,
+    _custody=None,
 ) -> None:
     """Durably move an operation-owned file/directory without replacing any name.
 
@@ -110,12 +130,16 @@ def publish_new(
     A flush failure after rename is ambiguous: preserve/journal actual evidence;
     never delete a destination or retry using replace. No hard-link fallback.
     """
-    allowed, reason = qualified_for("publish_new", destination.parent)
+    allowed, reason = (
+        qualified_for("publish_new", destination.parent)
+        if _custody is None
+        else qualified_for("publish_new", destination.parent, _custody=_custody)
+    )
     if not allowed:
         raise OSError(reason)
     with (
-        pinned_directory(staged.parent) as source_parent,
-        pinned_directory(destination.parent) as target_parent,
+        pinned_directory(staged.parent, _custody=_custody) as source_parent,
+        pinned_directory(destination.parent, _custody=_custody) as target_parent,
     ):
         if parent_identities is not None:
             actual = tuple(
@@ -139,6 +163,8 @@ def publish_new(
         if directory:
             flags |= os.O_DIRECTORY
         fd = os.open(staged.name, flags, dir_fd=source_parent)
+        if _custody is not None:
+            _custody.fds.append(fd)
         try:
             info = os.fstat(fd)
             if (info.st_dev, info.st_ino) != (
@@ -152,7 +178,7 @@ def publish_new(
                 raise OSError("staged_not_private_regular_object")
             if info.st_dev != os.fstat(target_parent).st_dev:
                 raise OSError("cross_volume_publication_unqualified")
-            _flush_private_tree(fd, info.st_dev)
+            _flush_private_tree(fd, info.st_dev, _custody=_custody)
             if os.stat(
                 staged.name, dir_fd=source_parent, follow_symlinks=False
             ) != os.fstat(fd):
@@ -161,4 +187,4 @@ def publish_new(
             flush_directory(target_parent)
             flush_directory(source_parent)
         finally:
-            os.close(fd)
+            _close_owned(fd, _custody)

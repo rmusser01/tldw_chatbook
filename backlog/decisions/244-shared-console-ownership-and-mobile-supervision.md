@@ -226,3 +226,46 @@ accounting/identity tombstones, every import hold and every batch receipt. Neith
 import nor automatic recovery invokes erasure. Later completed-cutover verification
 must respect native erased-payload tombstones and must never restore erased bodies
 from retained source archives merely to reproduce a historical receipt.
+
+### Native imported-history file custody
+
+Consolidation retains the registered `agents.history` owner's captured bytes at
+`user_data_dir(target_config)/agent_history/imports/<destination-identity>/<source-fingerprint>`.
+Both components come from the same qualified operation's selectors and encrypted
+capture. Each authenticated original root has a separate stable root-ID component;
+its relative topology and original framed-record IDs remain unchanged. Legacy
+store discovery does not treat the canonical import namespace as legacy input.
+Ordinary native recovery discovery owns and captures the imported namespace.
+
+A separate MaintenanceSession-issued file capability binds the actual live claim,
+operation, native journal, selectors, captures and fixed destination. It cannot
+accept caller paths, file lists or mapper callbacks, and does not expand the three
+DB targets. Typed intent, staged, observed and verified evidence precedes/records
+native no-replace publication of the complete tree. Staging remains private and
+pinned. Recovery accepts only the exact witnessed object at temp XOR final, with
+unchanged parents, topology and bytes; unknown pre-witness objects and foreign
+conflicts are retained and refused. Existing bytes are never accepted by name.
+
+File evidence establishes custody, not a committed database batch. Later native
+owner receipts must bind original root/run IDs to mapped runs/conversations and
+file locations/hashes before historical lookup becomes available. Lookup must
+retain native recovery admission, byte witnesses, bounded paging and original-ID
+primary/subagent filtering. No global fallback, scratch activation, writable root,
+permission, hook, tool grant or blind JSON/path rewriting follows. Bindings,
+exclusions and change-snapshot root meaning remain historical; change tracking
+continues to belong to its separate owner. Unknown associations fail complete
+preflight before any database import. The private file increment supplies this
+contract; the run-owner increment qualifies actual committed-receipt consumers.
+
+The private file path reuses the existing descriptor owner through extraction,
+staging, capacity/pinning, recursive flush, native publication/qualification and
+artifact observation. Optional private helper custody does not change ordinary
+validation or grant paths. Uncertain closes retain native exclusion and are never
+retried. Pre-import canonical absence is native `unused` producer evidence;
+existing trees retain ordinary complete capture coverage. The existing restore
+selection handles same-operation local topology; cross-profile `agents.history`
+relocation stays `owner_relocation_unverified`. Public rollback after file
+publication plus committed DB batches remains the later terminal qualification.
+Custody reuse retains native per-component `O_NOFOLLOW`; it does not substitute
+bootstrap's trusted-system-symlink traversal. The resource owner supplies close
+bookkeeping only, never an alternate pathname resolver.

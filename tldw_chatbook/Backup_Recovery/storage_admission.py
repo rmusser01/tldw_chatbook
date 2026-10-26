@@ -3277,7 +3277,12 @@ class MaintenanceSession:
         self._check()
         if journal is not getattr(self, "_mobile_journal", None) or any(
             getattr(_local, name, None) is not None
-            for name in ("mobile_scope", "capture_scope", "discovery_scope")
+            for name in (
+                "mobile_scope",
+                "capture_scope",
+                "discovery_scope",
+                "mobile_history_scope",
+            )
         ):
             raise bootstrap.RecoveryRequired("mobile_native_preparation_required")
         classes = {
@@ -3294,6 +3299,7 @@ class MaintenanceSession:
         if records[-1].event not in {
             "mobile_prepared",
             "mobile_capture_verified",
+            "mobile_history_verified",
             "mobile_path_observed",
             "mobile_owner_retired",
             "mobile_owner_opened",
@@ -3374,6 +3380,12 @@ class MaintenanceSession:
                             journal._append(parent, "mobile_owner_retired", owner)
             finally:
                 _local.mobile_scope = None
+
+    def mobile_history_files(self, captured, *, password, cancel):
+        """Issue only the fixed imported-history capability of this live operation."""
+        from .mobile_history_files import _history_files
+
+        return _history_files(self, captured, password=password, cancel=cancel)
 
     def _retire(self):
         self._active = False

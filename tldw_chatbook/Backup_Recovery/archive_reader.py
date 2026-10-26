@@ -24,6 +24,7 @@ from tldw_chatbook.Utils.platform_files import os
 from .archive_models import ArchiveManifest, EncryptedSource, SealedArchive
 from .limits import ArchiveLimits
 from .native_files import (
+    _close_owned,
     create_private_directory,
     create_private_file,
     pinned_directory,
@@ -53,27 +54,34 @@ def _space(root: Path, required: int) -> None:
 
 
 @contextmanager
-def _regular(path: Path):
-    with pinned_directory(path.parent) as parent:
+def _regular(path: Path, *, _custody=None):
+    pinned = (
+        pinned_directory(path.parent)
+        if _custody is None
+        else pinned_directory(path.parent, _custody=_custody)
+    )
+    with pinned as parent:
         fd = os.open(
             path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
         )
+        if _custody is not None:
+            _custody.fds.append(fd)
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise ValueError("invalid_source")
             with os.fdopen(fd, "rb", closefd=False) as stream:
                 yield stream
         finally:
-            os.close(fd)
+            _close_owned(fd, _custody)
 
 
 def _identity(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
-def _hash(path: Path, cancel: Event) -> str:
+def _hash(path: Path, cancel: Event, *, _custody=None) -> str:
     digest = hashlib.sha256()
-    with _regular(path) as stream:
+    with _regular(path, _custody=_custody) as stream:
         before = _identity(os.fstat(stream.fileno()))
         while chunk := stream.read(_BUFFER):
             _check(cancel)
@@ -583,12 +591,15 @@ def acquire(
 
 
 def verify_sealed(
-    sealed: SealedArchive, cancel: Event | None = None
+    sealed: SealedArchive, cancel: Event | None = None, *, _custody=None
 ) -> ArchiveManifest:
     """Invalidate a preview if its completed bytes changed; never reopen source."""
-    if _hash(sealed.path, cancel or Event()) != sealed.digest:
+    if _hash(sealed.path, cancel or Event(), _custody=_custody) != sealed.digest:
         raise ValueError("sealed_changed")
-    with _regular(sealed.path) as stream, zipfile.ZipFile(stream) as archive:
+    with (
+        _regular(sealed.path, _custody=_custody) as stream,
+        zipfile.ZipFile(stream) as archive,
+    ):
         info = archive.getinfo("manifest.json")
         if info.file_size > max(16 * 1024**2, len(sealed.manifest_bytes)):
             raise ValueError("sealed_changed")
@@ -601,7 +612,7 @@ def verify_sealed(
     ).encode()
     if (
         canonical != sealed.manifest_bytes
-        or _hash(sealed.path, cancel or Event()) != sealed.digest
+        or _hash(sealed.path, cancel or Event(), _custody=_custody) != sealed.digest
     ):
         raise ValueError("sealed_changed")
     return doc

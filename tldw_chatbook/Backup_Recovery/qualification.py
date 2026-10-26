@@ -251,12 +251,12 @@ def _qualified_identity(
     return False, "operation_not_qualified"
 
 
-def qualified_for(operation: str, root: Path) -> tuple[bool, str]:
+def qualified_for(operation: str, root: Path, *, _custody=None) -> tuple[bool, str]:
     """Match installed test evidence and current identity without writing probes."""
     from .native_files import pinned_directory
 
     try:
-        with pinned_directory(root) as fd:
+        with pinned_directory(root, _custody=_custody) as fd:
             return _qualified_identity(operation, native_identity(fd))
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False, "qualification_unavailable"

@@ -20371,3 +20371,20 @@ closing every creator DB before that owner made the public capture/WAL/reference
 closure checks pass (4 tests in 28.27 seconds). Do not rely on garbage collection
 for fixtures promising closed writers, and do not bypass admission to hide a
 retained owner.
+
+### Native file custody must include the helpers after rename
+
+**TASK-36766 C2-A-files, 2026-10-25.** A payload-copy close probe passed while
+`native_files.publish_new` could leave its staged-root FD readable after rename
+and release maintenance exclusion. A second reached-phase probe found
+`journal.observe_artifact` retrying an ambiguous parent close after publication.
+Census the connected extraction/staging/publication/observation path before
+freezing final evidence; thread the existing resource owner through those helpers.
+Inject only after real scope issuance: an earlier cold-resume fault stopped at
+`mobile_preview_authority_changed` and proved no FD behavior. The useful witness
+is the actual live FD plus a separately refused native maintenance acquisition,
+followed by successful acquisition after physical process retirement.
+The same increment's self-review caught a traversal mismatch: delegating native
+pinning to bootstrap's descriptor owner admitted the actual root-owned macOS
+`/var` alias. A real-alias RED required retaining native per-component
+`O_NOFOLLOW` traversal and reusing only the owner's FD-close bookkeeping.

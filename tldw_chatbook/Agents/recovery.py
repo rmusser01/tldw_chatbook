@@ -228,6 +228,13 @@ class _RunLogs(_RawDeclaration):
                             for item in group
                         )
                     result.extend(group)
+        # Canonical imports are not legacy input, even with coincident selectors.
+        if stores is None:
+            imported = self._tree(config, user_data_dir(config) / "agent_history")
+            result.extend(imported)
+            retained_logs |= any(
+                item.status in {"included", "included_directory"} for item in imported
+            )
         if unused_runs is not None and (bound_root or retained_logs):
             # Retained installed run logs are observable evidence of prior use.
             result.append(

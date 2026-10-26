@@ -18,7 +18,12 @@ from .admission import Admission, fcntl
 from .archive_models import Metadata
 from .bootstrap import MAX_RECORD, _read
 from .limits import RECOVERY_RECORD_BYTES
-from .native_files import create_private_directory, flush_directory, pinned_directory
+from .native_files import (
+    _close_owned,
+    create_private_directory,
+    flush_directory,
+    pinned_directory,
+)
 from .native_platform import flush_file
 from .qualification import qualified_for
 
@@ -229,7 +234,7 @@ class _Prepared(_Evidence):
     )
 
 
-def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
+def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> dict:
     """Read bounded no-follow file/tree identity and bytes for local reconciliation.
 
     Modes are deliberately separate from content identity: native publication
@@ -261,10 +266,12 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
                 child = os.open(
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
                 )
+                if _custody is not None:
+                    _custody.fds.append(child)
                 try:
                     recheck(child, relative + "/" + name)
                 finally:
-                    os.close(child)
+                    _close_owned(child, _custody)
 
     def read(fd, relative, device):
         nonlocal count, total
@@ -300,11 +307,13 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
                 child = os.open(
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
                 )
+                if _custody is not None:
+                    _custody.fds.append(child)
                 try:
                     _, child_rows = read(child, relative + "/" + name, device)
                     rows.extend(child_rows)
                 finally:
-                    os.close(child)
+                    _close_owned(child, _custody)
             if names != sorted(os.listdir(fd)):
                 raise ValueError("artifact_changed")
         else:
@@ -317,10 +326,17 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
         observed[relative] = identity(after), names
         return kind, rows
 
-    with pinned_directory(path.parent) as parent:
+    pinned = (
+        pinned_directory(path.parent)
+        if _custody is None
+        else pinned_directory(path.parent, _custody=_custody)
+    )
+    with pinned as parent:
         fd = os.open(
             path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
         )
+        if _custody is not None:
+            _custody.fds.append(fd)
         try:
             before = os.fstat(fd)
             kind, rows = read(fd, "", before.st_dev)
@@ -329,7 +345,7 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
             if (named.st_dev, named.st_ino) != (before.st_dev, before.st_ino):
                 raise ValueError("artifact_changed")
         finally:
-            os.close(fd)
+            _close_owned(fd, _custody)
     return _Object(
         path=str(path),
         device=before.st_dev,
@@ -714,6 +730,27 @@ class _MobileCaptureVerified(_Evidence):
     partition_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class _MobileHistoryIntent(_Evidence):
+    location: str
+    publication: str
+    temporary: str
+    parent: _MobileWitness
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    members_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("location", "publication", "temporary")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileHistoryObject(_Evidence):
+    intent_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact: _Object
+
+
 class _MobileEmptySource(_Evidence):
     source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -818,6 +855,10 @@ def _validate_mobile(event, evidence, prior):
         "mobile_capture_staged": _MobileCaptureStaged,
         "mobile_capture_verified": _MobileCaptureVerified,
         "mobile_source_empty": _MobileEmptySource,
+        "mobile_history_intended": _MobileHistoryIntent,
+        "mobile_history_staged": _MobileHistoryObject,
+        "mobile_history_observed": _MobileHistoryObject,
+        "mobile_history_verified": _MobileHistoryObject,
         "mobile_path_observed": _MobilePathObserved,
         "mobile_owner_opened": _MobileOwner,
         "mobile_owner_retired": _MobileOwner,
@@ -855,7 +896,80 @@ def _validate_mobile(event, evidence, prior):
             raise ValueError("journal_transition_invalid")
         prepared, witnesses = _mobile_state(prior)
         last = prior[-1]
-        if last.event == "mobile_claim_intended":
+        if last.event in {
+            "mobile_history_intended",
+            "mobile_history_staged",
+            "mobile_history_observed",
+        }:
+            intent = next(
+                row.evidence for row in prior if row.event == "mobile_history_intended"
+            )
+            expected_event = {
+                "mobile_history_intended": "mobile_history_staged",
+                "mobile_history_staged": "mobile_history_observed",
+                "mobile_history_observed": "mobile_history_verified",
+            }[last.event]
+            if event != expected_event or value.intent_digest != _evidence_digest(
+                intent
+            ):
+                raise ValueError("mobile_history_unsettled")
+            expected_path = (
+                intent["temporary"]
+                if event == "mobile_history_staged"
+                else intent["publication"]
+            )
+            if (
+                value.artifact.path != expected_path
+                or value.artifact.kind != "directory"
+            ):
+                raise ValueError("mobile_history_scope_invalid")
+            if last.event != "mobile_history_intended" and value.artifact.model_dump(
+                exclude={"path"}
+            ) != {
+                key: item
+                for key, item in last.evidence["artifact"].items()
+                if key != "path"
+            }:
+                raise ValueError("mobile_history_changed")
+        elif event == "mobile_history_intended":
+            claims = [
+                row.evidence for row in prior if row.event == "mobile_claim_intended"
+            ]
+            captures = [
+                row.evidence for row in prior if row.event == "mobile_capture_verified"
+            ]
+            if (
+                _mobile_active_owner(prior) is not None
+                or last.event not in {"mobile_capture_verified", "mobile_owner_retired"}
+                or any(row.event == event for row in prior)
+                or len(claims) != 1
+                or {row["purpose"] for row in captures} != {"legacy", "canonical"}
+                or value.source_fingerprint != prepared.source_fingerprint
+                or value.destination_identity != claims[0]["destination_identity"]
+                or value.manifest_digest
+                != next(
+                    row["manifest_digest"]
+                    for row in captures
+                    if row["purpose"] == "legacy"
+                )
+                or Path(value.location).parts[-4:]
+                != (
+                    "agent_history",
+                    "imports",
+                    value.destination_identity,
+                    value.source_fingerprint,
+                )
+                or Path(value.publication)
+                not in (Path(value.location), *list(Path(value.location).parents)[:3])
+                or Path(value.publication).parent != Path(value.parent.path)
+                or Path(value.temporary).parent != Path(value.parent.path)
+                or Path(value.temporary).name
+                != ".mobile-history-"
+                + hashlib.sha256(claims[0]["operation_id"].encode()).hexdigest()
+                or value.parent.inode is None
+            ):
+                raise ValueError("mobile_history_scope_invalid")
+        elif last.event == "mobile_claim_intended":
             encoded = json.dumps(
                 last.evidence, sort_keys=True, separators=(",", ":")
             ).encode()
@@ -1071,6 +1185,10 @@ class _Event(_Evidence):
         "mobile_capture_staged",
         "mobile_capture_verified",
         "mobile_source_empty",
+        "mobile_history_intended",
+        "mobile_history_staged",
+        "mobile_history_observed",
+        "mobile_history_verified",
         "mobile_path_observed",
         "mobile_owner_opened",
         "mobile_owner_retired",

@@ -293,3 +293,65 @@ formats are unchanged. A pre-correction source proof that no longer matches is
 refused by the native preparation/recovery review; there is no lossy fallback or
 silent proof relabeling. Full mapped import and public cutover remain separate
 qualification gates.
+
+## Private imported-history file custody
+
+`MaintenanceSession.mobile_history_files(captured, *, password, cancel)` opens the
+private file capability for the actual live `_CapturedMobile` operation. It
+rechecks the same journal, source claim, captures and original selector content
+and physical witnesses. Copied, overlapping, mutated or retired scopes refuse.
+The capability derives its only location from the canonical selector:
+`user_data_dir(target_config)/agent_history/imports/<destination-identity>/<source-fingerprint>`.
+Each authenticated source root contributes a SHA-256 root-ID component beneath
+that location. Relative paths, empty directories, original framed-record IDs and
+payload bytes are preserved. No caller supplies a destination or file list.
+
+`publish()` returns immutable `_HistoryMember` associations (`logical_id`,
+`root_id`, `original_root`, `relative_path`, `location`, `size`, `sha256`). These
+are file contracts for the subsequent real owner mappings; they are not committed
+DB receipts. `mobile_history_intended`, `mobile_history_staged`,
+`mobile_history_observed` and `mobile_history_verified` separately record fixed
+location, parent witness, operation-private temporary name, complete-tree identity
+and content. Publication uses the existing qualified native flush and no-replace
+rename. Same-operation recovery accepts the exact witnessed tree at temporary XOR
+final location. Unknown pre-witness objects, occupied names, symlinks, foreign
+replacements and conflicting evidence remain retained and refuse publication.
+
+The new path reuses `_CaptureFileDescriptors` for extraction, staging and capacity
+pins, recursive tree flush, native publication and qualification, artifact
+observation, and private member reads. Optional private custody parameters on the
+existing helpers leave ordinary callers' validation and publication rules intact.
+Native per-component `O_NOFOLLOW` traversal stays intact; custody reuses close
+bookkeeping, not bootstrap's trusted-system-symlink resolver.
+An ambiguous native close is never retried; the existing resource owner retains
+the maintenance quarantine. Successful method return requires resource retirement.
+`read_member(logical_id, *, offset=0, limit=65536)` requires verified same-operation
+file evidence, exact member identity and current full-tree/payload byte checks;
+it returns at most 1 MiB. It is a maintenance-only reader, not runtime UI admission.
+
+`Agents.recovery._RunLogs.discover_for_stores` owns the partition distinction:
+ordinary canonical discovery (`stores is None`) includes `agent_history`; the
+explicit legacy-store discovery used by `mobile_inventory` does not. This holds
+when source and target selectors coincide and does not exclude caller-selected
+paths or substrings. An existing imported tree without its canonical AgentRuns
+owner is evidence of use and refuses the native unused-owner declaration.
+
+The canonical archive is captured **before import**. A missing `agent_history`
+root is represented by native producer-inventory `unused` evidence; existing
+`restore_groups.selected_absent_target_ids` selects its subsequently discovered
+descendants for exact local rollback. An existing tree is captured with ordinary
+native directory/file metadata and bytes. B must qualify complete same-operation
+rollback after file publication plus a real committed DB prefix using that
+canonical capture and native witnessed ownership. There is no second restore
+engine, name-only deletion, or inference that file verification means a DB commit.
+Cross-profile `agents.history` relocation remains refused by native
+`staging._config_targets` (`owner_relocation_unverified`). This increment does not
+claim public terminal recovery or cross-profile restoration.
+
+A-chat and A-runs still own actual Chat/Workspace/Run/Goal identity mappings,
+committed receipts, all-owner preflight and complete reference/byte closure.
+A-runs must connect the runtime history consumers to actual canonical receipts
+and run/conversation ownership, preserve original-ID filtering and bounded paging,
+and retain existing membership/tool gates. Imported history never grants scratch,
+workspace binding, hook, tool or permission authority. Public apply, cutover and
+terminal recovery remain separate B qualification gates.

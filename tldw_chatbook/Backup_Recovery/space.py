@@ -11,14 +11,19 @@ from .native_files import pinned_directory
 _MARGIN = 64 * 1024**2
 
 
-def _volume(path: Path) -> tuple[os.stat_result, Path]:
+def _volume(path: Path, *, _custody=None) -> tuple[os.stat_result, Path]:
     """Resolve one existing ancestor and stat it through its pinned descriptor."""
     selected = path
     while not selected.is_dir():
         if selected == selected.parent:
             raise ValueError("capacity_volume_unavailable")
         selected = selected.parent
-    with pinned_directory(selected) as descriptor:
+    pinned = (
+        pinned_directory(selected)
+        if _custody is None
+        else pinned_directory(selected, _custody=_custody)
+    )
+    with pinned as descriptor:
         return os.fstat(descriptor), selected
 
 
@@ -32,7 +37,7 @@ def _require(path: Path, required: int) -> None:
         raise ValueError("invalid_capacity_requirement")
 
 
-def held_capacity(path: Path) -> Callable[[int], None]:
+def held_capacity(path: Path, *, _custody=None) -> Callable[[int], None]:
     """Resolve one destination's volume once, for a loop that re-checks per chunk.
 
     ``require_capacity`` calls ``_volume``, which enters ``pinned_directory``
@@ -65,7 +70,9 @@ def held_capacity(path: Path) -> Callable[[int], None]:
             on the same predicate ``require_capacity`` uses.
     """
     _require(path, 0)
-    pinned, ancestor = _volume(path)
+    pinned, ancestor = (
+        _volume(path) if _custody is None else _volume(path, _custody=_custody)
+    )
     identity = (pinned.st_dev, pinned.st_ino)
 
     def check(required: int) -> None:
