@@ -1,4 +1,8 @@
-"""The character-context 2Hz sweep pauses while the Console is suspended."""
+"""The character-context 2Hz sweep pauses while the Console is suspended.
+
+It also pauses while the Character section is collapsed (TASK-35970): a
+count written to a hidden row requests a layout no one can see.
+"""
 
 from types import SimpleNamespace
 
@@ -17,9 +21,13 @@ class _SweepWidget(ConsoleCharacterContext):
     is_attached = True
     screen = None  # shadow read-only Widget properties for stubbing
     app = None
+    shown = True
 
     def __init__(self) -> None:  # skip the heavy real widget init
         pass
+
+    def _presented(self) -> bool:  # the stub has no DOM ancestors
+        return self.shown
 
     def query(self, selector):  # noqa: D102 - test stub
         return self._buttons
@@ -59,3 +67,10 @@ def test_sweep_skips_when_detached():
     widget.is_attached = False
     widget._sync_progress_counts()
     assert not calls, "detached widget: sweep must not walk buttons"
+
+
+def test_sweep_skips_while_the_section_is_collapsed():
+    widget, calls = _widget(current=True)
+    widget.shown = False
+    widget._sync_progress_counts()
+    assert not calls, "collapsed section: sweep must not walk its hidden rows"
