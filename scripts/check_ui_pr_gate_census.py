@@ -546,6 +546,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # also drops a dead first `MINIMUM_FILES = 906` assignment dev carried
 # above the live 905.
 MINIMUM_FILES = 906
+# TASK-35970 (2026-10-26) appends 1 whole-file entry at the tail: a collapsed
+# Character section renders nothing while a send refreshes it (three cases,
+# about 15 s locally), so no existing entry changes shard: 906 -> 907.
+MINIMUM_FILES = 908
 
 
 def read_census(path: Path) -> list[str]:

@@ -1352,3 +1352,4 @@ Tests/UI/test_console_workspace_display_reads_off_loop.py
 Tests/UI/test_console_projection_reads_off_loop.py
 Tests/UI/test_console_durable_commit_quiet_gap.py
 Tests/UI/test_console_send_transition_layout_requests.py
+Tests/UI/test_console_character_section_collapsed_render.py
