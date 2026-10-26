@@ -1532,6 +1532,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-19, TASK-41715 (review r17ls-rev1): five late completions read
     #: ``is_attached`` on its own line before ``app.screen``: 32823 -> 32828
     #: lines, 1288 methods.
+    #: 2026-10-26, TASK-34000.29 (polish-1b Task 6; same owner decision --
+    #: expand limits, don't contort code): a cancelled note export clears its
+    #: token instead of failing it, the leave-veto toast built from the
+    #: veto's own reason (``_library_note_exit_veto_toast`` + the Discard
+    #: visibility predicate), the create path's per-note fact reset, and the
+    #: focus capture reading an operation's origin and a pruned control's
+    #: role: 38166 -> 38233 lines, 1373 -> 1374 methods (measured with
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32828, 1288),
 }
 

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Ready                                        │  o    ‹ Notes   Advisor meeting 2026-09-24                                             │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │         Edit     Preview     Info                                                      │
+│      │ Filter                                                       │         Save     Use in Console                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ ▊ advisor meeting                                          ▎ │     │Properties                                                                      │ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │Keywords                                                                        │ │
+│      │                                                              │     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │
+│      │    New     ○ Sort: Newest     Select                         │     │▊ meeting, thesis                                                              ▎│ │
+│ ---> │    Add from files…     Export                                │     │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │
+│      │ Folders & placement                                          │     │                                                                                │ │
+│      │    New folder     Add to folder     Move note                │     │Created   2026-10-26 14:26 · 2m ago                                             │ │
+│      │    Remove placement                                          │     │Modified  2026-10-26 14:26 · 2m ago                                             │ │
+│      │ Sort unavailable — clear the filter                          │     │Version   v2                                                                    │ │
+│      │ filter: advisor meeting · 3 results                          │<--- │Words     60 words                                                              │ │
+│      │                                                              │     │Linked from (1)                                                                 │ │
+│      │   Clear filter                                               │     │  Thesis outline — retrieval-augmented tutoring                                 │ │
+│      │  ▾ Meetings                                                  │     │Reuse & Export                                                                  │ │
+│      │    Advisor meeting 2026-09-10 · Meetings · 2m                │     │  Copy                                                                          │ │
+│ ---> │    Advisor meeting 2026-09-24 · Meetings · 2m                │     │┃ Export Markdown ┃                                                             │ │
+│      │  ▾ Projects                                                  │     │  Export text                                                                   │ │
+│      │    ▾ Thesis                                                  │     │Danger                                                                          │ │
+│      │      Thesis outline — retrieval-augmented tutoring · Proje…  │     │      Delete                                                                    │ │
+│      │                                                              │     │                                                                                │ │
+│      │                                                              │     │                                                                                │ │
+│      │                                                              │     │                                                                                │ │
+│      │                                                              │     │                                                                                │ │
+│      │                                                              │     │                     ╭──────────────────────────────────────────────────────────╮ │
+│      │                                                              │     │                     │                                                          │ │
+│      │                                                              │     │                     │ Note export cancelled.                                   │ │
+│      │                                                              │     │                     │                                                          │ │
+│      │                                                              │     │                     ╰──────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────────────┘     └────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter export Markdown | esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1198,6 +1198,14 @@ MINIMUM_FILES = 2437
 # _focus_library_list_entry nodes at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 2439
+# 2026-10-26, TASK-34000.29 (polish-1b batch), appended at the tail, so no
+# existing entry changes shard:
+# - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
+#   160x45 boots, ~26 s): 916 -> 917.
+# Rebased 2026-11-20 onto dev d85e90bc9e (2439 entries, floor 2439): the
+# polish-1b entries above stay appended at the tail, so no existing slot
+# moves; the floor is the measured entry count: 2439 + 1 = 2440.
+MINIMUM_FILES = 2440
 
 
 def read_census(path: Path) -> list[str]:

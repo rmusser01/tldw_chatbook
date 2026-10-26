@@ -3564,3 +3564,4 @@ Tests/UI/test_screen_navigation.py::test_library_completions_after_the_exit_fenc
 # 2 passed in 3.2 s serially with the lane's flags (load ~10).
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_prefers_still_checked_row_in_select_mode
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_checked_row_preference_is_media_only
+Tests/UI/test_library_note_editor_feedback_is_honest.py

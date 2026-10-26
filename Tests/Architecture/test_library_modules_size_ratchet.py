@@ -754,6 +754,13 @@ _BUDGETS: dict[str, int] = {
     # files; Folder files lands its search box or Change…/Choose folder…,
     # after its first layout sync reads the workspace's real width; View
     # imported notes lands like Import once's exits: 7462 -> 7492 (measured).
+    # 2026-10-26, TASK-34000.29 (polish-1b Task 6; owner decision "expand
+    # limits, don't contort code"): ``_cancel_library_notes_operation``, the
+    # operation's ``origin_control`` and the synchronous focus return after a
+    # finish or cancel, the ``use-in-console`` focus role, and the one
+    # per-note fact reset (``_reset_library_note_facts`` /
+    # ``_start_library_note_fact_loads``) the open and create paths share:
+    # 7394 -> 7470 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7492,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the

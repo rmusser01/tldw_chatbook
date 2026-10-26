@@ -361,6 +361,11 @@ class LibraryNotesOperationState:
             Next: try again." or, when there is no note to refuse, "No note
             is open. Next: open a note, then try again."). Rendered verbatim
             in place of the generic "{action} failed — …" line when set.
+        origin_control: TASK-34000.29 (N-12) -- the ``#``-less id of the
+            control that had focus when the operation began. The running
+            operation disables that control, so Textual moves focus on to
+            the next enabled stop (Delete, in Info); focus goes back here
+            once the operation ends. Empty when nothing had focus.
     """
 
     kind: Literal["import", "export", "copy", "console"]
@@ -370,6 +375,7 @@ class LibraryNotesOperationState:
     completion_next_action: str = ""
     failure_next_action: str = "try again"
     failure_line: str = ""
+    origin_control: str = ""
 
     @property
     def running(self) -> bool:
