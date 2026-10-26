@@ -613,7 +613,11 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
         def _footer_is_the_focused_controls() -> bool:
             painted = _footer(host, screen)
             if _focused_id(screen) != "library-notes-filter":
-                return TYPING not in painted
+                # Final review M-3: focus landing in another text field (the
+                # rail search box) rightly paints the typing footer too.
+                return (TYPING in painted) == isinstance(
+                    screen.focused, (Input, TextArea)
+                )
             return (
                 TYPING in painted
                 and "esc focus rail" in painted
