@@ -126,7 +126,7 @@ Reason: existing-owner applicability correction plus test readiness, without new
 - [x] Add deterministic current-source Chunking render-order RED controls, then repair only owned final publication and verify newer-input protection plus adjacent edit behavior.
 - [x] Replace Library test fixed delay with bounded current-list paint readiness; retain the original missing-folder negative control and all semantic/page-count assertions.
 - [x] Verify actual child/canvas evidence, source guards, scoped static checks, architecture/QA notes and one focused Superpowers review of this CI delta.
-- [ ] Preserve all 901 current dev census slots and required caps, register the new exact controls, push the reviewed complete change, and remain on PR #3251 until current-head CI is green and review feedback is addressed.
+- [ ] Preserve all 906 current dev census slots and required caps, register the new exact controls, push the reviewed complete change, and remain on PR #3251 until current-head CI is green and review feedback is addressed.
 
 
 ### Focused CI repair review follow-up
@@ -137,3 +137,28 @@ Reason: existing-owner applicability correction plus test readiness, without new
 ADR required: no
 ADR path: existing ADR-118 and ADR-033.
 Reason: preserve the existing configuration authoring contract while correcting the same-owner sample publication defect; no new state/store/service boundary.
+
+
+## Integration onto dev386 (required CI admission)
+
+Dev advanced to `38623632e9` while the focused review ran. Preserve all newer upstream changes; thirteen reviewed files remain byte-identical, and the Personas added/deleted lines for this PR match the reviewed patch exactly alongside upstream search changes. Verify the nine Lore cases under the combined screen/new bootstrap fixture, the bounded Library cases, relevant architecture/census contracts and exact source guards before one scoped integration review. Preserve all 906 dev census entries, append the same 44 exact cases (floor 950), and keep 17 shards/1,200-second caps. Consolidate dev's adjacent 906/905 floor assignments into the one exact combined floor; no checker logic change. Pin the measured combined Personas size at 16,859, below current dev's 16,883 ceiling, preserving upstream pane/state ratchets.
+
+ADR required: no
+ADR path: existing ADR-007, ADR-011, ADR-033 and ADR-118.
+Reason: mechanical integration and current-source verification; existing boundaries and reviewed feature behavior remain.
+
+
+### Dev386 integration review correction (existing TASK-33910.35)
+
+- [x] Preserve a permanent mounted regression of held native Lore Save, search read S, newer Save refresh R, actual list Enter while R is held, and first matching selection after R publishes. Retain the intended old-row Enter RED and independently clean teardown.
+- [x] Complete first-match intent at actual current Lore-row publication, rechecking generation/query/mode after the row-update await. Remove unconditional landing when a superseded Lore search merely returns; let the authoritative Save refresh finish the same existing intent. Keep captured Save, window ownership, errors and other-mode behavior intact; no new timer/state owner.
+- [x] Run the focused new overlap plus nine existing Lore cases and directly affected search/window controls, exact source guards and measured module/census checks, then one scoped rereview of the complete integration fix before push.
+
+ADR required: no
+ADR path: existing ADR-007, ADR-011 and ADR-033.
+Reason: repair publication completion within the existing Lore list and first-match intent owners; no storage, service or new UI architecture.
+
+The same integration correction also keeps the background Lore-save active-row marker from taking the cursor or creating a load-through intent after a newer search. Use the existing `mark_active_row(..., move_cursor=False, load_through=False)` options in `persona_save_completion.py`; no new owner/API. The mounted overlap has two query arms: captured book filtered out, and captured Second still included while First is the first match. Both must keep Enter inert while R is held, then retain the actual first match after R and save completion.
+
+
+Canonical decisions for the CI integration corrections: [ADR-007](../../../backlog/decisions/007-personas-workbench-route-consolidation.md), [ADR-011](../../../backlog/decisions/011-chatbook-workbench-ui-system.md), [ADR-033](../../../backlog/decisions/033-application-session-state-ownership.md) and [ADR-118](../../../backlog/decisions/118-chunking-lab-local-execution-and-recovery.md). The final measured Personas owner after the publication correction is 16,870 lines, below current dev's 16,883 ceiling; no allowance is increased relative to the current target.
