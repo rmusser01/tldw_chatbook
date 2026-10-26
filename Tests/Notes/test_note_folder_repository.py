@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import re
 import sqlite3
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -2594,6 +2595,415 @@ def test_wrapped_non_contention_database_error_is_preserved() -> None:
         _raise_wrapped_repository_error(wrapped)
 
     assert caught.value is wrapped
+
+
+# --- TASK-34000.28 (N-24): a conflict names its reason; contention is not one.
+
+#: SQLite's extended SQLITE_BUSY_SNAPSHOT (``5 | 2 << 8``), spelled out so the
+#: pins do not depend on which constants this Python's ``sqlite3`` exports.
+_SQLITE_BUSY_SNAPSHOT = 517
+
+
+def _stale_folder_version(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Work", parent_id=None)
+    repository.rename_folder(
+        folder.folder_id, name="Projects", expected_version=folder.version + 1
+    )
+
+
+def _ignored_folder_update(repository: LocalNoteFolderRepository) -> None:
+    root = repository.create_folder(name="Root", parent_id=None)
+    repository.create_folder(name="Child", parent_id=root.folder_id)
+    repository.db.get_connection().execute(
+        "CREATE TRIGGER ignore_child_folder_update BEFORE UPDATE ON note_folders "
+        "WHEN OLD.name = 'Child' BEGIN SELECT RAISE(IGNORE); END"
+    )
+    repository.rename_folder(root.folder_id, name="Renamed", expected_version=1)
+
+
+def _stale_membership_version(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    membership = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=membership.version + 1,
+    )
+
+
+def _membership_guard_rejected(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Guarded", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    repository.db.get_connection().execute(
+        "UPDATE notes SET version = 2 WHERE id = ?", (note_id,)
+    )
+    repository.attach_manual(
+        folder_id=folder.folder_id, note_id=note_id, expected_note_version=1
+    )
+
+
+def _duplicate_active_membership(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    now = _timestamp()
+    try:
+        repository.db.get_connection().execute(
+            "INSERT INTO note_folder_memberships(id, folder_id, note_id, ownership, "
+            "owner_id, created_at, modified_at) VALUES (?, ?, ?, 'manual', '', ?, ?)",
+            (str(uuid.uuid4()), folder.folder_id, note_id, now, now),
+        )
+    except sqlite3.IntegrityError as exc:
+        _raise_membership_integrity_error(exc)
+    raise AssertionError("the duplicate active membership was accepted")
+
+
+def _statement_contention(_repository: LocalNoteFolderRepository) -> None:
+    error = sqlite3.OperationalError("database is locked")
+    error.sqlite_errorcode = _SQLITE_BUSY_SNAPSHOT
+    _raise_mutation_operational_error(error)
+
+
+def _commit_contention(_repository: LocalNoteFolderRepository) -> None:
+    wrapped = CharactersRAGDBError("Commit failed: database is locked")
+    wrapped.__cause__ = sqlite3.OperationalError("database is locked")
+    wrapped.__cause__.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    _raise_wrapped_repository_error(wrapped)
+
+
+@pytest.mark.parametrize(
+    ("trigger", "reason"),
+    [
+        (_stale_folder_version, "folder_version"),
+        (_ignored_folder_update, "folder_changed"),
+        (_stale_membership_version, "membership_version"),
+        (_membership_guard_rejected, "membership_changed"),
+        (_duplicate_active_membership, "membership_exists"),
+        (_statement_contention, "busy"),
+        (_commit_contention, "busy"),
+    ],
+    ids=lambda value: getattr(value, "__name__", value),
+)
+def test_every_conflict_raise_names_its_reason(
+    repository: LocalNoteFolderRepository, trigger, reason: str
+) -> None:
+    """Each of the seven ``FolderConflictError`` sites says what changed, so
+    the Notes tree can name it instead of one generic sentence (N-24)."""
+    with pytest.raises(FolderConflictError) as caught:
+        trigger(repository)
+
+    assert caught.value.reason == reason
+
+
+def test_a_conflict_without_a_reason_is_unknown() -> None:
+    assert FolderConflictError("conflict").reason == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("code", "contended"),
+    [
+        (sqlite3.SQLITE_BUSY, True),
+        (sqlite3.SQLITE_LOCKED, True),
+        (_SQLITE_BUSY_SNAPSHOT, True),
+        (sqlite3.SQLITE_BUSY | (1 << 8), True),  # BUSY_RECOVERY
+        (sqlite3.SQLITE_LOCKED | (1 << 8), True),  # LOCKED_SHAREDCACHE
+        (sqlite3.SQLITE_IOERR, False),
+        (sqlite3.SQLITE_CONSTRAINT, False),
+        (None, False),
+    ],
+)
+def test_contention_covers_busy_locked_and_their_extended_codes(
+    code: int | None, contended: bool
+) -> None:
+    error = sqlite3.OperationalError("detail")
+    if code is not None:
+        error.sqlite_errorcode = code
+
+    assert folder_repository_module._is_sqlite_contention(error) is contended
+
+
+def _record_backoffs(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record each retry back-off (still sleeping it). ``raising=False``: the
+    seam does not exist before the fix, and that RED must fail on behaviour."""
+    backoffs: list[int] = []
+    real = getattr(folder_repository_module, "_contention_backoff", None)
+
+    def recorded(attempt: int) -> None:
+        backoffs.append(attempt)
+        if real is not None:
+            real(attempt)
+
+    monkeypatch.setattr(
+        folder_repository_module, "_contention_backoff", recorded, raising=False
+    )
+    return backoffs
+
+
+@contextmanager
+def _write_lock_held(repository: LocalNoteFolderRepository, *, seconds: float | None):
+    """Hold the database's write lock from a second connection.
+
+    The repository's own connection is told not to wait on a held lock
+    (``busy_timeout = 0``), so what these pins measure is the repository's
+    bounded retry, not SQLite's busy handler -- the app's connections wait
+    15 s (``CharactersRAGDB`` opens them with ``timeout=15``).
+    """
+    repository.db.get_connection().execute("PRAGMA busy_timeout = 0")
+    holder = sqlite3.connect(
+        repository.db.db_path_str, check_same_thread=False, isolation_level=None
+    )
+    holder.execute("BEGIN IMMEDIATE")
+    release = threading.Timer(seconds, holder.rollback) if seconds else None
+    if release is not None:
+        release.start()
+    try:
+        yield
+    finally:
+        if release is not None:
+            release.join()
+        else:
+            holder.rollback()
+        holder.close()
+
+
+def _active_manual_rows(
+    repository: LocalNoteFolderRepository, folder_id: str, note_id: str
+) -> list[str]:
+    return [
+        str(row[0])
+        for row in repository.db.get_connection().execute(
+            "SELECT id FROM note_folder_memberships WHERE folder_id = ? "
+            "AND note_id = ? AND ownership = 'manual' AND deleted = 0",
+            (folder_id, note_id),
+        )
+    ]
+
+
+def test_sqlite_busy_is_retried_before_it_becomes_a_conflict(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write lock held for 80 ms costs a retry, not a false conflict, and
+    the retried attach still writes exactly one active placement."""
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    backoffs = _record_backoffs(monkeypatch)
+
+    with _write_lock_held(repository, seconds=0.08):
+        membership = repository.attach_manual(
+            folder_id=folder.folder_id, note_id=note_id
+        )
+
+    assert backoffs and backoffs[0] == 0
+    assert _active_manual_rows(repository, folder.folder_id, note_id) == [
+        membership.membership_id
+    ]
+
+
+def test_contention_that_outlasts_three_attempts_is_a_busy_conflict(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    backoffs = _record_backoffs(monkeypatch)
+
+    with _write_lock_held(repository, seconds=None):
+        with pytest.raises(FolderConflictError) as caught:
+            repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+
+    assert caught.value.reason == "busy"
+    # Three attempts, two back-offs between them; nothing was written.
+    assert backoffs == [0, 1]
+    assert _active_manual_rows(repository, folder.folder_id, note_id) == []
+
+
+@pytest.mark.parametrize("borrowed", ["cursor", "nested"])
+def test_contention_inside_a_callers_transaction_is_never_retried(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    borrowed: str,
+) -> None:
+    """Inside a transaction the repository does not own, a retry would re-run
+    half of someone else's work: the conflict is raised at once."""
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    backoffs = _record_backoffs(monkeypatch)
+
+    with _write_lock_held(repository, seconds=None):
+        with pytest.raises(FolderConflictError) as caught:
+            with repository.db.transaction() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM notes").fetchone()
+                repository.attach_manual(
+                    folder_id=folder.folder_id,
+                    note_id=note_id,
+                    cursor=cursor if borrowed == "cursor" else None,
+                )
+
+    assert caught.value.reason == "busy"
+    assert backoffs == []
+    assert _active_manual_rows(repository, folder.folder_id, note_id) == []
+
+
+@contextmanager
+def _wal_restarted_after_the_first_read(
+    repository: LocalNoteFolderRepository,
+) -> Iterator[list[tuple[int, int, int]]]:
+    """Restart the WAL from a second connection once this thread's next
+    transaction has taken its read snapshot.
+
+    N-24's measured cause: every finite worker retires its thread's
+    connection through ``close_connection``, whose ``PRAGMA
+    wal_checkpoint(TRUNCATE)`` restarts the WAL header. A DEFERRED
+    transaction on another thread that has already read then fails its first
+    write with SQLITE_BUSY_SNAPSHOT (517) -- no other writer needed, and
+    SQLite's busy handler is never consulted for that code. The checkpointer
+    waits on nothing (``timeout=0``), so against a transaction that already
+    holds the write lock it falls back to a passive checkpoint.
+    """
+    checkpointer = sqlite3.connect(
+        repository.db.db_path_str, timeout=0, isolation_level=None
+    )
+    # Every frame is backfilled first, so the next reader reads the database
+    # file alone -- exactly the state a just-closed worker leaves behind.
+    checkpointer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    connection = repository.db.get_connection()
+    restarts: list[tuple[int, int, int]] = []
+    read_started = False
+
+    def on_statement(sql: str) -> None:
+        nonlocal read_started
+        if restarts:
+            return
+        if read_started:
+            restarts.append(
+                tuple(
+                    checkpointer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                )
+            )
+        elif sql.lstrip().upper().startswith(("SELECT", "WITH")):
+            read_started = True
+
+    connection.set_trace_callback(on_statement)
+    try:
+        yield restarts
+    finally:
+        connection.set_trace_callback(None)
+        checkpointer.close()
+
+
+def _attach_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    return lambda: repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+
+
+def _detach_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    membership = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    return lambda: repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=membership.version,
+    )
+
+
+def _create_child_case(repository: LocalNoteFolderRepository):
+    parent = repository.create_folder(name="Parent", parent_id=None)
+    return lambda: repository.create_folder(name="Child", parent_id=parent.folder_id)
+
+
+def _rename_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    return lambda: repository.rename_folder(
+        folder.folder_id, name="Projects", expected_version=folder.version
+    )
+
+
+def _move_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    destination = repository.create_folder(name="Archive", parent_id=None)
+    return lambda: repository.move_folder(
+        folder.folder_id,
+        parent_id=destination.folder_id,
+        expected_version=folder.version,
+    )
+
+
+def _delete_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    return lambda: repository.soft_delete_folder(
+        folder.folder_id, expected_version=folder.version
+    )
+
+
+def _restore_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    repository.soft_delete_folder(folder.folder_id, expected_version=folder.version)
+    return lambda: repository.restore_folder(folder.folder_id, expected_version=2)
+
+
+def _managed_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Synced", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    return folder.folder_id, note_id
+
+
+def _reconcile_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    return lambda: repository.reconcile_managed(
+        owner_id="root-1", desired=((folder_id, note_id),)
+    )
+
+
+def _convert_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    repository.reconcile_managed(owner_id="root-1", desired=((folder_id, note_id),))
+    return lambda: repository.convert_owner_to_manual(owner_id="root-1")
+
+
+def _remove_owner_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    repository.reconcile_managed(owner_id="root-1", desired=((folder_id, note_id),))
+    return lambda: repository.remove_owner_memberships(owner_id="root-1")
+
+
+def _mark_owners_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    repository.reconcile_managed(owner_id="root-1", desired=((folder_id, note_id),))
+    return lambda: repository.mark_unknown_owners_inactive(active_owner_ids=())
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        _attach_case,
+        _detach_case,
+        _create_child_case,
+        _rename_case,
+        _move_case,
+        _delete_case,
+        _restore_case,
+        _reconcile_case,
+        _convert_case,
+        _remove_owner_case,
+        _mark_owners_case,
+    ],
+    ids=lambda case: case.__name__.strip("_").removesuffix("_case"),
+)
+def test_a_wal_restart_after_the_first_read_cannot_fail_a_mutation(
+    repository: LocalNoteFolderRepository, case
+) -> None:
+    """Every read-then-write mutation the repository owns takes SQLite's
+    write lock up front (``BEGIN IMMEDIATE``), so a concurrent checkpoint can
+    no longer invalidate the snapshot its first write depends on."""
+    mutate = case(repository)
+
+    with _wal_restarted_after_the_first_read(repository) as restarts:
+        result = mutate()
+
+    assert restarts, "the WAL restart never ran"
+    assert result or result == 0
 
 
 def test_managed_reconcile_never_removes_manual_membership(

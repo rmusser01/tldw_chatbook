@@ -441,6 +441,8 @@ class LibraryNotesState:
     # together (PR #2571 review, finding 6).
     navigation_focus_intent: bool = False
     notice: str = ""
+    # TASK-34000.28 (N-24): the folder-conflict ``notice`` offers Refresh.
+    notice_refresh_offered: bool = False
     tree_expanded_ids: set[str] = field(default_factory=set)
     tree_branches: dict[NotesBranchKey, NotesBranchSliceState] = field(
         default_factory=dict

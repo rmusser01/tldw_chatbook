@@ -1168,8 +1168,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: ``_ensure_library_notes_folder_slices``) for one out
     #: (``_library_notes_folder_target_options``): 37862 -> 37897 lines,
     #: 1361 -> 1362 methods (measured).
+    #: 2026-10-26, TASK-34000.28 (polish-1a task 4; owner decision 2026-10-04,
+    #: expand-the-limits rule): the per-reason folder-conflict copy table
+    #: (``_FOLDER_CONFLICT_COPY``) and its handler, the Refresh offer's
+    #: wiring plus its press handler (``handle_library_notes_notice_refresh``),
+    #: the delete path clearing the selection it deleted, and the move
+    #: reconcile reloading Unfiled for a note moved out of it: 37897 -> 37955
+    #: lines, 1362 -> 1363 methods (measured).
     #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37943, 1363),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37965, 1364),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
