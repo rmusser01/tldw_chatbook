@@ -853,6 +853,14 @@ MINIMUM_FILES = 1744
 # TASK-38981 re-review 4 (2026-11-06): append the four stage-pick
 # user-move nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1748
+# 2026-10-26, TASK-34000.29 (polish-1b batch), appended at the tail, so no
+# existing entry changes shard:
+# - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
+#   160x45 boots, ~26 s): 916 -> 917.
+# Rebased 2026-11-06 onto dev 2684e5453f (1748 entries, floor 1748): the
+# polish-1b entries above stay appended at the tail, so no existing slot
+# moves; the floor is the measured entry count: 1748 + 1 = 1749.
+MINIMUM_FILES = 1749
 
 
 def read_census(path: Path) -> list[str]:
