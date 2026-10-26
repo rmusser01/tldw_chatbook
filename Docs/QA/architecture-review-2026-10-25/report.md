@@ -45,7 +45,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
   - `ConsoleRuntime` reads a screen's private `_console_hook_review_projection` through `view.app.screen` / `screen_stack` (`console_runtime.py:4981`, `:5296-5297`).
   - `Event_Handlers/Chat_Events/chat_rag_events.py` is a RAG application service: 22 of its 36 functions take `app: "TldwCli"`.
   - Other modules build their own DBs: `MCP/server.py:604`, `Web_Server/mobile_service.py:420/832`, and config's lazy singletons (F9).
-- **Recommended structure:** a frozen, typed application-services bundle built once in `app_service_wiring`. Each consumer receives its slice through its constructor. No container, no registry. ADR-036 deferred exactly this "until more than one real composition root" exists, and the evidence above suggests that trigger has been reached. That is the owner's call (TASK-36947.1).
+- **Recommended structure:** a frozen, typed application-services bundle built once in `app_service_wiring`. Each consumer receives its slice through its constructor. No container, no registry. ADR-036 deferred exactly this "until more than one real composition root" exists, and the evidence above suggests that trigger has been reached. Owner decision 2026-10-25: adopt the bundle; TASK-36947.1 records it as an ADR.
 - **Strategy:**
   1. Ratchet string lookups first (TASK-36942.4).
   2. Record the decision.
@@ -198,7 +198,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 
   CLAUDE.md states the stored `api_settings` key outranks the env var; the engine's own comment states the opposite rule. A user with both set gets a different key depending on the provider family.
 - **Kwargs-builder drift:** the drifted builder is the dead `_chat_api_kwargs` (zero production callers, 23 test calls), already owned by **TASK-32807.5**. Not re-filed.
-- **Tasks:** TASK-36941.3 (precedence; needs an owner decision), TASK-36946.1–.2.
+- **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25: a set environment variable wins), TASK-36946.1–.2.
 
 ### F12 — Shared code lives in widget/screen files; Chat identity-checks UI internals · Medium · Layering · Module
 - **Evidence:** pure helpers sit in Textual modules:
@@ -250,8 +250,8 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
   - CLAUDE.md's Chat description and "New LLM Provider" steps (`:118-121`), which name neither the registry nor the presets;
   - `llm-providers.md:36`, which mentions neither the registry nor the presets;
   - `size-decomposition-candidates-2026-09-18.md`, which lists ChaChaNotes_DB (`:117`), and that file has no row.
-- **ADR numbering:** **50 ADR numbers are used by two files**, including 228 (store kernel and config-encryption memoization).
-- **Tasks:** TASK-36941.4, TASK-36943.1–.2.
+- **ADR numbering:** **50 ADR numbers are shared by 117 files** (37 numbers by two files, 10 by three, 2 by four, 1 by five), including 228 (store kernel and config-encryption memoization). About 7,400 references use one of these ambiguous numbers. Owner decision 2026-10-25: renumber the younger files.
+- **Tasks:** TASK-36941.4, TASK-36943.1–.3.
 
 ---
 

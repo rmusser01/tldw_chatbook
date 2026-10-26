@@ -7,7 +7,7 @@
 **Architecture:** Four phases:
 1. Defects and guardrails.
 2. Pure moves that fix dependency direction.
-3. Real seams (services bundle, registries, repositories), which need three owner decisions first.
+3. Real seams (services bundle, registries, repositories). All three owner decisions are made (2026-10-25); the services-bundle ADR (TASK-36947.1) must be accepted before TASK-36947.2 starts.
 4. Decomposition of the god functions and god screens.
 
 Every structural PR lowers the ratchet it affects in the same commit.
@@ -28,7 +28,10 @@ Every structural PR lowers the ratchet it affects in the same commit.
   - Run `Tests/Architecture` serially.
   - No test or probe may write the real profile; a sandboxed launch denies writes to `~/.config/tldw_cli` and `~/.local/share/tldw_cli`.
 - **Preflight:** run `./scripts/preflight.sh` before opening a PR, and again after any rebase that touches `backlog/`.
-- **Owner decisions are not made by implementers:** TASK-36941.3 (credential precedence), TASK-36943.2 (ADR numbering rule) and TASK-36947.1 (services bundle / ADR-036). A dependent task waits for its decision.
+- **Owner decisions (all made 2026-10-25) are not reopened by implementers:**
+  - TASK-36941.3: a set environment variable wins over the stored key.
+  - TASK-36943.2/.3: on an ADR-number collision the oldest file keeps the number and each younger file is renumbered with provenance.
+  - TASK-36947.1: adopt a frozen, typed, per-feature services bundle built once in `app_service_wiring`, with a shared factory for the other entry points and no DI container. TASK-36947.1 writes the ADR; TASK-36947.2 waits for the owner to accept it.
 - **Defer to existing owners:** TASK-32807.5 (dead Chat modules and `_chat_api_kwargs`), TASK-32898 (Interop helpers), TASK-34905 and TASK-33132 (transaction consolidation), TASK-34906 (migration registry), TASK-32463 (over-budget screens). Do not re-solve their scope inside these tasks.
 
 ## Review Focus
@@ -39,7 +42,7 @@ The failure modes most likely to bite users that no single task's tests cover by
 2. **A DB split or injected coordinator moves work outside the write transaction** (TASK-36949.2–.4). The semantic-mutation authorizer fails closed, so the symptom is a refused write, not corruption. Each task asserts the moved writes and the coordination run inside one `transaction()`, including a rollback case.
 3. **Boot import cost regresses** because a new package or shim imports eagerly (TASK-36944.x, 36945.1, 36947.2). The boot-import snapshot and pre-import ratchets (ADR-097, TASK-33276) must stay green; new neutral packages must not import Chat, DB or Textual at module level.
 4. **Settings save order changes** when a category moves into the panel registry (TASK-1378.x). Pin ADR-033 commit behaviour per category, including unsaved-change prompts on navigation, before moving it.
-5. **The credential-precedence change silently switches a user's key** (TASK-36941.3). Users with both an env var and a stored key will see a different key used for one provider family. The task records the decision, adds a test with both present, and adds a CHANGELOG entry.
+5. **The credential-precedence change silently switches a user's key** (TASK-36941.3). Under the decided env-first order, users with both an env var and a stored key will see the env key used for every provider family. The task records the order, adds a test with both present, and adds a CHANGELOG entry.
 
 ---
 
@@ -63,8 +66,9 @@ The failure modes most likely to bite users that no single task's tests cover by
 | 6 | TASK-36941.2 Research public methods | Independent defect | — |
 | 7 | TASK-36941.4 `chat_models.py` removal | Check TASK-19571's rule first | — |
 | 8 | TASK-36943.1 docs match code | Cheap; prevents re-review churn | — |
+| 9 | TASK-36943.2 ADR numbering rule and guard | Stops new collisions immediately | Adds the frozen list of shared numbers |
 
-**Request in parallel at the start of phase 1:** the three owner decisions (TASK-36941.3, TASK-36943.2, TASK-36947.1). They gate phase 3, and the decisions take calendar time.
+**Start early in phase 1:** write the services-bundle ADR (TASK-36947.1) so it can be accepted before phase 3.
 
 **Exit gate:** TASK-36942.1–.4 merged, so every later PR has a number to lower.
 
@@ -74,8 +78,8 @@ The failure modes most likely to bite users that no single task's tests cover by
 |---|---|---|
 | A: dependency direction | 36944.1 → 36944.2. Then 36944.3, .4, .6, .7, .8 in any order. 36944.5 and 36944.9 last (Console files) | `Chat/console_*`, `Widgets/Console/*` |
 | B: config | 36945.1, 36945.2, 36945.3 in any order; 36945.4 → 36945.5 | `config.py`: one config PR in flight at a time |
-| C: providers | 36946.1 → 36946.2; 36941.3 once its decision lands | `Chat/Chat_Functions.py`, `provider_registry.py` |
-| D: small independents | 36949.1, 36949.5, 36948.2, 36953.2, 36953.3 | `DB/ChaChaNotes_DB.py` (36949.x and 36948.2 both touch its imports) |
+| C: providers | 36946.1 → 36946.2; 36941.3 (decided: env wins when set) | `Chat/Chat_Functions.py`, `provider_registry.py` |
+| D: small independents | 36949.1, 36949.5, 36948.2, 36953.2, 36953.3; 36943.3 (ADR renumbering) after 36943.2 | `DB/ChaChaNotes_DB.py` (36949.x and 36948.2 both touch its imports) |
 
 **Cross-task interfaces fixed here, which later tasks consume:**
 
@@ -87,11 +91,11 @@ The failure modes most likely to bite users that no single task's tests cover by
 
 **Exit gate:** the layer allowlist has shrunk by at least the edges lanes A and D remove, and `config.py` is at least 2,584 lines shorter (TASK-36945.1).
 
-## Phase 3 — Real seams (after the owner decisions)
+## Phase 3 — Real seams
 
 | Task | Depends on | Notes |
 |---|---|---|
-| TASK-36947.2 services bundle | 36947.1 decision | Shape, ownership, teardown and alias period come from the decision; aliases keep the old attributes working |
+| TASK-36947.2 services bundle | 36947.1 ADR accepted | Shape, ownership, teardown and alias period come from the ADR; aliases keep the old attributes working |
 | TASK-36947.3 RAG service move | 36947.2, 36942.4 | First consumer cluster; removes RAG_Search → Event_Handlers |
 | TASK-36947.4 Console controller without the app | 36947.2 | Land before TASK-36951.3 (same file) |
 | TASK-36947.5 ConsoleRuntime hook-review state | — | Independent; can start in phase 2 |
