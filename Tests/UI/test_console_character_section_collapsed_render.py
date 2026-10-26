@@ -23,7 +23,8 @@ controller that loads real groups, then opens the section and reads what it
 shows -- the chats the send produced, with no Refreshing line, in every
 painted frame -- and checks the open still reveals the section. The third
 hides the browser under another ancestor (as the hidden rail does) and shows
-it again.
+it again. The last pins the one other request a collapsed send window made
+live: the avatar painter's first write to the never-shown name caption.
 """
 
 from __future__ import annotations
@@ -278,10 +279,11 @@ async def test_opening_after_a_collapsed_refresh_shows_its_chats_without_refresh
         assert await character_presentation_work(controller, screen) is True
         await pilot.pause(0.3)
         renders.stop()
-        assert [state.phase for state in published] == [
-            ConsoleCharacterOperationPhase.REFRESHING,
-            ConsoleCharacterOperationPhase.IDLE,
-        ], "the check did not publish Refreshing, then its result"
+        phases = [state.phase for state in published]
+        # A mount-time check can still land in the window; the property is
+        # about whatever is published while collapsed, Refreshing included.
+        assert ConsoleCharacterOperationPhase.REFRESHING in phases, phases
+        assert phases[-1] is ConsoleCharacterOperationPhase.IDLE, phases
         assert controller.state.data_revision == 8
         assert renders.recomposes == [], (
             f"{len(renders.recomposes)} Character recomposes while collapsed"
@@ -428,3 +430,49 @@ async def test_a_hidden_ancestor_defers_the_render_until_the_browser_shows(
         assert len(browser.query(".console-character-row")) == 5
         assert not browser.query("#console-character-loading")
         assert str(app.identity.content) == "Ada · Local · Open"
+
+
+class _CaptionApp(App):
+    """The avatar painter's two caption Statics, as the rail composes them."""
+
+    def compose(self) -> ComposeResult:
+        name = Static("Roleplay character", id="console-character-name", markup=False)
+        name.display = False  # A hidden seam, never shown (left_rail compose).
+        yield name
+        yield Static(
+            "Reaction: Automatic", id="console-character-reaction-state", markup=False
+        )
+
+
+async def test_hidden_avatar_caption_takes_new_copy_without_a_layout(
+    monkeypatch,
+) -> None:
+    """The painter's first write lands on a send; a hidden caption needs no layout.
+
+    Live, the only Character-section layout request left in a collapsed send
+    window was this one: the screen composes the hidden caption with
+    "Roleplay character", and the avatar painter's first paint of a session
+    (on its first send) writes "No character in this chat".
+    """
+    layouts: list[Widget] = []
+    refresh = Widget.refresh
+
+    def counted(widget, *regions, repaint=True, layout=False, recompose=False):
+        if layout or recompose:
+            layouts.append(widget)
+        return refresh(
+            widget, *regions, repaint=repaint, layout=layout, recompose=recompose
+        )
+
+    app = _CaptionApp()
+    async with app.run_test(size=(40, 6)) as pilot:
+        await pilot.pause()
+        name = app.query_one("#console-character-name", Static)
+        reaction = app.query_one("#console-character-reaction-state", Static)
+        monkeypatch.setattr(Widget, "refresh", counted)
+        ConsoleLeftRail.sync_character_caption(app.screen, None, None)
+        assert str(name.content) == "No character in this chat"
+        assert name not in layouts
+        # Positive control: the shown Reaction line still lays out a change.
+        ConsoleLeftRail.sync_character_caption(app.screen, None, "Happy")
+        assert reaction in layouts
