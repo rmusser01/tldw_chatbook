@@ -275,31 +275,55 @@ def _members(scope, partition, document):
                 )
             )[owner]
         )
-        declarations = [
-            row for row in projected.items if row.owner == owner and row.path == path
-        ]
-        if len(declarations) != 1:
+        declarations = sorted(
+            (row for row in projected.items if row.owner == owner and row.path == path),
+            key=lambda row: row.logical_id,
+        )
+        if not declarations:
             raise ValueError("mobile_sqlite_declaration_changed")
-        declared = declarations[0]
-        producer = producers.get(declared.logical_id)
-        if producer is None or (
-            producer.owner_id,
-            producer.status,
-            producer.dependencies,
-        ) != (declared.owner, declared.status, declared.dependencies):
-            raise ValueError("mobile_sqlite_inventory_changed")
-        payload = payloads.get(declared.logical_id)
-        if declared.status == "unused" and payload is None:
-            continue
+        selected = []
         expected = legacy if partition.purpose == "legacy" else canonical
-        if (
-            declared.status != "included"
-            or payload is None
-            or payload.owner_id != owner
-            or owner_versions.get(owner) != expected
-        ):
-            raise ValueError("mobile_sqlite_member_changed")
-        result.append((family, owner, expected, payload))
+        for declared in declarations:
+            producer = producers.get(declared.logical_id)
+            if producer is None or (
+                producer.owner_id,
+                producer.status,
+                producer.dependencies,
+                producer.shared_group,
+            ) != (
+                declared.owner,
+                declared.status,
+                declared.dependencies,
+                declared.shared_group,
+            ):
+                raise ValueError("mobile_sqlite_inventory_changed")
+            payload = payloads.get(declared.logical_id)
+            if declared.status == "unused" and payload is None:
+                continue
+            if (
+                declared.status != "included"
+                or payload is None
+                or payload.owner_id != owner
+                or owner_versions.get(owner) != expected
+            ):
+                raise ValueError("mobile_sqlite_member_changed")
+            selected.append(payload)
+        if not selected:
+            continue
+        if len(selected) != len(declarations):
+            raise ValueError("mobile_sqlite_declaration_changed")
+        if len(declarations) > 1:
+            from .mobile_consolidation import _resource_identity
+
+            group = declarations[0].shared_group
+            if not group or any(row.shared_group != group for row in declarations):
+                raise ValueError("mobile_sqlite_alias_unproven")
+            identities = {_resource_identity(row.path)[1:] for row in declarations}
+            if len(identities) != 1 or len(next(iter(identities))) != 2:
+                raise ValueError("mobile_sqlite_alias_unproven")
+            if len({(row.size, row.sha256) for row in selected}) != 1:
+                raise ValueError("mobile_sqlite_alias_payload_changed")
+        result.append((family, owner, expected, selected[0]))
     return result
 
 

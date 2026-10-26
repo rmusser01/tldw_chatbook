@@ -547,6 +547,7 @@ def discover(
     if not any(adapter.owner_id == "recovered.media" for adapter in adapters):
         adapters += recovery_adapters()
     selected_roots: set[Path] = set()
+    mobile_controls: dict[int, StorageItem] = {}
     for selected in config_paths or (profile_paths.effective_config_path(),):
         selected = profile_paths.lexical_path(selected)
         profile_id = hashlib.sha256(str(selected).encode()).hexdigest()[:24]
@@ -657,11 +658,14 @@ def discover(
                 from .mobile_consolidation import mobile_inventory
 
                 existing_ids = {item.logical_id for item in declared}
-                declared.extend(
-                    item
-                    for item in mobile_inventory(config)
-                    if item.logical_id not in existing_ids
-                )
+                for item in mobile_inventory(config):
+                    if item.logical_id not in existing_ids:
+                        declared.append(item)
+                        if (
+                            item.owner == "recovery.control"
+                            and item.status == "intentionally_excluded"
+                        ):
+                            mobile_controls[id(item)] = item
             declared.extend(_sqlite_sidecars(declared, adapters))
             declared.extend(_planned_output_exclusion(context, declared, root))
             items[profile_start:] = declared
@@ -716,6 +720,8 @@ def discover(
         if (
             entry.path is not None
             and entry.owner != "sqlite.transient"
+            # Native claim creation must not add payload-sharing scope.
+            and mobile_controls.get(id(entry)) is not entry
             and entry.shared_group is None
             and entry.status
             not in {

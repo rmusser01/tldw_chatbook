@@ -389,3 +389,41 @@ kill policy, lifecycle and provenance. No raw policy or grant is imported.
 Missing, unknown, ambiguous, changed or non-equivalent authority produces an
 actionable body-free exact-reference blocker before effects, without rejecting
 unrelated history or otherwise supported defaults.
+
+
+### Stable native source-claim control discovery
+
+The fixed source-addressed claim/lock declarations retain stable discovery scope
+across native missing-to-created transitions, including distinct enrolled selector
+aliases. Only the exact safe intentionally-excluded control objects produced by
+native mobile inventory are outside discovery's automatic physical-alias grouping.
+Every declaration remains in the complete scope digest; unknown, unsafe and other
+recovery controls keep ordinary classification. This does not declare a shared
+payload identity or change generic alias/capture policy.
+
+Native claim contents, operation/journal/session identity, current source fingerprint
+and the complete selector cohort's physical/path/ancestor/mode witnesses remain
+mandatory at their existing boundaries. An excluded control row cannot authorize
+adoption of a substituted claim, release old ownership, or suppress payload/shared
+owner changes. Qualify actual distinct-selector encrypted capture and authenticated
+SQLite reads before typed planning; this correction supplies no import, receipt,
+history publication, public recovery or cutover authority.
+
+
+### Authenticated fixed SQLite alias member selection
+
+After the native control-discovery correction, distinct-selector encrypted capture
+reaches the private SQLite reader with multiple native declarations for one fixed
+owner file. The reader may select one deterministic logical-ID representative only
+after fresh native discovery/projection and current physical identity prove the
+same shared owner, and every relevant authenticated producer matches its native
+logical ID, owner, status, dependencies and shared group. Every included alias must
+have its exact authenticated member with equal size/hash semantics. Missing,
+changed, mixed or unproved declarations refuse; owner/path/group labels alone do
+not qualify a shared resource. All-native-unused declarations without payloads
+retain absence and grant no shared-file authority.
+
+This consumes the existing native capture's alias semantics; it does not widen
+fixed families/paths, change complete inventory or source/cohort/claim checks, or
+issue additional connections, schemas, transactions or publication authority.
+Captured-SQLite custody, physical retirement and quarantine remain unchanged.

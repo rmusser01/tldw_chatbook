@@ -103,14 +103,17 @@ def _observe_physical_retirement(monkeypatch):
     assert dispatches == []
 
 
+@pytest.mark.parametrize("distinct_selectors", (False, True))
 def test_actual_captured_sqlite_reads_preserve_frozen_schemas_and_bytes(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, distinct_selectors
 ):
     from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
         _captured_mobile,
     )
 
-    with _capture_fixture(tmp_path, monkeypatch) as values:
+    with _capture_fixture(
+        tmp_path, monkeypatch, distinct_selectors=distinct_selectors
+    ) as values:
         session, journal, _, _, preview, inventory, _ = values
         output = tmp_path / "archives"
         output.mkdir(mode=0o700)
@@ -552,7 +555,10 @@ def test_read_staging_substitution_is_retained_not_removed(tmp_path, monkeypatch
                     retained.rename(foreign)
 
 
-def test_native_read_authority_and_integrity_controls(tmp_path, monkeypatch):
+@pytest.mark.parametrize("distinct_selectors", (False, True))
+def test_native_read_authority_and_integrity_controls(
+    tmp_path, monkeypatch, distinct_selectors
+):
     from copy import copy
 
     from tldw_chatbook.Backup_Recovery import (
@@ -571,9 +577,10 @@ def test_native_read_authority_and_integrity_controls(tmp_path, monkeypatch):
 
     with _capture_fixture(tmp_path, monkeypatch) as values:
         session, journal, source, _, _, _, authority = values
-        target = source
+        target = source.with_name("target.toml") if distinct_selectors else source
+        selectors = tuple(dict.fromkeys((source, target)))
         candidate_selector = source.with_name("candidate.toml")
-        for selector in (candidate_selector,):
+        for selector in (*selectors[1:], candidate_selector):
             selector.write_bytes(source.read_bytes())
             selector.chmod(0o600)
             control_records.bind_profile(
@@ -584,7 +591,7 @@ def test_native_read_authority_and_integrity_controls(tmp_path, monkeypatch):
                 session=session,
             )
         with session._discovery_reads(private_sqlite=True):
-            inventory = discover((source,))
+            inventory = discover(selectors)
             preview = _preview_selected_mobile(source, target)
         assert {source, target, candidate_selector} <= {
             row.selector for row in preview.selector_provenance
@@ -633,7 +640,7 @@ def test_native_read_authority_and_integrity_controls(tmp_path, monkeypatch):
                     fault.setattr(journal, "operation_id", "foreign-operation")
                     with pytest.raises((ValueError, RuntimeError)):
                         reads.page("legacy", "chat", "messages")
-                for selector in (source, candidate_selector):
+                for selector in (*selectors, candidate_selector):
                     retained = selector.with_suffix(".retained")
                     original = selector.read_bytes()
                     selector.rename(retained)
@@ -654,7 +661,7 @@ def test_native_read_authority_and_integrity_controls(tmp_path, monkeypatch):
                     "foreign-pending",
                     ("mobile.profile",),
                     journal.root.parent,
-                    (source,),
+                    selectors,
                 )
                 try:
                     with pytest.raises(

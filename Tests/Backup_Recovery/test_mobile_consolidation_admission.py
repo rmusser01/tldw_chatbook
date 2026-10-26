@@ -25,6 +25,8 @@ def prepared(
     monkeypatch,
     *,
     fresh=False,
+    canonical_runs_absent=False,
+    legacy_artifact_root=None,
     enrolled=True,
     ordinary_execution=False,
     run_mode=None,
@@ -48,9 +50,20 @@ def prepared(
     config.chmod(384)
     values = read_profile_config(config)
     source = legacy_mobile_dir(values)
-    seed_legacy_mobile(source)
+    seed_legacy_mobile(source, artifact_root=legacy_artifact_root)
     stores = CanonicalConsoleStores(*canonical_console_paths(values))
-    if not fresh:
+    if canonical_runs_absent:
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+        assert not fresh
+        stores.chat_path.parent.mkdir(parents=True, mode=0o700)
+        chat = CharactersRAGDB(stores.chat_path, "unused-runs-fixture")
+        chat.close_connection()
+        workspace = WorkspaceDB(stores.workspace_path, "unused-runs-fixture")
+        workspace.close()
+        assert not stores.run_path.exists()
+    elif not fresh:
         seed_canonical_console(stores)
     if wal:
         import subprocess

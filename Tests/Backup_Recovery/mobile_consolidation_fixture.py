@@ -24,7 +24,9 @@ def fingerprints(root: Path) -> dict[str, str]:
     }
 
 
-def _seed(stores: CanonicalConsoleStores, *, legacy: bool) -> dict:
+def _seed(
+    stores: CanonicalConsoleStores, *, legacy: bool, artifact_root: Path | None = None
+) -> dict:
     for path in stores.paths:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     workspace_db = WorkspaceDB(stores.workspace_path, "mobile-fixture")
@@ -34,11 +36,12 @@ def _seed(stores: CanonicalConsoleStores, *, legacy: bool) -> dict:
         stores.run_path, client_id="mobile-fixture", execution_owner=execution_owner
     )
     try:
-        artifact_root = (
-            stores.run_path.parent.parent / "tool_sandbox"
-            if legacy
-            else stores.run_path.parent.parent / "canonical-artifacts"
-        )
+        if artifact_root is None:
+            artifact_root = (
+                stores.run_path.parent.parent / "tool_sandbox"
+                if legacy
+                else stores.run_path.parent.parent / "canonical-artifacts"
+            )
         registry = LocalWorkspaceRegistryService(workspace_db)
         default = registry.ensure_default_workspace()
         workspace = registry.create_workspace(
@@ -216,13 +219,14 @@ def _seed(stores: CanonicalConsoleStores, *, legacy: bool) -> dict:
         execution_owner.close()
 
 
-def seed_legacy_mobile(source_dir: Path) -> dict:
+def seed_legacy_mobile(source_dir: Path, *, artifact_root: Path | None = None) -> dict:
     """Seed closed branched/history/authority fixtures under one isolated source."""
     result = _seed(
         CanonicalConsoleStores(
             source_dir / "chat.db", source_dir / "workspaces.db", source_dir / "runs.db"
         ),
         legacy=True,
+        artifact_root=artifact_root,
     )
     result["fingerprints"] = fingerprints(source_dir)
     return result

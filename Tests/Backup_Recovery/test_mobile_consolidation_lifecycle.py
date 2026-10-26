@@ -300,6 +300,7 @@ def _capture_fixture(tmp_path, monkeypatch, **options):
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
     from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 
+    distinct_selectors = options.pop("distinct_selectors", False)
     source_state = options.pop("source_state", None)
     excluded_citation = options.pop("excluded_citation", False)
     with prepared(tmp_path, monkeypatch, **options) as values:
@@ -358,6 +359,31 @@ def _capture_fixture(tmp_path, monkeypatch, **options):
         if item.status in {"unsupported", "missing_required", "unavailable"}
     ]
     with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session:
+        if distinct_selectors:
+            from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+            from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+                _preview_selected_mobile,
+            )
+
+            target = config.with_name("target.toml")
+            candidate = config.with_name("candidate.toml")
+            for selector in (target, candidate):
+                selector.write_bytes(config.read_bytes())
+                selector.chmod(0o600)
+                bind_profile(
+                    authority.control_root.parent,
+                    selector,
+                    ("mobile.profile",),
+                    authority.control_root,
+                    session=session,
+                )
+            with session._discovery_reads(private_sqlite=True):
+                inventory = discover((config, target))
+                preview = _preview_selected_mobile(config, target)
+            assert inventory.complete
+            assert {config, target, candidate} <= {
+                row.selector for row in preview.selector_provenance
+            }
         yield session, journal, config, stores, preview, inventory, authority
 
 

@@ -90,6 +90,19 @@ Multiple known configs sharing one physical source require destination review.
 `identity_conflicts` lists exact overlapping destination primary-key tuples;
 collisions require explicit mapping and never establish equivalent content.
 
+Safe fixed source-claim/lock declarations produced by native mobile discovery
+stay in the full inventory while remaining outside automatic payload-alias
+grouping. Native creation therefore preserves their reviewed scope across
+selector aliases. Other recovery controls and unsafe declarations retain ordinary
+classification; live claim custody still rejects substituted objects.
+
+The private captured-SQLite reader rechecks all fixed-owner alias declarations
+against authenticated producer and member IDs, including dependencies and shared
+groups. Included aliases require fresh native physical identity plus matching
+captured size/hash before deterministic representative selection. All-unused
+members retain absence; mixed or unproved records refuse. This changes member
+selection only, retaining the reader's existing custody and retirement owners.
+
 The existing chat, workspace and AgentRuns owners declare `:legacy-mobile`
 logical records. Installed run-log discovery reads the explicitly reviewed legacy
 stores for retained artifact roots. Normal maintenance, WAL capture, credential
