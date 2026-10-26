@@ -125,6 +125,7 @@ MAX_PASS_ADDED_MODULES = 558
 
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
+#: 2026-10-26 TASK-34000.28/.40 polish-1a: 425,347 -> 425,752 (paired arms; dev 424,643 + 1,109) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 MAX_PASS_ADDED_LOC = 425_752
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
