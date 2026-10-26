@@ -103,7 +103,10 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
     row, or a click, chooses it; Choose confirms the row last focused (Top
     level when ``include_root`` and nothing else was focused); Escape, Cancel
     or the backdrop dismiss with ``None``. Nothing but Enter, a click or
-    Choose ever dismisses with a folder id.
+    Choose ever dismisses with a folder id -- and never one from a list the
+    filter's current text has not answered yet (fix round 1, I-1): while the
+    filter's debounce or its page is pending, Down, Enter, a row or Choose
+    ask for the narrowed list at once and focus ITS first row when it lands.
     """
 
     BINDINGS = (Binding("escape", "request_safe_cancel", "Cancel", show=False),)
@@ -158,6 +161,9 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
         self._page: NoteFolderChildPage | None = None
         # Top level is a real choice before the first page has even landed.
         self._highlighted: str | None = "" if include_root else None
+        # The filter text the MOUNTED rows (and that preselection) answer.
+        self._shown_query = ""
+        self._loading = False
         self._load_generation = 0
         self._filter_timer: Timer | None = None
         self._focus_first_row_on_load = False
@@ -175,7 +181,9 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
                 max_length=200,
                 id="library-note-folder-target-filter",
             )
-            yield VerticalScroll(id="library-note-folder-target-list")
+            # Fix round 1 (M-1): not a Tab stop of its own -- Tab from the
+            # filter lands on the first row, and Down there walks the rows.
+            yield VerticalScroll(id="library-note-folder-target-list", can_focus=False)
             yield Static(
                 "Loading folders…", id="library-note-folder-target-total", markup=False
             )
@@ -212,11 +220,18 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
 
     def _request_page(self, offset: int) -> None:
         self._load_generation += 1
+        self._loading = True
+        # Fix round 1 (M-4): no stale total beside a list about to change.
+        self._set_total("Loading folders…")
         self.run_worker(
             self._load_page(self._query, offset, self._load_generation),
             exclusive=True,
             group="library-note-folder-target",
         )
+
+    def _set_total(self, text: str) -> None:
+        for total in self.query("#library-note-folder-target-total").results(Static):
+            total.update(text)
 
     async def _load_page(self, query: str, offset: int, generation: int) -> None:
         try:
@@ -227,23 +242,39 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
                 exception_class=type(exc).__name__,
             ).warning("library_note_folder_target_page_failed")
             if generation == self._load_generation and self.is_mounted:
-                for total in self.query("#library-note-folder-target-total").results(
-                    Static
-                ):
-                    total.update("Could not load folders.")
+                await self._show_failure(query)
             return
         if generation != self._load_generation or not self.is_mounted:
             return
-        await self._show_page(page)
+        await self._show_page(page, query)
 
-    def _root_row_shown(self, page: NoteFolderChildPage) -> bool:
+    async def _show_failure(self, query: str) -> None:
+        """Fix round 1 (M-4): nothing from the previous query stays choosable."""
+        self._loading = False
+        self._focus_first_row_on_load = False
+        self._page = None
+        self._highlighted = None
+        self._shown_query = query
+        for listing in self.query("#library-note-folder-target-list").results(
+            VerticalScroll
+        ):
+            await listing.remove_children()
+        self._set_total("Could not load folders.")
+        for pager in self.query("#library-note-folder-target-pager"):
+            pager.display = False
+        for confirm in self.query("#library-note-folder-target-confirm").results(
+            Button
+        ):
+            confirm.disabled = True
+
+    def _root_row_shown(self, page: NoteFolderChildPage, query: str) -> bool:
         return (
             self._include_root
             and page.start_offset == 0
-            and (not self._query or self._query.casefold() in "top level")
+            and (not query or query.casefold() in "top level")
         )
 
-    async def _show_page(self, page: NoteFolderChildPage) -> None:
+    async def _show_page(self, page: NoteFolderChildPage, query: str) -> None:
         """Replace the rows in place: never a recompose over the filter."""
         listing = next(
             iter(self.query("#library-note-folder-target-list").results(VerticalScroll)),
@@ -253,7 +284,7 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
             return
         self._page = page
         rows: list[Button] = []
-        if self._root_row_shown(page):
+        if self._root_row_shown(page, query):
             rows.append(self._row("Top level", ""))
         rows.extend(
             self._row(
@@ -275,8 +306,13 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
         await listing.remove_children()
         await listing.mount_all(rows)
         listing.scroll_home(animate=False)
-        for total in self.query("#library-note-folder-target-total").results(Static):
-            total.update(self._total_text(page))
+        self._shown_query = query
+        self._loading = False
+        self._set_total(self._total_text(page, query))
+        for confirm in self.query("#library-note-folder-target-confirm").results(
+            Button
+        ):
+            confirm.disabled = False
         paged = (
             page.total_folders > self._page_size
             or page.previous_offset is not None
@@ -303,11 +339,11 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
         row.choice_value = value
         return row
 
-    def _total_text(self, page: NoteFolderChildPage) -> str:
+    def _total_text(self, page: NoteFolderChildPage, query: str) -> str:
         total = page.total_folders
         if total == 0:
-            if self._query:
-                return f"No folder matches “{self._query}”"
+            if query:
+                return f"No folder matches “{query}”"
             return "No folders yet"
         if page.previous_offset is None and page.next_offset is None:
             return f"{total} folder" if total == 1 else f"{total} folders"
@@ -320,11 +356,49 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
     @on(Input.Changed, "#library-note-folder-target-filter")
     def _filter_changed(self, event: Input.Changed) -> None:
         event.stop()
+        # Typing again means the user is still in the filter: a Down pressed
+        # before this keystroke no longer gets to pull focus into the rows.
+        self._focus_first_row_on_load = False
         if self._filter_timer is not None:
             self._filter_timer.stop()
         self._filter_timer = self.set_timer(
             self.FILTER_DEBOUNCE_SECONDS, self._apply_filter
         )
+
+    def _filter_text(self) -> str:
+        field = next(
+            iter(self.query("#library-note-folder-target-filter").results(Input)), None
+        )
+        return field.value.strip() if field is not None else self._query
+
+    def _rows_answer_the_filter(self) -> bool:
+        """Whether the mounted rows are the answer to the filter's text now.
+
+        Fix round 1 (I-1): False while the debounce is pending or the page for
+        newer text is still on its way -- then the rows are the PREVIOUS
+        list, and choosing one moved a note (or a whole folder) to a place
+        the typed text does not match.
+        """
+        return self._filter_timer is None and self._shown_query == self._filter_text()
+
+    def _catch_up_with_the_filter(self) -> None:
+        """Ask for the filter's current text now; focus its first row on landing."""
+        if self._filter_timer is not None:
+            self._filter_timer.stop()
+            self._filter_timer = None
+        query = self._filter_text()
+        if query != self._query:
+            self._query = query
+            self._request_page(0)
+        if self._loading:
+            self._focus_first_row_on_load = True
+
+    def _move_into_the_rows(self) -> None:
+        """Down or Enter in the filter: the first row of the CURRENT answer."""
+        if self._rows_answer_the_filter() and not self._loading:
+            self._focus_row(0)
+            return
+        self._catch_up_with_the_filter()
 
     def _apply_filter(self) -> None:
         self._filter_timer = None
@@ -345,7 +419,7 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
     def _filter_submitted(self, event: Input.Submitted) -> None:
         """Enter in the filter moves to the first row; it never chooses."""
         event.stop()
-        self._focus_row(0)
+        self._move_into_the_rows()
 
     # -- rows, keys, choosing ------------------------------------------------
 
@@ -378,9 +452,10 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
             isinstance(focused, Input)
             and focused.id == "library-note-folder-target-filter"
         ):
-            if event.key == "down" and self._focus_row(0):
+            if event.key == "down":
                 event.stop()
                 event.prevent_default()
+                self._move_into_the_rows()
             return
         rows = self._rows()
         if focused not in rows:
@@ -398,6 +473,11 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
     @on(Button.Pressed, ".library-note-folder-target-row")
     def _row_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if not self._rows_answer_the_filter():
+            # A stale row (reached by Tab or a click before the filter
+            # answered) is never chosen; the narrowed list is asked for.
+            self._catch_up_with_the_filter()
+            return
         self.dismiss(str(event.button.choice_value))
 
     @on(Button.Pressed, "#library-note-folder-target-previous")
@@ -416,7 +496,11 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
 
     def _submit(self) -> None:
         # Choose with no row ever focused (and no Top level) stays open: it
-        # must never dismiss with a folder id the user did not pick.
+        # must never dismiss with a folder id the user did not pick -- nor
+        # with one from a list the filter's current text has not answered.
+        if not self._rows_answer_the_filter():
+            self._catch_up_with_the_filter()
+            return
         if self._highlighted is not None:
             self.dismiss(self._highlighted)
 
