@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-21 07:45'
-updated_date: '2026-10-26 12:25'
+updated_date: '2026-10-26 15:47'
 labels:
   - console
   - performance
@@ -85,4 +85,36 @@ AC#2 scope: every requester above that does not need a layout no longer requests
 **Visual check** (fix arm, live, a first and a warm send at each size; `LQ/visual/`): 80x24, 120x40 and 235x52 mid-run and after; Queue/Send, Dictate, Redirect and Stop paint whole at every size, the "Type to queue" reason strip shows mid-run, and the Conversations row shows the running icon during the run and the idle icon after (patched in place).
 
 **Suite comparison**: 134 related files (every test file that names a touched module) on the branch and on a detached dev worktree, compared by test id. Branch-only reds: TASK-33620.15.7's Inspector-fact pin (expected: the fact now repaints without layout; updated); the rest re-ran green serially on the branch or fail identically on dev when re-run serially (`test_settings_active_compaction_close_anyway...`, `test_console_bootstrap_workspace_activation_and_details_use_target_default`, `test_conversation_row_renders_custom_icon_in_right_action_slot` flakes 2/6 on both). Governance: Python style inventory (ADR-161), component/design-token governance, screen and module size ratchets, UI-ready module census and timer-path inventory match dev (the last is red on dev for `ProjectIndexBindingCard._poll`, TASK-36191, identically).
+
+**Review fix (2026-10-26).** The independent review found that every tray sync the patch refused (a conversation switch, a search, a rename, a first send, an approval that adds a row line) ran two throwaway off-DOM composes inside `sync_state` before the rebuild composed a third time. Verified first: a new pin counted 3 composes for each refused delta on the pre-fix head. Fix: `_browser_delta_may_patch` checks the state before composing. The two composes run only when `conversation_browser` is the sole changed field, the browsers differ only in run markers, attention facts, icons or colours, and every row's activity line is unchanged. The compose diff is still the authority on whether an admitted delta moves nothing.
+- CPU per tray sync (headless, app stylesheets, `process_time` around sync + settle, median of 9; dev 0d7e418db1 / pre-fix / fix): conversation switch at 12 rows 81 / 142 / 82 ms and at 40 rows 203 / 382 / 203 ms (192 ms of the pre-fix figure blocked inside `sync_state`); search at 40 rows 203 / 381 / 203 ms; running marker (patched) at 40 rows 205 / 211 / 211 ms. A patched sync costs the same CPU as dev's rebuild, but the two composes now run inside `sync_state`. TASK-37030 is filed to drop the compose of the state already shown.
+- Pins: `test_delta_the_patch_refuses_composes_once[conversation switch|search results|rename|approval]` assert one compose per refused sync. They pass on dev by design and failed on the pre-fix head (3 composes each). Three gate mutations were each caught: an empty patchable-field set (by the warm-send test and the tray A/B), no activity-line check (by the approval pin), and allowing other changed fields (by the unrendered-field control).
+
+**Review follow-ups applied.**
+- `plan_in_place_delta` rebuilds when a public attribute that is not a plain value differs. `test_delta_rebuilds_a_changed_public_object` failed before the change.
+- The compose read view moved into `compose_delta.py` as `ComposeReadView`, shared by both trays.
+- The dead first `MINIMUM_FILES` assignment was dropped from the census script, and its comment now gives the file's test count (20, about 22 s).
+- The warm-send test's docstring says which assertions its first failure hides on the base build, and where each of those fixes is shown red.
+
+**Live re-run with CPU columns** (real app via the launcher, isolated profile, null keyring, Anthropic claude-haiku-4-5 through the review proxy, 160x45, 8 sends per launch, launches B F F B, base = origin/dev 0d7e418db1, host load 6-11 with a test suite running). The probe now also samples process CPU and UI-thread CPU, and counts tray composes, per send window. Warm sends (14 per arm), median base -> fix:
+- full reflows 16 -> 13 (mean 16.7 -> 13.4);
+- layout requests 257 -> 111;
+- layout time 171 -> 139 ms;
+- process CPU 1302 -> 1205 ms;
+- UI-thread CPU 554 -> 486 ms;
+- tray composes 2 (15 ms) -> 4 (28 ms).
+
+The patch's extra composes cost about 14 ms per send window, against about 68 ms of UI-thread CPU saved. First sends (2 per arm): reflows 22.5 -> 22.5 (19 and 26 vs 24 and 21); process CPU 2328 -> 2025 ms.
+
+Visual check (fix, 120x40, live):
+- switching conversations from a tray row rebuilds the tray, moving the selection highlight and the summary line;
+- a warm send shows the running icon on its row mid-run and the idle icon after.
+
+**Merge evidence (2026-10-26, base origin/dev 0d7e418db1, no rebase needed).**
+- New file: 20 passed under the plain command on the branch. On origin/dev: 14 failed, 6 passed. The 6 that pass are 2 positive controls and the 4 refused-compose pins, which match dev by design and failed on the pre-fix head.
+- 139 related test files (every file naming a touched module), run on the branch and on origin/dev and compared by test id. All 12 branch-only reds were resolved on re-run:
+  - 6 passed serially on the branch;
+  - 3 fail identically on dev serially (cost-chip active edit, switcher local probe, zero-result workspace search);
+  - the two add-API-key recovery tests and the workspace persona bootstrap test flake on both arms with the same assertions (dev failed 5 of 6 and 3 of 6 runs).
+- Governance: Python style inventory 37 passed; component pattern 18 passed; design tokens 8 passed; screen size ratchet 4 passed; UI-ready module census 4 passed (no module added, no CSS changed). The module size ratchet shows the same 8 reds as dev, none in touched files. The census check reports OK (907 entries, floor 906), and ./scripts/preflight.sh passes.
 <!-- SECTION:NOTES:END -->
