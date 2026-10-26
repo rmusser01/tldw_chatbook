@@ -113,3 +113,27 @@ Reason: completion of the existing finite operation and UI refresh contract; no 
 ADR required: no
 ADR path: existing canonical ADRs 007, 011, 033 and existing persistent-diagnostic governance.
 Reason: bounded lookup safety and regenerated source-derived metadata; no new service, sink or storage contract.
+
+
+## CI qualification repairs (existing TASK-36695 and TASK-34000.14)
+
+Final-head attempts exposed two independently controlled issues. TASK-36695 owns a real competing-render final sample publication race: canonical Undo is complete while the editor can remain stale after ordinary settling. TASK-34000.14 owns a test observation gap: an attached replacement Notes list may have a zero compositor region before layout. The original three tasks remain complete; reuse these existing owners without duplicate tasks.
+
+ADR required: no
+ADR path: existing canonical ADR-118, ADR-033 and ADR-011.
+Reason: existing-owner applicability correction plus test readiness, without new storage, runtime, UI structure or service boundaries.
+
+- [x] Add deterministic current-source Chunking render-order RED controls, then repair only owned final publication and verify newer-input protection plus adjacent edit behavior.
+- [x] Replace Library test fixed delay with bounded current-list paint readiness; retain the original missing-folder negative control and all semantic/page-count assertions.
+- [x] Verify actual child/canvas evidence, source guards, scoped static checks, architecture/QA notes and one focused Superpowers review of this CI delta.
+- [ ] Preserve all 901 current dev census slots and required caps, register the new exact controls, push the reviewed complete change, and remain on PR #3251 until current-head CI is green and review feedback is addressed.
+
+
+### Focused CI repair review follow-up
+
+- [x] Address the independently reproduced configuration-input regression introduced by the first final-render exception: restrict the exception to the sample echo while preserving the original configuration publication generation fence, or use an equally narrow proven guard. Add a permanent real-key/held-parent regression retaining the second accepted key and canonical result.
+- [x] Verify the existing sample convergence and newer-input/status controls on the corrected source; run one scoped rereview of the complete feedback fix before pushing.
+
+ADR required: no
+ADR path: existing ADR-118 and ADR-033.
+Reason: preserve the existing configuration authoring contract while correcting the same-owner sample publication defect; no new state/store/service boundary.
