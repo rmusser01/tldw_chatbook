@@ -546,3 +546,35 @@ Ruling: Fix the reproduced Evals retained-definition passive-read boundary narro
 The Evals passive discovery path may read the same verified isolated-profile descriptor during its own native mobile recovery_pending operation. Factor the existing committed association, journal receipt, catalog identity/digest, activation-owner, prepared mapping and root-coverage checks once. The ordinary launch-state/descriptor entry and all launch, selection and requirements consumers retain their startup-permission gate and refusal behavior. A separate private Evals metadata entry may pass only the actual native current-mobile discovery/session/journal/selector/namespace predicate; it accepts no bypass flag or callback and does not grant execution. All descriptor validation remains mandatory, including exact selected config/profile/control and paired witness. Missing, foreign or retired scopes, mismatches and recovery_scope_uncertain refuse.
 
 This corrects a second reached boundary after the first Evals pending gate: its shared isolated descriptor also enforced startup admission during passive capture. The alternative of weakening the shared launch gate is rejected because it would admit ordinary profile consumers. Qualify unwrapped restored/MCP-reviewed capture and raw reference proof, ordinary launch/requirements refusal under pending, and focused profile/catalog/retained controls. Existing inherited internal control-reader custody remains independently unqualified.
+
+
+### Native note-link token relocation during private consolidation
+
+The captured Note identity map may relocate only the identity capture group of
+the installed `ChaChaNotes_DB._NOTE_LINK_TARGET_RE` grammar in `notes.content`.
+Preserve the surrounding `(note://...)` syntax, visible link text and all other
+body bytes exactly. Process every occurrence, including repeated links and
+self-links; native backlink extraction excludes self-links from its edges, not
+from the body's identity tokens. An unknown or unproved target, or a token that
+cannot retain the native grammar, produces an exact body-free source/dependency
+blocker before effects. Never guess a canonical match, replace arbitrary prose
+or recursively rewrite extension JSON.
+
+This is necessary because native `replace_note_links` regenerates `note_links`
+from the note body on every write. Mapping only the relational edges would
+silently revert their meaning on the next save. Validate the mapped body through
+the installed extractor, native write and backlink reader, including collisions,
+repeated/self/deleted notes and unchanged non-reference text. Later native sync
+proof construction uses that actual relocated body, while source capture retains
+the original body/digest association without a body-bearing receipt shadow or
+replaying source Sync authority. A failed proof blocks writes; originals remain
+retained.
+
+Contemporary state at this amendment: released HEAD
+`d74175b0fd319aef9d17f94d697bbbfd7fdf0895` already contains the private captured
+SQLite reader, literal table manifest, typed identity reservations, Workspace
+planning and captured Persona/MCP reference proof. No content-graph production
+module or tests exist yet; only the private field-ownership matrix and initial
+source-boundary handoff were written. Existing controller TASK-36766 metadata
+remains outside this amendment. This records current policy before its new code
+and tests; it does not reconstruct earlier A-files or hook chronology.
