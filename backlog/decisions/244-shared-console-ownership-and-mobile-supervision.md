@@ -499,3 +499,21 @@ completion marker or pretending opaque audit references are understood. Some
 legacy rows consequently require a supported explicit default choice, matching
 native completion state or a separately reviewed manifest grammar before import.
 Originals and captures remain intact when preflight refuses.
+
+
+### Typed identity and ordering reservations
+
+Unused genuine identities survive. Global memory-selection and fleet sequence
+positions are ordered domains, separate from stable selection/message identities:
+allocate their complete source order deterministically against destination
+occupancy/native frontiers rather than preserving an unused position that would
+reverse history after a lower collision. Keep original/mapped position
+associations; C/S may rewrite only proved typed references. Do not infer relative
+chronology between profiles. Per-parent/per-segment ordinals remain local to
+their mapped owners and are never shifted as a global sequence. Unrepresentable
+ordering or relationships refuse with the exact source association.
+
+Native validators govern every identity's format/version. Deterministic collision
+identities must satisfy those actual validators; a blanket UUIDv5 transformation
+is invalid where the native record requires UUIDv4. Ordinary integer identities
+remain integers; no ID-looking strings or arbitrary JSON values are rewritten.
