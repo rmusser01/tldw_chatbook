@@ -21858,16 +21858,25 @@ CI's existing Library receipt-open test timed out waiting for its Reader. A mous
 PR #3211 changed the Send-reason strip's `set_styles(width=None, height=None)`
 to clear only the rules that exist: `set_styles(**dict.fromkeys(stale))`. The
 behaviour was identical and every touched suite, the size ratchets and preflight
-passed. The merge queue evicted the PR twice on
-`test_component_pattern_governance.py::test_python_style_ratchet`: ADR-161's
-Python style inventory is an AST scan, so a `**` keyword has no property name
-and no literal value and is recorded as an opaque runtime write (`set_styles *
-(runtime)`), which the HARD-ZERO floor rejects. Only a literal `None` counts as
-a reset. Two guarded `set_styles(<name>=None)` calls passed the scan with the
-same layout-request counts.
+passed locally. The required check then failed on that one offender on every
+pushed head from 84cb13cd87 through 0e3b5419df: five Derived Artifacts runs
+(39877447689, 39995716336, 40045903260, 40079492878, and 40087818848 at
+run_attempt 3), all on
+`test_component_pattern_governance.py::test_python_style_ratchet`. The queue
+evicted the PR for it once (`evict-failed-twice`, 2026-10-24); its three earlier
+evictions were conflicts, and they hid the red. The red stood for about two days
+across several re-gates before anyone read its log. ADR-161's Python style
+inventory is an AST scan, so a `**` keyword has no property name and no literal
+value and is recorded as an opaque runtime write (`set_styles * (runtime)`),
+which the HARD-ZERO floor rejects. Only a literal `None` counts as a reset. Two
+guarded `set_styles(<name>=None)` calls passed the scan with the same
+layout-request counts.
 
 **What to do.** When a change touches a Python `styles`/`set_styles` write in
 `tldw_chatbook/`, even a refactor of a reset, run
 `Tests/UI/test_component_pattern_governance.py` before pushing. Name each
 property as a literal keyword; a reset must be a literal `None`, and a computed
 value is legal only as measured runtime geometry with a `# ds-runtime:` reason.
+When a required check is red on a pushed head, read its failed log
+(`gh run view <id> --log-failed`) before the next rebase or re-gate. A conflict
+eviction does not mean the check was green.
