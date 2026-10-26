@@ -65,13 +65,23 @@ _TAG_KEYS = frozenset({"tags", "keywords"})
 _OWN_EXPORT_KEYS = frozenset({"date", "note_id", "id", "created_at", "updated_at"})
 """Provenance keys the app's own exporters write (``Export Markdown``, bundles).
 
-They are never imported -- the Library has its own ids and stamps -- and never
+They are never imported -- the Library has its own ids and stamps -- and, in a
+block that carries an export's own marker (``_carries_export_provenance``), never
 reported as "not imported" either (TASK-34000.31 fix round 1, M3): dropping
-them loses nothing a user wrote.
+them there loses nothing a user wrote.
 """
+_EXPORT_MARKDOWN_PROVENANCE_KEY = "note_id"
+"""**Export Markdown** writes ``title``, ``date``, ``tags`` (``keywords`` before
+TASK-34000.31) and this key (``build_note_export_content``)."""
+_BUNDLE_PROVENANCE_KEYS = frozenset({"id", "created_at", "updated_at"})
+"""A bundle's note file always carries all three (``ChatbookCreator``)."""
 _ALIAS_KEYWORD_PREFIX = "alias: "
 """Marks a keyword that came from `aliases:` rather than from `tags:`."""
 _MAX_FRONTMATTER_LINES = 200
+_MAX_FRONTMATTER_BYTES = 64 * 1024
+"""A larger block is read as no front matter (final review M-11): the line cap
+does not bound a line's length, and the YAML reader takes ~0.25 s per MB of a
+file that may be up to 128 MB (a bundle member)."""
 _MAX_WIKILINKS_PER_NOTE = 200
 _TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
 """A `{{date}}`-style template placeholder, which never becomes a note title."""
@@ -520,11 +530,13 @@ def _parse_text(
         # toggle is offered for a vault alone) comes back with its title and
         # keywords instead of its own ``---`` block as body text (the review's
         # N-20 symptom, reproduced live). Fix round 1 ruling: outside a vault
-        # the block is stripped ONLY when every key is one the import honours
-        # or one the app's own exports write -- a user's ``Summary:`` or
-        # ``Yes:`` block stays in the body exactly as before, nothing of theirs
-        # is dropped. Obsidian mode still governs what is Obsidian's: the
-        # vault's private folders, ``[[wikilinks]]``, and stripping any block.
+        # the block is stripped ONLY when every key is one the import honours,
+        # or the block is the app's own export (ruling F-1: it carries the
+        # exporters' provenance) -- a user's ``Summary:`` or ``Yes:`` block, or
+        # a daily note's ``date:`` beside ``tags:``, stays in the body exactly
+        # as before, nothing of theirs is dropped. Obsidian mode still governs
+        # what is Obsidian's: the vault's private folders, ``[[wikilinks]]``,
+        # and stripping any block.
         if markdown:
             metadata, body = split_frontmatter(text)
             if (
@@ -611,6 +623,8 @@ def split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
         if line.rstrip() not in {"---", "..."}:
             continue
         block = "\n".join(lines[1:index])
+        if len(block.encode("utf-8")) > _MAX_FRONTMATTER_BYTES:
+            return None, text
         try:
             for token in yaml.scan(block):
                 if isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)):
@@ -678,17 +692,37 @@ _STRIPPABLE_OUTSIDE_A_VAULT = _IMPORTED_FRONTMATTER_KEYS | _OWN_EXPORT_KEYS
 _MAX_REPORTED_FRONTMATTER_KEYS = 12
 
 
+def _carries_export_provenance(keys: set[Any]) -> bool:
+    """Does the block name the exporter that wrote it?
+
+    ``note_id`` (Export Markdown) or ``id`` + ``created_at`` + ``updated_at``
+    (a bundle's note file) -- the two markers ruling F-1 names.
+    """
+    return _EXPORT_MARKDOWN_PROVENANCE_KEY in keys or _BUNDLE_PROVENANCE_KEYS <= keys
+
+
 def _is_own_export_block(metadata: Mapping[Any, Any]) -> bool:
-    """Is every key one the import honours or one the app's own exports write?
+    """Can this block leave the body without losing anything the user wrote?
 
     Outside a vault that is the only block worth removing from the body: it
     round-trips the app's own ``Export Markdown`` file and bundles while a
     block holding anything else -- a user's ``Summary:``, a ``Yes:`` key the
     YAML reader typed as ``True`` -- stays in the note exactly as written.
+
+    Every key must be one the import honours or one the exporters write, and
+    an exporter's key (``date``, ``id``, ...) counts as noise only when the
+    block carries that exporter's provenance (final review I-2, ruling F-1):
+    an Obsidian daily note's ``{date, tags}`` or a Hugo post's ``{title, date,
+    tags}`` holds nothing but such keys, yet its ``date`` is the user's. A
+    block of only honoured keys (``title``, ``tags``, ``keywords``,
+    ``aliases``) qualifies on its own: all of it is read back.
     """
     # Exact match, the way the readers match (``title``, never ``Title``):
     # a key the readers would not read is a key the user would lose.
-    return all(key in _STRIPPABLE_OUTSIDE_A_VAULT for key in metadata)
+    keys = set(metadata)
+    if not keys <= _STRIPPABLE_OUTSIDE_A_VAULT:
+        return False
+    return not keys & _OWN_EXPORT_KEYS or _carries_export_provenance(keys)
 
 
 def _unimported_frontmatter_keys(
@@ -705,10 +739,12 @@ def _unimported_frontmatter_keys(
     stripped block held disappears silently (TASK-34000.31 fix round 1).
 
     The app's own provenance keys (``date``, ``id``, ...) are left out ONLY
-    when the whole block has the shape of the app's own export; beside a
-    ``mood:`` a ``date:`` is the user's Obsidian property and is reported like
-    any other (fix round 2, R2-3). Keyword reports come first and are never
-    cut by the cap -- they are the only sign the keywords were lost (R2-5).
+    when the whole block is the app's own export, provenance marker included
+    (``_is_own_export_block``); beside a ``mood:`` -- or beside only ``tags:``
+    -- a ``date:`` is the user's Obsidian property and is reported like any
+    other (fix round 2, R2-3; final review I-2). Keyword reports come first
+    and are never cut by the cap -- they are the only sign the keywords were
+    lost (R2-5).
 
     Args:
         metadata: One parsed frontmatter mapping, or None when there was none.
