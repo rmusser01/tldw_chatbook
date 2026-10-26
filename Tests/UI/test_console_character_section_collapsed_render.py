@@ -222,17 +222,18 @@ def _row(revision: int, n: int) -> CharacterConversationRow:
     )
 
 
-async def test_opening_after_a_collapsed_refresh_shows_its_chats_without_refreshing(
-    monkeypatch,
-) -> None:
+def _install_loading_controller(monkeypatch, revision: list[int]) -> None:
+    """Give the next mounted Console a Character controller that loads groups.
+
+    The harness's own reads cannot open the ``:memory:`` database, so every
+    check errors. This controller loads one group whose rows follow
+    ``revision``: two chats at revision 7, three after it moves.
+    """
     from Tests.UI.test_console_character_context import _controller, _Service
-    from Tests.UI.test_console_composer_run_controls import _wait_for
-    from Tests.UI.test_console_left_rail import _click_rail_toggle, make_console_pilot
     from tldw_chatbook.UI.Console_Modules.wiring import (
         _sync_character_context_presentation,
     )
 
-    revision = [7]
     database = SimpleNamespace(
         get_local_authority_id=lambda: "authority",
         get_character_conversation_search_revision=lambda: revision[0],
@@ -259,18 +260,39 @@ async def test_opening_after_a_collapsed_refresh_shows_its_chats_without_refresh
         )
 
     monkeypatch.setattr(chat_screen_module, "build_console_controllers", build)
+
+
+async def _collapse_loaded_character_section(pilot) -> Widget:
+    """Wait for the groups to load, collapse the section and return its body."""
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import _click_rail_toggle
+
+    screen = pilot.app.screen
+    controller = screen._character_context
+    await _wait_for(
+        pilot, lambda: controller.state.groups, "the Character groups never loaded"
+    )
+    body = screen.query_one(_SECTION_BODY)
+    if body.display:
+        await _click_rail_toggle(pilot, "character")
+    assert body.display is False, "precondition: Character is collapsed"
+    await pilot.pause(0.2)
+    return body
+
+
+async def test_opening_after_a_collapsed_refresh_shows_its_chats_without_refreshing(
+    monkeypatch,
+) -> None:
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    revision = [7]
+    _install_loading_controller(monkeypatch, revision)
     renders = _Renders(monkeypatch)
     async with make_console_pilot(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         controller = screen._character_context
-        await _wait_for(
-            pilot, lambda: controller.state.groups, "the Character groups never loaded"
-        )
-        body = screen.query_one(_SECTION_BODY)
-        if body.display:
-            await _click_rail_toggle(pilot, "character")
-        assert body.display is False, "precondition: Character is collapsed"
-        await pilot.pause(0.2)
+        body = await _collapse_loaded_character_section(pilot)
         published = _observe_publications(monkeypatch, controller)
 
         renders.start(body)
@@ -351,6 +373,54 @@ async def test_opening_after_a_collapsed_refresh_shows_its_chats_without_refresh
             ),
         )
         assert rail._active_section_id == "character"
+
+
+async def test_return_from_roleplay_keeps_focus_on_search_over_a_deferred_render(
+    monkeypatch,
+) -> None:
+    """Coming back from Roleplay or Library lands on the Character search.
+
+    The return opens a collapsed section and focuses its search Input at once.
+    When a snapshot was waiting to be drawn, that open starts the deferred
+    render, which pruned the focused Input and restored nothing: keyboard
+    users came back with nothing focused.
+    """
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    revision = [7]
+    _install_loading_controller(monkeypatch, revision)
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        controller = screen._character_context
+        await _collapse_loaded_character_section(pilot)
+        browser = screen.query_one(ConsoleCharacterContext)
+        revision[0] = 8
+        assert await character_presentation_work(controller, screen) is True
+        await pilot.pause(0.3)
+        assert browser.state.data_revision == 8, "precondition: a newer snapshot"
+
+        # The anchor a Roleplay/Library "Back to Console" return leaves.
+        screen._pending_character_return_focus_id = "console-context-character"
+        screen._workspace.restore_character_navigation_focus()
+        assert screen._pending_character_return_focus_id is None
+
+        def titles() -> list[str]:
+            return [
+                str(button.label) for button in browser.query(".console-character-row")
+            ]
+
+        await _wait_for(
+            pilot,
+            lambda: any("Chat r8-2" in title for title in titles()),
+            lambda: f"the opened section shows {titles()}",
+        )
+        await pilot.pause(0.3)
+        focused = pilot.app.focused
+        assert getattr(focused, "id", None) == "console-character-search", (
+            f"focus after the return: {focused!r}"
+        )
+        assert focused.is_attached and browser in focused.ancestors
 
 
 class _HiddenRailApp(App):
