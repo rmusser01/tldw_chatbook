@@ -1585,7 +1585,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: dev after TASK-41757), 1288 -> 1289 methods.
     #: 2026-11-23, TASK-42473 review: the override records only a reset that
     #: moved focus: 32849 -> 32852 lines, 1289 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32852, 1289),
+    #: 2026-10-26, TASK-34000.29 (polish-1b Task 6; same owner decision --
+    #: expand limits, don't contort code): a cancelled note export clears its
+    #: token instead of failing it, the leave-veto toast built from the
+    #: veto's own reason (``_library_note_exit_veto_toast`` + the Discard
+    #: visibility predicate), the create path's per-note fact reset, and the
+    #: focus capture reading an operation's origin and a pruned control's
+    #: role: 38166 -> 38233 lines, 1373 -> 1374 methods (measured with
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32828, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

@@ -1247,6 +1247,15 @@ MINIMUM_FILES = 2472
 # The floor is the measured entry count.
 MINIMUM_FILES = 2520
 
+# 2026-10-26, TASK-34000.29 (polish-1b batch), appended at the tail, so no
+# existing entry changes shard:
+# - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
+#   160x45 boots, ~26 s): 916 -> 917.
+# Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
+# polish-1b entries above stay appended at the tail, so no existing slot
+# moves; the floor is the measured entry count: 2457 + 1 = 2458.
+MINIMUM_FILES = 2458
+
 
 MINIMUM_FILES = 2038
 MINIMUM_FILES = 2045
