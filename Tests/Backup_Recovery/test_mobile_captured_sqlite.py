@@ -216,6 +216,7 @@ def _physical_fault(root, phase, monkeypatch):
     native_acquire = archive_reader.acquire
     native_popen = crypto.subprocess.Popen
     native_retire_staging = mobile_captured_sqlite._retire_staging
+    native_retire_output = crypto._CryptoOutput.retire
     native_sqlite = storage_admission.sqlite3
     processes = []
 
@@ -242,7 +243,24 @@ def _physical_fault(root, phase, monkeypatch):
         finally:
             reached["cleaning"] = False
 
+    def retire_output(owner):
+        if phase == "output_close" and "fd" not in reached:
+            reached["output_fd"] = owner.parent
+            reached["selected"] = owner.identity
+            reached["retiring_output"] = True
+        try:
+            return native_retire_output(owner)
+        finally:
+            reached["retiring_output"] = False
+
     def close(fd):
+        if (
+            reached.get("retiring_output")
+            and fd == reached.get("output_fd")
+            and "fd" not in reached
+        ):
+            reached["fd"] = fd
+            raise OSError("injected exact output parent close")
         if (
             reached.get("armed")
             and (phase in {"acquire", "helper"} or reached.get("cleaning"))
@@ -321,6 +339,7 @@ def _physical_fault(root, phase, monkeypatch):
             monkeypatch.setattr(
                 mobile_captured_sqlite, "_retire_staging", retire_staging
             )
+            monkeypatch.setattr(crypto._CryptoOutput, "retire", retire_output)
             monkeypatch.setattr(archive_reader, "acquire", acquire)
             monkeypatch.setattr(archive_reader.os, "close", close)
             monkeypatch.setattr(crypto.subprocess, "Popen", popen)
@@ -334,7 +353,7 @@ def _physical_fault(root, phase, monkeypatch):
             with captured.sqlite_reads(
                 password=b"test-private-mobile-rollback", cancel=Event()
             ) as reads:
-                assert phase in {"read_close", "cleanup_close"}
+                assert phase in {"read_close", "cleanup_close", "output_close"}
                 reads.page("legacy", "chat", "messages")
                 if phase == "read_close":
                     reached["connection"] = reads._connections["legacy", "chat"][0]
@@ -404,6 +423,7 @@ raise AssertionError('live fault released native maintenance')
         "reference_close",
         "read_close",
         "cleanup_close",
+        "output_close",
     ],
 )
 def test_actual_resource_fault_keeps_native_exclusion_until_process_exit(
@@ -698,3 +718,221 @@ def test_native_read_authority_and_integrity_controls(tmp_path, monkeypatch):
             assert corrupted
             assert not tuple(output.glob(".mobile-read-*"))
             assert _fingerprints(tmp_path / "profile") == before
+
+
+@pytest.mark.parametrize("boundary", ("validation", "page"))
+def test_authenticated_candidate_stays_bound_to_actual_sqlite_pin(
+    tmp_path, monkeypatch, boundary
+):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mobile_captured_sqlite
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
+        _captured_mobile,
+    )
+
+    with _capture_fixture(tmp_path, monkeypatch) as values:
+        session, journal, _, _, preview, inventory, _ = values
+        output = tmp_path / "archives"
+        output.mkdir(mode=0o700)
+        with _captured_mobile(
+            session,
+            journal,
+            preview,
+            inventory.scope_digest,
+            destination=output,
+            password=b"test-private-mobile-rollback",
+            cancel=Event(),
+        ) as captured:
+            reached = []
+            original = mobile_captured_sqlite.open_recovery_validation
+
+            @contextmanager
+            def substitute_before_validation(owner_id, candidate, **kwargs):
+                if not reached:
+                    authentic = candidate.read_bytes()
+                    changed = authentic.replace(
+                        b"private fixture prompt", b"changed fixture prompt"
+                    )
+                    assert changed != authentic
+                    candidate.write_bytes(changed)
+                    reached.append(candidate.stat().st_ino)
+                with original(owner_id, candidate, **kwargs) as opened:
+                    yield opened
+
+            if boundary == "validation":
+                monkeypatch.setattr(
+                    mobile_captured_sqlite,
+                    "open_recovery_validation",
+                    substitute_before_validation,
+                )
+                with (
+                    pytest.raises(ValueError, match="candidate_changed"),
+                    captured.sqlite_reads(
+                        password=b"test-private-mobile-rollback", cancel=Event()
+                    ),
+                ):
+                    pytest.fail(
+                        "unauthenticated candidate reached a validated read scope"
+                    )
+                assert reached
+            else:
+                with captured.sqlite_reads(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                ) as reads:
+                    candidate = reads._connections["legacy", "chat"][3]
+                    authentic = candidate.read_bytes()
+                    info = candidate.stat()
+                    pins = [
+                        fd
+                        for fd in reads.custody.fds
+                        if (
+                            mobile_captured_sqlite.os.fstat(fd).st_dev,
+                            mobile_captured_sqlite.os.fstat(fd).st_ino,
+                        )
+                        == (info.st_dev, info.st_ino)
+                    ]
+                    assert len(pins) == 1
+                    retained = candidate.with_suffix(".retained")
+                    candidate.rename(retained)
+                    candidate.write_bytes(authentic)
+                    candidate.chmod(0o600)
+                    changed = authentic.replace(
+                        b"private fixture prompt", b"changed fixture prompt"
+                    )
+                    assert changed != authentic
+                    retained.write_bytes(changed)
+                    assert (
+                        mobile_captured_sqlite.os.fstat(pins[0]).st_ino
+                        == retained.stat().st_ino
+                    )
+                    assert candidate.stat().st_ino != retained.stat().st_ino
+                    assert (
+                        hashlib.sha256(candidate.read_bytes()).digest()
+                        == hashlib.sha256(authentic).digest()
+                    )
+                    with pytest.raises(ValueError, match="candidate_changed"):
+                        reads.page("legacy", "chat", "messages")
+            assert not tuple(output.glob(".mobile-read-*"))
+
+
+def test_plaintext_output_never_uses_substituted_staging_parent(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import crypto
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
+        _captured_mobile,
+    )
+
+    with _capture_fixture(tmp_path, monkeypatch) as values:
+        session, journal, _, _, preview, inventory, _ = values
+        output = tmp_path / "archives"
+        output.mkdir(mode=0o700)
+        with _captured_mobile(
+            session,
+            journal,
+            preview,
+            inventory.scope_digest,
+            destination=output,
+            password=b"test-private-mobile-rollback",
+            cancel=Event(),
+        ) as captured:
+            violations = []
+
+            def run_case(boundary, kind):
+                foreign = tmp_path / (boundary + "-" + kind)
+                foreign.mkdir(mode=0o700)
+                reached = {}
+                native_open = crypto._open_regular
+                native_link = crypto.os.link
+
+                def substitute(parent):
+                    retained = output / (parent.name + "-retained")
+                    parent.rename(retained)
+                    if kind == "symlink":
+                        parent.symlink_to(foreign, target_is_directory=True)
+                    else:
+                        foreign.rename(parent)
+                    reached.update(parent=parent, retained=retained)
+
+                @contextmanager
+                def open_input(path, **kwargs):
+                    with native_open(path, **kwargs) as stream:
+                        if (
+                            path.name == "input"
+                            and kwargs.get("_custody") is not None
+                            and not reached
+                        ):
+                            reached["scope"] = kwargs["_custody"].scope
+                            reached["operation"] = path.parent
+                            if boundary == "allocation":
+                                substitute(path.parent)
+                        yield stream
+
+                def publish(source, target, **kwargs):
+                    if (
+                        boundary == "publication"
+                        and reached.get("operation") is not None
+                        and not reached.get("parent")
+                        and Path(target).name == "decrypted.zip"
+                    ):
+                        substitute(reached["operation"])
+                        replacement = (
+                            foreign if kind == "symlink" else reached["parent"]
+                        )
+                        # An unrelated existing file must never be adopted by
+                        # path-based publication after the parent is replaced.
+                        (replacement / Path(source).name).write_bytes(b"foreign marker")
+                        reached["allowed"] = {Path(source).name: b"foreign marker"}
+                    return native_link(source, target, **kwargs)
+
+                try:
+                    with monkeypatch.context() as fault:
+                        fault.setattr(crypto, "_open_regular", open_input)
+                        fault.setattr(crypto.os, "link", publish)
+                        with (
+                            pytest.raises((OSError, ValueError, RuntimeError)),
+                            captured.sqlite_reads(
+                                password=b"test-private-mobile-rollback", cancel=Event()
+                            ),
+                        ):
+                            pytest.fail("substituted output parent admitted")
+                    assert reached.get("parent") is not None
+                    replacement = foreign if kind == "symlink" else reached["parent"]
+                    actual = {
+                        p.name: p.read_bytes()
+                        for p in (replacement.iterdir() if replacement.exists() else ())
+                        if p.is_file()
+                    }
+                    if actual != reached.get("allowed", {}):
+                        violations.append((boundary, kind, sorted(actual)))
+                    if not replacement.exists():
+                        violations.append((boundary, kind, "foreign directory removed"))
+                    identity = reached["retained"].stat()
+                    pins = [
+                        fd
+                        for fd in reached["scope"].custody.fds
+                        if (crypto.os.fstat(fd).st_dev, crypto.os.fstat(fd).st_ino)
+                        == (identity.st_dev, identity.st_ino)
+                    ]
+                    if not pins:
+                        violations.append(
+                            (boundary, kind, "owned parent pin not retained")
+                        )
+                finally:
+                    if reached.get("parent") is not None:
+                        parent = reached["parent"]
+                        if parent.is_symlink():
+                            parent.unlink()
+                        elif parent.exists():
+                            parent.rename(foreign)
+                        if parent.parent.exists():
+                            reached["retained"].rename(parent)
+                            # Restore the exact test-owned original before retrying
+                            # name verification, never an uncertain descriptor close.
+                            reached["scope"].retire()
+
+            for boundary in ("allocation", "publication"):
+                for kind in ("symlink", "directory"):
+                    run_case(boundary, kind)
+            assert violations == []

@@ -378,10 +378,17 @@ repository constructor, migration or destination connection participates.
 rows, bounded to 1000 rows and 16 MiB. `purpose` is legacy/canonical and `family` is
 chat/workspaces/runs; these select already authenticated declarations and grant
 no caller-supplied owner or path authority. The scope owns all connections and
-rechecks live native authority and candidate bytes at the read boundary.
+rechecks live native authority at the read boundary. Before and after initial
+validation and each page, it hashes the retained candidate descriptor actually
+supplied to SQLite and verifies that strict nofollow traversal still names that
+same file. An authentic replacement pathname cannot mask a changed retained file.
 
 Optional native archive/crypto custody reaches acquisition before yield,
-including the packaged helper, child pipes and threads. Candidate and installed
+including the packaged helper, child pipes and threads. Custody-mode plaintext
+allocation and no-clobber publication use the exact retained private parent
+through descriptor-relative native operations. Parent substitution prevents
+retirement and retains the actual parent pin; cleanup never adopts that foreign
+replacement. Ordinary helper defaults remain separate. Candidate and installed
 reference connections use the existing capture lease. Uncertain retirement
 retains staged material and real maintenance exclusion; it never retries an
 ambiguous descriptor. Existing journal/bootstrap/selector guard lifetimes remain

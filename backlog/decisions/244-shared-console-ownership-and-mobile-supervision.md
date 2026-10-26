@@ -336,7 +336,7 @@ require revising the specific disposition while preserving recovery copies.
 A-chat refuses a populated `message_exchanges` table before imported rows, exact
 holds, batch receipts or history-file publication. Already-normalized
 `console_trace_*` graph rows and artifact BLOBs remain in the fixed import scope.
-Native `ConsoleLegacyTraceMaintenance.run_batch` deletes each old exchange only
+Native `LegacyTraceMaintenance.run_batch` deletes each old exchange only
 after `normalize_exchange` reports verified semantic equivalence, and its cursor
 is local to that database. Copying either the raw exchange or its source cursor
 cannot establish readable imported trace history. The mapper neither invokes a

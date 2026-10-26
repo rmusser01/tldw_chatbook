@@ -107,11 +107,7 @@ class _CapturedSQLite:
             raise ValueError("mobile_sqlite_table_invalid")
         if restrictions.expired():
             raise ValueError("sqlite_resource_limit")
-        if (
-            archive_reader._hash(candidate, self.cancel, _custody=self.custody)
-            != digest
-        ):
-            raise ValueError("mobile_sqlite_candidate_changed")
+        _verify_candidate(self, restrictions, candidate, digest)
         # Membership in the exact installed catalog precedes identifier quoting.
         cursor = connection.execute(
             'SELECT * FROM "' + table.replace('"', '""') + '" LIMIT ? OFFSET ?',
@@ -136,11 +132,7 @@ class _CapturedSQLite:
         finally:
             cursor.close()
         self.check()
-        if (
-            archive_reader._hash(candidate, self.cancel, _custody=self.custody)
-            != digest
-        ):
-            raise ValueError("mobile_sqlite_candidate_changed")
+        _verify_candidate(self, restrictions, candidate, digest)
         return result
 
     def retire(self):
@@ -152,6 +144,57 @@ class _CapturedSQLite:
                 continue
             _retire_staging(self, root, identity)
         self.roots.clear()
+
+
+def _verify_candidate(scope, restrictions, candidate, digest):
+    """Authenticate the retained SQLite pin and its strict named binding."""
+    fd = restrictions.capture_stream.fileno()
+    before = os.fstat(fd)
+    identity = archive_reader._identity(before)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_uid != os.geteuid()
+        or before.st_mode & 0o077
+    ):
+        raise ValueError("mobile_sqlite_candidate_changed")
+    with native_files.pinned_directory(
+        candidate.parent, _custody=scope.custody
+    ) as parent:
+
+        def check_name():
+            named = os.stat(candidate.name, dir_fd=parent, follow_symlinks=False)
+            if archive_reader._identity(named) != identity:
+                raise ValueError("mobile_sqlite_candidate_changed")
+
+        check_name()
+        hasher = hashlib.sha256()
+        offset = os.lseek(fd, 0, os.SEEK_CUR)
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            remaining = before.st_size
+            while remaining:
+                archive_reader._check(scope.cancel)
+                block = os.read(fd, min(remaining, 1024 * 1024))
+                if not block:
+                    raise ValueError("mobile_sqlite_candidate_changed")
+                hasher.update(block)
+                remaining -= len(block)
+            if os.read(fd, 1):
+                raise ValueError("mobile_sqlite_candidate_changed")
+        finally:
+            os.lseek(fd, offset, os.SEEK_SET)
+        check_name()
+        if (
+            archive_reader._identity(os.fstat(fd)) != identity
+            or hasher.hexdigest() != digest
+        ):
+            raise ValueError("mobile_sqlite_candidate_changed")
+    # Rewalk ancestors too: a held parent alone cannot qualify its current name.
+    with native_files.pinned_directory(
+        candidate.parent, _custody=scope.custody
+    ) as parent:
+        check_name()
 
 
 def _retire_staging(scope, root, identity):
@@ -392,6 +435,7 @@ def _sqlite_reads(captured, *, password, cancel):
                             _custody=scope.custody,
                         )
                     )
+                    _verify_candidate(scope, restrictions, candidate, payload.sha256)
                     owner = sqlite_validation._installed_owner(owner_id)
                     issues, version = sqlite_validation._check(
                         connection, owner, owner.schema_policy(), restrictions
@@ -406,6 +450,7 @@ def _sqlite_reads(captured, *, password, cancel):
                             "SELECT name FROM sqlite_schema WHERE type='table'"
                         )
                     )
+                    _verify_candidate(scope, restrictions, candidate, payload.sha256)
                     scope._connections[purpose, family] = (
                         connection,
                         restrictions,

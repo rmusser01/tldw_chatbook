@@ -2087,6 +2087,7 @@ def open_recovery_validation(
             lease.attach(connection)
         restrictions = _restrict_connection(connection, cancel)
         restrictions.capture_scope = None if _custody is None else _custody.scope
+        restrictions.capture_stream = None if _custody is None else stream
         with _recovery_restriction_scope(connection, restrictions):
             yield (connection, restrictions) if with_restrictions else connection
 

@@ -14,10 +14,11 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import BinaryIO
+from uuid import uuid4
 
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.platform_files import os
@@ -313,6 +314,89 @@ def helper_capability() -> tuple[bool, str]:
     return True, "available"
 
 
+class _CryptoOutput:
+    """Retain the exact output parent until its name and close are qualified."""
+
+    def __init__(self, target, custody):
+        self.target, self.custody = target, custody
+        self.stack, self.parent, self.identity = ExitStack(), None, None
+        self.close_failed = False
+        custody.scope.resources.append(self)
+
+    def open(self):
+        from .native_files import pinned_directory
+
+        self.parent = self.stack.enter_context(
+            pinned_directory(self.target.parent, _custody=self.custody)
+        )
+        info = os.fstat(self.parent)
+        self.identity = (info.st_dev, info.st_ino)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise CryptoError("output_parent_not_private")
+
+    def check(self):
+        from .native_files import pinned_directory
+
+        if self.close_failed or self.custody.close_failed:
+            raise CryptoError("output_parent_not_retired")
+        with pinned_directory(self.target.parent, _custody=self.custody) as named:
+            for fd in (self.parent, named):
+                info = os.fstat(fd)
+                if self.identity != (info.st_dev, info.st_ino):
+                    raise CryptoError("output_parent_changed")
+
+    def retire(self):
+        if self.close_failed or self.custody.close_failed:
+            raise CryptoError("output_parent_not_retired")
+        if self.identity is not None:
+            self.check()
+        # A changed name leaves the actual pin live; an attempted close is final.
+        self.close_failed = True
+        self.stack.close()
+        self.custody.scope.resources.remove(self)
+
+
+def _transform_owned(source, target, worker_path, *, _custody, **options):
+    from .native_files import _create_private_file_at
+
+    if source.parent != target.parent:
+        raise CryptoError("output_parent_changed")
+    owner = _CryptoOutput(target, _custody)
+    owner.open()
+    temporary = ".backup-age-" + uuid4().hex
+    with _open_regular(source, _custody=_custody) as input_stream:
+        owner.check()
+        with _create_private_file_at(owner.parent, temporary, _custody=_custody) as fd:
+            with os.fdopen(fd, "wb", closefd=False) as output:
+                _pipes(
+                    worker_path,
+                    source=input_stream,
+                    output=output,
+                    _custody=_custody,
+                    **options,
+                )
+                output.flush()
+                os.fsync(fd)
+            if options["cancel"].is_set():
+                raise CryptoError("cancelled")
+            owner.check()
+            before = os.fstat(fd)
+            named = os.stat(temporary, dir_fd=owner.parent, follow_symlinks=False)
+            if (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino):
+                raise CryptoError("output_changed")
+            os.link(
+                temporary,
+                target.name,
+                src_dir_fd=owner.parent,
+                dst_dir_fd=owner.parent,
+                follow_symlinks=False,
+            )
+            named = os.stat(target.name, dir_fd=owner.parent, follow_symlinks=False)
+            if (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino):
+                raise CryptoError("output_changed")
+            owner.check()
+
+
 def transform(
     source: Path,
     target: Path,
@@ -354,14 +438,27 @@ def transform(
         # Never read device/FIFO/link input, which could outlive child cleanup.
         if source.is_symlink() or not source.is_file():
             raise CryptoError("invalid_source")
-        with _open_regular(source, **custody) as input_stream:
+        if _custody is not None:
+            return _transform_owned(
+                source,
+                target,
+                worker_path,
+                _custody=_custody,
+                mode="decrypt" if decrypt else "encrypt",
+                password=password,
+                cancel=cancel,
+                limit=_MAX_CONTAINER,
+                input_limit=input_limit,
+                output_limit=output_limit,
+                space_check=space_check,
+                expected_input_sha256=expected_input_sha256,
+            )
+        with _open_regular(source) as input_stream:
             descriptor, name = tempfile.mkstemp(
                 prefix=".backup-age-", dir=target.parent
             )
             temporary = Path(name)
-            if _custody is not None:
-                _custody.fds.append(descriptor)
-            with os.fdopen(descriptor, "wb", closefd=_custody is None) as output:
+            with os.fdopen(descriptor, "wb", closefd=True) as output:
                 _pipes(
                     worker_path,
                     "decrypt" if decrypt else "encrypt",
@@ -378,10 +475,6 @@ def transform(
                 )
                 output.flush()
                 os.fsync(output.fileno())
-            if _custody is not None:
-                from .native_files import _close_owned
-
-                _close_owned(descriptor, _custody)
             if cancel.is_set():
                 raise CryptoError("cancelled")
             # Atomic no-clobber publication: an existing/racing target survives.

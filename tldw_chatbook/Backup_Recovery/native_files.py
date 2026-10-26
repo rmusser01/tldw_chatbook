@@ -62,21 +62,32 @@ def create_private_directory(destination: Path, *, _custody=None) -> None:
 @contextmanager
 def create_private_file(destination: Path, *, _custody=None) -> Iterator[int]:
     """Exclusively create a private regular file; flush on successful close."""
-    with pinned_directory(destination.parent, _custody=_custody) as parent:
-        fd = os.open(
-            destination.name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=parent,
-        )
-        if _custody is not None:
-            _custody.fds.append(fd)
-        try:
-            yield fd
-            os.fsync(fd)
-            flush_directory(parent)
-        finally:
-            _close_owned(fd, _custody)
+    with (
+        pinned_directory(destination.parent, _custody=_custody) as parent,
+        _create_private_file_at(parent, destination.name, _custody=_custody) as fd,
+    ):
+        yield fd
+
+
+@contextmanager
+def _create_private_file_at(parent: int, name: str, *, _custody=None) -> Iterator[int]:
+    """Create a native private leaf under an already owned parent pin."""
+    if not name or Path(name).name != name or name in (".", ".."):
+        raise ValueError("private_leaf_required")
+    fd = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=parent,
+    )
+    if _custody is not None:
+        _custody.fds.append(fd)
+    try:
+        yield fd
+        os.fsync(fd)
+        flush_directory(parent)
+    finally:
+        _close_owned(fd, _custody)
 
 
 def _rename_new(
