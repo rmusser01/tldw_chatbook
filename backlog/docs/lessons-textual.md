@@ -1786,7 +1786,7 @@ nor doing it *before* the snapshot landed.
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
 
-## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix round 1, 2026-10-25)
+## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix rounds 1-2, 2026-10-25)
 
 Enter on the Notes tree's "more" pager loaded the next page and left focus in
 the filter, where the next printable key typed into it. The hand-off that
@@ -1805,18 +1805,34 @@ Pilot pins were green.
   `LibraryHarness`) won the race: the canvas's `_after_recompose` ran first.
   The root pager under the production stylesheet, at load ~35, lost it on
   every run.
-- **Fix.** `LibraryScreen._reset_focus` now records where the reset landed,
-  and `on_descendant_focus` leaves that landing out of the intent count. A
-  press-time record also lets the pager's hand-off survive the prune, without
-  relying on focus staying on a pruned widget. That record is keyed on the
-  widget focus was parked on, not on the generation alone. The
-  generation-only first cut stole a user's own move to the filter, because
-  in `LibraryHarness` that move never bumped the generation
-  (`test_mounted_pager_completion_does_not_steal_moved_focus[success]`).
-- **Rule.** Any "has the user moved focus since X?" counter must exclude
-  Textual's reset after a removal. Every recompose that prunes the focused
-  control produces one, and it is indistinguishable from a click unless you
-  mark it.
+- **Fix (final design).** Do not let Textual reset focus at all. The pager
+  press runs the loading sync, which captures the pager and only schedules
+  the recompose. It then parks focus itself, before the prune, through the
+  public API:
+  - mark the Library grip as `_library_notes_programmatic_focus_target`;
+  - call `screen.set_focus(grip)`;
+  - record the grip as the parked widget.
+
+  The landing is classified programmatic, so no generation bump happens, and
+  Textual's reset finds nothing focused to move. The hand-off holds while
+  focus is still on the pager or exactly on the parked widget, with the
+  generation unchanged.
+- **Two first cuts that failed review.**
+  - **A generation-only ownership check stole a user's move.** The user moved
+    to the filter, and in `LibraryHarness` that move never bumped the
+    generation, so the regression pin caught the hand-off taking focus back
+    (`test_mounted_pager_completion_does_not_steal_moved_focus[success]`).
+    The fix was keying the check on the parked widget.
+  - **Overriding the private `Screen._reset_focus` worked, but was ruled
+    out.** It changed every prune and blur landing screen-wide: Media and
+    Conversations read the same generation. A Textual rename would also have
+    silently dropped the override.
+- **Rule.** Any "has the user moved focus since X?" counter must not count
+  Textual's reset after a removal, which every recompose of the focused
+  control produces and which looks exactly like a click. Prefer parking focus
+  yourself (public `set_focus`, marked programmatic) before the recompose,
+  scoped to the flow that needs it, over reclassifying the framework's reset
+  globally.
 
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 

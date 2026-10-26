@@ -24,7 +24,9 @@ focus to the first row it added (M2); Right/Left toggle a folder without
 selecting it (I-3); Left/Right walk the open Sort strip (I-2); and a re-page
 held until the strip has closed still leaves focus on Sort (I-4). One
 boot-free arm pins M2's other half -- a page that added no row keeps focus
-on its pager -- which no seeded tree reaches by keys.
+on its pager -- which no seeded tree reaches by keys. Fix round 2 adds a
+second boot-free arm: the pager press parks focus through the public
+``set_focus`` before the loading recompose prunes the pager.
 """
 
 from __future__ import annotations
@@ -664,3 +666,62 @@ async def test_a_page_that_added_no_row_keeps_focus_on_its_pager(monkeypatch) ->
 
     assert focused == [pager_id]
     assert result is False  # handled: the captured identity is not replayed
+
+
+async def test_a_pager_press_parks_focus_before_the_loading_recompose(
+    monkeypatch,
+) -> None:
+    """Fix round 2 (R2-1): the press parks focus itself, through ``set_focus``.
+
+    The loading sync only SCHEDULES the recompose that prunes the focused
+    pager. Parking focus on the Library grip right after that sync -- marked
+    programmatic, recorded as the parked widget -- means Textual's own focus
+    reset has nothing to do, so no landing is counted as a user move and the
+    pager keeps ownership until its page lands. Order matters: the sync must
+    still see focus on the pager (the canvas re-focuses the loading pager
+    from that capture), and the parking must follow it.
+
+    The Pilot arm above cannot isolate the ``set_focus`` call: Textual's own
+    reset lands on the same grip, which the press has already marked
+    programmatic and parked. This boot-free arm can. Without the call it is
+    RED (no ``set_focus`` recorded, and focus is still on the pruned pager).
+    """
+    pager_id = "library-notes-tree-pager-root-placements-more"
+    key = NotesBranchKey(None, "placements")
+    calls: list[tuple[str, str]] = []
+    grip = SimpleNamespace(id="library-browse-library-grip", focusable=True)
+    fake = SimpleNamespace(
+        focused=SimpleNamespace(id=pager_id),
+        _notes_state=SimpleNamespace(tree_target_offsets={}, focus_intent_generation=7),
+        _library_notes_programmatic_focus_target=None,
+        _capture_library_notes_focus_identity=lambda: SimpleNamespace(),
+        query=lambda _selector: (grip,),
+        run_worker=lambda coroutine, **_kwargs: coroutine.close(),
+    )
+    fake._sync_library_notes_tree_canvas_if_present = lambda **_kwargs: calls.append(
+        ("sync", fake.focused.id)
+    )
+
+    def set_focus(widget, scroll_visible=True):
+        calls.append(("set_focus", widget.id))
+        fake.focused = widget
+
+    fake.set_focus = set_focus
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_begin_library_notes_tree_slice_request",
+        lambda _self, _key, **_kwargs: (3, 1, 0, ()),
+    )
+
+    LibraryScreen._request_library_notes_tree_slice(
+        fake, key, direction="more", offset=20, pager_focus_id=pager_id
+    )
+
+    assert calls == [("sync", pager_id), ("set_focus", "library-browse-library-grip")]
+    assert fake._library_notes_programmatic_focus_target is grip
+    assert fake._library_notes_tree_pager_parked is grip
+    assert fake._library_notes_tree_pager_press == (pager_id, 7)
+    # Parked, the pager still owns focus; a user move elsewhere would not.
+    assert LibraryScreen._library_notes_tree_pager_still_focused(fake, pager_id)
+    fake.focused = SimpleNamespace(id="library-notes-filter")
+    assert not LibraryScreen._library_notes_tree_pager_still_focused(fake, pager_id)
