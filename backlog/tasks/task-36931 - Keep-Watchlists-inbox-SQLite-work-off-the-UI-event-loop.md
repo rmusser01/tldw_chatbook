@@ -1,7 +1,7 @@
 ---
 id: TASK-36931
 title: Keep Watchlists inbox SQLite work off the UI event loop
-status: To Do
+status: In Progress
 created_date: 2026-10-25 23:37
 labels:
 - textual-book
@@ -11,6 +11,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
+assignee:
+- '@codex'
+updated_date: 2026-10-26 00:08
 ---
 
 ## Description
@@ -46,3 +49,18 @@ Reason: Use existing controller/store boundaries and preserve policy gates plus 
 - [ ] #3 Existing policy refusals, corrupt/unavailable-store feedback and nonfatal worker behavior remain intact, without reporting a failed mutation as successful.
 - [ ] #4 Targeted coverage verifies file-backed responsiveness and compatible in-memory behavior without violating SQLite connection ownership or weakening lifecycle guards.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add controlled regression tests and observe the reported defect before production edits.
+2. Dispatch synchronous file-backed ClientNotificationsDB list/read/dismiss calls with asyncio.to_thread before evaluation. Keep thread-affine in-memory stores valid and retain awaitable seams, policy gates, nonfatal errors and existing loader serialization. Test real private file-backed durable state and controlled blocking/competing writes, in-memory compatibility and refusal/error paths. Do not repair Notifications pane rebuilding (TASK-33283).
+3. Run focused regression and adjacent owner tests, lint/format checks, update Docs/Architecture/notifications.md, and self-review.
+4. Complete Superpowers review, register new UI coverage in the existing gate and verify CI before closure.
+
+ADR required: no
+ADR path: existing canonical ADRs 011, 033, 042 (linked in Description).
+Reason: bounded implementation of existing UI/session/store ownership; no new contract or architecture.
+
+Implementation plan: Docs/superpowers/plans/2026-10-25-textual-followup-fixes.md (Task 2).
+<!-- SECTION:PLAN:END -->

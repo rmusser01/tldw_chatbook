@@ -1,7 +1,7 @@
 ---
 id: TASK-36930
 title: Retire pending quiz Submit publication when its Study context changes
-status: To Do
+status: In Progress
 created_date: 2026-10-25 23:33
 labels:
 - textual-book
@@ -11,6 +11,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
+assignee:
+- '@codex'
+updated_date: 2026-10-26 00:06
 ---
 
 ## Description
@@ -46,3 +49,18 @@ Reason: A bounded correction to controller-local publication under existing runt
 - [ ] #3 Ordinary current-context grading/progression and the established definite pre-write failure/retry behavior remain usable without duplicate submission.
 - [ ] #4 Controlled mounted tests establish current-context success and obsolete success/failure behavior, with truthful feedback for any already completed prior-context operation and no claim of remote rollback.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add controlled regression tests and observe the reported defect before production edits.
+2. Capture Submit mode, scope, generation, attempt and answer-panel identity before awaiting the existing service. Reject obsolete publication after every service await, including failures, and report prior-context completion truthfully without touching current state. Preserve nonfinal progression and definite pre-write retry semantics. Test runtime reset, scope ABA, attempt replacement and panel replacement, ordinary grading and failure/retry using mounted Study and actual local SQLite.
+3. Run focused regression and adjacent owner tests, lint/format checks, update Docs/Architecture/study.md, and self-review.
+4. Complete Superpowers review, register new UI coverage in the existing gate and verify CI before closure.
+
+ADR required: no
+ADR path: existing canonical ADRs 011, 033 (linked in Description).
+Reason: bounded implementation of existing UI/session/store ownership; no new contract or architecture.
+
+Implementation plan: Docs/superpowers/plans/2026-10-25-textual-followup-fixes.md (Task 1).
+<!-- SECTION:PLAN:END -->

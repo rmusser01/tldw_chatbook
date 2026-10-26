@@ -1,7 +1,7 @@
 ---
 id: TASK-36932
 title: Keep Personas controls responsive during Lore settings saves
-status: To Do
+status: In Progress
 created_date: 2026-10-25 23:38
 labels:
 - textual-book
@@ -11,6 +11,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
+assignee:
+- '@codex'
+updated_date: 2026-10-26 00:10
 ---
 
 ## Description
@@ -46,3 +49,18 @@ Reason: A screen-owned operation using the current Lore manager and draft contra
 - [ ] #3 Save completion reports the actual result for the captured Lore book and cannot retarget or overwrite a replacement selection/panel; existing dirty-state and transition ownership remains intact.
 - [ ] #4 Mounted controlled slow-save and ordinary success/failure tests verify responsive admission and correct real SQLite results, without claiming natural latency from a synthetic hold.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add controlled regression tests and observe the reported defect before production edits.
+2. Release the screen handler promptly by admitting one screen-owned, noncancelling Lore settings save worker. Capture manager, book ID, expected version, payload and original panel before dispatch. Guard publication against retired selection/panel, preserve newer edits, and report captured-book success/failure truthfully. Test mounted held and ordinary saves using actual manager/private SQLite, repeated activation, conflicts, replacement and stale failures. Preserve existing dirty/transition owners.
+3. Run focused regression and adjacent owner tests, lint/format checks, update Docs/Architecture/character-chat.md, and self-review.
+4. Complete Superpowers review, register new UI coverage in the existing gate and verify CI before closure.
+
+ADR required: no
+ADR path: existing canonical ADRs 007, 011, 033 (linked in Description).
+Reason: bounded implementation of existing UI/session/store ownership; no new contract or architecture.
+
+Implementation plan: Docs/superpowers/plans/2026-10-25-textual-followup-fixes.md (Task 3).
+<!-- SECTION:PLAN:END -->
