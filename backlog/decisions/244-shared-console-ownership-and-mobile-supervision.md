@@ -616,3 +616,41 @@ does not describe the current partial content handler as complete. Original
 `d74175b0fd319aef9d17f94d697bbbfd7fdf0895` review base and all subsequent private
 plan/integrated/write gates remain in force. Controller TASK-36766 metadata is
 outside this amendment, and historical hook limitations remain unchanged.
+
+
+### Imported response-rule history retains native execution restrictions
+
+The private source-to-canonical projection follows
+`DB/recovery_response_rules.prepare_imported_rules` and ADR-232 decision 10:
+source enabled bindings become disabled with `binding_revision + 1`; disabled
+and excluded bindings keep their state and revision. Source pending assessments
+become cancelled in both relational state and the closed assessment JSON state
+field, using the native canonical JSON encoding. Completed, cancelled and stale
+assessments retain their state. This is an import; the exact local rollback
+exception does not apply. Preserve authenticated original rows separately and
+retain typed original-to-mapped associations and historical RuleSource fields,
+including effective digests. Known conversation/message/branch references map
+through their authenticated domains. Unproved global profile namespaces still
+produce exact dependency blockers; historical strings never activate a scope.
+
+Do not invoke the mutating native preparation helper against captured source or
+canonical owners, change canonical/rollback rows, execute checks or repairs,
+create receipts, or invent fresh authority/digests. Inconsistent native records
+produce body-free source blockers. Qualify this pure projection with one native
+import-restriction comparison in a disposable test owner and unchanged source
+and canonical snapshots. This clarifies earlier broad state-preservation prose:
+historical originals stay exact; imported execution-bearing states obey the
+installed restriction. If wrong, correct and requalify this finite projection
+before writes while retained originals remain untouched.
+
+Contemporary state at HEAD `63ea05de48`: dirty C1 core/Note/message graph and
+Canvas modules, captured-reader entry, narrow Notes preview guard change,
+native fixture extension and three C1 test modules already exist. The rule
+module now implements independent revision/validation/fixture/draft mapping;
+binding and assessment restriction projection has not been written. Actual
+rule RED reached missing validation rows/global-scope blocker in 111.98s after
+native capture; Canvas native import/read consumers are still pending. The
+earlier malformed Canvas fixtures failed native guards and are not product RED.
+This snapshot precedes restriction-projection code and test changes. The exact
+C review BASE `d74175b0fd319aef9d17f94d697bbbfd7fdf0895`, full integrated gate,
+controller-only TASK-36766 metadata, and historical hook limitations are retained.
