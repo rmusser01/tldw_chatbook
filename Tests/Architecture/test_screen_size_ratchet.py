@@ -1197,8 +1197,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: ``_first_library_notes_tree_row`` through the browse receipt (M5), and
     #: ``link_origin`` cleared on every plain open (I-1): 38076 -> 38138 lines,
     #: 1370 -> 1372 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 (polish-1a task 5 fix round 2; same owner
+    #: decision): ``_withdraw_library_notes_filter_row_handoff`` called from
+    #: every input site ``on_key`` never sees (the wheel, the priority Tab
+    #: pair, Shift+F6) and from ``on_screen_suspend`` (R2-2), and Down from an
+    #: empty, unfiltered box landing on the tree's first row (R2-4): 38138 ->
+    #: 38164 lines, 1372 -> 1373 methods (measured with ``_measure``).
     #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38184, 1373),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38210, 1374),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
