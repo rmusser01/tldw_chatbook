@@ -14,7 +14,17 @@ from tldw_chatbook.DB.sql_validation import escape_identifier
 from .file_inventory import _inventory_root
 from .profile_paths import lexical_path
 
+
 # Physical names are installed declarations, never inferred from a glob.
+class MobileConsolidationRefused(ValueError):
+    """A fixed consolidation refusal with an optional existing local operation."""
+
+    def __init__(self, reason, *, operation_id=None, control_root=None):
+        super().__init__(reason)
+        self.operation_id = operation_id
+        self.control_root = control_root
+
+
 LEGACY_STORES = (
     ("chat.db", "db.chachanotes.primary"),
     ("workspaces.db", "db.workspaces"),
@@ -87,6 +97,18 @@ class CanonicalConsoleStores:
 
 
 @dataclass(frozen=True)
+class MobileSelectorProvenance:
+    """Checked locator/content evidence; no configuration bodies or permission."""
+
+    selector: Path
+    fingerprint: str | None
+    witnesses: tuple
+    destination: CanonicalConsoleStores | None = None
+    destination_witnesses: tuple = ()
+    destination_sidecars: tuple = ()
+
+
+@dataclass(frozen=True)
 class MobileConsolidationPreview:
     source_dir: Path
     source_fingerprint: str
@@ -105,6 +127,11 @@ class MobileConsolidationPreview:
     destination_witnesses: tuple[tuple[str, tuple], ...] = ()
     destination_sidecars: tuple[tuple[str, tuple], ...] = ()
     identity_conflicts: tuple[tuple[str, str, tuple], ...] = ()
+    source_selector: Path | None = None
+    target_selector: Path | None = None
+    selector_provenance: tuple[MobileSelectorProvenance, ...] = ()
+    source_witnesses: tuple = ()
+    credential_acknowledgements: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 def _adapters():
@@ -253,10 +280,10 @@ _SOFT_REFERENCES = {
 }
 
 
-def _destination_witnesses(destination):
+def _path_witnesses(paths):
     """Strict ancestor/object evidence; creation or replacement needs a journal transition."""
     result = []
-    for path in destination.paths:
+    for path in paths:
         path = lexical_path(path)
         chain = []
         for ancestor in reversed((path, *path.parents)):
@@ -268,6 +295,21 @@ def _destination_witnesses(destination):
             chain.append((str(ancestor), *witness))
         result.append((str(path), tuple(chain)))
     return tuple(result)
+
+
+def _destination_witnesses(destination):
+    return _path_witnesses(destination.paths)
+
+
+def _selector_observation(path):
+    from .bootstrap import _fingerprint
+
+    _resource_identity(path)
+    before = _path_witnesses((path,))[0][1]
+    fingerprint = _fingerprint(path) if before[-1][2] is not None else None
+    if _path_witnesses((path,))[0][1] != before:
+        raise ValueError("mobile_selector_changed")
+    return fingerprint, before
 
 
 def _sqlite_sidecars(path):
@@ -594,15 +636,16 @@ def mobile_inventory(config):
 
     context = discovery_context(config)
     stores = legacy_mobile_declarations(config)
+    controls = _source_claim_inventory(config)
     if not legacy_mobile_dir(config).exists():
-        return stores
+        return (*stores, *controls)
     preview = _preview(
         legacy_mobile_dir(config),
         CanonicalConsoleStores(*canonical_console_paths(config)),
         config,
         review_destination=False,
     )
-    items = list(stores)
+    items = [*stores, *controls]
     for issue in preview.issues:
         items.append(
             StorageItem(
@@ -615,7 +658,8 @@ def mobile_inventory(config):
                 (),
             )
         )
-    items.extend(_referenced_files(config, stores))
+    if preview.has_data:
+        items.extend(_referenced_files(config, stores))
     lock = legacy_mobile_dir(config) / ".runs.db.execution.lock"
     lock_item = _inventory_root(lock, owner="db.agent_runs", external=False)
     items.append(
@@ -640,8 +684,8 @@ def _referenced_files(config, stores):
     )
 
 
-def preview_selected_mobile(
-    source_config: Path, target_config: Path
+def _preview_selected_mobile(
+    source_config: Path, target_config: Path, *, review_destination=True
 ) -> MobileConsolidationPreview:
     """Review admitted local config selectors and all known shared-source candidates."""
     from dataclasses import replace
@@ -649,9 +693,11 @@ def preview_selected_mobile(
     from .capture_service import _selectors
     from .inventory import read_profile_config
     from .profile_paths import canonical_console_paths, legacy_mobile_dir
-    from .storage_admission import _preview_reads
 
+    source_config, target_config = map(lexical_path, (source_config, target_config))
     selectors = _selectors((source_config, target_config), include_known_profiles=True)
+    observations = {path: _selector_observation(path) for path in selectors}
+    provenance = []
     for path in (source_config, target_config):
         _resource_identity(path)
     source = read_profile_config(source_config)
@@ -661,7 +707,10 @@ def preview_selected_mobile(
     candidates = {destination.identity: destination}
     issues = set()
     for selected in selectors:
-        if not selected.exists():
+        fingerprint, chain = observations[selected]
+        candidate = None
+        if fingerprint is None:
+            provenance.append(MobileSelectorProvenance(selected, None, chain))
             continue
         try:
             config = read_profile_config(selected)
@@ -672,6 +721,16 @@ def preview_selected_mobile(
                 candidates[candidate.identity] = candidate
         except (OSError, ValueError):
             issues.add("mobile_candidate_unavailable")
+        provenance.append(
+            MobileSelectorProvenance(
+                selected,
+                fingerprint,
+                chain,
+                candidate,
+                _destination_witnesses(candidate) if candidate else (),
+                _destination_sidecars(candidate) if candidate else (),
+            )
+        )
     try:
         _refuse_witness_aliases(
             witness
@@ -680,8 +739,15 @@ def preview_selected_mobile(
         )
     except ValueError:
         issues.add("mobile_unsafe_alias")
-    with _preview_reads():
-        preview = _preview(source_dir, destination, source)
+    preview = _preview(
+        source_dir, destination, source, review_destination=review_destination
+    )
+    if _selectors(
+        (source_config, target_config), include_known_profiles=True
+    ) != selectors or any(
+        _selector_observation(path) != row for path, row in observations.items()
+    ):
+        raise ValueError("mobile_selector_changed")
     needs_review = preview.has_data and len(candidates) > 1
     if needs_review:
         issues.add("mobile_destination_review_required")
@@ -690,4 +756,136 @@ def preview_selected_mobile(
         needs_destination_review=needs_review,
         issues=tuple(sorted(set(preview.issues) | issues)),
         candidate_destinations=tuple(candidates[key] for key in sorted(candidates)),
+        source_selector=source_config,
+        target_selector=target_config,
+        selector_provenance=tuple(provenance),
+        source_witnesses=_path_witnesses((source_dir,))[0][1],
     )
+
+
+def preview_selected_mobile(
+    source_config: Path, target_config: Path
+) -> MobileConsolidationPreview:
+    """Review checked selectors without ordinary runtime admission or mutation."""
+    from .storage_admission import _preview_reads
+
+    with _preview_reads():
+        return _preview_selected_mobile(source_config, target_config)
+
+
+def _selector_evidence(preview):
+    """Encode only fixed locator and witness fields for the native typed journal."""
+
+    def witness(value):
+        return dict(zip(("path", "device", "inode", "mode"), value, strict=True))
+
+    return [
+        {
+            "selector": str(row.selector),
+            "fingerprint": row.fingerprint,
+            "witnesses": [witness(item) for item in row.witnesses],
+            "destination_identity": row.destination.identity
+            if row.destination
+            else None,
+            "targets": [
+                {
+                    "owner_id": owner,
+                    "witnesses": [witness(item) for item in chain],
+                    "sidecars": [
+                        witness(item) for item in dict(row.destination_sidecars)[path]
+                    ],
+                }
+                for owner, (path, chain) in zip(
+                    (owner for _, owner in LEGACY_STORES),
+                    row.destination_witnesses,
+                    strict=True,
+                )
+            ]
+            if row.destination
+            else [],
+        }
+        for row in preview.selector_provenance
+    ]
+
+
+def _source_claim_locations(source_dir):
+    """Fixed source-addressed names, including safe absent-source ancestors."""
+    stem = ".mobile-consolidation-" + _digest(str(lexical_path(source_dir)))
+    return tuple(
+        (parent / (stem + ".lock"), parent / (stem + ".json"))
+        for parent in source_dir.parents
+    )
+
+
+def _source_claim_inventory(config):
+    from dataclasses import replace
+
+    from tldw_chatbook.Utils.platform_files import os
+
+    from . import bootstrap
+    from .journal import _MobileSourceClaim
+    from .models import discovery_context, storage_logical_id
+    from .native_files import pinned_directory
+    from .profile_paths import legacy_mobile_dir
+
+    source = legacy_mobile_dir(config)
+    context = discovery_context(config)
+    result = []
+    for index, pair in enumerate(_source_claim_locations(source)):
+        for path in pair:
+            item = _inventory_root(path, owner="recovery.control", external=False)
+            safe = item.status in {"unused", "included"}
+            if item.status == "included":
+                try:
+                    with pinned_directory(path.parent) as parent:
+                        if path.suffix == ".json":
+                            record = _MobileSourceClaim.model_validate(
+                                bootstrap._read(parent, path.name)
+                            )
+                            safe = record.source_dir == str(
+                                source
+                            ) and record.claim_path == str(path)
+                        else:
+                            from .admission import Admission
+
+                            descriptor = Admission._open(parent, path.name, 0)
+                            os.close(descriptor)
+                except (OSError, ValueError):
+                    safe = False
+            result.append(
+                replace(
+                    item,
+                    logical_id=storage_logical_id(
+                        context,
+                        "recovery.control",
+                        f"legacy-mobile-control-{index}-{path.suffix[1:]}",
+                    ),
+                    status="intentionally_excluded" if safe else "unsupported",
+                    metadata=None,
+                )
+            )
+    return tuple(result)
+
+
+def _credential_review_evidence(preview):
+    """Validate separately reviewed manual-only issue metadata; never infer consent."""
+    from .journal import _MobileCredentialReview
+
+    rows = preview.credential_acknowledgements
+    if type(rows) is not tuple:
+        raise ValueError("mobile_credential_review_invalid")
+    try:
+        if any(
+            type(row) is not tuple or len(row) != 2 or type(row[1]) is not tuple
+            for row in rows
+        ):
+            raise ValueError()
+        result = [
+            _MobileCredentialReview(purpose=purpose, issues=list(issues)).model_dump()
+            for purpose, issues in rows
+        ]
+        if len({row["purpose"] for row in result}) != len(result):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise ValueError("mobile_credential_review_invalid") from None
+    return result

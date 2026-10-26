@@ -42,7 +42,10 @@ def _witnesses(path, lease):
 def _paired_witnesses(path, root, names, selected):
     """Read paired local control metadata; this grants no storage admission."""
     if not bootstrap.startup_permission(selected, root)[0]:
-        raise ValueError("projection_generation_unavailable")
+        from .storage_admission import _mobile_discovery_pending
+
+        if not _mobile_discovery_pending(root, names, selected):
+            raise ValueError("projection_generation_unavailable")
     _, profiles, associations = bootstrap._control_records(root)
     registry = bootstrap._registry(root)
     held = set(names or ())

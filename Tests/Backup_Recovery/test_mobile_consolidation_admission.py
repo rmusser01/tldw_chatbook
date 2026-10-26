@@ -88,8 +88,11 @@ def prepared(
     authority.register("mobile.profile", (profile,))
     if enrolled:
         bind_profile(root, config, ("mobile.profile",), authority.control_root)
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+
+    with _preview_reads():
+        inventory = discover((config,))
     preview = preview_selected_mobile(config, config)
-    inventory = discover((config,))
     journal = Journal(control, "mobile-test")
     from contextlib import ExitStack
 
@@ -114,6 +117,7 @@ def prepare(session, journal, config, preview, inventory):
         source_fingerprint=preview.source_fingerprint,
         destination_witnesses=preview.destination_witnesses,
         destination_sidecars=preview.destination_sidecars,
+        reviewed_preview=preview,
     )
 
 
@@ -213,9 +217,16 @@ def test_fresh_parents_and_databases_have_ordered_creation_evidence(
         with journal._locked(exclusive=False) as parent:
             records = journal._records(parent)
         creations = [row for row in records if row.event.startswith("mobile_path_")]
-        assert len(creations) == 6
-        for intended, observed in zip(creations[::2], creations[1::2], strict=True):
+        assert len(creations) == 9
+        for intended, staged, observed in zip(
+            creations[::3], creations[1::3], creations[2::3], strict=True
+        ):
             assert intended.event == "mobile_path_intended"
+            assert staged.event == "mobile_path_staged"
+            assert (
+                staged.evidence["temporary"]["inode"]
+                == observed.evidence["after"]["inode"]
+            )
             assert observed.event == "mobile_path_observed"
             assert intended.evidence["before"]["inode"] is None
             assert (
@@ -752,7 +763,6 @@ def test_reviewed_mode_hardening_is_journaled_before_actual_owner_construction(
 def test_reopen_rejects_changed_review_and_creation_rejects_swapped_parent(
     tmp_path, monkeypatch
 ):
-    from tldw_chatbook.Backup_Recovery import native_files
 
     with prepared(tmp_path, monkeypatch, fresh=True) as (
         session,
@@ -774,18 +784,23 @@ def test_reopen_rejects_changed_review_and_creation_rejects_swapped_parent(
                 source_fingerprint=preview.source_fingerprint,
                 destination_witnesses=preview.destination_witnesses,
                 destination_sidecars=preview.destination_sidecars,
+                reviewed_preview=preview,
             )
-        native_pinned = native_files.pinned_directory
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _CaptureFileDescriptors,
+        )
+
+        native_pinned = _CaptureFileDescriptors.pinned_directory
 
         @contextmanager
-        def changed_parent(path):
+        def changed_parent(custody, path):
             if path == stores.chat_path.parent.parent.parent:
                 path.rename(path.with_name("retired-profile"))
                 path.mkdir(mode=448)
-            with native_pinned(path) as descriptor:
+            with native_pinned(custody, path) as descriptor:
                 yield descriptor
 
-        monkeypatch.setattr(native_files, "pinned_directory", changed_parent)
+        monkeypatch.setattr(_CaptureFileDescriptors, "pinned_directory", changed_parent)
         with (
             pytest.raises(bootstrap.RecoveryRequired, match="mobile_object_changed"),
             session.mobile_consolidation_owner(journal, "db.chachanotes.primary"),
@@ -1050,17 +1065,16 @@ def test_interrupted_native_mode_transition_remains_fenced(
         False,
         "recovery_pending",
     )
-    with (
-        authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session,
-        pytest.raises(bootstrap.RecoveryRequired),
-    ):
-        prepare(
-            session,
-            Journal(journal.root.parent, journal.operation_id),
-            config,
-            preview,
-            inventory,
+    with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session:
+        reopened = Journal(journal.root.parent, journal.operation_id)
+        prepare(session, reopened, config, preview, inventory)
+        assert bootstrap.startup_permission(config, authority.control_root.parent) == (
+            False,
+            "recovery_pending",
         )
+        with session.mobile_consolidation_owner(reopened, "db.workspaces"):
+            assert stores.workspace_path.stat().st_ino == inode
+            assert stores.workspace_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_preview_rejects_absent_main_sidecar_name_overlap(tmp_path):

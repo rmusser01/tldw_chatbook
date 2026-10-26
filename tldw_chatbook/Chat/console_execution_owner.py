@@ -119,7 +119,7 @@ class ConsoleExecutionOwner:
 
         if cls is not ConsoleExecutionOwner or type(scope) is not _MobileScope:
             raise ConsoleExecutionUnavailable("consolidation_scope_required")
-        _MobileScope.check(scope)
+        _MobileScope.check_for_lock(scope)
         if (
             scope.owner["owner_id"] != "db.agent_runs"
             or scope.execution_owner is not None
@@ -146,6 +146,7 @@ class ConsoleExecutionOwner:
                 if exc.errno in (errno.EACCES, errno.EAGAIN):
                     raise ConsoleExecutionBusy("console_execution_busy") from None
                 raise
+            _MobileScope.recover_mode(scope)
             if scope.recovering_owner:
                 _MobileScope.observe_sidecars(scope, "recovered")
             _MobileScope.harden_store(scope)

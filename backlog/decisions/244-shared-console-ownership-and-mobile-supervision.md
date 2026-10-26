@@ -155,3 +155,38 @@ The spec records targeted storage/runtime/API tests and real served-browser
 qualification. Full-suite execution remains opt-in. Written-spec review precedes
 the implementation plan and atomic implementation tasks; this ADR records the
 approved design direction without claiming shipped behavior.
+
+### Native lifecycle implementation details
+
+Legacy source and canonical rollback are two fixed native capture partitions under
+one positively qualified exclusive maintenance session. The native archive format
+assigns one schema version per owner; legacy81/8/25 and canonical82/9/26 share real
+owner IDs and cannot honestly share that slot. Projection derives solely from the
+admitted installed inventory. Both encrypted archives bind the original source,
+reviewed destination, operation and exact verification identities; no import writes
+or release of the enclosing source/maintenance custody occurs between captures.
+Generic mixed-version refusal remains unchanged. Empty source has a no-data proof,
+never an invented source archive or legacy database.
+
+Missing canonical ancestors and stores use empty native private siblings. Typed
+intent precedes creation, exact temp inode/parent/final witnesses precede native
+no-replace publication, and final observation records the same inode. Recovery may
+finish only the witnessed object at exactly temp or final. Unknown pre-witness
+objects and foreign replacements remain retained and refused. No name-only
+adoption, overwrite or expanded caller path authority is introduced.
+
+Credential review uses disposable native capture before actual capture intent.
+It returns body-free native issues without acknowledgement or publication. Exact
+separately acknowledged manual-only issue sets are immutable per partition in the
+reviewed preview, preparation and capture intent. Actual capture re-exports and
+checks both issue sets and captured bytes; destination confirmation never grants
+credential consent. Manual-only archives are coherent but do not establish
+automatic credential rollback readiness. Required missing/unreadable/unsupported
+material refuses. The conservative unused-default-key rule and its shared native
+predicate are specified in ADR-126; it permits no fabricated keys or records.
+
+The private lifecycle retains source-addressed claim custody and real native owner
+retirement. It provides no public import success, completion, rollback terminal or
+cutover. Cold source validation keeps Chat package server exports lazy so reading
+Goal models cannot bootstrap config inside recovery; explicit public service
+access preserves its normal runtime and admission behavior.

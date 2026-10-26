@@ -572,27 +572,11 @@ class CitationTraceRepository:
     def fingerprint_bearing_rows_exist(self) -> bool:
         """Return whether silently provisioning a replacement key is forbidden."""
 
-        row = (
-            self.db.get_connection()
-            .execute(
-                """
-            SELECT
-              EXISTS(SELECT 1 FROM rag_message_trace_owners)
-              OR EXISTS(SELECT 1 FROM rag_payload_tombstones)
-              OR EXISTS(SELECT 1 FROM rag_legacy_migration_journal)
-              OR EXISTS(
-                SELECT 1 FROM rag_citation_traces
-                WHERE origin = 'imported' OR import_package_fingerprint IS NOT NULL
-              )
-              OR EXISTS(
-                SELECT 1 FROM rag_evidence_snapshots
-                WHERE content_hash IS NOT NULL OR comparison_fingerprint IS NOT NULL
-              )
-            """
-            )
-            .fetchone()
+        from tldw_chatbook.DB.citation_fingerprint_policy import (
+            fingerprint_bearing_rows_exist,
         )
-        return bool(row[0])
+
+        return fingerprint_bearing_rows_exist(self.db.get_connection())
 
     @property
     def canonical_writes_enabled(self) -> bool:

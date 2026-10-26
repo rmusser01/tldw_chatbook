@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## Read-only SQLite census can change reviewed sidecars (TASK-36766, 2026-10-25)
+
+**Incident.** Mobile consolidation had reviewed absent canonical WAL/SHM names,
+then a complete native adapter census opened the live Chat SQLite database for
+inspection and created sidecars. Correct strict custody validation rejected the
+next capture. A separate cold test correctly refused a different scope because
+its fixture patched `profile_paths.default_config_path` after `config_adapter`
+had imported that function; the fresh process observed a different tokenizer root.
+
+**What to do.** Under mobile maintenance, use the existing bounded private SQLite
+copy discovery scope, and assert source/main/WAL/SHM bytes and modes stay identical.
+For cold tests, establish the same isolated defaults at every imported fixture
+boundary. Compare actual inventory items before changing a digest or witness gate.
+The real WAL capture, fresh-process ciphertext recovery, and unchanged-source tests
+in `test_mobile_consolidation_lifecycle.py` exercise these failures.
+
+
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
 **Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule

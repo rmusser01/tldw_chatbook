@@ -614,6 +614,36 @@ class _MobileTarget(_Evidence):
     sidecars: list[_MobileWitness] = Field(min_length=3, max_length=3)
 
 
+class _MobileSelectorReview(_Evidence):
+    selector: str
+    fingerprint: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    witnesses: list[_MobileWitness] = Field(min_length=2, max_length=256)
+    destination_identity: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    targets: list[_MobileTarget] = Field(max_length=3)
+
+    @field_validator("selector")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileCredentialReview(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    issues: list[str] = Field(max_length=10000)
+
+    @field_validator("issues")
+    @classmethod
+    def manual_only(cls, values):
+        import re
+
+        if values != sorted(set(values)) or any(
+            not re.fullmatch(r"credential_manual_recovery_required:[0-9a-f]{64}", value)
+            for value in values
+        ):
+            raise ValueError("mobile_credential_review_invalid")
+        return values
+
+
 class _MobilePrepared(_Evidence):
     mode: Literal["mobile_consolidation"] = "mobile_consolidation"
     bootstrap_root: str
@@ -623,6 +653,12 @@ class _MobilePrepared(_Evidence):
     source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     inventory_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     selector_fingerprints: list[str] = Field(min_length=2, max_length=2)
+    selector_review: list[_MobileSelectorReview] = Field(
+        default_factory=list, max_length=4096
+    )
+    credential_review: list[_MobileCredentialReview] = Field(
+        default_factory=list, max_length=2
+    )
     targets: list[_MobileTarget] = Field(min_length=3, max_length=3)
 
     @field_validator("bootstrap_root", "source_selector", "target_selector")
@@ -631,9 +667,67 @@ class _MobilePrepared(_Evidence):
         return _Object.absolute_path(value)
 
 
+class _MobileSourceClaim(_Evidence):
+    version: Literal[1] = 1
+    operation_id: str = Field(min_length=1, max_length=256)
+    control_root: str
+    claim_path: str
+    source_dir: str
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_witnesses: list[_MobileWitness] = Field(min_length=2, max_length=256)
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    targets: list[_MobileTarget] = Field(min_length=3, max_length=3)
+
+    @field_validator("control_root", "claim_path", "source_dir")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileCaptureIntent(_Evidence):
+    credential_issues: list[str] = Field(default_factory=list, max_length=10000)
+    purpose: Literal["legacy", "canonical"]
+    destination: str
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    inventory_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("destination")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileCaptureStaged(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    temporary: _Object
+    destination_parent: _MobileWitness
+    temporary_parent: _MobileWitness
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    partition_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _MobileCaptureVerified(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    archive: _Object
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    partition_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _MobileEmptySource(_Evidence):
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class _MobilePathIntent(_Evidence):
     before: _MobileWitness
     kind: Literal["directory", "database"]
+    temporary: str | None = None
+
+
+class _MobilePathStaged(_Evidence):
+    target: str
+    temporary: _MobileWitness
+    parent: _MobileWitness
 
 
 class _MobilePathObserved(_Evidence):
@@ -717,6 +811,13 @@ def _validate_mobile(event, evidence, prior):
     models = {
         "mobile_prepared": _MobilePrepared,
         "mobile_path_intended": _MobilePathIntent,
+        "mobile_path_staged": _MobilePathStaged,
+        "mobile_claim_intended": _MobileSourceClaim,
+        "mobile_claim_observed": _Object,
+        "mobile_capture_intended": _MobileCaptureIntent,
+        "mobile_capture_staged": _MobileCaptureStaged,
+        "mobile_capture_verified": _MobileCaptureVerified,
+        "mobile_source_empty": _MobileEmptySource,
         "mobile_path_observed": _MobilePathObserved,
         "mobile_owner_opened": _MobileOwner,
         "mobile_owner_retired": _MobileOwner,
@@ -754,20 +855,95 @@ def _validate_mobile(event, evidence, prior):
             raise ValueError("journal_transition_invalid")
         prepared, witnesses = _mobile_state(prior)
         last = prior[-1]
-        if last.event == "mobile_path_intended":
-            if event != "mobile_path_observed":
-                raise ValueError("mobile_creation_unsettled")
-            before = last.evidence["before"]
-            if value.after.path != before["path"] or any(
-                item is None
-                for item in (value.after.device, value.after.inode, value.after.mode)
+        if last.event == "mobile_claim_intended":
+            encoded = json.dumps(
+                last.evidence, sort_keys=True, separators=(",", ":")
+            ).encode()
+            artifact_rows = [
+                ("", "file", len(encoded), hashlib.sha256(encoded).hexdigest())
+            ]
+            digest = hashlib.sha256(
+                json.dumps(artifact_rows, separators=(",", ":")).encode()
+            ).hexdigest()
+            if (
+                event != "mobile_claim_observed"
+                or value.path != last.evidence["claim_path"]
+                or value.kind != "file"
+                or value.size != len(encoded)
+                or value.sha256 != digest
             ):
+                raise ValueError("mobile_claim_unverified")
+        elif last.event == "mobile_capture_intended":
+            intent = last.evidence
+            if (
+                event != "mobile_capture_staged"
+                or value.purpose != intent["purpose"]
+                or value.temporary.kind != "file"
+                or Path(value.destination_parent.path)
+                != Path(intent["destination"]).parent
+                or Path(value.temporary_parent.path)
+                != Path(value.temporary.path).parent
+                or Path(value.temporary_parent.path).parent
+                != Path(value.destination_parent.path)
+                or not Path(value.temporary_parent.path).name.startswith(
+                    ".backup-write-"
+                )
+            ):
+                raise ValueError("mobile_capture_unverified")
+        elif last.event == "mobile_capture_staged":
+            intent = prior[-2].evidence
+            expected = {**last.evidence["temporary"], "path": intent["destination"]}
+            if (
+                event != "mobile_capture_verified"
+                or value.purpose != intent["purpose"]
+                or value.archive.model_dump() != expected
+                or value.manifest_digest != last.evidence["manifest_digest"]
+                or value.partition_digest != last.evidence["partition_digest"]
+            ):
+                raise ValueError("mobile_capture_unverified")
+        elif last.event == "mobile_path_intended":
+            before = last.evidence["before"]
+            temporary = last.evidence.get("temporary")
+            if temporary is not None:
+                expected_mode = (
+                    stat.S_IFDIR | 0o700
+                    if last.evidence["kind"] == "directory"
+                    else stat.S_IFREG | 0o600
+                )
+                if (
+                    event != "mobile_path_staged"
+                    or value.target != before["path"]
+                    or value.temporary.path != temporary
+                    or value.temporary.inode is None
+                    or value.temporary.mode != expected_mode
+                    or value.parent.model_dump()
+                    != witnesses[str(Path(before["path"]).parent)]
+                    or value.temporary.device != value.parent.device
+                ):
+                    raise ValueError("mobile_creation_unverified")
+            else:
+                if event != "mobile_path_observed":
+                    raise ValueError("mobile_creation_unsettled")
+                if value.after.path != before["path"] or any(
+                    item is None
+                    for item in (
+                        value.after.device,
+                        value.after.inode,
+                        value.after.mode,
+                    )
+                ):
+                    raise ValueError("mobile_creation_unverified")
+                check = (
+                    stat.S_ISDIR
+                    if last.evidence["kind"] == "directory"
+                    else stat.S_ISREG
+                )
+                if not check(value.after.mode):
+                    raise ValueError("mobile_creation_kind_invalid")
+        elif last.event == "mobile_path_staged":
+            expected = {**last.evidence["temporary"], "path": last.evidence["target"]}
+            if event != "mobile_path_observed" or value.after.model_dump() != expected:
                 raise ValueError("mobile_creation_unverified")
-            check = (
-                stat.S_ISDIR if last.evidence["kind"] == "directory" else stat.S_ISREG
-            )
-            if not check(value.after.mode):
-                raise ValueError("mobile_creation_kind_invalid")
         elif last.event == "mobile_mode_intended":
             expected = {**last.evidence, "mode": stat.S_IFREG | 0o600}
             if event != "mobile_mode_observed" or value.after.model_dump() != expected:
@@ -792,12 +968,74 @@ def _validate_mobile(event, evidence, prior):
                 _validate_mobile_sidecars(owner["path"], value.witnesses)
             elif event != "mobile_owner_retired" or value.model_dump() != owner:
                 raise ValueError("mobile_owner_not_retired")
+        elif event == "mobile_claim_intended":
+            if (
+                last.event != "mobile_prepared"
+                or value.operation_id != prior[0].operation_id
+                or value.source_fingerprint != prepared.source_fingerprint
+                or value.targets != prepared.targets
+            ):
+                raise ValueError("mobile_claim_scope_invalid")
+        elif event == "mobile_source_empty":
+            if (
+                last.event != "mobile_claim_observed"
+                or value.source_fingerprint != prepared.source_fingerprint
+            ):
+                raise ValueError("mobile_empty_source_unverified")
+        elif event == "mobile_capture_intended":
+            expected_purpose = (
+                "legacy" if last.event == "mobile_claim_observed" else "canonical"
+            )
+            if (
+                last.event
+                not in {
+                    "mobile_claim_observed",
+                    "mobile_source_empty",
+                    "mobile_capture_verified",
+                }
+                or last.event == "mobile_capture_verified"
+                and last.evidence["purpose"] != "legacy"
+                or value.purpose != expected_purpose
+                or value.source_fingerprint != prepared.source_fingerprint
+                or value.inventory_digest != prepared.inventory_digest
+                or value.credential_issues
+                != next(
+                    (
+                        row.issues
+                        for row in prepared.credential_review
+                        if row.purpose == value.purpose
+                    ),
+                    [],
+                )
+                or value.destination_identity
+                != next(
+                    row.evidence["destination_identity"]
+                    for row in prior
+                    if row.event == "mobile_claim_intended"
+                )
+            ):
+                raise ValueError("mobile_capture_scope_invalid")
         elif event == "mobile_path_intended":
             if (
                 witnesses.get(value.before.path) != value.before.model_dump()
                 or value.before.inode is not None
             ):
                 raise ValueError("mobile_creation_unreviewed")
+            if value.temporary is not None:
+                import re
+
+                prefix = (
+                    ".mobile-create-"
+                    + hashlib.sha256(prior[0].operation_id.encode()).hexdigest()
+                    + "-"
+                )
+                temporary = Path(value.temporary)
+                if temporary.parent != Path(
+                    value.before.path
+                ).parent or not re.fullmatch(
+                    re.escape(prefix) + r"[0-9a-f]{32}", temporary.name
+                ):
+                    raise ValueError("mobile_creation_temporary_invalid")
             leaves = {target.witnesses[-1].path for target in prepared.targets}
             if (value.kind == "database") != (value.before.path in leaves):
                 raise ValueError("mobile_creation_kind_invalid")
@@ -826,6 +1064,13 @@ class _Event(_Evidence):
     event: Literal[
         "mobile_prepared",
         "mobile_path_intended",
+        "mobile_path_staged",
+        "mobile_claim_intended",
+        "mobile_claim_observed",
+        "mobile_capture_intended",
+        "mobile_capture_staged",
+        "mobile_capture_verified",
+        "mobile_source_empty",
         "mobile_path_observed",
         "mobile_owner_opened",
         "mobile_owner_retired",

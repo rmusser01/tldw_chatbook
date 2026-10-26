@@ -664,6 +664,24 @@ def stage_restore(
             else _preview_reads()
         )
         with validation_scope:
+            if doc.credential_policy != "exclude":
+                from .credentials import _material, validate_citation_coverage
+
+                _copy(
+                    stage / "payload" / "credential-recovery.json",
+                    stage / "credential-recovery.json",
+                    cancel,
+                )
+                validate_citation_coverage(
+                    stage,
+                    (
+                        (items[key].owner, path)
+                        for key, path in extracted.items()
+                        if key in items
+                    ),
+                    _material(stage),
+                )
+                (stage / "credential-recovery.json").unlink()
             credentials = {}
             if isolated_profiles:
                 from dataclasses import replace

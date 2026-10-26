@@ -124,7 +124,7 @@ quarantine consumers; the preview still performs no import or cutover.
 
 `MaintenanceSession.prepare_mobile_consolidation(journal, *, source_config,
 target_config, selections, approved_scope, source_fingerprint,
-destination_witnesses, destination_sidecars)` prepares an internal in-place
+destination_witnesses, destination_sidecars, reviewed_preview)` prepares an internal in-place
 operation. It accepts checked config selectors and the reviewed native inventory digest and preview witnesses.
 Both selectors must have compatible, positive ADR-126 enrollment; their own
 selected roots must cover their respective source/canonical paths. The actual
@@ -149,9 +149,11 @@ ChaChaNotes, Workspace or AgentRuns owner (`db.chachanotes.primary`,
 session, PID, thread, repository instance/type, target, witnesses and journal
 operation. Ordinary owner opens inside maintenance still refuse; capture still
 reads source and writes only staging. Missing canonical parents and databases use
-pinned native exclusive creation, with `mobile_path_intended` before creation and
-`mobile_path_observed` before accepting the new witness. Changed objects, foreign
-operations and unresolved creation intents refuse. This path does not adopt an
+pinned native exclusive creation: `mobile_path_intended` fixes an operation-unique
+private sibling, `mobile_path_staged` durably witnesses its empty inode and parent,
+and native no-replace publication precedes `mobile_path_observed`. Recovery accepts
+only that witnessed inode at exactly temp or final. Pre-witness objects remain
+unknown, retained and refused. Changed objects and foreign operations refuse. This path does not adopt an
 unexpected object or replace an existing object. Existing destination DBs and
 their fixed SQLite sidecars use the qualified mode transition described below.
 
@@ -166,15 +168,17 @@ Neither journal labels nor retirement establish that an import batch committed.
 RecoveryService reports this typed mode as `recovery_required` with no finish,
 rollback or abort action. Durable pending records override cached worker success
 and continue fencing startup, including corrupt or mismatched journal/pending
-records. The importer must add checked preview provenance, source claims, complete
-mapping/reference and byte closure, native owner batch receipts, validated recovery
-and cutover before any public apply or terminal fence-release route is exposed.
+records. The private lifecycle below supplies provenance, source claims and native captures.
+The importer must add complete mapping/reference and byte closure, native owner
+batch receipts, validated terminal recovery and cutover before any public apply or terminal fence-release route is exposed.
 
 Before native owner construction, `mobile_mode_intended` records an exact existing
 owned regular file witness, and `mobile_mode_observed` accepts only the same
 path/device/inode changed to 0600. All three DB owners use this transition;
 AgentRuns first wins its stable execution flock. Interrupted transitions remain
-pending and refuse adoption on reopen. Source bytes and permissions are unchanged.
+pending. Fresh native exclusion can finish only the original inode at its reviewed
+mode or journaled 0600 mode; AgentRuns reacquires its real execution flock first.
+Foreign modes/inodes refuse. Source bytes and permissions are unchanged.
 
 `destination_sidecars` is separate immutable preview evidence: for each canonical
 DB it records exactly `-wal`, `-shm` and `-journal` presence/path/device/inode/mode,
@@ -203,3 +207,69 @@ only after admitted SQLite allocation. Ordinary callers retain native hardening;
 read-only `preserve_source_mode` keeps its original meaning. Old/mixed
 wire versions and missing fields fail closed. This protocol is separate from
 Canvas and HTTP protocols.
+
+
+## Private mobile capture and recovery lifecycle
+
+`mobile_consolidation_apply._captured_mobile(session, journal, preview,
+approved_scope, *, destination, password, cancel)` supplies a concrete private
+lifecycle to the fixed importer. `_resume_captured_mobile` reconstructs the
+original checked review from typed records and revalidates it under fresh native
+exclusion. Neither API exposes completion, cutover or a terminal recovery action.
+
+The immutable preview includes every reviewed candidate selector, content digest
+and strict physical witness. Native preparation rejects a changed candidate set,
+config or source. A durable claim binds the original source fingerprint, canonical
+namespace and witnesses, operation and native control locator. A stable,
+source-addressed never-unlinked flock remains physically held for the lifecycle;
+another config/control cannot import that source under another operation.
+
+Capture uses the complete installed adapter census. Mobile discovery uses the
+existing bounded private SQLite read copies, preventing census reads from creating
+live WAL sidecars after a strict reviewed-absent witness. Own-pending reads require
+the actual live native session and exact typed operation/journal, selectors,
+namespace and pending association. Ordinary, foreign, copied or retired scopes
+retain the normal pending refusal.
+
+Legacy source history/artifacts and complete canonical rollback are fixed native
+partitions captured under that same exclusive session, without intervening owner
+writes. This preserves the native archive's one-version-per-owner contract:
+legacy81/8/25 and canonical82/9/26 have the same actual owner IDs. Generic mixed
+owner versions still refuse. Each archive uses native encrypted publication and
+verification, with typed intended/staged/verified identities. Interrupted
+publication can finish only the durable verified ciphertext inode at its exact
+temporary or final name. After authentication and the verified record, recovery
+retires only the native writer staging directory with the exact durable parent
+witness; foreign replacements remain untouched. Empty sources record a native no-data proof, create no
+legacy database and have no source archive. C2 must verify purpose-specific rows,
+references and artifact bytes before import and cutover.
+
+`_preview_mobile_credential_issues` performs native disposable capture under the
+same qualified session before actual capture intent. It returns bounded body-free
+issues and grants no consent or publication. Explicitly reviewed manual-only issue
+sets are immutable per partition on `preview.credential_acknowledgements`, typed
+preparation and capture intent. Actual capture re-exports and checks exact issues
+and captured records. `credential_issues` and `manual_recovery_required` on the
+private lifecycle disclose the limitation; coherent archives do not establish
+automatic credential rollback readiness. Destination confirmation never implies
+credential consent. Missing, unreadable or unsupported required material refuses.
+The existing generic excluded citation marker also refuses inside the exact native
+mobile partition; generic backup marker handling is unchanged.
+
+ADR126's native unused-default citation rule is shared with the citation
+provisioning invariant in `DB/citation_fingerprint_policy.py`. Only an exact
+validated default reference with all fingerprint history absent and a positively
+missing backend value may omit a record. Present values still require native
+manual recovery review. Export and staged archive reference verification reject
+omitted required keys and uncertain catalog/context/predicate/backend evidence.
+No key is provisioned by capture or verification.
+
+The returned `source` (optional) and `canonical` archive objects identify encrypted
+native output files. Their `manifest_bytes` are authenticated native manifests;
+consumers must use the native archive acquisition/decryption path before reading
+payloads. `owner(fixed_owner_id)` opens actual installed owners only while the
+same operation's source claim, archives and session remain valid. Owner closure
+and descriptor retirement remain physical requirements; ambiguous close retains
+the native maintenance quarantine. A prepared-only crash can register its exact
+pending fence after full revalidation; source claims and captures do not establish
+committed import batches.

@@ -720,6 +720,90 @@ def _sanitize_column(value, kind):
     return json.dumps(decoded, ensure_ascii=False, separators=(",", ":"))
 
 
+def _citation_context_values(connection):
+    rows = connection.execute(
+        "SELECT context_name,fingerprint_key_id FROM rag_identity_context"
+    ).fetchall()
+    if (
+        len(rows) != 1
+        or rows[0][0] != "default"
+        or not isinstance(rows[0][1], str)
+        or not rows[0][1]
+    ):
+        raise ValueError("credential_context_unverified")
+    return (rows[0][1],)
+
+
+def _unused_citation_reference(connection, key_id):
+    """Prove the exact default reference has no native fingerprint history."""
+    from tldw_chatbook.DB.citation_fingerprint_policy import (
+        fingerprint_bearing_rows_exist,
+    )
+
+    return key_id in _citation_context_values(
+        connection
+    ) and not fingerprint_bearing_rows_exist(connection)
+
+
+def validate_citation_coverage(staging, payloads, records, *, _mobile_partition=None):
+    """Reject omitted required citation material in qualified captured payloads.
+
+    Payload paths come from installed inventory or verified archive declarations.
+    Neither an archive record nor a caller flag can declare a key unused.
+    """
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+    from .sqlite_validation import _check, _installed_owner
+
+    if _mobile_partition is not None:
+        from .mobile_consolidation_apply import _MobileCapturePartition
+
+        if type(_mobile_partition) is not _MobileCapturePartition:
+            raise ValueError("mobile_native_partition_required")
+        _mobile_partition.check()
+    owners = {
+        rule.owner for rule in SQLITE_CREDENTIAL_COLUMNS if rule.kind == "citation"
+    }
+    known = {
+        (row["file"], row.get("username"))
+        for row in records
+        if row["kind"] == "citation"
+    }
+    seen = set()
+    for owner_id, path in payloads:
+        if owner_id not in owners or path in seen:
+            continue
+        seen.add(path)
+        path = _staged_path(staging, path)
+        installed = _installed_owner(owner_id)
+        with open_recovery_validation(
+            owner_id, path, writable=False, with_restrictions=True
+        ) as (source, restrictions):
+            if _check(source, installed, installed.schema_policy(), restrictions)[0]:
+                raise ValueError("unsupported_credential_schema")
+            for key_id in _citation_context_values(source):
+                if key_id == RECOVERY_SETUP_REQUIRED and _mobile_partition is not None:
+                    raise ValueError("credential_material_excluded")
+                if (
+                    key_id == RECOVERY_SETUP_REQUIRED
+                    or (path.relative_to(staging).as_posix(), key_id) in known
+                ):
+                    continue
+                if not _unused_citation_reference(source, key_id):
+                    raise ValueError("credential_material_missing")
+                record = {
+                    "kind": "citation",
+                    "service": CITATION_SERVICE,
+                    "username": key_id,
+                }
+                try:
+                    missing = _read_scope(record, _credential_store()) is None
+                except Exception:  # noqa: BLE001 - backend errors may contain secret values
+                    raise ValueError("credential_store_unavailable") from None
+                if not missing:
+                    raise ValueError("credential_material_missing")
+
+
 def _rewrite_database(staging, path, owner_id, *, export=None):
     from tldw_chatbook.DB.private_sqlite import (
         connect_private_sqlite,
@@ -751,6 +835,8 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
             if export is not None:
                 material, coverage = export
                 for (table, column), kind in rules.items():
+                    if kind == "citation":
+                        _citation_context_values(source)
                     # Identifiers come only from the frozen installed policy.
                     for rowid, value in source.execute(
                         f'SELECT rowid,"{column}" FROM "{table}"'  # nosec B608 - installed policy identifiers only
@@ -769,6 +855,7 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
                                     },
                                     material,
                                     coverage,
+                                    optional=_unused_citation_reference(source, value),
                                 )
                         elif value and kind != "url":
                             decoded = json.loads(value)

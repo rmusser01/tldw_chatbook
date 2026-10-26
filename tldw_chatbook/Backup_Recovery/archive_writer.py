@@ -169,9 +169,20 @@ def _package(capture, doc, destination, cancel, limits, stored=()):
 
 
 def write_archive(
-    capture: CaptureResult, destination: Path, *, password: bytes | None, cancel: Event
+    capture: CaptureResult,
+    destination: Path,
+    *,
+    password: bytes | None,
+    cancel: Event,
+    _mobile_capture=None,
 ) -> SealedArchive:
     """Package, actually read/verify, then durably publish without replacement."""
+    if _mobile_capture is not None:
+        from .mobile_consolidation_apply import _MobileCapturePartition
+
+        if type(_mobile_capture) is not _MobileCapturePartition:
+            raise ValueError("mobile_native_partition_required")
+        _mobile_capture.check()
     destination = Path(destination)
     parent_identity = _output(capture, destination)
     suffix = ".tldw-backup.zip" + (".age" if password is not None else "")
@@ -254,11 +265,19 @@ def write_archive(
         if _output(capture, destination) != parent_identity:
             raise ValueError("output_parent_changed")
         reader._check(cancel)
+        if _mobile_capture is not None:
+            cleanup_operation = False
+            _mobile_capture.stage_publication(
+                output, destination, verified, capture.inventory
+            )
         publish_new(
             output,
             destination,
             parent_identities=(operation_identity, parent_identity),
         )
+        if _mobile_capture is not None:
+            _mobile_capture.observe_publication(destination)
+            cleanup_operation = True
         # A late cancellation never retracts or conceals durable publication.
         return SealedArchive(destination, digest, verified.manifest_bytes)
     except (OSError, ValueError) as error:

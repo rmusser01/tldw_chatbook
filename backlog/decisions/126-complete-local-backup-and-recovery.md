@@ -1650,3 +1650,22 @@ That single execution scope still freshly admits every actual source before the
 run body starts; it avoids re-admitting the same profile/config/database sources
 in a nested scope. Qualification never imports or calls an optional source before
 admission. Missing or custom source objects keep the admitted global fallback.
+
+### Unused default citation references (ADR-244 native capture qualification)
+
+The installed Chat schema creates a default citation fingerprint-key identifier
+before any citation key or fingerprint exists. Actual legacy mobile81 capture with
+an empty keyring exposed this distinction: the shared native fingerprint-history
+predicate was false, but credential export reported missing required material.
+
+Export and archive reference verification use one inert SQL predicate, shared with
+`CitationTraceRepository.fingerprint_bearing_rows_exist`. Only the exact validated
+`default` identity context in a qualified frozen SQLite owner, with every native
+fingerprint-bearing condition absent and a backend positively returning missing,
+may omit an unused key. This creates no credential record and provisions no key.
+Present values retain encrypted capture and explicit manual recovery semantics.
+Fingerprint history, unreadable backends, invalid contexts/catalogs and incomplete
+or failed predicate evaluation remain required or refused. Archive verification
+must reject omitted required references using the same qualified predicate; an
+archive-provided assertion of unused material grants no exception. Other credential
+kinds, acknowledgement policy, encryption and admission remain unchanged.
