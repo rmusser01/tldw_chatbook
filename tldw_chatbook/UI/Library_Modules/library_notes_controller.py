@@ -3858,6 +3858,7 @@ class LibraryNotesController:
         if self._library_notes_view != "import":
             self._library_notes_view = "list"
         self._selected_note_id = ""
+        self._notes_state.link_origin = None  # TASK-34000.28: a plain exit
         self._library_note_load_state = "idle"
         self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"

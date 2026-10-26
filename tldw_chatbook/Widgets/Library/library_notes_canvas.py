@@ -2090,7 +2090,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # TASK-34000.40 (N-31) AC#2: the recompose below rebuilds the filter
         # box, so text the user typed and did not submit (Escape in the box
         # ends in this sync) went with the old widget. A box that differs
-        # from the filter IT was composed for (stamped on the widget: a
+        # from the filter IT was composed for (declared on the widget: a
         # second sync before the first recompose has moved ``filter_value``
         # on) AND from the incoming one is a draft and is carried; the
         # APPLIED filter is never touched here. Clear filter empties the box
@@ -2098,7 +2098,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         boxes = self.query("#library-notes-filter")
         box = boxes.first(Input) if boxes else None
         typed = box.value if box is not None else None
-        composed_for = getattr(box, "_library_applied_filter", typed)
+        applied = getattr(box, "_library_applied_filter", None)
+        composed_for = typed if applied is None else applied
         self._filter_draft = (
             typed if typed not in (None, composed_for, filter_value) else None
         )
