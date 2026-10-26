@@ -249,6 +249,33 @@ passes `layout=` nor carries a stated exemption. Two things that census taught:
 
 ---
 
+## A widget inside a `display: none` ancestor still costs a whole-screen reflow, and `Content.__eq__` ignores styling (TASK-36012, 2026-10-26)
+
+**Incident.** At 160x45 the Console's Inspector rail is collapsed to its
+handle (`display: none` on `#console-right-rail`). A headless probe of a send
+(wrapping `Widget.refresh` and `Screen._refresh_layout`) still counted layout
+requests from inside it on every send: the rail's own outer-fold reconcile,
+the rail cascade re-hiding Settings rows the Settings summary had just
+re-shown (eleven rows, twice per transition), and on a chat's first send a
+whole run-inspector recompose (about 30 mounts). Each one posted a `Layout`
+to the screen, and the screen reflowed everything. Textual 8.2.8's
+`Widget._check_refresh` posts `messages.Layout(self)` with no `display`
+check (only the repaint path checks `self.display`), so a hidden subtree's
+requests cost exactly what a visible one's do and paint nothing.
+
+Writing the in-place patch for the Conversations tray turned up a second
+trap: `textual.content.Content.__eq__` compares `.plain` only, so a Button
+label whose text is unchanged but whose style changed compares equal and an
+equality gate would skip the repaint. The patch compares `(plain, spans)`.
+
+**What to do.** When counting layout cost, include widgets under hidden
+ancestors: do not assume `display: none` makes a subtree free. Before
+skipping a hidden widget's layout, check what reopens it: a rail whose
+display flips gets a `Resize` and re-reconciles, but a child's content-height
+change written with `layout=False` leaves its ancestors' arrangement caches
+stale, so only a fixed box may skip the layout. Gate repaints on the
+content's spans as well as its text.
+
 ## `Button.label` repaints but does not re-lay out: a longer label written in place wraps inside the old box (TASK-34000.22, 2026-10-20)
 
 **Incident.** The Media reader's Cancel button is relabelled "Discard
