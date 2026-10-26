@@ -3,9 +3,11 @@ id: TASK-36961
 title: >-
   Console tab-publication test reads a lazily created replay flag and fails with
   AttributeError when no replay ran
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-10-26 02:10'
+updated_date: '2026-10-26 03:24'
 labels:
   - console
   - tests
@@ -22,6 +24,14 @@ Found while re-verifying TASK-33620.15.4 after its rebase onto dev 7a5e2513c5 (2
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test passes whether or not the Console ran a whole-sync replay before its wait (shown by a run that forces no replay)
-- [ ] #2 The test still waits for any replay that is pending, so it does not start its lock before the screen's own syncs settle
+- [x] #1 The test passes whether or not the Console ran a whole-sync replay before its wait (shown by a run that forces no replay)
+- [x] #2 The test still waits for any replay that is pending, so it does not start its lock before the screen's own syncs settle
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed on the TASK-33620.15.4 branch (2026-10-25), test harness only. The quiet-wait predicate in Tests/UI/test_console_tab_publication_maintenance.py (_quiet) now reads the replay flag with getattr(console, '_console_control_bar_replay_whole_sync', False), as the file's two other waits and the product code already do.
+- AC#1: a scratch probe (deleted before commit) popped the flag off the mounted ChatScreen right before the wait, forcing the no-replay case. Without the fix it failed with AttributeError (1 of 1); with the fix it passed (1 of 1). The whole file then passed 3 of 3 tests under the plain command.
+- AC#2: when a replay is pending the flag is set, so getattr returns True and the wait still holds until it clears; that path is unchanged.
+<!-- SECTION:NOTES:END -->

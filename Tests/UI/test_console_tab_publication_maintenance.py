@@ -333,7 +333,7 @@ async def _quiet(pilot, console, projection) -> bool:
         return (
             not projection.pending
             and not console._console_sync_in_progress
-            and not console._console_control_bar_replay_whole_sync
+            and not getattr(console, "_console_control_bar_replay_whole_sync", False)
         )
 
     for _ in range(3):
