@@ -219,7 +219,14 @@ exclusion. Neither API exposes completion, cutover or a terminal recovery action
 
 The immutable preview includes every reviewed candidate selector, content digest
 and strict physical witness. Native preparation rejects a changed candidate set,
-config or source. A durable claim binds the original source fingerprint, canonical
+config or source. Frozen preview values alone grant no authority: before durable
+preparation, native selection re-derives and compares source/destination paths,
+no-data status, source witnesses, schemas/counts/mappings/dependencies and capture
+scopes. Separate explicit credential metadata may differ. On resume, only original
+destination/provenance witnesses governed by the typed journal and advisory
+collision hints are normalized; native source fields remain exact, and the existing
+journal checks still qualify creation, modes and transient sidecars.
+A durable claim binds the original source fingerprint, canonical
 namespace and witnesses, operation and native control locator. A stable,
 source-addressed never-unlinked flock remains physically held for the lifecycle;
 another config/control cannot import that source under another operation.
@@ -254,7 +261,9 @@ private lifecycle disclose the limitation; coherent archives do not establish
 automatic credential rollback readiness. Destination confirmation never implies
 credential consent. Missing, unreadable or unsupported required material refuses.
 The existing generic excluded citation marker also refuses inside the exact native
-mobile partition; generic backup marker handling is unchanged.
+mobile partition, including when another captured credential produces an explicitly
+acknowledged manual-recovery issue. Such issues never skip mobile coverage
+validation. Generic backup marker handling is unchanged.
 
 ADR126's native unused-default citation rule is shared with the citation
 provisioning invariant in `DB/citation_fingerprint_policy.py`. Only an exact

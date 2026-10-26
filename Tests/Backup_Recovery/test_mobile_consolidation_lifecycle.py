@@ -1506,3 +1506,146 @@ def test_mobile_capture_refuses_explicitly_excluded_citation_material(
             and row.evidence["purpose"] == "canonical"
             for row in records
         )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "has_data",
+        "source_dir",
+        "destination",
+        "source_witnesses",
+        "capture_scope",
+        "rollback_scope",
+        "candidate_destinations",
+        "counts",
+        "mappings",
+    ],
+)
+def test_native_preparation_rejects_changed_preview_authority_before_effects(
+    tmp_path, monkeypatch, field
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        CanonicalConsoleStores,
+    )
+
+    with prepared(tmp_path, monkeypatch) as (
+        session,
+        journal,
+        config,
+        _,
+        preview,
+        inventory,
+        authority,
+    ):
+        assert preview.has_data
+        changes = {
+            "has_data": False,
+            "source_dir": tmp_path / "foreign-source",
+            "destination": CanonicalConsoleStores(
+                *(tmp_path / leaf for leaf in ("c", "w", "r"))
+            ),
+            "source_witnesses": (),
+            "capture_scope": (),
+            "rollback_scope": (),
+            "candidate_destinations": (),
+            "counts": (),
+            "mappings": (),
+        }
+        forged = replace(preview, **{field: changes[field]})
+        assert getattr(forged, field) != getattr(preview, field)
+        with pytest.raises(ValueError):
+            _prepare_review(session, journal, config, forged, inventory)
+        with journal._locked(exclusive=False) as fd:
+            assert journal._records(fd) == []
+        assert bootstrap.startup_permission(config, authority.control_root.parent)[0]
+
+
+@pytest.mark.parametrize("entry", ["preflight", "acknowledged_capture"])
+def test_excluded_citation_with_actual_manual_issues_refuses(
+    tmp_path, monkeypatch, entry
+):
+    from dataclasses import replace
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery import credentials
+    from tldw_chatbook.Backup_Recovery.credential_policies import GENERATION_KEYRINGS
+    from tldw_chatbook.Backup_Recovery.inventory import discover
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
+        _captured_mobile,
+        _preview_mobile_credential_issues,
+    )
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    with _capture_fixture(tmp_path, monkeypatch) as (
+        session,
+        journal,
+        config,
+        stores,
+        preview,
+        inventory,
+        authority,
+    ):
+        _, service, names = GENERATION_KEYRINGS[0]
+        backend = credentials._credential_store()._keyring
+        backend.set_password(service, names[0], "test-owned-generation-key")
+        original_keys = dict(backend.values)
+        issues = _preview_mobile_credential_issues(
+            session, preview, inventory.scope_digest, cancel=Event()
+        )
+        assert all(
+            rows
+            and all(
+                value.startswith("credential_manual_recovery_required:")
+                for value in rows
+            )
+            for _, rows in issues
+        )
+    # Change only test-owned setup through the real owner outside maintenance.
+    # The fresh review sees this state; existing exact native manual issues remain
+    # insufficient consent for excluded material and cannot suppress its validation.
+    owner = CharactersRAGDB(stores.chat_path, "excluded-with-manual-fixture")
+    with owner.transaction() as cursor:
+        cursor.execute(
+            "UPDATE rag_identity_context SET fingerprint_key_id=? WHERE context_name='default'",
+            (credentials.RECOVERY_SETUP_REQUIRED,),
+        )
+    owner.close_connection()
+    with _preview_reads():
+        inventory = discover((config,))
+    preview = preview_selected_mobile(config, config)
+    reviewed = replace(preview, credential_acknowledgements=issues)
+    destination = tmp_path / "archives"
+    destination.mkdir(mode=0o700)
+    with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session:
+        if entry == "preflight":
+            with pytest.raises(ValueError, match="credential_material_excluded"):
+                _preview_mobile_credential_issues(
+                    session, reviewed, inventory.scope_digest, cancel=Event()
+                )
+        else:
+            with (
+                pytest.raises(ValueError, match="credential_material_excluded"),
+                _captured_mobile(
+                    session,
+                    journal,
+                    reviewed,
+                    inventory.scope_digest,
+                    destination=destination,
+                    password=b"test-private-mobile-rollback",
+                    cancel=Event(),
+                ),
+            ):
+                pytest.fail("manual issues hid excluded material")
+        with journal._locked(exclusive=False) as fd:
+            records = journal._records(fd)
+        assert not any(
+            row.event == "mobile_capture_verified"
+            and row.evidence["purpose"] == "canonical"
+            for row in records
+        )
+        assert backend.values == original_keys and backend.deleted == []

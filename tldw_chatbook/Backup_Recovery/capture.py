@@ -522,7 +522,7 @@ def _capture_under_maintenance(
                 encrypted=encrypted,
                 profile_scopes=profile_credential_scopes(current),
             )
-            if mode != "exclude" and not issues:
+            if mode != "exclude" and (not issues or _mobile_partition is not None):
                 from .credentials import _material, validate_citation_coverage
 
                 validate_citation_coverage(

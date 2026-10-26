@@ -3015,6 +3015,8 @@ class MaintenanceSession:
         uses its typed witnesses and the same checked selectors; batch recovery is
         the importer owner's responsibility.
         """
+        from dataclasses import replace
+
         from .inventory import read_profile_config
         from .journal import Journal, _mobile_state, _MobilePrepared
         from .mobile_consolidation import (
@@ -3080,7 +3082,23 @@ class MaintenanceSession:
             )
         with self._discovery_reads(private_sqlite=True):
             current_review = _preview_selected_mobile(
-                *selectors, review_destination=False
+                *selectors, review_destination=not records
+            )
+        authoritative_review = replace(
+            current_review,
+            credential_acknowledgements=reviewed_preview.credential_acknowledgements,
+        )
+        if records:
+            # Only journal-governed destination observations may have changed.
+            # Their original/current witnesses are independently checked below.
+            # Collision hints are advisory; source identity/mapping/count evidence
+            # and every field that drives this lifecycle remain native-derived.
+            authoritative_review = replace(
+                authoritative_review,
+                destination_witnesses=reviewed_preview.destination_witnesses,
+                destination_sidecars=reviewed_preview.destination_sidecars,
+                selector_provenance=reviewed_preview.selector_provenance,
+                identity_conflicts=reviewed_preview.identity_conflicts,
             )
         current_selectors = _selector_evidence(current_review)
         if records:
@@ -3097,11 +3115,17 @@ class MaintenanceSession:
             for current, original in zip(current_selectors, reviewed_selectors):
                 if (
                     current["destination_identity"]
-                    == reviewed_preview.destination.identity
+                    == current_review.destination.identity
                 ):
                     current["targets"] = original["targets"]
         if current_selectors != reviewed_selectors:
             raise ValueError("mobile_selector_review_changed")
+        if (
+            reviewed_preview != authoritative_review
+            or reviewed_preview.destination_witnesses != destination_witnesses
+            or reviewed_preview.destination_sidecars != destination_sidecars
+        ):
+            raise ValueError("mobile_preview_authority_changed")
         source = read_profile_config(selectors[0])
         target = CanonicalConsoleStores(
             *canonical_console_paths(read_profile_config(selectors[1]))
