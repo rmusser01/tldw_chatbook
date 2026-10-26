@@ -482,10 +482,6 @@ _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it he
 #: export/delete) while browsing server-owned characters.
 _SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
-#: Enter in the library search waits at most this long for its search to
-#: render. The wait runs in the screen's message handler, so every
-#: non-priority key waits with it (on a server source, for the round trip).
-_SEARCH_SUBMIT_WAIT_SECONDS = 2.0
 #: Debounce for the inspector's conversations search (F14): the same 0.2 s
 #: window as the library search above, so a typing burst runs one Keyword
 #: generation (via the conversations controller) instead of one per keystroke.
@@ -570,20 +566,6 @@ class _CharacterTTSAuthorityUnavailable(RuntimeError):
 
 class _CharacterTTSMixedSnapshot(RuntimeError):
     """Repository or capability observations did not form one snapshot."""
-
-
-async def _wait_at_most(worker: Worker, seconds: float) -> None:
-    """Wait for ``worker`` to finish, for at most ``seconds``, and never cancel it.
-
-    ``asyncio.wait_for(worker.wait(), ...)`` would cancel ``Worker.wait()`` at
-    the deadline, and that cancels the worker's own task, which it awaits
-    directly, so a slow render would never land. ``asyncio.wait`` leaves the
-    waiter running; its outcome is read when it ends, so a failed or
-    cancelled worker never leaves an unretrieved task exception behind.
-    """
-    waiter = asyncio.ensure_future(worker.wait())
-    waiter.add_done_callback(lambda done: done.cancelled() or done.exception())
-    await asyncio.wait({waiter}, timeout=seconds)
 
 
 def _whole_count(value: Any) -> int | None:
@@ -1451,6 +1433,9 @@ class PersonasScreen(BaseAppScreen):
         self._selected_lore_book_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
+        #: Bumped by every set and cancel of the search timer: a callback
+        #: delivered for a superseded or stopped timer carries an old serial.
+        self._search_timer_serial = 0
         self._conversation_search_debounce_timer: Timer | None = None
         self._console_readiness_poll_timer: Timer | None = None
         self._console_readiness_block_reason: str | None = None
@@ -3812,37 +3797,63 @@ class PersonasScreen(BaseAppScreen):
         )
 
     @on(PersonaSearchSubmitted)
-    async def _handle_search_submitted(self, message: PersonaSearchSubmitted) -> None:
-        """Enter in the search box: start a still-pending search now, wait for it, then the first match.
+    def _handle_search_submitted(self, message: PersonaSearchSubmitted) -> None:
+        """Enter in the search box: start a still-pending search now and owe its first match.
 
-        On dev, Enter within the 0.2 s debounce of the last keystroke put the
-        cursor on the previous result's first row, so ``ctrl+f isolde ⏎ ⏎``
-        could open the wrong card (spec 1.6's 4-key find); B2a renders first.
-        The wait holds every non-priority key on this screen, so it ends after
-        ``_SEARCH_SUBMIT_WAIT_SECONDS`` (B2a's final review, I2): a slower
-        render (a server round trip) keeps running and its rows still land,
-        and the cursor goes to the first row shown now, as on dev.
+        Returns at once (TASK-33910.35): the list takes the cursor to the
+        searched list's first match when that list's rows land, and Enter on
+        the list opens nothing until then. On dev, Enter within the 0.2 s
+        debounce put the cursor on the previous result's first row, so
+        ``ctrl+f isolde ⏎ ⏎`` could open the wrong card (spec 1.6's 4-key
+        find); B2a waited for the render inside this handler, which held
+        every non-priority key (bounded at 2 s, then dev's behaviour). The
+        hold exists on dev today (new with B2a) and is removed here.
         """
         message.stop()
-        if self._search_debounce_timer is not None:
+        pending = self._search_debounce_timer is not None
+        if pending:
             self._cancel_search_debounce()
             self._start_debounced_search_render(
                 query=self.state.search_query, mode=self.state.active_mode
             )
-        # The search's render may still be reading. Wait for it, or the cursor
-        # lands on rows it is about to replace.
-        for worker in list(self.workers):
-            if (
-                worker.node is self
-                and worker.group == "personas-library-search"
-                and not worker.is_finished
-            ):
-                await _wait_at_most(worker, _SEARCH_SUBMIT_WAIT_SECONDS)
+        fence = self._list_fence()
+        if pending or self._search_rows_pending(fence):
+            self._window_state.owe_first(fence)
+            return
+        self._window_state.user_moved()
         try:
-            library = self.query_one(PersonasLibraryPane)
+            self.query_one(PersonasLibraryPane).land_on_first()
         except QueryError:
             return
-        library.focus_first_result()
+
+    def _search_rows_pending(self, fence: frame_state.ListFence) -> bool:
+        """Whether rows for ``fence``'s list are still on their way to the list."""
+        window_running = False
+        for worker in self.workers:
+            if worker.node is not self or worker.is_finished:
+                continue
+            if worker.group == "personas-library-search":
+                return True
+            if worker.group == _LIST_WINDOW_GROUP:
+                window_running = True
+        # A window run that is only an append leaves the rows current.
+        return (
+            fence.mode == "characters"
+            and window_running
+            and not self._window_state.rows_current(fence)
+        )
+
+    def _land_first_match(self, fence: frame_state.ListFence) -> None:
+        """The searched list's rows are in the list: the cursor to its first match, if owed."""
+        if not self._window_state.take_first(fence):
+            # A newer query or source landed: a landing owed on the older
+            # list can never land (its cancelled render skips read_failed).
+            self._window_state.landed_elsewhere(fence)
+            return
+        try:
+            self.query_one(PersonasLibraryPane).land_on_first()
+        except QueryError:
+            pass
 
     async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
         """One window run: fetch until the request is met, fence, apply once."""
@@ -4122,6 +4133,8 @@ class PersonasScreen(BaseAppScreen):
                 )
             if request.to_end and window.take_end():
                 library.item_list.move_to_end()
+            if request.replace and not blank and window.take_first(fence):
+                library.land_on_first()
             replay = (
                 window.take_replay(fence) if request.replace and not blank else None
             )
@@ -4301,10 +4314,28 @@ class PersonasScreen(BaseAppScreen):
         self._cancel_search_debounce()
         query = self.state.search_query
         mode = self.state.active_mode
+        serial = self._search_timer_serial
         self._search_debounce_timer = self.set_timer(
             PERSONAS_SEARCH_DEBOUNCE_SECONDS,
-            lambda: self._start_debounced_search_render(query=query, mode=mode),
+            lambda: self._search_timer_fired(serial=serial, query=query, mode=mode),
         )
+
+    def _search_timer_fired(self, *, serial: int, query: str, mode: str) -> None:
+        """A debounce timer fired: start its render unless it was superseded or stopped.
+
+        A timer stopped as it fires can still run its callback, and Enter
+        stops the live timer and starts the search itself. Starting a stale
+        callback's render would clear ``_search_debounce_timer``, which by
+        then names the newer keystroke's live timer (Enter in the search box
+        would take the search for done: it owed no landing and put the cursor
+        on the previous results' first row), or would read the same search
+        twice. Both are on dev today (the first shows under load) and are
+        closed here: each set and cancel bumps a serial, and a callback
+        carrying an old one starts nothing.
+        """
+        if serial != self._search_timer_serial:
+            return
+        self._start_debounced_search_render(query=query, mode=mode)
 
     @on(PersonaSortCycleRequested)
     async def _handle_sort_cycle(self, message: PersonaSortCycleRequested) -> None:
@@ -4367,6 +4398,7 @@ class PersonasScreen(BaseAppScreen):
     def _cancel_search_debounce(self) -> None:
         """Cancel a pending search render when newer state supersedes it."""
 
+        self._search_timer_serial += 1
         if self._search_debounce_timer is not None:
             self._search_debounce_timer.stop()
             self._search_debounce_timer = None
@@ -4409,6 +4441,9 @@ class PersonasScreen(BaseAppScreen):
                 logger.opt(exception=True).warning(
                     "Could not re-render profile rows after search."
                 )
+                self._window_state.read_failed()
+            else:
+                self._land_first_match(self._list_fence())
         elif mode == "dictionaries":
             try:
                 await self._render_dictionary_rows(query=query)
@@ -4416,6 +4451,9 @@ class PersonasScreen(BaseAppScreen):
                 logger.opt(exception=True).warning(
                     "Could not re-render dictionary rows after search."
                 )
+                self._window_state.read_failed()
+            else:
+                self._land_first_match(self._list_fence())
         elif mode == "lore":
             try:
                 await self._render_lore_rows(query=query)
@@ -4423,6 +4461,9 @@ class PersonasScreen(BaseAppScreen):
                 logger.opt(exception=True).warning(
                     "Could not re-render lore rows after search."
                 )
+                self._window_state.read_failed()
+            else:
+                self._land_first_match(self._list_fence())
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:

@@ -317,12 +317,20 @@ async def test_arrow_navigation_and_enter_selects():
 
 
 async def test_search_enter_jumps_to_results():
-    """Enter in the search input focuses the list and highlights the first row."""
+    """Enter in the search input focuses the list and tells the screen.
+
+    The screen owns the cursor's landing on the first match (TASK-33910.35):
+    the pane alone only jumps into the list, and ``land_on_first`` is what the
+    screen calls when the searched rows are in."""
     received = []
+    submitted = []
 
     class CaptureApp(LibraryPaneApp):
         def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
             received.append(message.entity_id)
+
+        def on_persona_search_submitted(self, message) -> None:
+            submitted.append(message)
 
     app = CaptureApp()
     async with app.run_test() as pilot:
@@ -344,6 +352,10 @@ async def test_search_enter_jumps_to_results():
         await pilot.press("enter")
         await pilot.pause()
         assert pilot.app.focused is pilot.app.query_one("#personas-library-rows")
+        assert len(submitted) == 1
+        assert highlighted_item_id(pilot.app.screen) is None
+        pane.land_on_first()
+        await pilot.pause()
         assert highlighted_item_id(pilot.app.screen) == "character:1"
         # Jumping into the results highlights only; it must not select.
         assert received == []

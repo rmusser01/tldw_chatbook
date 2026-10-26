@@ -1139,11 +1139,16 @@ async def test_a_newer_cursor_move_or_selection_forgets_an_owed_end(move):
         elif move == "selection":
             pane.mark_active_row("character", "50")
         elif move == "enter":
-            pane.focus_first_result()
+            # Enter in the search box owes the first match: a newer move than
+            # the End it replaces (TASK-33910.35).
+            item_list.window_state.owe_first(_search_fence())
         else:
             await pilot.press(move)
         await pilot.pause()
-        assert item_list.window_state.intent is None
+        if move == "enter":
+            assert item_list.window_state.landing_owed()
+        else:
+            assert item_list.window_state.intent is None
 
 
 async def test_a_re_mark_of_the_open_row_keeps_an_owed_end_and_enter_on_it_does_not():
@@ -1379,3 +1384,84 @@ async def test_clear_hides_the_bar_and_focus_lands_on_the_list():
         assert _bar_text(pilot) == ""
         assert not item_list.marked_ids()
         assert pilot.app.focused is item_list
+
+
+# ---- The first-match landing (TASK-33910.35) ----
+
+
+def _search_fence(**changes):
+    base = dict(
+        mode="characters",
+        query="isolde",
+        sort_key="relevance",
+        tag=None,
+        runtime_source="local",
+        server_id=None,
+        generation=3,
+    )
+    base.update(changes)
+    return frame_state.ListFence(**base)
+
+
+def test_the_first_match_landing_belongs_to_its_list():
+    window = frame_state.ListWindowState()
+    window.owe_first(_search_fence())
+    assert window.landing_owed()
+    assert not window.take_first(_search_fence(query="other"))
+    assert window.landing_owed()
+    assert window.take_first(_search_fence(generation=9))  # any generation of that list
+    assert not window.landing_owed()
+    assert not window.take_first(_search_fence())
+
+
+def test_landing_another_list_or_a_failed_read_or_a_newer_move_drops_the_first_match():
+    window = frame_state.ListWindowState()
+    window.owe_first(_search_fence())
+    window.landing(_search_fence(sort_key="name_asc"))
+    assert not window.landing_owed()
+    window.owe_first(_search_fence())
+    window.read_failed()
+    assert not window.landing_owed()
+    window.owe_first(_search_fence())
+    window.user_moved()
+    assert not window.landing_owed()
+    window.owe_first(_search_fence())
+    window.leave(_search_fence())
+    assert not window.landing_owed()
+    window.owe_first(_search_fence())
+    window.want("end", read=False)  # a newer move than the owed landing
+    assert not window.landing_owed()
+
+
+async def test_enter_on_the_list_is_inert_while_the_first_match_is_owed():
+    """Enter on a row opens it; while the searched list's rows are pending the
+    cursor is on rows they replace, so Enter opens nothing and the landing
+    stays owed (it is not a newer move)."""
+    async with _PaneHost().run_test(size=(120, 36)) as pilot:
+        pane, item_list = await _host(pilot, _rows(1, 20), total=20)
+        item_list.focus()
+        item_list.highlighted = 3
+        item_list.window_state.owe_first(_search_fence())
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pilot.app.selected == []
+        assert item_list.window_state.landing_owed()
+        item_list.window_state.user_moved()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(pilot.app.selected) == 1
+
+
+def test_a_landing_owed_on_another_list_is_dropped_when_that_list_can_never_land():
+    """A non-character render ends without landing(): ``landed_elsewhere`` drops
+    a first-match landing owed on a superseded list, keeps one owed on this
+    list, and leaves an owed End alone."""
+    window = frame_state.ListWindowState()
+    window.owe_first(_search_fence())
+    window.landed_elsewhere(_search_fence(generation=9))
+    assert window.landing_owed()
+    window.landed_elsewhere(_search_fence(query="newer"))
+    assert not window.landing_owed()
+    window.want("end", read=False)
+    window.landed_elsewhere(_search_fence(query="newer"))
+    assert window.intent is not None and window.intent.reason == "end"

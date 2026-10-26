@@ -491,6 +491,11 @@ class RoleplayItemList(OptionList):
     # load-through still owed is not wanted any more (TASK-33910.34).
 
     def action_select(self) -> None:
+        if self._window.landing_owed():
+            # The searched list's rows are pending: the cursor is on rows they
+            # replace, so Enter opens nothing; the landing is still owed
+            # (TASK-33910.35).
+            return
         self._window.user_moved()
         super().action_select()
 
@@ -1133,11 +1138,9 @@ class PersonasLibraryPane(Vertical):
             # The bar takes the pane's bottom row: keep the cursor row in view.
             item_list.call_after_refresh(item_list.scroll_to_highlight)
 
-    def focus_first_result(self) -> None:
-        """Into the list with the cursor on the first row (Enter in the search box)."""
+    def land_on_first(self) -> None:
+        """The cursor to the first row (a searched list's rows have arrived)."""
         item_list = self.item_list
-        item_list.focus()
-        item_list.window_state.user_moved()
         if item_list.option_count:
             item_list.highlighted = 0
 
@@ -1210,11 +1213,12 @@ class PersonasLibraryPane(Vertical):
     def _search_submitted(self, event: Input.Submitted) -> None:
         """Enter in the search box jumps into the results list.
 
-        The screen then renders a still-pending search at once and puts the
-        cursor on its first match (spec 1.6's 4-key find).
+        The screen starts a still-pending search at once and owes the cursor
+        on its first match, which the list takes when the rows arrive (spec
+        1.6's 4-key find); Enter returns without waiting (TASK-33910.35).
         """
         event.stop()
-        self.focus_first_result()
+        self.item_list.focus()
         self.post_message(PersonaSearchSubmitted())
 
     @on(OptionList.OptionSelected, "#personas-library-rows")

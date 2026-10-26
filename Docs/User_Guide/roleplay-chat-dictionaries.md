@@ -87,7 +87,7 @@ panes (handle → Library → centre → Inspector → handle).
 
 | Control | What it does | Shown in |
 |---|---|---|
-| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter puts the first match under the cursor in the list. If the search takes longer than 2 seconds (a slow server), Enter stops waiting and moves into the list before the results arrive. A server search shows an empty list until the server answers, so no row is under the cursor and a second Enter opens nothing; once the results appear, move to one with the arrow keys. (A local search that slow keeps the previous results on screen until it finishes, and the cursor goes to their first row.) | every mode |
+| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter moves into the list at once and puts the cursor on the first match as soon as the search's results appear, however long a slow server takes. Until they appear, Enter on the list opens nothing (a server search shows an empty list until the server answers); press Enter again once the cursor is on the match to open it. An arrow key or a click while you wait keeps the cursor where you put it instead. A search that fails or finds nothing leaves the cursor alone. | every mode |
 | **New** | Creates a new item in the current mode. ("Create a new item in this mode.") | every mode |
 | **Import** | Opens a file picker; the tooltip names the accepted formats per mode — "Import a character card (PNG or JSON).", "Import a dictionary (JSON or Markdown).", "Import a world book (JSON)." | Characters, Dictionaries, Lore — **hidden in Personas** |
 | **Duplicate** | Copies the selected item. ("Duplicate the selected item.") | Characters, Dictionaries, Lore — **hidden in Personas** |
@@ -295,7 +295,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | c / p / d / l | Switch to Characters / Personas / Dictionaries / Lore — **only when focus is not in a text box** (in a text box they type the letter) |
 | [ / ] | Previous / next mode — **only when focus is not in a text box** (in a text box they type the bracket) |
 | Ctrl+N | New item in the current mode |
-| Ctrl+F | Focus the **Search...** box; Enter there puts the first match under the cursor in the list |
+| Ctrl+F | Focus the **Search...** box; Enter there moves into the list and puts the cursor on the first match once the results appear |
 | Ctrl+Enter | Attach to Console — only with a saved character or persona selected |
 | Ctrl+S | Save — character and persona editors only |
 | Escape | Back: cancels the open editor, returns from a conversation transcript to the card, or moves focus from the search box to the list. On the list or its marks bar it clears the current kind's marks. It never leaves the screen. |
