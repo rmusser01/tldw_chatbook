@@ -18,12 +18,21 @@ user then sees: painted text, the focused control, ``Button.label``, and the
 database unchanged. The F6 arm (N-32) boots the real ``TldwCli`` and lives in
 ``test_library_notes_tree_keys_extended.py``, which the full ``Tests/UI`` run
 covers -- one more real-app boot put this file past the PR lane's 30 s budget.
+
+Fix round 1 (2026-10-25) rides the same three boots: Enter on the pager hands
+focus to the first row it added (M2); Right/Left toggle a folder without
+selecting it (I-3); Left/Right walk the open Sort strip (I-2); and a re-page
+held until the strip has closed still leaves focus on Sort (I-4). One
+boot-free arm pins M2's other half -- a page that added no row keeps focus
+on its pager -- which no seeded tree reaches by keys.
 """
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Input, TextArea
@@ -154,6 +163,57 @@ def _list_rows(screen) -> list[Button]:
     ]
 
 
+def _tree_selection(screen) -> tuple:
+    """What a folder action would act on, as the user sees it.
+
+    The selected placement, the rows painted as selected, and the folder
+    toolbar's buttons (Rename / Move / Remove appear only for a selected
+    folder) -- navigation alone must leave all three alone.
+    """
+    return (
+        screen._notes_state.tree_selected_placement_id,
+        tuple(row.id for row in screen.query("#library-notes-list > .is-selected")),
+        tuple(
+            (button.id, str(button.label))
+            for button in screen.query(".library-notes-tree-action-row Button").results(
+                Button
+            )
+        ),
+    )
+
+
+def _hold_root_pages(tree, monkeypatch) -> tuple[asyncio.Event, list[str]]:
+    """Gate the root folder and placement pages on an ``asyncio.Event``.
+
+    The event starts set (pages pass straight through); clearing it holds
+    every ROOT page request until it is set again, which is how the sort
+    test lands a re-page after the strip has closed, deterministically
+    (the reviewer's probe B, fix round 1 I-4).
+    """
+    gate = asyncio.Event()
+    gate.set()
+    held: list[str] = []
+    service = tree.profile.scope_service
+    for name in ("page_note_placements", "page_note_folder_children"):
+        real = getattr(service, name)
+
+        def held_page(*, _real=real, _name=name, **kwargs):
+            async def page():
+                if kwargs.get("parent_id") is None and not gate.is_set():
+                    held.append(_name)
+                    await gate.wait()
+                return await _real(**kwargs)
+
+            return page()
+
+        monkeypatch.setattr(service, name, held_page)
+    return gate, held
+
+
+def _focused_id(screen) -> str | None:
+    return getattr(screen.focused, "id", None)
+
+
 async def _notes_tree(host, pilot) -> LibraryScreen:
     """Boot into Notes and wait for the root slices and the pager to settle."""
     screen = _active_library_screen(host)
@@ -244,6 +304,42 @@ async def test_down_from_a_folder_row_reaches_the_note_rows_and_the_pager(
         await pilot.press("up")
         await pilot.pause()
         assert screen.focused is rows[-2], screen.focused
+
+        # Fix round 1 (M2): Enter on the pager loads the next page and hands
+        # focus to the first row that page ADDED. It used to leave focus in
+        # the filter, where the next printable key typed into it. Base: the
+        # loading recompose pruned the focused pager, Textual's reset landed
+        # on the grip, and the screen counted that reset as the user's own
+        # focus move -- which vetoed the pager's hand-off.
+        await pilot.press("down")
+        await pilot.pause()
+        assert screen.focused is rows[-1], screen.focused
+        before_page = {
+            getattr(row, "placement_id", "")
+            for row in screen.query(".library-notes-tree-note-row")
+        }
+        await pilot.press("enter")
+        await _wait(
+            pilot,
+            lambda: len(screen.query(".library-notes-tree-note-row")) > len(before_page),
+            "Enter on the pager to load the next page",
+        )
+        await _wait(
+            pilot,
+            lambda: screen.focused is not None
+            and screen.focused.has_class("library-notes-tree-note-row")
+            and getattr(screen.focused, "placement_id", "") not in before_page,
+            lambda: f"focus to land on the first added row (focused={screen.focused!r})",
+        )
+        added = screen.focused
+        await pilot.pause(0.3)
+        assert screen.focused is added, screen.focused
+        assert not isinstance(screen.focused, (Input, TextArea))
+        # A real key still works from there: Up reaches the row above it.
+        await pilot.press("up")
+        await pilot.pause()
+        assert screen.focused is not added
+        assert screen.focused.has_class("library-notes-tree-note-row"), screen.focused
         # Nothing was opened or changed by the walk: still the list, no note.
         assert screen._notes_state.view == "list"
         assert not screen.query("#library-note-body")
@@ -267,6 +363,14 @@ async def test_right_expands_and_left_collapses_then_climbs(tmp_path) -> None:
             assert screen.focused is not before, f"Down stalled on {before!r}"
         expanded = screen._notes_state.tree_expanded_ids
         assert tree.projects_id not in expanded
+        # Fix round 1 (I-3): Right/Left only toggle. Selecting a folder is
+        # Enter's or a click's job -- it retargets the folder toolbar's
+        # Rename / Move / Remove onto that folder -- so navigation alone must
+        # leave the selection and the toolbar exactly as they were. Base:
+        # Right pressed the row, which selected Projects.
+        selection = _tree_selection(screen)
+        selection_paint = _painted(host)
+        assert screen.focused.placement_id != selection[0], selection
 
         await pilot.press("right")
         await _wait(
@@ -285,6 +389,7 @@ async def test_right_expands_and_left_collapses_then_climbs(tmp_path) -> None:
             lambda: _folder_id(screen.focused) == tree.projects_id,
             lambda: f"focus to stay on Projects (focused={screen.focused!r})",
         )
+        assert _tree_selection(screen) == selection
         # Right on an already-expanded folder changes nothing.
         await pilot.press("right")
         await pilot.pause()
@@ -307,6 +412,7 @@ async def test_right_expands_and_left_collapses_then_climbs(tmp_path) -> None:
         assert tree.projects_id in expanded
         assert tree.thesis_id not in expanded
         assert "▸ Thesis" in _painted(host)
+        assert _tree_selection(screen) == selection
 
         # Left on the expanded parent collapses it.
         await pilot.press("left")
@@ -326,6 +432,10 @@ async def test_right_expands_and_left_collapses_then_climbs(tmp_path) -> None:
             lambda: _folder_id(screen.focused) == tree.projects_id,
             lambda: f"focus to stay on Projects (focused={screen.focused!r})",
         )
+        assert _tree_selection(screen) == selection
+        # ...and what the user reads agrees: the folder toolbar did not grow
+        # Rename / Move / Remove for a folder nobody selected.
+        assert ("Rename" in _painted(host)) == ("Rename" in selection_paint)
         # A real key still works after the recomposes (lessons-textual: a
         # recompose can orphan ``app.focused``): Down reaches Unfiled.
         await pilot.press("down")
@@ -337,17 +447,22 @@ async def test_right_expands_and_left_collapses_then_climbs(tmp_path) -> None:
 
 
 async def test_sort_chooser_takes_focus_on_the_active_choice_and_returns_it(
-    tmp_path,
+    tmp_path, monkeypatch
 ) -> None:
-    """AC#8: Enter on Sort focuses the ``✓`` choice; choosing returns to Sort.
+    """AC#8: Enter on Sort focuses the ``✓`` choice; arrows and Enter choose.
 
     Base: the strip opens and the footer reads "enter choose sort", but focus
     stays on the opener (or the filter), so Enter never chooses a sort.
 
+    Fix round 1: Left/Right walk the open strip without choosing (I-2), and
+    the re-page a changed sort requests is HELD until focus is back on Sort,
+    then released -- the live walk's race, deterministically (I-4).
+
     The same boot ends with the Right/Left negative control in the filter
     (one boot fewer in the PR lane).
     """
-    host, _tree = _mounted(tmp_path)
+    host, tree = _mounted(tmp_path)
+    gate, held = _hold_root_pages(tree, monkeypatch)
     async with host.run_test(size=SIZE) as pilot:
         screen = await _notes_tree(host, pilot)
         await _leave_text_fields(screen, pilot)
@@ -388,14 +503,34 @@ async def test_sort_chooser_takes_focus_on_the_active_choice_and_returns_it(
         )
         assert str(screen.focused.label).startswith("✓ Newest"), screen.focused.label
 
-        await pilot.press("tab")
-        await _wait(
-            pilot,
-            lambda: screen.focused is not None
-            and screen.focused.id == "library-notes-sort-oldest",
-            lambda: f"Tab to reach Oldest (focused={screen.focused!r})",
-        )
+        # Fix round 1 (I-2): the open strip is one row of choices. Left and
+        # Right move between them -- no wrap at either end, and moving never
+        # chooses (Enter does). Base: every arrow left focus where it was.
+        for key, expected in (
+            ("left", "library-notes-sort-newest"),
+            ("right", "library-notes-sort-oldest"),
+            ("right", "library-notes-sort-title"),
+            ("right", "library-notes-sort-title"),
+            ("left", "library-notes-sort-oldest"),
+        ):
+            await pilot.press(key)
+            await _wait(
+                pilot,
+                lambda: _focused_id(screen) == expected,
+                lambda: f"{key} to focus {expected} (focused={screen.focused!r})",
+            )
+        assert screen._notes_state.sort == "newest"
+        assert screen._notes_state.sort_choices_visible
+        assert "✓ Newest" in _painted(host)
+
+        # Fix round 1 (I-4): choosing re-pages the tree. Hold that root page
+        # until the closed strip has handed focus back to Sort, then let it
+        # land: the sync it triggers replays the focus it finds, and Sort has
+        # to survive that. Base: no portable role for Sort, so the replay
+        # fell back to the filter (the live walk's capture 07, first round).
+        gate.clear()
         await pilot.press("enter")
+        await _wait(pilot, lambda: bool(held), "the re-page to be held")
         await _wait(
             pilot,
             lambda: screen._notes_state.sort == "oldest"
@@ -404,10 +539,19 @@ async def test_sort_chooser_takes_focus_on_the_active_choice_and_returns_it(
         )
         await _wait(
             pilot,
-            lambda: screen.focused is not None
-            and screen.focused.id == "library-notes-sort",
-            lambda: f"focus to return to Sort (focused={screen.focused!r})",
+            lambda: _focused_id(screen) == "library-notes-sort",
+            lambda: f"focus to return to Sort before the page lands ({screen.focused!r})",
         )
+        gate.set()
+        await _wait(
+            pilot,
+            lambda: not any(
+                branch.loading for branch in screen._notes_state.tree_branches.values()
+            ),
+            "the held pages to land",
+        )
+        await pilot.pause(0.3)
+        assert _focused_id(screen) == "library-notes-sort", screen.focused
         await _wait(
             pilot,
             lambda: "Sort: Oldest" in _painted(host),
@@ -467,3 +611,56 @@ async def test_sort_chooser_takes_focus_on_the_active_choice_and_returns_it(
             lambda: f"the filter to read 'acbd' (value={filter_input.value!r})",
         )
         assert screen.focused is filter_input
+
+
+async def test_a_page_that_added_no_row_keeps_focus_on_its_pager(monkeypatch) -> None:
+    """Fix round 1 (M2): nothing added -> focus the pager itself, by id.
+
+    The other half of the pager hand-off. While the loading recompose has
+    the pager pruned, Textual parks focus on a neighbour, so the identity the
+    page sync captured names THAT neighbour; restoring it would leave focus
+    where Textual put it (live: the filter). The hand-off therefore focuses
+    the still-listed pager directly. No seeded tree reaches this by keys (a
+    "more" page that adds nothing also ends the paging), so the branch is
+    driven with the screen's own state shapes, like its sibling pins in
+    ``test_library_notes_folder_navigator.py``. Base: the branch returned
+    ``True`` (restore the captured identity) and focused nothing.
+    """
+    key = NotesBranchKey(None, "placements")
+    pager_id = "library-notes-tree-pager-root-placements-more"
+    focused: list[str] = []
+    pager = SimpleNamespace(
+        id=pager_id, focusable=True, focus=lambda: focused.append(pager_id)
+    )
+    row = SimpleNamespace(placement_id="a", focus=lambda: focused.append("a"))
+    fake = SimpleNamespace(
+        _notes_state=SimpleNamespace(
+            tree_branches={key: SimpleNamespace(generation=2, item_ids=("a", "b"))},
+            tree_lifecycle_generation=1,
+            tree_topology_epoch=1,
+            tree_request_generations={key: 2},
+            focus_intent_generation=5,
+        ),
+        query=lambda selector: (pager,) if "pager" in selector else (row,),
+    )
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_build_library_notes_tree_projection",
+        lambda _self: SimpleNamespace(
+            rows=(SimpleNamespace(kind="pager", focus_id=pager_id),)
+        ),
+    )
+
+    result = LibraryScreen._focus_library_notes_tree_after_page(
+        fake,
+        key,
+        pager_focus_id=pager_id,
+        prior_item_ids=("a", "b"),
+        request_generation=2,
+        topology_epoch=1,
+        lifecycle_generation=1,
+        focus_generation=5,
+    )
+
+    assert focused == [pager_id]
+    assert result is False  # handled: the captured identity is not replayed

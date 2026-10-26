@@ -1521,9 +1521,9 @@ permanent delete.
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". The footer drops the "/ find note" chip while a text field has focus, for that reason. |
 | **g** | Go to the folder tree beside the list — focus lands on the selected placement when there is one, otherwise on the first folder row. |
 | **e** (in select mode) | Export the checked notes. Advertised only once at least one row is checked, which is also when the **Export selected** button stops being disabled. |
-| **↑ / ↓** (Notes tree) | Move through folder rows, note rows and the "more" pager in the order shown — one list, top to bottom. |
+| **↑ / ↓** (Notes tree) | Move through folder rows, note rows and the "more" pager in the order shown — one list, top to bottom. Enter on a "more" pager loads the next page and puts focus on the first row it added. |
 | **→ / ←** (on a folder row) | Expand the folder; collapse it, or jump to its parent folder when it is already collapsed. Selecting a folder (Enter) stays separate from these. |
-| **Enter** (on **Sort**) | Opens the chooser with the current choice focused, so ↹ Tab and Enter pick a sort; Enter on a choice or Escape returns focus to **Sort**. |
+| **Enter** (on **Sort**) | Opens the chooser with the current choice focused. **← / →** (or ↹ Tab) move between the choices without choosing, and Enter picks the focused one; Enter on a choice or Escape returns focus to **Sort**. |
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
 | **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |

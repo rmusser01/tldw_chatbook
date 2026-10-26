@@ -590,7 +590,11 @@ _BUDGETS: dict[str, int] = {
     # (``then=`` pair, Skills shape), its strip-focus forwarding property and
     # the ``sort``/``sort-choice:`` role targets (a vanished choice resolves
     # to its opener): 7200 -> 7298 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7298,
+    # 2026-10-25, TASK-34000.28 fix round 1 (same owner decision): the
+    # expand/collapse step split out of the folder-row press handler
+    # (``_toggle_library_notes_folder``) so Right/Left toggle without
+    # selecting the folder: 7298 -> 7312 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7312,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
