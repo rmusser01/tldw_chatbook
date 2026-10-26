@@ -86,7 +86,7 @@ Reason: existing-boundary correction.
 
 ## Delivery checks
 
-- [ ] Finish the fresh whole-branch Superpowers review and address actionable findings.
+- [x] Finish the fresh whole-branch Superpowers review and address actionable findings.
 - [ ] Create and attach the PR against dev; verify hosted CI and current-head review feedback.
 - [ ] Complete task acceptance criteria and Implementation Notes via Backlog CLI after CI.
 
@@ -97,8 +97,19 @@ Verification record: `Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md`.
 
 - [x] Reproduce and correct exclusive mutation-worker cancellation losing the late native write refresh (TASK-36931 AC2/4); preserve nonfatal policy/store behavior and loader ownership.
 - [x] Add the optional direct obsolete-history-exception witness (TASK-36930 AC1/4) without changing production semantics.
-- [ ] Correct the historical TASK-36931 affected-source path through the task CLI; complete one scoped re-review of the entire fix wave.
+- [x] Correct the historical TASK-36931 affected-source path through the task CLI; complete one scoped re-review of the entire fix wave.
 
 ADR required: no
 ADR path: existing canonical ADRs 011, 033, 042.
 Reason: completion of the existing finite operation and UI refresh contract; no new architecture.
+
+
+## CI guard integration follow-up
+
+- [x] Express the protected post-await Lore library-pane lookup as a safe optional query, without increasing the worker-contract census.
+- [x] Review all changed diagnostic statements and regenerate only the intended inventory owner rows (two moved calls, one new ID-only presentation warning; unchanged persistent sink topology).
+- [ ] Verify both exact guard scripts, the existing nine Lore regression cases and a focused review of this CI delta before final hosted qualification.
+
+ADR required: no
+ADR path: existing canonical ADRs 007, 011, 033 and existing persistent-diagnostic governance.
+Reason: bounded lookup safety and regenerated source-derived metadata; no new service, sink or storage contract.
