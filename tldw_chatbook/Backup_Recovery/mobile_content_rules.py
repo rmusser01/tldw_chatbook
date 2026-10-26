@@ -4,12 +4,17 @@ import json
 from dataclasses import asdict, replace
 from typing import Literal, TypedDict
 
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, TypeAdapter
 
-from tldw_chatbook.Chat.response_rules.models import (
+# Pydantic 2.4 resolves postponed native annotations in the adapter namespace.
+from tldw_chatbook.Chat.response_rules.models import (  # noqa: F401
     RULE_SCHEMA_VERSION,
     RuleAssessment,
     RuleBinding,
+    RuleCandidate,
+    RuleCaseResult,
+    RuleCheck,
+    RuleEvidence,
     RuleInput,
     RuleRevision,
     RuleScope,
@@ -42,18 +47,24 @@ class _DraftDocument(TypedDict):
 
 
 # JSON mode validates original array/scalar shapes before native dataclass
-# __post_init__ can coerce them. Only these fixed installed types are admitted.
-_SOURCE_JSON = TypeAdapter(RuleSource)
-_REVISION_JSON = TypeAdapter(RuleRevision)
-_VALIDATION_JSON = TypeAdapter(RuleValidation)
-_INPUT_JSON = TypeAdapter(RuleInput)
-_ASSESSMENT_JSON = TypeAdapter(RuleAssessment)
-_DRAFT_JSON = TypeAdapter(_DraftDocument)
+# __post_init__ can coerce them. A single-item tuple lets adapter-local config
+# close nested stdlib dataclasses on the declared Pydantic >=2.4 contract,
+# without changing the native types or using the newer per-call extra keyword.
+_SOURCE_JSON = TypeAdapter(tuple[RuleSource], config=ConfigDict(extra="forbid"))
+_REVISION_JSON = TypeAdapter(tuple[RuleRevision], config=ConfigDict(extra="forbid"))
+_VALIDATION_JSON = TypeAdapter(tuple[RuleValidation], config=ConfigDict(extra="forbid"))
+_INPUT_JSON = TypeAdapter(tuple[RuleInput], config=ConfigDict(extra="forbid"))
+_ASSESSMENT_JSON = TypeAdapter(tuple[RuleAssessment], config=ConfigDict(extra="forbid"))
+_DRAFT_JSON = TypeAdapter(tuple[_DraftDocument], config=ConfigDict(extra="forbid"))
 
 # Installed response-rule CHECK limits (DB/recovery_core_schema.py), UTF-8 bytes.
 _SOURCE_JSON_BYTES = 8192
 _VALIDATION_JSON_BYTES = 32768
 _RESULT_JSON_BYTES = 65536
+
+
+def _read_rule_json(adapter, encoded):
+    return adapter.validate_json("[" + encoded + "]", strict=True)[0]
 
 
 def _encoded_rule_json(document, max_bytes):
@@ -172,7 +183,8 @@ def _rules(builder):
     native_revisions, native_validations = {}, {}
 
     def revision(row):
-        original = _REVISION_JSON.validate_json(
+        original = _read_rule_json(
+            _REVISION_JSON,
             canonical_json(
                 {
                     "rule_id": row["rule_id"],
@@ -183,8 +195,6 @@ def _rules(builder):
                     "created_at": row["created_at"],
                 }
             ),
-            strict=True,
-            extra="forbid",
         )
         mapped = _revision(builder, original)
         origin_json = _encoded_rule_json(asdict(mapped.origin), _SOURCE_JSON_BYTES)
@@ -203,9 +213,7 @@ def _rules(builder):
 
     def validation(row):
         rule_id, _ = _rule_key(builder, row["rule_id"], row["revision"])
-        original = _VALIDATION_JSON.validate_json(
-            row["validation_json"], strict=True, extra="forbid"
-        )
+        original = _read_rule_json(_VALIDATION_JSON, row["validation_json"])
         association = row["conversation_id"], row["message_id"]
         expected = (
             original.source.conversation_id,
@@ -240,7 +248,7 @@ def _rules(builder):
         }:
             raise ValueError("invalid_rule_fixture_kind")
         if row["input_json"] is not None:
-            _INPUT_JSON.validate_json(row["input_json"], strict=True, extra="forbid")
+            _read_rule_json(_INPUT_JSON, row["input_json"])
         builder.emit(
             "console_response_rule_fixtures",
             row,
@@ -251,18 +259,14 @@ def _rules(builder):
 
     def draft(row):
         scope = _scope(builder, row["scope_kind"], row["scope_id"])
-        original_source = _SOURCE_JSON.validate_json(
-            row["source_json"], strict=True, extra="forbid"
-        )
+        original_source = _read_rule_json(_SOURCE_JSON, row["source_json"])
         if (row["conversation_id"], row["message_id"]) != (
             original_source.conversation_id,
             original_source.message_id if original_source.conversation_id else None,
         ):
             raise ValueError("invalid_draft_association")
         source = _source(builder, original_source)
-        document = _DRAFT_JSON.validate_json(
-            row["result_json"], strict=True, extra="forbid"
-        )
+        document = _read_rule_json(_DRAFT_JSON, row["result_json"])
         rule = (
             _revision(builder, document["rule"])
             if document["rule"] is not None
@@ -354,9 +358,7 @@ def _rules(builder):
     builder.handle("console_response_rule_bindings", binding)
 
     def assessment(row):
-        original = _ASSESSMENT_JSON.validate_json(
-            row["assessment_json"], strict=True, extra="forbid"
-        )
+        original = _read_rule_json(_ASSESSMENT_JSON, row["assessment_json"])
         if (
             original.assessment_id,
             original.state,

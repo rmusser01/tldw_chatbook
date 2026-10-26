@@ -205,6 +205,9 @@ def test_malformed_native_rule_json_refuses_before_collection_coercion(
                 "bad-evidence-refs": lambda d: d["checks"][0].update(
                     evidence_refs="opaque-evidence"
                 ),
+                "extra-root": lambda d: d.update(unknown="opaque-extra"),
+                "extra-source": lambda d: d["source"].update(unknown="opaque-extra"),
+                "extra-check": lambda d: d["checks"][0].update(unknown="opaque-extra"),
                 "bad-checks": lambda d: d.update(checks={}),
                 "bad-bool": lambda d: d.update(evidence_complete="true"),
                 "bad-reason": lambda d: d["checks"][0].update(reason=["body"]),
@@ -283,3 +286,77 @@ def test_malformed_native_rule_json_refuses_before_collection_coercion(
             assert source[key][column] == encoded
         assert "opaque-evidence" not in repr(plan.blockers)
         assert any(r.table == "console_response_rule_revisions" for r in plan.rows)
+
+
+def test_private_rule_json_adapters_preserve_native_types_and_close_nested_fields():
+    from pydantic import ValidationError
+
+    from Tests.Chat.response_rules_fixtures import inputs
+    from Tests.Chat.response_rules_store_fixtures import learning
+    from tldw_chatbook.Backup_Recovery import mobile_content_rules as rules
+    from tldw_chatbook.Chat.response_rules.models import (
+        RuleAssessment,
+        RuleEvidence,
+        canonical_json,
+    )
+    from tldw_chatbook.Chat.response_rules.repository import revision_document
+
+    learned = learning()
+    source = learned.rule.origin
+    check = learned.validation.case_results[0].check
+    assessment = RuleAssessment(
+        "assessment", source, (check,), True, "digest", "violation", "completed"
+    )
+    native_input = inputs(
+        evidence=(RuleEvidence("proof", "settled", "ok", None, "body"),)
+    )
+    draft = {
+        "state": "inactive",
+        "rule": learned.rule,
+        "validation": learned.validation,
+        "reason": "tested",
+    }
+    draft_json = {
+        **draft,
+        "rule": revision_document(learned.rule),
+        "validation": asdict(learned.validation),
+    }
+    cases = (
+        (rules._SOURCE_JSON, asdict(source), source, ((),)),
+        (
+            rules._REVISION_JSON,
+            revision_document(learned.rule),
+            learned.rule,
+            ((), ("origin",), ("candidate", "detector")),
+        ),
+        (
+            rules._VALIDATION_JSON,
+            asdict(learned.validation),
+            learned.validation,
+            ((), ("source",), ("case_results", 0), ("case_results", 0, "check")),
+        ),
+        (rules._INPUT_JSON, asdict(native_input), native_input, ((), ("evidence", 0))),
+        (
+            rules._ASSESSMENT_JSON,
+            asdict(assessment),
+            assessment,
+            ((), ("source",), ("checks", 0)),
+        ),
+        (
+            rules._DRAFT_JSON,
+            draft_json,
+            draft,
+            ((), ("rule", "origin"), ("validation", "case_results", 0, "check")),
+        ),
+    )
+    for adapter, document, expected, locations in cases:
+        encoded = canonical_json(document)
+        assert rules._read_rule_json(adapter, encoded) == expected
+        for location in locations:
+            malformed = json.loads(encoded)
+            target = malformed
+            for key in location:
+                target = target[key]
+            target["unexpected"] = "preserve original"
+            with pytest.raises(ValidationError):
+                rules._read_rule_json(adapter, canonical_json(malformed))
