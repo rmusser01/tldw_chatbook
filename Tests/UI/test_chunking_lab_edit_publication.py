@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Static, TextArea
+from textual.widgets import Input, Static, TextArea
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_chunking_lab_sample_import_drafts import (
@@ -28,6 +28,7 @@ def held_final_refresh(monkeypatch, screen, ordering=None):
         release=threading.Event(),
         worker_entered=threading.Event(),
         worker_release=threading.Event(),
+        worker_completed=asyncio.Event(),
     )
     owned = ContextVar("lab_owned_refresh", default=False)
     refresh, validate = screen._refresh_session, module._validation
@@ -54,12 +55,10 @@ def held_final_refresh(monkeypatch, screen, ordering=None):
         token = owned.set(edit_complete)
         try:
             await refresh(edit_complete=edit_complete)
-            if (
-                not edit_complete
-                and ordering == "worker-first"
-                and gate.worker_entered.is_set()
-            ):
-                gate.release.set()
+            if not edit_complete and gate.worker_entered.is_set():
+                gate.worker_completed.set()
+                if ordering == "worker-first":
+                    gate.release.set()
         finally:
             owned.reset(token)
 
@@ -197,3 +196,64 @@ async def test_status_refresh_stays_live_during_final_preparation(request, monke
             await screen.drain_edits()
             await settle_lab(host, screen, pilot)
             assert not screen.query_one(SampleRegion).disabled
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_final_sample_echo_preserves_queued_configuration_keys(
+    request, monkeypatch
+):
+    from tldw_chatbook.Chunking import lab_state
+
+    async with mounted_lab() as (host, screen, pilot):
+        await type_initial_sample(screen, pilot)
+        screen.query_one("#lab-show-configure").press()
+        await pilot.pause()
+        await screen.drain_edits()
+        await settle_lab(host, screen, pilot)
+        name = screen.query_one("#lab-name", Input)
+        name.focus()
+        await pilot.press("end")
+        await pilot.pause()
+        initial = name.value
+        parent_entered, parent_release = asyncio.Event(), asyncio.Event()
+
+        async def hold_parent():
+            parent_entered.set()
+            await asyncio.wait_for(parent_release.wait(), 10)
+
+        with held_final_refresh(monkeypatch, screen) as gate:
+            keys = []
+            try:
+                screen.queue_edit(lab_state.undo_edit)
+                await entered_read(gate.entered)
+                await asyncio.wait_for(gate.worker_completed.wait(), 5)
+                screen.call_next(hold_parent)
+                await asyncio.wait_for(parent_entered.wait(), 3)
+                inputs = screen._input_generation
+                keys.append(asyncio.create_task(pilot.press("y")))
+                async with asyncio.timeout(3):
+                    while name.value != initial + "y":
+                        await asyncio.sleep(0.01)
+                assert screen._input_generation == inputs
+                assert not screen._edits  # The accepted key's parent delivery is held.
+                gate.release.set()
+                await screen.drain_edits()
+                second_expected = name.value + "z"
+                keys.append(asyncio.create_task(pilot.press("z")))
+                async with asyncio.timeout(3):
+                    while name.value != second_expected:
+                        await asyncio.sleep(0.01)
+                parent_release.set()
+                await asyncio.gather(*keys)
+                await pilot.pause()
+                await screen.drain_edits()
+                await settle_lab(host, screen, pilot)
+                canonical = screen.coordinator.session.candidates[screen._b_id()][
+                    "draft"
+                ]["record_fields"]["name"]
+                assert name.value == canonical == initial + "yz"
+            finally:
+                parent_release.set()
+                gate.release.set()
+                await asyncio.gather(*keys, return_exceptions=True)
