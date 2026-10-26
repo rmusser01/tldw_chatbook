@@ -599,12 +599,13 @@ _BUDGETS: dict[str, int] = {
     # loop, now also the locator's) and the folder pickers' all-folders loader
     # ``_page_library_notes_folder_targets`` replacing the loaded-branches
     # ``_library_notes_folder_target_options``: 7312 -> 7339 (measured).
-    # 2026-10-26, TASK-34000.28 (polish-1a task 4; same owner decision): the
-    # folder-conflict notice's Refresh handler
-    # (``handle_library_notes_notice_refresh``), and a successful delete Undo
-    # withdrawing that notice and its Refresh offer, which used to outlive it
-    # until restart: 7339 -> 7360 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7360,
+    # 2026-10-26, TASK-34000.28 (polish-1a task 4 and its fix round 1; same
+    # owner decision): the folder-conflict notice's Refresh handler
+    # (``handle_library_notes_notice_refresh``) and its focus role's
+    # selector, and a successful delete Undo withdrawing that notice and its
+    # Refresh offer, which used to outlive it until restart: 7339 -> 7362
+    # (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7362,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

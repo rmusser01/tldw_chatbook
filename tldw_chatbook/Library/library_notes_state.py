@@ -282,11 +282,6 @@ def validate_database_note_draft(
     )
 
 
-def one_row_note_text(text: str) -> str:
-    """Flatten every line break and tab in ``text`` to a space (display only)."""
-    return re.sub(r"[\r\n\t\x85\u2028\u2029]", " ", text)
-
-
 def ellipsize_note_title_cells(title: str, max_cells: int) -> str:
     """Return a plain one-row title no wider than ``max_cells`` terminal cells.
 
@@ -301,7 +296,7 @@ def ellipsize_note_title_cells(title: str, max_cells: int) -> str:
     if max_cells <= 0:
         return ""
 
-    one_row_title = one_row_note_text(title)
+    one_row_title = re.sub(r"[\r\n\t\x85\u2028\u2029]", " ", title)
     width = sum(get_character_cell_size(character) for character in one_row_title)
     if width <= max_cells:
         return one_row_title
@@ -653,8 +648,7 @@ def build_library_notes_list_state(
             f"filter: {filter_note} · {len(rows)} {noun}", 52
         )
     if operation_status:
-        # TASK-34000.28 (N-24): kept whole; the status line wraps.
-        status_copy = one_row_note_text(operation_status)
+        status_copy = ellipsize_note_title_cells(operation_status, 52)
     selected_count = sum(1 for r in rows if r.checked)
     source_total = len(rows) if total_count is None else max(total_count, 0)
     empty_copy = ""

@@ -142,7 +142,10 @@ class NotesOrganizationSyncService:
         dataset_id = str(profile.get("dataset_id") or "")
         if not dataset_id:
             raise ValueError("synchronized profile is missing dataset identity")
-        with self.notes_repository.db.transaction() as cursor:
+        # TASK-34000.28 (N-24): read-then-write, so the write lock comes first;
+        # a deferred snapshot dies with 517 when another connection's close
+        # restarts the WAL (see ``LocalNoteFolderRepository``).
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=server_profile_id,
@@ -195,7 +198,9 @@ class NotesOrganizationSyncService:
         if profile is None:
             return folder_repository.attach_manual(folder_id=folder_id, note_id=note_id)
         dataset_id = self._dataset_id(profile)
-        with self.notes_repository.db.transaction() as cursor:
+        # TASK-34000.28 (N-24): the Move note / Add to folder chain under a
+        # local-first profile -- write lock first, as in ``create_folder``.
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -245,7 +250,8 @@ class NotesOrganizationSyncService:
                 expected_version=expected_version,
             )
         dataset_id = self._dataset_id(profile)
-        with self.notes_repository.db.transaction() as cursor:
+        # TASK-34000.28 (N-24): Move note's second half -- write lock first.
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
