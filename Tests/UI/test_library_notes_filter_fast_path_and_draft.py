@@ -20,9 +20,11 @@ control, the box's value, and the applied filter.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.command import CommandPalette
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import (
@@ -118,8 +120,21 @@ def _painted_in(host, widget) -> str:
     return " ".join(" ".join(rows).split())
 
 
+def _shown(screen, selector: str) -> bool:
+    """Whether ``selector`` is mounted and displayed (a recompose in flight is
+    "not yet", never an error)."""
+    found = screen.query(selector)
+    return bool(found) and bool(found.first().display)
+
+
+def _painted_of(host, screen, selector: str) -> str:
+    found = screen.query(selector)
+    return _painted_in(host, found.first()) if found else ""
+
+
 def _footer(host, screen) -> str:
-    return _painted_in(host, screen.query_one(AppFooterStatus))
+    found = screen.query(AppFooterStatus)
+    return _painted_in(host, found.first()) if found else ""
 
 
 def _status(host, screen) -> str:
@@ -193,12 +208,48 @@ async def _type_into(screen, pilot, text: str, expected: str) -> None:
     )
 
 
+class _HeldSearch:
+    """The real filter search, held until ``release`` is set, so a key can
+    land while the filter page is still loading."""
+
+    def __init__(self, service) -> None:
+        self._real = service.search_note_tree_placements
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, **kwargs):
+        self.entered.set()
+        await self.release.wait()
+        return await self._real(**kwargs)
+
+
+def _first_tree_row(screen):
+    """The first folder or note row of the painted list, in visual order."""
+    found = screen.query("#library-notes-list")
+    if not found:
+        return None
+    for row in found.first().children:
+        if row.has_class("library-notes-folder-row") or row.has_class(
+            "library-notes-row"
+        ):
+            return row
+    return None
+
+
 async def _footer_says(host, screen, pilot, *needles: str, what: str) -> None:
     await _wait(
         pilot,
         lambda: all(needle in _footer(host, screen) for needle in needles),
         lambda: f"{what}: footer paints {_footer(host, screen)!r}",
     )
+
+
+async def _footer_withholds_after_esc(host, screen, pilot, *, what: str) -> None:
+    """Ruling T5-b: Escape from a list filter lands in the rail's search box,
+    another text field, so the typing footer names no "after esc:" keys."""
+    await _footer_says(host, screen, pilot, TYPING, "esc focus rail", what=what)
+    painted = _footer(host, screen)
+    assert "after esc:" not in painted and "n new note" not in painted, (what, painted)
 
 
 async def test_down_with_an_unsubmitted_draft_applies_it_and_lands_on_the_new_result(
@@ -290,6 +341,37 @@ async def test_down_with_an_unsubmitted_draft_applies_it_and_lands_on_the_new_re
         await pilot.pause(0.3)
         assert _focused_id(screen) == "library-notes-filter", _focused_id(screen)
 
+        # M4 (fix round 1): a key after Down withdraws the hand-off, and the
+        # landing then leaves focus where that key took it -- here Escape, to
+        # the rail -- instead of pulling it into the box or onto a result row.
+        # The search is held so the key lands first. (The landing's canvas
+        # sync replays a rail-stage focus onto the Notes rail row; the rail's
+        # search box has no portable role of its own.)
+        held = _HeldSearch(seeded.profile.scope_service)
+        monkeypatch.setattr(
+            seeded.profile.scope_service, "search_note_tree_placements", held
+        )
+        await pilot.press(*["backspace"] * 4)
+        await _type_into(screen, pilot, "index", "index")
+        await pilot.press("down")
+        await _wait(pilot, held.entered.is_set, "the held 'index' search")
+        await pilot.press("escape")
+        await _wait(
+            pilot,
+            lambda: _focused_id(screen) == "library-search-input",
+            lambda: f"Escape to the rail's search box (focus {_focused_id(screen)!r})",
+        )
+        held.release.set()
+        await _wait(
+            pilot,
+            lambda: "filter: index · 2 results" in _status(host, screen),
+            lambda: f"the released 'index' result (status {_status(host, screen)!r})",
+        )
+        await pilot.pause(0.3)
+        focused = screen.focused
+        assert focused is not None and focused.is_attached
+        assert screen._library_notes_focus_stage(focused) == "rail", _focused_id(screen)
+
 
 async def test_down_and_enter_on_an_applied_filter_reach_and_open_the_first_result(
     tmp_path,
@@ -339,6 +421,33 @@ async def test_down_and_enter_on_an_applied_filter_reach_and_open_the_first_resu
             "Escape back to the filtered list",
         )
 
+        # M5 (fix round 1, ruling T5-a): Down over an emptied box clears the
+        # filter the Enter way, then lands on the first row of the browse tree.
+        await _slash_to_filter(screen, pilot)
+        await pilot.press("end", *["backspace"] * 5)
+        await _wait(
+            pilot, lambda: getattr(_box(screen), "value", None) == "", "an empty box"
+        )
+        await pilot.press("down")
+
+        def _on_first_tree_row() -> bool:
+            first_row = _first_tree_row(screen)
+            return bool(
+                screen._notes_state.filter == ""
+                and INDEX in _list(host, screen)
+                and first_row is not None
+                and screen.focused is first_row
+            )
+
+        await _wait(
+            pilot,
+            _on_first_tree_row,
+            lambda: (
+                f"Down over the emptied box to the first tree row (applied "
+                f"{screen._notes_state.filter!r}, focus {_focused_id(screen)!r})"
+            ),
+        )
+
 
 async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
     tmp_path,
@@ -347,10 +456,13 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
 
     Escape with unsubmitted text leaves the field and keeps the text in the
     (recomposed) box; the applied filter is unchanged -- with nothing applied
-    and with ``thes`` applied. Then the footer says "typing in field" and its
-    "after esc:" keys however focus reached the filter: ``/``, a click, Tab
-    and a return from the command palette, each from a control that is not a
-    text field, so the cue is the arrival's own.
+    and with ``thes`` applied. Then the footer says "typing in field" however
+    focus reached the filter: ``/``, a click, Tab and a return from the command
+    palette, each from a control that is not a text field, so the cue is the
+    arrival's own. It names no "after esc:" keys there, because one Escape
+    lands in the rail's search box (ruling T5-b); in that box, whose Escape
+    leaves for a control, it does. A sibling filter (Prompts) is pinned in the
+    ``_extended`` sibling.
     """
     host, seeded = _mounted(tmp_path)
     async with host.run_test(size=SIZE) as pilot:
@@ -372,16 +484,30 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
 
         await _wait(
             pilot,
-            lambda: _left_with_draft("thes"),
+            lambda: _left_with_draft("thes") and INDEX in _list(host, screen),
             lambda: (
-                "Escape to leave the field keeping 'thes' (box "
+                "Escape to leave the field keeping 'thes', list unfiltered (box "
                 f"{getattr(_box(screen), 'value', None)!r}, focus {_focused_id(screen)!r})"
             ),
         )
         await pilot.pause(0.3)
         assert _box(screen).value == "thes"
         assert screen._notes_state.filter == ""
-        assert INDEX in _list(host, screen), "the list must stay unfiltered"
+
+        # Ruling T5-b's other half: in the rail's own search box Escape leaves
+        # for a non-text canvas control, so there the footer keeps its verbs.
+        assert _focused_id(screen) == "library-search-input", _focused_id(screen)
+        await _footer_says(
+            host, screen, pilot, TYPING, "after esc:", "n new note", what="rail search"
+        )
+        await pilot.press("escape")
+        await _wait(
+            pilot,
+            lambda: screen.focused is not None
+            and screen.focused.is_attached
+            and not isinstance(screen.focused, (Input, TextArea)),
+            lambda: f"Escape from the rail search (focus {_focused_id(screen)!r})",
+        )
 
         # Applied "thes", then a further draft: Escape keeps both apart.
         await pilot.click("#library-notes-filter")
@@ -407,13 +533,13 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
         await pilot.press("escape")
         await _wait(
             pilot,
-            lambda: _left_with_draft("thes out"),
+            lambda: _left_with_draft("thes out")
+            and "filter: thes · 1 result" in _status(host, screen),
             lambda: f"Escape to keep 'thes out' (box {getattr(_box(screen), 'value', None)!r})",
         )
         await pilot.pause(0.3)
         assert _box(screen).value == "thes out"
         assert screen._notes_state.filter == "thes"
-        assert "filter: thes · 1 result" in _status(host, screen)
 
         # Clear filter empties the box: the draft is never resurrected.
         await pilot.click("#library-notes-filter-clear")
@@ -440,7 +566,7 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
             lambda: f"the row's footer: {_footer(host, screen)!r}",
         )
         await _slash_to_filter(screen, pilot)
-        await _footer_says(host, screen, pilot, TYPING, "after esc:", what="`/` arrival")
+        await _footer_withholds_after_esc(host, screen, pilot, what="`/` arrival")
 
         # Arrival by click, from a row.
         await pilot.press("down")
@@ -450,7 +576,7 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
             lambda: f"the row's footer: {_footer(host, screen)!r}",
         )
         await pilot.click("#library-notes-filter")
-        await _footer_says(host, screen, pilot, TYPING, "after esc:", what="click arrival")
+        await _footer_withholds_after_esc(host, screen, pilot, what="click arrival")
 
         # Arrival by Tab: Shift+Tab back from the row until the filter.
         await pilot.press("down")
@@ -465,7 +591,7 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
             await pilot.press("shift+tab")
             await pilot.pause(0.05)
         assert _focused_id(screen) == "library-notes-filter", _focused_id(screen)
-        await _footer_says(host, screen, pilot, TYPING, "after esc:", what="Tab arrival")
+        await _footer_withholds_after_esc(host, screen, pilot, what="Tab arrival")
 
         # Return from the command palette.
         await pilot.press("ctrl+p")
@@ -477,9 +603,10 @@ async def test_escape_in_the_filter_keeps_the_draft_and_the_footer_says_typing(
         await pilot.press("escape")
         await _wait(pilot, lambda: host.screen is screen, "the return from the palette")
         assert _focused_id(screen) == "library-notes-filter", _focused_id(screen)
-        await _footer_says(
-            host, screen, pilot, TYPING, "after esc:", what="return from the palette"
+        await _footer_withholds_after_esc(
+            host, screen, pilot, what="return from the palette"
         )
+
 
 
 async def test_following_a_link_offers_one_hop_back_and_the_editor_footer_says_typing(
@@ -490,7 +617,9 @@ async def test_following_a_link_offers_one_hop_back_and_the_editor_footer_says_t
     A backlink and a note link each open their note with a visible
     ``‹ <origin>`` control; pressing it returns to the origin, and the
     control is then gone (one hop). Then the editor's text fields say
-    "typing in field" and "esc back to notes".
+    "typing in field" and "esc back to notes". Fix round 1 (I-1): a note made
+    with Ctrl+N after a followed link has no ``‹``. The way back to an origin
+    deleted meanwhile is pinned in the ``_extended`` sibling.
     """
     host, seeded = _mounted(tmp_path)
     async with host.run_test(size=SIZE) as pilot:
@@ -530,35 +659,37 @@ async def test_following_a_link_offers_one_hop_back_and_the_editor_footer_says_t
             ),
         )
 
-        # Note link: Preview on Index, Enter follows its one link to Recipes.
-        screen.query_one("#library-note-preview", Button).press()
-        await _wait(
-            pilot,
-            lambda: bool(screen.query("#library-note-preview-region"))
-            and screen.query_one("#library-note-preview-region").display
-            and RECIPES in _painted_in(host, screen.query_one("#library-note-preview-body")),
-            "Preview to paint the link",
-        )
-        await pilot.click("#library-note-preview-region")
-        await _wait(
-            pilot,
-            lambda: _focused_id(screen) == "library-note-preview-region",
-            "the Preview region to hold focus",
-        )
-        await pilot.press("enter")
-        await _armed_editor(screen, pilot, seeded.recipes_id)
-        await _wait(
-            pilot,
-            lambda: _link_back_paints(INDEX),
-            lambda: f"'‹ {INDEX}' after following the note link",
-        )
+        async def _follow_index_link_to_recipes() -> None:
+            """Preview on Index, Enter follows its one link to Recipes."""
+            screen.query_one("#library-note-preview", Button).press()
+            await _wait(
+                pilot,
+                lambda: _shown(screen, "#library-note-preview-region")
+                and RECIPES in _painted_of(host, screen, "#library-note-preview-body"),
+                "Preview to paint the link",
+            )
+            await pilot.click("#library-note-preview-region")
+            await _wait(
+                pilot,
+                lambda: _focused_id(screen) == "library-note-preview-region",
+                "the Preview region to hold focus",
+            )
+            await pilot.press("enter")
+            await _armed_editor(screen, pilot, seeded.recipes_id)
+            await _wait(
+                pilot,
+                lambda: _link_back_paints(INDEX),
+                lambda: f"'‹ {INDEX}' after following the note link",
+            )
+
+        await _follow_index_link_to_recipes()
 
         # One hop: press it, the origin opens and the control is gone.
         await pilot.click("#library-note-link-back")
         await _armed_editor(screen, pilot, seeded.index_id)
         await _wait(
             pilot,
-            lambda: INDEX in _painted_in(host, screen.query_one("#library-note-heading")),
+            lambda: INDEX in _painted_of(host, screen, "#library-note-heading"),
             "Index's heading",
         )
         assert not screen.query("#library-note-link-back"), "one hop only"
@@ -614,8 +745,8 @@ async def test_following_a_link_offers_one_hop_back_and_the_editor_footer_says_t
         screen.query_one("#library-note-context", Button).press()
         await _wait(
             pilot,
-            lambda: screen.query_one("#library-note-context-keywords").display
-            and screen.query_one("#library-note-context-region").display,
+            lambda: _shown(screen, "#library-note-context-keywords")
+            and _shown(screen, "#library-note-context-region"),
             "Info to show",
         )
         await pilot.click("#library-note-context-keywords")
@@ -630,14 +761,26 @@ async def test_following_a_link_offers_one_hop_back_and_the_editor_footer_says_t
         await pilot.press("escape")
         await _wait(
             pilot,
-            lambda: not screen.query_one("#library-note-context-region").display,
+            lambda: bool(screen.query("#library-note-context-region"))
+            and not _shown(screen, "#library-note-context-region"),
             "Escape out of Info",
         )
 
-        # A real key still works: Escape leaves the editor for the list.
-        await pilot.press("escape")
+        # I-1 (fix round 1): a note made after a followed link has no origin.
+        await _follow_index_link_to_recipes()
+        await pilot.press("ctrl+n")
+        known = {
+            seeded.index_id,
+            seeded.recipes_id,
+            seeded.thesis_id,
+            seeded.profile.note_id,
+            seeded.profile.other_id,
+        }
         await _wait(
             pilot,
-            lambda: screen._notes_state.view == "list",
-            "Escape back to the list",
+            lambda: _open_note_id(screen) not in known | {""}
+            and screen._notes_state.editor_armed
+            and bool(_painted_of(host, screen, "#library-note-heading").strip()),
+            lambda: f"Ctrl+N to open a new note (open {_open_note_id(screen)!r})",
         )
+        assert not screen.query("#library-note-link-back"), "a new note has no origin"

@@ -1116,7 +1116,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the Notes navigator, editor and Info tiers, Clear filter emptying the
     #: box, and the link-back delegator plus its focus role: 37926 -> 38076
     #: lines, 1363 -> 1370 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38076, 1370),
+    #: 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a task 5 fix round 1;
+    #: same owner decision): ruling T5-b's ``_library_escape_lands_in_text_field``
+    #: (the typing footer withholds "after esc:" keys when Escape lands in
+    #: another text field), the withdrawable ``(filter, live)`` Down hand-off
+    #: and its failure-branch clear (M4), an emptied box's Down landing on
+    #: ``_first_library_notes_tree_row`` through the browse receipt (M5), and
+    #: ``link_origin`` cleared on every plain open (I-1): 38076 -> 38138 lines,
+    #: 1370 -> 1372 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38138, 1372),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

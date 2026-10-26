@@ -302,8 +302,11 @@ readable measure rather than stretched across the whole canvas.
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and
   carries the canvas verbs after `after esc:` — they are not live until you
-  leave the field. Under 64 columns there is room for a single chip, so the
-  footer names only what Escape does there and the verbs are not listed.
+  leave the field. A list canvas's own filter lists none: its Escape moves the
+  caret into the rail's "Search Library…" box, another text field, so one
+  Escape would not make them live. Under 64 columns there is room for a
+  single chip, so the footer names only what Escape does there and the verbs
+  are not listed.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**

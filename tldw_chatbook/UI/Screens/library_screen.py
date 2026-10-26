@@ -4087,9 +4087,10 @@ class LibraryScreen(BaseAppScreen):
         #: focus was parked on before the loading recompose pruned it.
         self._library_notes_tree_pager_press: tuple[str, int] | None = None
         self._library_notes_tree_pager_parked: Widget | None = None
-        #: TASK-34000.28 ruling T5-a: the filter a Down in the box asked to
-        #: land on the first row of; any later key or click withdraws it.
-        self._library_notes_filter_row_handoff: str | None = None
+        #: TASK-34000.28 ruling T5-a: ``(filter, live)`` -- the filter a Down
+        #: in the box asked to land on the first row of; a later key or click
+        #: withdraws it (``live`` False), and the landing then moves nothing.
+        self._library_notes_filter_row_handoff: tuple[str, bool] | None = None
         self._transcribe_cpp_configured = False
         self._transcription_default_model = "base"
         # One provisional external-root scope exists only while its captured
@@ -4895,7 +4896,9 @@ class LibraryScreen(BaseAppScreen):
                         + " · ".join(f"{key} {label}" for key, label in swallowed),
                     ),
                 )
-                if swallowed
+                # TASK-34000.40 ruling T5-b: no "after esc:" keys when one
+                # Escape only hands the caret to another text field.
+                if swallowed and not self._library_escape_lands_in_text_field()
                 else ()
             )
             # AC#2: "F6 next pane" goes LAST so AppFooterStatus's
@@ -4925,6 +4928,26 @@ class LibraryScreen(BaseAppScreen):
                 else (status + esc_pairs + verbs + rest + f6_pairs)
             )
         return shortcuts
+
+    def _library_escape_lands_in_text_field(self) -> bool:
+        """Whether Escape from the focused field puts the caret in ANOTHER one.
+
+        TASK-34000.40 ruling T5-b, read off the actual destination: Textual
+        runs the first ``escape`` binding whose gate passes, and the only one
+        that picks a text field is the list focus-rail hop (Notes' own Escape
+        converges on it from the plain list), so its target is resolved.
+        """
+        actions = self._library_escape_actions_before("")
+        action = next((a for a in actions if self.check_action(a, ())), "")
+        hop = action == "library_list_focus_rail" or (
+            action == "library_notes_escape"
+            and self.check_action("library_list_focus_rail", ())
+        )
+        target = self._library_list_focus_rail_target() if hop else ""
+        found = self.query(target) if target else ()
+        return bool(found) and isinstance(found.first(), (Input, TextArea)) and (
+            found.first() is not self.focused
+        )
 
     def _library_footer_shortcuts_for_current_state(
         self,
@@ -8546,7 +8569,8 @@ class LibraryScreen(BaseAppScreen):
             target = None
         self._advance_library_ordinary_emergency_user_interaction(target)
         self._mark_library_notes_user_interaction()
-        self._library_notes_filter_row_handoff = None
+        if handoff := self._library_notes_filter_row_handoff:
+            self._library_notes_filter_row_handoff = (handoff[0], False)
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -9170,7 +9194,8 @@ class LibraryScreen(BaseAppScreen):
                     focused = self._move_library_screen_focus(-1)
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
-        self._library_notes_filter_row_handoff = None
+        if handoff := self._library_notes_filter_row_handoff:
+            self._library_notes_filter_row_handoff = (handoff[0], False)
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         if emergency_tab:
@@ -10635,6 +10660,7 @@ class LibraryScreen(BaseAppScreen):
             notes_view = "list"
         self._notes_state.selected_note_id = selected_note_id
         self._notes_state.view = notes_view
+        self._notes_state.link_origin = None  # TASK-34000.28: never persisted
 
         selected_media_id = str(state.get("selected_media_id") or "")
         media_view = str(state.get("library_media_view") or "list")
@@ -25296,16 +25322,29 @@ class LibraryScreen(BaseAppScreen):
             browse_receipt = self._notes_state.filter_browse_receipt
             self._notes_state.filter_browse_receipt = None
             self._notes_state.filter_records = None
-            restore = (
-                partial(
-                    LibraryScreen._restore_library_notes_browse_return_receipt,
-                    self,
-                    browse_receipt,
-                )
-                if browse_receipt is not None
-                else None
-            )
-            _sync_library_canvas(self, "notes", then=restore)
+
+            def restore_then_land(receipt=browse_receipt) -> None:
+                # Ruling T5-a: a Down that emptied the box lands on the browse
+                # tree's first row, as the receipt's own focus -- so the
+                # receipt's settled pass restores that row, not the box.
+                handoff = self._library_notes_filter_row_handoff
+                if handoff is not None and not handoff[0]:
+                    self._library_notes_filter_row_handoff = None
+                landing = handoff == ("", True)
+                row = self._first_library_notes_tree_row() if landing else None
+                role = self._library_notes_semantic_role(row) if row else ""
+                if role and receipt is not None:
+                    receipt = dataclasses.replace(
+                        receipt, focus_role=role, focus_semantic_id="",
+                        scroll_offset=None,
+                    )
+                elif row is not None:
+                    self.set_focus(row)
+                if receipt is not None:
+                    restore = LibraryScreen._restore_library_notes_browse_return_receipt
+                    restore(self, receipt)
+
+            _sync_library_canvas(self, "notes", then=restore_then_land)
             return
         self.run_worker(
             self._run_library_notes_filter(submitted),
@@ -25397,6 +25436,7 @@ class LibraryScreen(BaseAppScreen):
                 )
                 self._notes_state.tree_filter_state = result.state
                 self._notes_state.filter_navigation_generation = None
+                self._library_notes_filter_row_handoff = None  # T5-a: no landing
                 self._sync_library_notes_tree_canvas_if_present()
             return
         if not current_authority():
@@ -25443,16 +25483,30 @@ class LibraryScreen(BaseAppScreen):
         Ruling T5-a (TASK-34000.28 N-21): a Down that applied ``query`` (or
         met it loading) hands focus to the NEW result's first row through the
         list-entry arm, which falls back to the box on an empty result. A key
-        or click since then, or text typed since (the carried draft), cancels.
+        or click since the Down leaves focus where it went; text typed since
+        (the carried draft) keeps it in the box.
         """
-        if self._library_notes_filter_row_handoff == query:
-            self._library_notes_filter_row_handoff = None
-            boxes = self.query("#library-notes-filter")
-            typed = boxes.first(Input).value if boxes else ""
-            if self._safe_text(typed, max_length=200).strip() == query:
-                self._arm_library_list_entry_focus()
-                return
-        self._focus_library_notes_filter_input()
+        handoff = self._library_notes_filter_row_handoff
+        if handoff is None or handoff[0] != query:
+            self._focus_library_notes_filter_input()
+            return
+        self._library_notes_filter_row_handoff = None
+        if not handoff[1]:
+            # Focus stays where the key or click took it, unless a recompose
+            # lost it (Textual's reset: no role, not the rail) -- the box, as before.
+            focused = self.focused
+            if focused is None or not (
+                self._library_notes_semantic_role(focused)
+                or self._library_notes_focus_stage(focused) == "rail"
+            ):
+                self._focus_library_notes_filter_input()
+            return
+        boxes = self.query("#library-notes-filter")
+        typed = boxes.first(Input).value if boxes else ""
+        if self._safe_text(typed, max_length=200).strip() == query:
+            self._arm_library_list_entry_focus()
+        else:
+            self._focus_library_notes_filter_input()
 
     def _library_notes_filter_down(self) -> bool:
         """Down in the Notes filter: the first result row (TASK-34000.28 N-21).
@@ -25468,14 +25522,10 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return False
         draft = self._safe_text(box.value, max_length=200).strip()
-        if draft != self._notes_state.filter:
-            # An emptied box is the Enter way's clear, which returns to where
-            # browsing left off rather than to a first row.
-            self._library_notes_filter_row_handoff = draft or None
-            self._apply_library_notes_filter(draft)
-            return True
-        if self._library_notes_filter_loading():
-            self._library_notes_filter_row_handoff = draft
+        if draft != self._notes_state.filter or self._library_notes_filter_loading():
+            self._library_notes_filter_row_handoff = (draft, True)
+            if draft != self._notes_state.filter:
+                self._apply_library_notes_filter(draft)
             return True
         first = self._first_library_notes_note_row()
         if first is None:
@@ -25494,6 +25544,16 @@ class LibraryScreen(BaseAppScreen):
             or state.query != applied
             or self._notes_state.filter_records is None
         )
+
+    def _first_library_notes_tree_row(self) -> Button | None:
+        """The browse tree's first folder or note row (ruling T5-a, cleared box)."""
+        for row in self.query("#library-notes-list > Button").results(Button):
+            tree_row = row.has_class("library-notes-folder-row") or row.has_class(
+                "library-notes-row"
+            )
+            if tree_row and row.is_attached and not getattr(row, "_pruning", False):
+                return row
+        return None
 
     def _first_library_notes_note_row(self) -> Button | None:
         """The painted result's first note row: Down's target, Enter's open.
@@ -32553,6 +32613,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_filter_state = None
         self._notes_state.selected_note_id = created_id
         self._notes_state.view = "editor"
+        self._notes_state.link_origin = None  # TASK-34000.28: a plain open
         self._notes_state.load_state = "loaded"
         self._notes_state.load_message = ""
         self._notes_state.autosave_state = "idle"
@@ -36854,6 +36915,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_note_session.close_session()
                 self._notes_state.selected_note_id = record_id
                 self._notes_state.view = "editor"
+                self._notes_state.link_origin = None  # TASK-34000.28: a plain open
                 self._notes_state.load_state = "loading"
                 self._notes_state.load_message = ""
                 self._notes_state.autosave_state = "idle"
