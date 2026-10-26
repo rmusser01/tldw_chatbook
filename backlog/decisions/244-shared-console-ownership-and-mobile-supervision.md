@@ -427,3 +427,45 @@ This consumes the existing native capture's alias semantics; it does not widen
 fixed families/paths, change complete inventory or source/cohort/claim checks, or
 issue additional connections, schemas, transactions or publication authority.
 Captured-SQLite custody, physical retirement and quarantine remain unchanged.
+
+
+### Fixed captured Persona and permission-reference proof
+
+The private identity/Workspace planning increment may read only the `personas`
+and `mcp.permissions` raw owners already included by the canonical capture
+partition. The actual live captured-mobile, maintenance, source-claim, operation,
+selector and capture-cohort objects issue this fixed read/proof scope. No caller
+path, connection, callback, predicate or asserted shared/authenticated flag
+confers authority; no raw owner is added to the legacy capture partition.
+
+Before returning immutable private reference evidence, the scope authenticates
+the exact producer/member/schema/bytes and requalifies source and destination
+owner coverage, physical identity and current native generation/root-binding/
+activation provenance under maintained exclusion. A same-selector or shared-owner
+match still requires that complete proof. Equal paths, labels, IDs or logical
+scope digests alone are insufficient. Retained backups/history and inactive or
+unreviewed generations are recovery evidence, never active permission policy.
+
+Use installed pure Persona/MCP validation and resolution, including inherited
+defaults, global kill policy, lifecycle and provenance. A policy digest alone
+does not represent full effective authority. A necessary narrow read-only native
+gate must preserve the existing execution gate and its error/default behavior.
+Do not instantiate/load/repair authority stores or borrow execution admission
+and ambient effective-profile state to inspect the captured material. Missing,
+unknown, mismatched or unprovable dependencies yield body-free exact-reference
+prewrite blockers while unrelated supported history/defaults remain supported.
+
+The scope reuses admitted archive/custody primitives with strict nofollow checks,
+actual retained pins, bounded bytes and sticky uncertain retirement. New reached
+acquisition/read/substitution/retirement boundaries require actual native proof,
+including captured shared-owner and active-generation positives and absent,
+mismatched, inherited-policy and lifecycle negatives. Bodies remain private and
+out of logs, receipts and public plan metadata. This grants no policy activation,
+raw-policy import, key provisioning, owner write, hold, receipt or publication.
+
+This finite seam supplies an already-required proof that the SQLite-only reader
+cannot express. It does not replace the complete fixed table/column manifest,
+typed identity reservations or Workspace transformation plan; C/T/S remain
+required pending handlers and the integrated plan is reviewed before owner writes.
+If native proof cannot be retained, the dependency remains refusing; qualification
+may require a narrow correction or serial extraction before the plan completes.
