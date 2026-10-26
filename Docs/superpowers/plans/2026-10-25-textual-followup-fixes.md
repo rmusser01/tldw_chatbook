@@ -126,7 +126,7 @@ Reason: existing-owner applicability correction plus test readiness, without new
 - [x] Add deterministic current-source Chunking render-order RED controls, then repair only owned final publication and verify newer-input protection plus adjacent edit behavior.
 - [x] Replace Library test fixed delay with bounded current-list paint readiness; retain the original missing-folder negative control and all semantic/page-count assertions.
 - [x] Verify actual child/canvas evidence, source guards, scoped static checks, architecture/QA notes and one focused Superpowers review of this CI delta.
-- [ ] Preserve all 906 current dev census slots and required caps, register the new exact controls, push the reviewed complete change, and remain on PR #3251 until current-head CI is green and review feedback is addressed.
+- [x] Preserve all 906 current dev census slots and required caps, register the new exact controls, push the reviewed complete change, and remain on PR #3251 until current-head CI is green and review feedback is addressed.
 
 
 ### Focused CI repair review follow-up

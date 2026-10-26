@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
 assignee:
 - '@codex'
-updated_date: 2026-10-26 03:39
+updated_date: 2026-10-26 20:57
 ---
 
 ## Description
@@ -81,4 +81,5 @@ Superpowers task, whole-branch, fix-wave and CI-delta reviews are complete with 
 [Verification and explicit scope decisions](../../Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md) records exact targeted evidence and the retained baseline profile/bootstrap, Chat-size and initial Chunking timing qualifications. No full local suite or native/live-server qualification is claimed.
 
 [PR #3251](https://github.com/rmusser01/tldw_chatbook/pull/3251) targets dev.
+Final dev386 integration is also accepted: the shared Lore publisher completes first-match intent only after current rows publish; background captured-save row marking uses existing cursor-neutral options. Existing TASK-33910.35 owns this correction; [ADR-007](../decisions/007-personas-workbench-route-consolidation.md), [ADR-011](../decisions/011-chatbook-workbench-ui-system.md) and [ADR-033](../decisions/033-application-session-state-ownership.md) apply, no new ADR. Final combined implementation accepted on `eb500d22dd3ab37faf18efb0a5e718c8f103b642` after rebase onto dev38623632e9: [Derived Artifacts](https://github.com/rmusser01/tldw_chatbook/actions/runs/40372196627) and [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40372196618) are green. Successful hosted job logs establish all 46 new exact cases and five existing critical Library/Chunking cases once on their assigned shards (51 call-duration rows); all 17 UI jobs passed, maximum 1080s below the unchanged 1200s cap. All 906 current-dev census slots remain in order, plus 46 exact controls (floor952). Superpowers scoped reviews/rereviews have no open findings. [QA and evidence limits](https://github.com/rmusser01/tldw_chatbook/blob/codex/textual-book-followups-after-3248/Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md) retain failed prior attempts, actual RED/GREEN controls, baseline caveats and native/live/full-suite limits. [PR #3251](https://github.com/rmusser01/tldw_chatbook/pull/3251) targets dev; final metadata-head CI is checked separately on the PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
