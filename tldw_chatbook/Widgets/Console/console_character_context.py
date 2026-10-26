@@ -105,6 +105,9 @@ class ConsoleCharacterContext(Vertical):
         # TASK-35970: a snapshot arrived while the browser could not be seen
         # and is not rendered yet. compose() renders the newest one.
         self._render_deferred = False
+        # The event loop keeps only weak references to tasks: hold each render
+        # until it finishes, so its done-callback (the rail's settle) runs.
+        self._render_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def state(self) -> ConsoleCharacterContextState:
@@ -240,14 +243,30 @@ class ConsoleCharacterContext(Vertical):
         self._render_deferred = False
         self._sync_identity_line()
         self._recompose_generation += 1
-        task = asyncio.create_task(
-            self._recompose_and_restore(
-                self._recompose_generation, None, None, self._focus_intent_generation
+        task = self._spawn_render(
+            self._render_deferred_snapshot(
+                self._recompose_generation, self._focus_intent_generation
             )
         )
         if on_rendered is not None:
             task.add_done_callback(lambda _task: on_rendered())
         return True
+
+    async def _render_deferred_snapshot(
+        self, generation: int, focus_intent_generation: int
+    ) -> None:
+        await self._recompose_and_restore(
+            generation, None, None, focus_intent_generation
+        )
+        # The sweep paused while hidden; the new rows start at 0 until its
+        # next tick. Write the counts now so the opened section is current.
+        self._sync_progress_counts()
+
+    def _spawn_render(self, coroutine: Any) -> asyncio.Task[None]:
+        task = asyncio.create_task(coroutine)
+        self._render_tasks.add(task)
+        task.add_done_callback(self._render_tasks.discard)
+        return task
 
     def sync_state(self, state: ConsoleCharacterContextState) -> None:
         """Apply one complete snapshot and semantically restore focus/scroll."""
@@ -275,7 +294,7 @@ class ConsoleCharacterContext(Vertical):
         self._pending_focus_restore = restore
         self._recompose_generation += 1
         generation = self._recompose_generation
-        asyncio.create_task(
+        self._spawn_render(
             self._recompose_and_restore(
                 generation,
                 restore,

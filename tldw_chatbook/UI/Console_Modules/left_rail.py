@@ -546,9 +546,9 @@ class ConsoleLeftRail(Vertical):
         self._active_reveal_generation = 0
         self._pending_active_reveal: tuple[int, str, str | None, bool] | None = None
         self._allocation_reconcile_scheduled = False
-        # TASK-35970: an opened Character section is mounting the snapshot it
-        # deferred while collapsed; allocation passes wait for it.
-        self._character_render_pending = False
+        # TASK-35970: opened Character renders still mounting the snapshot
+        # deferred while collapsed; allocation passes wait for all of them.
+        self._character_renders_pending = 0
         self._last_allocation_state: (
             tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
         ) = None
@@ -1459,7 +1459,7 @@ class ConsoleLeftRail(Vertical):
     def _prepare_allocation_reconcile(self) -> None:
         """Let every bounded body commit its own ceiling before outer geometry."""
 
-        if not self.is_mounted or self._character_render_pending:
+        if not self.is_mounted or self._character_renders_pending:
             # The settled render requests the pass this one would have been.
             self._allocation_reconcile_scheduled = False
             return
@@ -1504,7 +1504,7 @@ class ConsoleLeftRail(Vertical):
         """Snapshot committed complete sections and reconcile the outer owner."""
 
         try:
-            if self._character_render_pending:
+            if self._character_renders_pending:
                 # A pass measuring the half-mounted Character body read zero
                 # rows and moved the active section off it, dropping the
                 # open's reveal (TASK-35970). The settled render re-requests.
@@ -2948,8 +2948,9 @@ class ConsoleLeftRail(Vertical):
     def _character_render_settled(self) -> None:
         """Measure the opened Character section once its render has mounted."""
 
-        self._character_render_pending = False
-        if self.is_mounted:
+        # A reopen before an earlier render settled has one still mounting.
+        self._character_renders_pending = max(0, self._character_renders_pending - 1)
+        if not self._character_renders_pending and self.is_mounted:
             self.request_allocation_reconcile()
 
     def _restore_section_toggle_focus(self, button_id: str) -> None:
@@ -3050,7 +3051,7 @@ class ConsoleLeftRail(Vertical):
                     if browser.render_deferred(
                         on_rendered=self._character_render_settled
                     ):
-                        self._character_render_pending = True
+                        self._character_renders_pending += 1
             body.styles.display = "block"
             bounded.set_presented(True)
         else:
