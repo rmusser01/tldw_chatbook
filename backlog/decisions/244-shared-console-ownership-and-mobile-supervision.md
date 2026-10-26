@@ -469,3 +469,33 @@ typed identity reservations or Workspace transformation plan; C/T/S remain
 required pending handlers and the integrated plan is reviewed before owner writes.
 If native proof cannot be retained, the dependency remains refusing; qualification
 may require a narrow correction or serial extraction before the plan completes.
+
+
+### Workspace backfill frontier and audit payload disposition
+
+The installed `workspace_agent_backfill` assistant_defaults key is a database-wide
+completion frontier. Preserve its exact source row/state as typed historical
+capture provenance, while retaining canonical marker rows and pending work. Do
+not import the source marker, coerce explicit-none flags, provision raw authority
+records, or add a per-workspace lifecycle. Preserve source default/null/archive
+flags. For imported named, nonarchived rows with NULL defaults and explicit_none
+false, differing source/canonical completion booleans refuse before effects with
+an exact-workspace blocker. Matching states preserve native eligibility. Default,
+archived, explicit-none and already-referenced rows are exempt; marker mismatch
+alone cannot block them. Unknown populated source marker keys refuse explicitly.
+Later owner-write/recovery qualification must verify actual post-import startup
+and no accidental authority creation; a pure plan proves no startup effect.
+
+Workspace handoff audit rows support their fixed fields and typed audit/workspace
+identities only when manifest_json is a valid empty object, retaining the original
+text and original/mapped identity association. Nonempty, invalid or unknown
+manifests refuse with the exact audit/workspace reference before effects. The
+installed schema supplies no versioned manifest reference grammar; no guessed
+recursive rewrite, silent drop or invented grammar is safe. This narrow refusal
+leaves ordinary supported Workspace and unrelated history semantics intact.
+
+These dispositions preserve both databases' intent without replaying a global
+completion marker or pretending opaque audit references are understood. Some
+legacy rows consequently require a supported explicit default choice, matching
+native completion state or a separately reviewed manifest grammar before import.
+Originals and captures remain intact when preflight refuses.
