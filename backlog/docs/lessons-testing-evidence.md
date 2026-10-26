@@ -5060,6 +5060,17 @@ testing caught them:
 fails. If it still passes, the guard is decorative. Prefer **recording and asserting
 after the fact** over raising inside code that catches broadly.
 
+### Undo a mutation from the bytes you saved, never by replacing the mutant back (TASK-34000.40, 2026-10-26)
+
+A mutation harness swapped `draft if draft not in (…) else None` for a bare
+`            None` (12-space indent), ran the test, then "restored" with
+`text.replace(mutant, original)`. That 16-character mutant was also the tail
+of two unrelated lines -- `            None.` in a docstring and
+`                    None,` in a tuple -- so all three became the original
+expression. The harness's own sha256 check raised `RESTORE MISMATCH`; the two
+lines were put back by hand against `git show HEAD:`. Capture the file's bytes
+before mutating, write those bytes back, and assert the digest.
+
 ---
 
 ## Mount dispatch can be attached before it is mounted

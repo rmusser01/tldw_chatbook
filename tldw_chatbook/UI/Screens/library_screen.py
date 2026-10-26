@@ -959,6 +959,7 @@ def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
 _LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
     "library-note-back": "back to list",
     "library-note-context-back": "back to list",
+    "library-note-link-back": "back to previous note",  # TASK-34000.28 N-21
     "library-note-edit": "edit note",
     "library-note-preview": "preview note",
     "library-note-context": "show info",
@@ -4083,6 +4084,9 @@ class LibraryScreen(BaseAppScreen):
         #: focus was parked on before the loading recompose pruned it.
         self._library_notes_tree_pager_press: tuple[str, int] | None = None
         self._library_notes_tree_pager_parked: Widget | None = None
+        #: TASK-34000.28 ruling T5-a: the filter a Down in the box asked to
+        #: land on the first row of; any later key or click withdraws it.
+        self._library_notes_filter_row_handoff: str | None = None
         self._transcribe_cpp_configured = False
         self._transcription_default_model = "base"
         # One provisional external-root scope exists only while its captured
@@ -4803,38 +4807,25 @@ class LibraryScreen(BaseAppScreen):
             ("", progress),
         )
 
-    def _library_footer_shortcuts_for_current_state(
-        self,
+    def _library_typing_field_footer(
+        self, shortcuts: tuple[tuple[str, str], ...]
     ) -> tuple[tuple[str, str], ...]:
-        """Hide rail-search hints while the compact rail has no search box."""
-        if self._library_selected_row_id.startswith("artifacts-"):
-            focused_id = getattr(self.focused, "id", "")
-            if focused_id == "library-artifacts-list":
-                return (("↑↓", "select"), ("enter", "read"), ("/", "find"))
-            if focused_id == "library-artifacts-search":
-                return (("esc", "clear / items"),)
-            return (("esc", "items"), ("/", "find"))
-        shortcuts = self._library_route_shortcuts_for_current_state()
-        # task-32053 AC#3: on Search/RAG the "enter" chip names whatever the
-        # FOCUSED control's Enter genuinely does. The static set said
-        # "select evidence" everywhere -- in the query box (Enter runs the
-        # search) and on a source toggle (Enter empties the results), the
-        # two places the live walk actually pressed it.
-        enter_label = self._library_focus_enter_label()
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
-            shortcuts = tuple(
-                ("enter", enter_label) if pair[0] == "enter" else pair
-                for pair in shortcuts
-                if pair[0] != "enter" or enter_label
-            )
-        elif enter_label and not any(pair[0] == "enter" for pair in shortcuts):
-            # task-32546 AC#1: the same honest-footer rule on a surface whose
-            # static set has no "enter" chip to replace -- the Library
-            # landing, where Enter opens the focused "From your Library"
-            # row. Appended, not prepended, for the reason task-32246 AC#2
-            # records: the narrow stage keeps only the leading chips that
-            # fit, and naming focus is the smaller promise of the two.
-            shortcuts = shortcuts + (("enter", enter_label),)
+        """Announce a focused text field: "typing in field", its esc, "after esc:".
+
+        TASK-34000.40 (N-31): extracted from
+        ``_library_footer_shortcuts_for_current_state`` so the Notes tiers,
+        which run INSTEAD of that function while the Notes workflow is
+        active, announce a text field in the same grammar as the rest of
+        Library rather than silently dropping their printable chips.
+
+        Args:
+            shortcuts: The surface's own ``(key, label)`` entries.
+
+        Returns:
+            ``shortcuts`` unchanged unless an ``Input``/``TextArea`` holds
+            focus (and the below-64-column stand-down does not apply);
+            otherwise the typing form of the same entries.
+        """
         # task-31223 (re-critique P1): while a text field holds focus, every
         # single printable key is INSERTED AS TEXT, so advertising "] next
         # in set" or "s select" is the footer lying -- live, a stray "]"
@@ -4930,6 +4921,43 @@ class LibraryScreen(BaseAppScreen):
                 if narrow
                 else (status + esc_pairs + verbs + rest + f6_pairs)
             )
+        return shortcuts
+
+    def _library_footer_shortcuts_for_current_state(
+        self,
+    ) -> tuple[tuple[str, str], ...]:
+        """Hide rail-search hints while the compact rail has no search box."""
+        if self._library_selected_row_id.startswith("artifacts-"):
+            focused_id = getattr(self.focused, "id", "")
+            if focused_id == "library-artifacts-list":
+                return (("↑↓", "select"), ("enter", "read"), ("/", "find"))
+            if focused_id == "library-artifacts-search":
+                return (("esc", "clear / items"),)
+            return (("esc", "items"), ("/", "find"))
+        shortcuts = self._library_route_shortcuts_for_current_state()
+        # task-32053 AC#3: on Search/RAG the "enter" chip names whatever the
+        # FOCUSED control's Enter genuinely does. The static set said
+        # "select evidence" everywhere -- in the query box (Enter runs the
+        # search) and on a source toggle (Enter empties the results), the
+        # two places the live walk actually pressed it.
+        enter_label = self._library_focus_enter_label()
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            shortcuts = tuple(
+                ("enter", enter_label) if pair[0] == "enter" else pair
+                for pair in shortcuts
+                if pair[0] != "enter" or enter_label
+            )
+        elif enter_label and not any(pair[0] == "enter" for pair in shortcuts):
+            # task-32546 AC#1: the same honest-footer rule on a surface whose
+            # static set has no "enter" chip to replace -- the Library
+            # landing, where Enter opens the focused "From your Library"
+            # row. Appended, not prepended, for the reason task-32246 AC#2
+            # records: the narrow stage keeps only the leading chips that
+            # fit, and naming focus is the smaller promise of the two.
+            shortcuts = shortcuts + (("enter", enter_label),)
+        # TASK-34000.40 (N-31): the one typing-field transform, shared with
+        # the Notes tiers (``_library_notes_footer_shortcuts``).
+        shortcuts = LibraryScreen._library_typing_field_footer(self, shortcuts)
         emergency = self._library_emergency_return_eligibility()
         if emergency.enabled:
             shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
@@ -5240,6 +5268,7 @@ class LibraryScreen(BaseAppScreen):
             # ``_library_notes_role_target``.
             "library-notes-sort": "sort",
             "library-notes-notice-refresh": "notice-refresh",  # TASK-34000.28
+            "library-note-link-back": "link-back",  # TASK-34000.28 N-21
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
@@ -8514,6 +8543,7 @@ class LibraryScreen(BaseAppScreen):
             target = None
         self._advance_library_ordinary_emergency_user_interaction(target)
         self._mark_library_notes_user_interaction()
+        self._library_notes_filter_row_handoff = None
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -8613,15 +8643,15 @@ class LibraryScreen(BaseAppScreen):
             # which includes focus parked in the filter box or (after Escape)
             # the rail's own search box, so the footer read "/ find note"
             # while "/" was landing as a literal character and "abc" was
-            # going into "Search Library…". Same transform the shared
-            # Library tier applies (see ``_library_footer_shortcuts_for_
-            # current_state``), scoped to the keys this tier owns.
+            # going into "Search Library…". TASK-34000.40 (N-31): the shared
+            # Library transform does that now -- it moves the swallowed keys
+            # behind "after esc:" and announces "typing in field" -- instead
+            # of a Notes-only drop that said nothing.
             if typing:
-                tier = tuple(
-                    pair
-                    for pair in tier
-                    if not (len(pair[0]) == 1 and pair[0].isprintable())
-                )
+                # The "g" gate refuses inside a text field, so ask the half
+                # of it that holds after Escape: is a folder row rendered?
+                if not self._library_notes_folder_rows():
+                    tier = tuple(pair for pair in tier if pair[0] != "g")
             elif not self.check_action("library_notes_focus_folders", ()):
                 # No folder tree rendered (a flat list, or a list still
                 # loading): "g" would move nothing, so it is not advertised.
@@ -8629,7 +8659,9 @@ class LibraryScreen(BaseAppScreen):
                 tier = tuple(pair for pair in tier if pair[0] != "g")
             # task-32539 AC#1: after a confirmed delete focus parks on the
             # receipt's Undo, which this tier never named.
-            return self._with_library_notes_focus_chip(tier)
+            return self._with_library_notes_focus_chip(
+                self._library_typing_field_footer(tier)
+            )
         if region == "preview":
             # task-32537 AC#1: Tab moves across the mode buttons in Preview
             # exactly as it does in Edit, and a blind Enter there fires Use
@@ -8672,7 +8704,10 @@ class LibraryScreen(BaseAppScreen):
             )
             enter_label = self._library_focus_enter_label()
             if not enter_label:
-                return tuple(pair for pair in tier if pair[0] != "enter")
+                # TASK-34000.40 (N-31): Info's Keywords box is a text field.
+                return self._library_typing_field_footer(
+                    tuple(pair for pair in tier if pair[0] != "enter")
+                )
             return tuple(
                 (key, enter_label if key == "enter" else label) for key, label in tier
             )
@@ -8698,7 +8733,11 @@ class LibraryScreen(BaseAppScreen):
             # `_library_focus_enter_label` already uses, not a fresh query.
             if str(getattr(self.focused, "id", "") or "") != "library-note-body":
                 tier = tuple(pair for pair in tier if pair[0] != "ctrl+end")
-            return self._with_library_notes_focus_chip(tier)
+            # TASK-34000.40 (N-31): the body, Title and Keywords announce
+            # themselves like every other Library text field.
+            return self._with_library_notes_focus_chip(
+                self._library_typing_field_footer(tier)
+            )
         if region == "create":
             if self._notes_state.create_running:
                 return ()
@@ -9128,6 +9167,7 @@ class LibraryScreen(BaseAppScreen):
                     focused = self._move_library_screen_focus(-1)
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
+        self._library_notes_filter_row_handoff = None
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         if emergency_tab:
@@ -9156,6 +9196,16 @@ class LibraryScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
                 return
+        if (
+            event.key == "down"
+            and getattr(self.focused, "id", None) == "library-notes-filter"
+            and self._library_notes_workflow_active()
+            and self._library_notes_filter_down()
+        ):
+            # TASK-34000.28 N-21: Down leaves the filter for its first result.
+            event.stop()
+            event.prevent_default()
+            return
         if isinstance(self.focused, (Input, TextArea)):
             return
         if (
@@ -20378,10 +20428,14 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     def _begin_library_note_load(
-        self, note_id: str, *, entry_origin: bool = False
+        self,
+        note_id: str,
+        *,
+        entry_origin: bool = False,
+        link_origin: tuple[str, str] | None = None,
     ) -> None:
         return self._notes_controller._begin_library_note_load(
-            note_id, entry_origin=entry_origin
+            note_id, entry_origin=entry_origin, link_origin=link_origin
         )
 
     def _arm_library_note_editor(self, recompose_generation: int | None = None) -> None:
@@ -25245,6 +25299,10 @@ class LibraryScreen(BaseAppScreen):
             if browse_receipt is not None
             else self._focus_library_notes_filter_input
         )
+        # TASK-34000.40 (N-31): Clear means the box too -- the canvas carries
+        # an unsubmitted draft across this recompose otherwise.
+        for box in self.query("#library-notes-filter").results(Input):
+            box.value = ""
         _sync_library_canvas(self, "notes", then=restore)
 
     @on(Input.Submitted, "#library-notes-filter")
@@ -25257,7 +25315,18 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         submitted = self._safe_text(event.value, max_length=200).strip()
         if submitted == self._notes_state.filter:
+            # TASK-34000.28 N-21 (owner ruling, question 5): Enter on the
+            # unchanged, applied filter opens its first result -- the row's
+            # own press, so an open editor flushes first, as a click does.
+            if submitted and not self._notes_state.select_mode:
+                first = self._first_library_notes_note_row()
+                if first is not None:
+                    first.press()
             return
+        LibraryScreen._apply_library_notes_filter(self, submitted)
+
+    def _apply_library_notes_filter(self, submitted: str) -> None:
+        """Apply one changed filter: Enter, or Down over a draft (T5-a)."""
         LibraryScreen._supersede_library_notes_navigation(self, render=False)
         if submitted and not self._notes_state.filter:
             self._notes_state.filter_browse_receipt = (
@@ -25407,10 +25476,87 @@ class LibraryScreen(BaseAppScreen):
         ]
         if navigation_generation is None:
             _sync_library_canvas(
-                self, "notes", then=self._focus_library_notes_filter_input
+                self,
+                "notes",
+                then=partial(LibraryScreen._land_library_notes_filter, self, query),
             )
         else:
             self._sync_library_notes_tree_canvas_if_present()
+
+    def _land_library_notes_filter(self, query: str) -> None:
+        """Focus the box after a painted result, or its first row for a Down.
+
+        Ruling T5-a (TASK-34000.28 N-21): a Down that applied ``query`` (or
+        met it loading) hands focus to the NEW result's first row through the
+        list-entry arm, which falls back to the box on an empty result. A key
+        or click since then, or text typed since (the carried draft), cancels.
+        """
+        if self._library_notes_filter_row_handoff == query:
+            self._library_notes_filter_row_handoff = None
+            boxes = self.query("#library-notes-filter")
+            typed = boxes.first(Input).value if boxes else ""
+            if self._safe_text(typed, max_length=200).strip() == query:
+                self._arm_library_list_entry_focus()
+                return
+        self._focus_library_notes_filter_input()
+
+    def _library_notes_filter_down(self) -> bool:
+        """Down in the Notes filter: the first result row (TASK-34000.28 N-21).
+
+        Returns:
+            Whether the key was claimed. An unsubmitted draft is applied the
+            Enter way and the hand-off waits for the new result (ruling
+            T5-a), as does an applied result still loading; a painted one
+            focuses its first note row now. Never a row of a replaced result.
+        """
+        try:
+            box = self.query_one("#library-notes-filter", Input)
+        except (NoMatches, QueryError):
+            return False
+        draft = self._safe_text(box.value, max_length=200).strip()
+        if draft != self._notes_state.filter:
+            # An emptied box is the Enter way's clear, which returns to where
+            # browsing left off rather than to a first row.
+            self._library_notes_filter_row_handoff = draft or None
+            self._apply_library_notes_filter(draft)
+            return True
+        if self._library_notes_filter_loading():
+            self._library_notes_filter_row_handoff = draft
+            return True
+        first = self._first_library_notes_note_row()
+        if first is None:
+            return False
+        first.focus(scroll_visible=False)
+        first.scroll_visible(animate=False, immediate=True)
+        return True
+
+    def _library_notes_filter_loading(self) -> bool:
+        """Whether the applied filter's result has not been painted yet."""
+        applied = self._notes_state.filter
+        state = self._notes_state.tree_filter_state
+        return bool(applied) and (
+            state is None
+            or state.loading
+            or state.query != applied
+            or self._notes_state.filter_records is None
+        )
+
+    def _first_library_notes_note_row(self) -> Button | None:
+        """The painted result's first note row: Down's target, Enter's open.
+
+        The same first ``library-notes-row`` list-entry focus lands on, so
+        the three cannot disagree. ``None`` while the applied filter's result
+        is loading, so no key reaches a row of the result being replaced.
+        """
+        if self._library_notes_filter_loading():
+            return None
+        for row in self.query("#library-notes-list > .library-notes-row").results(
+            Button
+        ):
+            pruning = getattr(row, "_pruning", False)
+            if row.is_attached and not row.disabled and not pruning:
+                return row
+        return None
 
     def _focus_library_notes_filter_input(self) -> None:
         return self._notes_controller._focus_library_notes_filter_input()
@@ -31355,6 +31501,10 @@ class LibraryScreen(BaseAppScreen):
             event: Press of one ``.library-note-backlink`` row button.
         """
         return await self._notes_controller.handle_library_note_backlink(event)
+
+    @on(Button.Pressed, "#library-note-link-back")
+    async def handle_library_note_link_back(self, event: Button.Pressed) -> None:
+        return await self._notes_controller.handle_library_note_link_back(event)
 
     @on(Button.Pressed, ".library-notes-folder-row")
     def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:

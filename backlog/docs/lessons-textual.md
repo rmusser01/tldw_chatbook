@@ -918,6 +918,25 @@ Re-query after **every** await that could trigger a recompose, and take the refe
 the caller will act on *after* the last one — scrolling counts, because
 `scroll_to_widget` can itself provoke another reconciliation pass.
 
+## A canvas's own fields run ahead of its mounted children -- stamp what a child was composed for ON the child (TASK-34000.40, 2026-10-26)
+
+Escape in the Notes filter used to lose unsubmitted text, because the
+canvas-scoped sync's recompose rebuilt the box from the applied filter. The
+first fix carried a "draft" -- the box's text when it differed from the
+canvas's `filter_value` and from the incoming filter. dev's
+`test_library_shell_filtered_delete_refreshes_list_without_ghost` went red: a
+delete from a filtered list clears the filter in TWO syncs before one
+recompose. `sync_state` stores its fields and only schedules the rebuild, so on
+the second sync `filter_value` was already `""` while the mounted box still
+showed the applied `retro`, and `retro` was "carried" over the clear.
+
+**Rule.** To ask "did the user change this child since it was composed?",
+compare it with a value stamped on the child at compose time
+(`filter_box._library_applied_filter`), not with the container's field: a
+second sync before the first recompose has moved the field on. The same
+reason `LibraryNotesCanvas._apply_post_compose_state` gates on the mounted
+children rather than on `self.mode`.
+
 ## Textual focuses the clicked widget BEFORE the press bubbles — a click-outside dismissal must not restore the popup's opener
 
 **TASK-25709, 2026-08-30.** Wiring click-outside dismissal for the Context rail's
