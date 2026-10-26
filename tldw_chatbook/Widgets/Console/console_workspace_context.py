@@ -868,6 +868,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 ],
                 before,
                 after,
+                patchable_types=(ConsoleBrowserSearchInput,),
             )
         finally:
             if writes is None:

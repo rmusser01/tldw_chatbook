@@ -8,20 +8,24 @@ colour class -- and not their boxes, that rebuild is pure cost.
 
 ``plan_in_place_delta`` compares the off-DOM compose output for the state the
 widget shows (``before``) with the one for its next state (``after``) and,
-only when the two trees have the same shape, ids, inline styles and plain
-attributes, returns the writes that turn the mounted tree into ``after``:
+only when the two trees have the same shape, types, ids, inline styles and
+private state, returns the writes that turn the mounted tree into ``after``:
 
-* a tooltip, a class set, or a plain (str/int/float/bool/None) attribute;
+* a tooltip, a class set, or a public plain (str/int/float/bool/None)
+  attribute;
 * a Button label or Static content, only when the mounted widget's width and
-  height are both non-``auto`` -- its box cannot depend on its content, so a
-  repaint without layout lands the same geometry a rebuild would.
+  height are not sized by its content -- so a repaint without layout lands the
+  same geometry a rebuild would.
 
-Anything else returns ``None`` and the caller rebuilds as before. Each delta
-is also checked against the mounted widget (``mounted`` must still show the
-``before`` value), so a tree that drifted from the state it claims to show is
-rebuilt rather than patched. A class change that moves a layout rule still
-asks for its own layout through Textual's stylesheet, so the patch never
-needs to know which classes are visual.
+Anything else returns ``None`` and the caller rebuilds as before. Only types
+whose whole state this module reads are patched (``PATCHABLE_TYPES`` plus
+any the caller names): a widget that keeps content in other state, a list or
+a model object, would be left stale. Each delta is also checked against the
+mounted widget (``mounted`` must still show the ``before`` value), so a tree
+that drifted from the state it claims to show is rebuilt rather than
+patched. A class change that moves a layout rule still asks for its own
+layout through Textual's stylesheet, so the patch never needs to know which
+classes are visual.
 """
 
 from __future__ import annotations
@@ -30,14 +34,30 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from rich.text import Text
+from textual.containers import Container, Horizontal, Vertical
 from textual.content import Content
 from textual.widget import Widget
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Label, Static
 
+#: Types whose compose-time state this module reads in full: plain
+#: attributes, a label or content, a tooltip, classes and inline styles.
+PATCHABLE_TYPES: tuple[type[Widget], ...] = (
+    Button,
+    Container,
+    Horizontal,
+    Input,
+    Label,
+    Static,
+    Vertical,
+)
 _PLAIN_TYPES = (str, int, float, bool, type(None))
-#: Public attributes Textual sets per instance rather than per state:
-#: ``Widget.sort_order`` is a construction counter.
-_PER_INSTANCE_ATTRIBUTES = frozenset({"sort_order"})
+#: Plain attributes Textual sets per instance or per frame rather than from
+#: state: ``Widget.sort_order`` is a construction counter, the other two are
+#: message-pump timestamps.
+_PER_INSTANCE_ATTRIBUTES = frozenset({"sort_order", "_last_idle", "_last_scroll_time"})
+#: Private storage of the deltas compared (and written) through their public
+#: accessors below.
+_DELTA_STORAGE = frozenset({"_Static__content", "_tooltip"})
 
 
 def _flatten(
@@ -62,12 +82,13 @@ def _mounted_children(node: Widget) -> Sequence[Widget]:
     return [child for child in node.children if not child.has_class("-textual-system")]
 
 
-def _plain_attributes(node: Widget) -> dict[str, Any]:
+def _plain_attributes(node: Widget, *, private: bool) -> dict[str, Any]:
     return {
         name: value
         for name, value in vars(node).items()
-        if not name.startswith("_")
+        if name.startswith("_") is private
         and name not in _PER_INSTANCE_ATTRIBUTES
+        and name not in _DELTA_STORAGE
         and isinstance(value, _PLAIN_TYPES)
     }
 
@@ -93,14 +114,6 @@ def _key(value: Any) -> Any:
     return value
 
 
-def _fixed_inputs(node: Widget) -> tuple[Any, ...]:
-    """State a compose sets that this patch never rewrites."""
-    fixed: tuple[Any, ...] = (node.disabled,)
-    if isinstance(node, Input):
-        fixed += (node.value, node.placeholder, node.password)
-    return fixed
-
-
 def _box_ignores_content(node: Widget) -> bool:
     """True when neither of ``node``'s box sides is sized by its content.
 
@@ -119,6 +132,8 @@ def plan_in_place_delta(
     mounted: Sequence[Widget],
     before: Sequence[Widget],
     after: Sequence[Widget],
+    *,
+    patchable_types: tuple[type[Widget], ...] = (),
 ) -> list[Callable[[], None]] | None:
     """Return the writes that turn ``mounted`` into ``after``, or ``None``.
 
@@ -127,13 +142,17 @@ def plan_in_place_delta(
             not compose itself.
         before: Off-DOM compose output for the state ``mounted`` shows.
         after: Off-DOM compose output for the next state.
+        patchable_types: Caller-owned widget types, beyond
+            ``PATCHABLE_TYPES``, whose whole state lives in what this module
+            compares.
 
     Returns:
         Zero-argument writes to apply in order, or ``None`` when the delta
-        needs a rebuild (a different shape, a style or input change, a copy
-        change in a content-sized box, or a mounted tree that no longer shows
-        ``before``).
+        needs a rebuild (a different shape, an unlisted type, a style or
+        private-state change, a copy change in a content-sized box, or a
+        mounted tree that no longer shows ``before``).
     """
+    allowed = PATCHABLE_TYPES + patchable_types
     live = _flatten(mounted, _mounted_children)
     old = _flatten(before, _composed_children)
     new = _flatten(after, _composed_children)
@@ -143,13 +162,15 @@ def plan_in_place_delta(
     for (live_depth, node), (old_depth, was), (new_depth, will) in zip(live, old, new):
         if not live_depth == old_depth == new_depth:
             return None
-        if not type(node) is type(was) is type(will):
+        if not type(node) is type(was) is type(will) or type(node) not in allowed:
             return None
         if not node.id == was.id == will.id:
             return None
         if was.styles.inline.get_rules() != will.styles.inline.get_rules():
             return None
-        if _fixed_inputs(was) != _fixed_inputs(will):
+        if _plain_attributes(was, private=True) != _plain_attributes(
+            will, private=True
+        ):
             return None
         plan = _node_writes(node, was, will)
         if plan is None:
@@ -162,8 +183,8 @@ def _node_writes(
     node: Widget, was: Widget, will: Widget
 ) -> list[Callable[[], None]] | None:
     writes: list[Callable[[], None]] = []
-    old_attributes = _plain_attributes(was)
-    new_attributes = _plain_attributes(will)
+    old_attributes = _plain_attributes(was, private=False)
+    new_attributes = _plain_attributes(will, private=False)
     if old_attributes.keys() != new_attributes.keys():
         return None
     live_attributes = vars(node)

@@ -592,6 +592,14 @@ async def test_header_title_keeps_its_layout_when_status_changes(monkeypatch) ->
 # -- plan_in_place_delta: what it patches, and what it leaves to a rebuild ---
 
 
+class _ActionButton(Button):
+    """A caller-owned Button subclass carrying private, compose-set state."""
+
+    def __init__(self, *args, note: str = "", **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._note = note
+
+
 def _row_tree(
     *,
     icon: str = "*",
@@ -599,12 +607,20 @@ def _row_tree(
     cls: str = "",
     width: int | None = 4,
     extra=False,
+    note: str | None = None,
 ):
     from textual.containers import Horizontal
 
     def build() -> ComposeResult:
         with Horizontal(id="row"):
-            button = Button(icon, id="row-action", classes=cls or None, compact=True)
+            if note is None:
+                button = Button(
+                    icon, id="row-action", classes=cls or None, compact=True
+                )
+            else:
+                button = _ActionButton(
+                    icon, id="row-action", classes=cls or None, compact=True, note=note
+                )
             if width is not None:
                 button.styles.width = width
             button.styles.height = 1
@@ -630,7 +646,7 @@ class _DeltaHost(ConsolidatedCSSApp):
             yield from self._build()
 
 
-async def _plan(mounted_build, before_build, after_build, mutate=None):
+async def _plan(mounted_build, before_build, after_build, mutate=None, types=()):
     from textual.compose import compose
 
     from tldw_chatbook.Widgets.Console.compose_delta import plan_in_place_delta
@@ -643,7 +659,9 @@ async def _plan(mounted_build, before_build, after_build, mutate=None):
             mutate(host)
         before = compose(owner, before_build())
         after = compose(owner, after_build())
-        writes = plan_in_place_delta(list(owner.children), before, after)
+        writes = plan_in_place_delta(
+            list(owner.children), before, after, patchable_types=types
+        )
         if writes is not None:
             for write in writes:
                 write()
@@ -701,4 +719,21 @@ async def test_delta_rebuilds_a_new_shape_or_style() -> None:
     writes, _ = await _plan(_row_tree(), _row_tree(), _row_tree(extra=True))
     assert writes is None
     writes, _ = await _plan(_row_tree(), _row_tree(), _row_tree(width=5))
+    assert writes is None
+
+
+async def test_delta_rebuilds_a_type_it_cannot_read_in_full() -> None:
+    """An unlisted widget type may keep content where the diff cannot see it."""
+    tree = _row_tree(note="a")
+    writes, _ = await _plan(tree, tree, _row_tree(note="a", icon="R"))
+    assert writes is None
+    # Listed by its owner, the same delta patches...
+    writes, _ = await _plan(
+        tree, tree, _row_tree(note="a", icon="R"), types=(_ActionButton,)
+    )
+    assert writes is not None
+    # ...but a change in its private compose-set state still rebuilds.
+    writes, _ = await _plan(
+        tree, tree, _row_tree(note="b", icon="R"), types=(_ActionButton,)
+    )
     assert writes is None
