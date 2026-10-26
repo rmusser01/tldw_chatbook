@@ -1527,7 +1527,7 @@ permanent delete.
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list). In the filter: leave the field, keeping what you typed; the applied filter is unchanged. |
 | **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter; Enter again on the same filter opens the first result |
-| ↓ (in the filter) | Focus the first result row. Text you have not applied yet is applied first, the way Enter applies it, and focus lands on the first row of the new result; with no result, focus stays in the filter. An emptied box clears the filter, as Enter does, and focus lands on the first folder or note of the list. A key or click while the result is still loading cancels that move to the first row. |
+| ↓ (in the filter) | Focus the first result row. Text you have not applied yet is applied first, the way Enter applies it, and focus lands on the first row of the new result; with no result, focus stays in the filter. An emptied box clears the filter, as Enter does, and focus lands on the first folder or note of the list — the same row ↓ reaches from an empty box with no filter applied. Any key, click or mouse-wheel scroll while the result is still loading — including F6, Shift+F6 and Tab — or a dialog opening over Library cancels that move to the first row. |
 | **‹ \<note\>** (note heading) | After following a link or a backlink, returns to the note you came from (one hop) |
 | ↑ / ↓ (New note view) | Move between **Blank note**, **From a template…** and the template rows it opens |
 | Enter (New note view) | Create from the focused row |

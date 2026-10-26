@@ -1355,3 +1355,4 @@ Tests/UI/test_library_notes_tree_keys.py
 Tests/UI/test_library_notes_folder_picker_lists_every_folder.py
 Tests/UI/test_library_notes_move_never_false_conflicts.py
 Tests/UI/test_library_notes_filter_fast_path_and_draft.py
+Tests/UI/test_library_notes_filter_fast_path_and_draft_extended.py
