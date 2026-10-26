@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-23 11:02'
-updated_date: '2026-10-26 11:00'
+updated_date: '2026-10-26 11:20'
 labels:
   - tests
   - console
@@ -82,4 +82,6 @@ AC#2 is reworded to the order-dependence scope, and the rest is TASK-36478.1. Tw
 Every first config read in a bootstrap-profile test now rebuilds the settings cache (20-50 ms in isolation), as a per-test sandbox's first read already does.
 
 **Files.** Tests/conftest.py, Tests/test_bootstrap_profile_config_reset.py, backlog/docs/lessons-testing-evidence.md, and the task files TASK-36478, TASK-36478.1 and TASK-36478.2.
+
+**Review fix round (2026-10-26).** The fable pre-merge review found that the restore was skipped whenever an earlier step of isolate_test_environment's teardown raised; the 'native app workers remain uncertain' refusal does this under load. That gap is not on dev, where the leak is unconditional. The restore and the cache drop now run in a finally, and the helper drops the caches in a finally too. New test test_the_config_is_restored_even_when_an_earlier_teardown_step_raises: red on the previous head, green now. The PR body's evidence arithmetic is corrected (5 ids plus one -k group of 3 nodes), and it now says the decomposition file is unmarked: CI's decomposition shard is unchanged, and the fix applies to bootstrap_profile-marked tests.
 <!-- SECTION:NOTES:END -->

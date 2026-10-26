@@ -31,6 +31,7 @@ function that launches it.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -122,10 +123,41 @@ def probe_d_does_not_see_the_in_place_edit() -> None:
     assert config.load_settings()["chat_defaults"].get("model") != _IN_MEMORY_MODEL
 
 
-def test_a_bootstrap_profile_tests_config_changes_never_reach_the_next_one(
-    tmp_path: Path,
-) -> None:
-    """Run the probes in one fresh pytest process and require all of them pass."""
+@pytest.mark.bootstrap_profile
+def probe_e_writes_config_then_its_teardown_raises(request) -> None:
+    """A writer whose fixture teardown raises before the restore would run.
+
+    ``isolate_test_environment`` raises at teardown when a test's native app
+    workers are uncertain (``retire_test_app_owners`` sets the flag when the
+    default executor does not stop within its grace period, which happens
+    under load). The restore must still run (PR #3254's review).
+    """
+    from tldw_chatbook import config
+
+    stash = Path(os.environ[_STASH_ENV]).with_suffix(".teardown-raise")
+    stash.write_bytes(_bootstrap_config_path().read_bytes())
+    assert config.save_setting_to_cli_config(
+        "console.rail_state", _RAIL_KEY, {"right_open": True}
+    )
+    assert _bootstrap_config_path().read_bytes() != stash.read_bytes()
+    request.node._test_app_native_workers_uncertain = True
+
+
+@pytest.mark.bootstrap_profile
+def probe_f_sees_the_config_after_a_teardown_that_raised() -> None:
+    """The next bootstrap-profile test still starts from the untouched profile."""
+    from tldw_chatbook import config
+
+    stash = Path(os.environ[_STASH_ENV]).with_suffix(".teardown-raise")
+    assert stash.is_file(), "the raising writer probe must run first in this process"
+
+    assert _bootstrap_config_path().read_bytes() == stash.read_bytes()
+    rail_state = config.load_settings().get("console", {}).get("rail_state", {})
+    assert _RAIL_KEY not in rail_state
+
+
+def _run_probes(tmp_path: Path, selection: str) -> subprocess.CompletedProcess:
+    """Run the ``probe_*`` functions matching ``selection`` in one fresh pytest process."""
     profile = tmp_path / "profile"
     profile.mkdir(mode=0o700)
     environment = dict(os.environ)
@@ -146,7 +178,7 @@ def test_a_bootstrap_profile_tests_config_changes_never_reach_the_next_one(
     ):
         environment.pop(name, None)
 
-    result = subprocess.run(
+    return subprocess.run(
         [
             sys.executable,
             "-m",
@@ -154,6 +186,8 @@ def test_a_bootstrap_profile_tests_config_changes_never_reach_the_next_one(
             str(Path(__file__).relative_to(REPO_ROOT)),
             "-o",
             "python_functions=probe_*",
+            "-k",
+            selection,
             "-p",
             "pytest_asyncio.plugin",
             "-p",
@@ -161,6 +195,7 @@ def test_a_bootstrap_profile_tests_config_changes_never_reach_the_next_one(
             "-p",
             "no:cacheprovider",
             "-q",
+            "-rA",
             f"--basetemp={tmp_path / 'child'}",
         ],
         cwd=REPO_ROOT,
@@ -171,6 +206,34 @@ def test_a_bootstrap_profile_tests_config_changes_never_reach_the_next_one(
         check=False,
     )
 
+
+def test_a_bootstrap_profile_tests_config_changes_never_reach_the_next_one(
+    tmp_path: Path,
+) -> None:
+    """Run the four writer/reader probes in one fresh pytest process; all pass."""
+    result = _run_probes(tmp_path, "probe_a or probe_b or probe_c or probe_d")
+
     output = result.stdout + result.stderr
     assert result.returncode == 0, output[-6000:]
     assert "4 passed" in output, output[-6000:]
+
+
+def test_the_config_is_restored_even_when_an_earlier_teardown_step_raises(
+    tmp_path: Path,
+) -> None:
+    """The writer's teardown errors on purpose; the reader after it still passes."""
+    result = _run_probes(tmp_path, "probe_e or probe_f")
+
+    output = result.stdout + result.stderr
+    # The writer itself passes and then errors at teardown, as designed.
+    assert "Native app workers remain uncertain" in output, output[-6000:]
+    summary = output.strip().splitlines()[-1]
+    assert re.search(r"\b2 passed\b", summary), output[-6000:]
+    assert re.search(r"\b1 error\b", summary), output[-6000:]
+    assert "failed" not in summary, output[-6000:]
+    passed = [
+        line
+        for line in output.splitlines()
+        if line.startswith("PASSED ") and "probe_f_" in line
+    ]
+    assert passed, output[-6000:]

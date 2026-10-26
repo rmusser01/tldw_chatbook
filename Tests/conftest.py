@@ -1257,21 +1257,25 @@ def _restore_bootstrap_profile_config(
     # The process-wide write lock every config save holds, so a write still
     # finishing on another thread cannot interleave with the restore.
     with config_module._config_file_lock():
-        if _read_config_bytes(config_path) != before:
-            if before is None:
-                config_path.unlink(missing_ok=True)
-            else:
-                staged = config_path.with_name(f".{config_path.name}.restore")
-                staged.unlink(missing_ok=True)
-                # The mode config.py's own writer gives the file
-                # (`Utils/private_paths._PRIVATE_FILE_MODE`).
-                descriptor = os.open(
-                    staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-                )
-                with os.fdopen(descriptor, "wb") as handle:
-                    handle.write(before)
-                os.replace(staged, config_path)
-        config_module._invalidate_config_caches()
+        try:
+            if _read_config_bytes(config_path) != before:
+                if before is None:
+                    config_path.unlink(missing_ok=True)
+                else:
+                    staged = config_path.with_name(f".{config_path.name}.restore")
+                    staged.unlink(missing_ok=True)
+                    # The mode config.py's own writer gives the file
+                    # (`Utils/private_paths._PRIVATE_FILE_MODE`).
+                    descriptor = os.open(
+                        staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
+                    with os.fdopen(descriptor, "wb") as handle:
+                        handle.write(before)
+                    os.replace(staged, config_path)
+        finally:
+            # A failed write still drops the caches, so an in-place edit of
+            # the cached settings cannot outlive the test either.
+            config_module._invalidate_config_caches()
 
 
 def _shutdown_prompts_interop_if_loaded():
@@ -1832,17 +1836,21 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
 
     yield test_data_dir
 
-    if getattr(request.node, "_test_app_native_workers_uncertain", False):
-        raise RuntimeError(
-            "Native app workers remain uncertain; config retirement refused"
-        )
-    if config is not None:
-        _shutdown_prompts_interop_if_loaded()
-        _reset_config_database_instances(config)
-    if reset_bootstrap_config:
-        _restore_bootstrap_profile_config(
-            config, bootstrap_config_path, bootstrap_config_before
-        )
+    try:
+        if getattr(request.node, "_test_app_native_workers_uncertain", False):
+            raise RuntimeError(
+                "Native app workers remain uncertain; config retirement refused"
+            )
+        if config is not None:
+            _shutdown_prompts_interop_if_loaded()
+            _reset_config_database_instances(config)
+    finally:
+        # Even when a step above raises: otherwise this test's config writes
+        # reach every later bootstrap-profile test (PR #3254's review).
+        if reset_bootstrap_config:
+            _restore_bootstrap_profile_config(
+                config, bootstrap_config_path, bootstrap_config_before
+            )
 
 
 # ========== Test Data Fixtures ==========
