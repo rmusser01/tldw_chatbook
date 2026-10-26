@@ -2253,10 +2253,12 @@ class ConsoleComposerBar(Horizontal):
         classes.update(("w-auto", "h-1") if visible else ("w-0", "h-0"))
         # Clearing a scalar style requests a whole-screen layout even when no
         # inline rule is set, and this runs on every 0.2 s run tick
-        # (TASK-33620.15.7): clear only rules that exist.
-        stale = [name for name in ("width", "height") if strip.styles.inline.has_rule(name)]
-        if stale:
-            strip.set_styles(**dict.fromkeys(stale))
+        # (TASK-33620.15.7): clear only rules that exist. Each reset is a
+        # literal None so ADR-161's style inventory reads it as a reset.
+        if strip.styles.inline.has_rule("width"):
+            strip.set_styles(width=None)
+        if strip.styles.inline.has_rule("height"):
+            strip.set_styles(height=None)
         strip.set_classes(classes)
         strip.styles.min_width = 0
         strip.styles.max_width = cap

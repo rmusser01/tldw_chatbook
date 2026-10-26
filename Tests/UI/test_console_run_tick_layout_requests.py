@@ -275,6 +275,40 @@ async def test_unchanged_send_reason_resync_requests_no_layout(monkeypatch) -> N
         )
 
 
+@pytest.mark.parametrize("stale", [("width",), ("height",), ("width", "height")])
+async def test_send_reason_resync_still_clears_stale_inline_sizes(
+    monkeypatch, stale
+) -> None:
+    """The strip's size classes stay authoritative over a leftover inline rule.
+
+    The resync clears ``width``/``height`` only when an inline rule exists (so
+    an unchanged tick requests no layout); each rule must still be cleared on
+    its own when it is the only one present.
+    """
+    requests = _LayoutRequests(monkeypatch)
+    composer = ConsoleComposerBar()
+    running = dict(
+        has_draft=False,
+        run_active=True,
+        can_save_chatbook=False,
+        send_blocked=True,
+        queue_blocked_reason="Type to queue",
+    )
+    async with _Host(composer).run_test(size=(160, 10)) as pilot:
+        composer.sync_action_state(**running)
+        await pilot.pause()
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        for name in stale:
+            setattr(strip.styles, name, 7)
+        assert all(strip.styles.inline.has_rule(name) for name in stale)
+        with requests.counting() as calls:
+            composer.sync_action_state(**running)
+        assert not [n for n in ("width", "height") if strip.styles.inline.has_rule(n)]
+        assert "Static#console-send-disabled-reason" in _names(calls)
+        await pilot.pause()
+        assert strip.size.height == 1
+
+
 # -- ConsoleStatusText: the run/cost line --------------------------------
 
 
