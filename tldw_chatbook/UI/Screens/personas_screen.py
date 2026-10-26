@@ -4310,8 +4310,23 @@ class PersonasScreen(BaseAppScreen):
         mode = self.state.active_mode
         self._search_debounce_timer = self.set_timer(
             PERSONAS_SEARCH_DEBOUNCE_SECONDS,
-            lambda: self._start_debounced_search_render(query=query, mode=mode),
+            lambda: self._search_timer_fired(query=query, mode=mode),
         )
+
+    def _search_timer_fired(self, *, query: str, mode: str) -> None:
+        """A debounce timer fired: start its render unless a newer keystroke superseded it.
+
+        A timer stopped as it fires can still run its callback. Starting the
+        stale query's render would clear ``_search_debounce_timer``, which by
+        then names the newer keystroke's live timer, and Enter in the search
+        box would take the search for done (it owed no landing and put the
+        cursor on the previous results' first row, then the live timer's
+        search landed without it). That hole is on dev today (it shows under
+        load) and is closed here.
+        """
+        if query != self.state.search_query or mode != self.state.active_mode:
+            return
+        self._start_debounced_search_render(query=query, mode=mode)
 
     @on(PersonaSortCycleRequested)
     async def _handle_sort_cycle(self, message: PersonaSortCycleRequested) -> None:

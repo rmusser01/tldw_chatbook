@@ -2836,3 +2836,39 @@ def test_the_2_s_bound_and_its_fallback_are_gone():
     """AC#4: no wait cap and no wait helper are left on the screen module."""
     assert not hasattr(personas_screen_module, "_SEARCH_SUBMIT_WAIT_SECONDS")
     assert not hasattr(personas_screen_module, "_wait_at_most")
+
+
+async def test_a_stale_debounce_timer_firing_does_not_hide_the_live_search_from_enter(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """A debounce timer stopped as it fires can still run its callback. On dev
+    today (it shows under load) that callback cleared ``_search_debounce_timer``
+    while it named the newer keystroke's live timer, so Enter in the search box
+    took the search for done: it put the cursor on the previous results' first
+    row, and the live timer's search then landed without a cursor (B2a's Enter
+    test failed 2 runs in 6 under CPU load on this). Fixed here: a stale
+    callback starts nothing and leaves the live timer alone, so Enter starts
+    the live search and owes its landing."""
+    target = volume_348.get_character_card_by_name("Character 0042")
+    monkeypatch.setattr(
+        personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await pilot.press("ctrl+f", *"Character 004")
+        stale = screen._search_debounce_timer
+        assert stale is not None
+        await pilot.press("2")
+        live = screen._search_debounce_timer
+        assert live is not None and live is not stale
+        stale._callback()  # the stopped timer's callback, still delivered
+        assert screen._search_debounce_timer is live
+        await pilot.press("enter")
+        await wait_until(
+            pilot,
+            lambda: highlighted_item_id(screen) == f"character:{target['id']}",
+            what="the first match under the cursor",
+        )
+        assert visible_item_ids(screen) == (f"character:{target['id']}",)
