@@ -14,6 +14,12 @@ holds the first four arms).
 - Fix round 2, R2-4: with nothing applied, Down from the empty box lands on
   the browse tree's first row (a folder here), exactly as after a clear; an
   empty tree leaves focus in the box.
+- PR #3259 CI fix round 1: ``/`` pressed right after Back from a note, while
+  the list's source snapshot is still loading, keeps the filter -- Back's
+  "focus the row you came from" hand-off, which waits for that snapshot,
+  yields to the user's own move instead of landing over it; and Down's
+  landing on the new result no longer loses a race to the box's own queued
+  focus event.
 
 Same harness as the first file: the real ``LibraryScreen`` with the
 production stylesheet over a real ChaChaNotes database.
@@ -21,6 +27,7 @@ production stylesheet over a real ChaChaNotes database.
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 from types import SimpleNamespace
 
@@ -44,6 +51,7 @@ from Tests.UI.test_library_notes_filter_fast_path_and_draft import (
     _first_tree_row,
     _focused_id,
     _footer_withholds_after_esc,
+    _box,
     _HeldSearch,
     _list,
     _mounted,
@@ -138,6 +146,229 @@ async def test_the_way_back_to_a_deleted_origin_warns_and_writes_nothing(
 
         # A real key still works: "/" reaches the filter.
         await _slash_to_filter(screen, pilot)
+
+
+class _HeldSnapshot:
+    """The screen's real source-snapshot read, held until ``release`` is set,
+    so a key can land while Back's list refresh is still in flight (the
+    window a slow CI runner widens: PR #3259 shard 9)."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.answered = asyncio.Event()
+
+    async def __call__(self):
+        self.entered.set()
+        await self.release.wait()
+        snapshot = await self._real()
+        # The worker applies the answer and schedules Back's hand-off in the
+        # same step it resumes in, before the test's next turn.
+        self.answered.set()
+        return snapshot
+
+
+async def _after_the_snapshot_lands(screen, pilot, held: _HeldSnapshot) -> None:
+    """Release the held read; return once everything its answer scheduled ran.
+
+    The answer schedules Back's hand-off with ``call_after_refresh`` -- at
+    once when it changed nothing on screen, or from the entry reconcile it
+    always queues (``_complete_library_entry_reconcile``) -- so the wait is
+    for that reconcile to finish, then for a marker scheduled the same way
+    after it (one FIFO queue): a hand-off that would land has landed.
+    """
+    held.release.set()
+    await _wait(pilot, held.answered.is_set, "the held snapshot to answer")
+    await _wait(
+        pilot,
+        lambda: screen._library_entry_reconcile_pending is None,
+        "the snapshot's entry reconcile to finish",
+    )
+    landed = asyncio.Event()
+    screen.call_after_refresh(landed.set)
+    await _wait(pilot, landed.is_set, "one refresh after the reconcile")
+
+
+async def _back_with_the_snapshot_held(screen, pilot, monkeypatch, real) -> _HeldSnapshot:
+    """Escape from the open note with its list refresh held in flight."""
+    held = _HeldSnapshot(real)
+    monkeypatch.setattr(screen, "_list_local_source_snapshot", held)
+    await pilot.press("escape")
+    await _wait(pilot, held.entered.is_set, "Back's list snapshot refresh")
+    await _wait(
+        pilot,
+        lambda: screen._notes_state.view == "list" and _box(screen) is not None,
+        "Back to the list",
+    )
+    assert screen._notes_state.pending_focus_waits_for_snapshot, (
+        "sanity: Back's hand-off should still be waiting for the snapshot"
+    )
+    return held
+
+
+async def test_slash_right_after_back_keeps_the_filter_when_the_list_snapshot_lands(
+    tmp_path, monkeypatch
+) -> None:
+    """Back from a note, then ``/`` before the list's snapshot refresh lands.
+
+    Back arms a hand-off -- focus the row the note was opened from -- that
+    waits for the source snapshot its exit refetches. The user's own move in
+    the meantime must win: when the held snapshot is released, focus stays in
+    the filter and the next keys type there. Every focus write after ``/`` is
+    recorded, so "no row took focus" is a counted claim. Control, same boot:
+    with no move, the released hand-off still focuses the row (a recorded
+    write: a canvas sync already in flight can restore its own older capture
+    over it afterwards, a separate race measured on the base too -- 5 of 16).
+
+    Base (``ddb9693e3b``, and dev ``38623632e9``): the released snapshot's
+    hand-off focused the note row over the filter -- the shard-9 red of
+    ``test_down_with_an_unsubmitted_draft_applies_it_and_lands_on_the_new_result``.
+    """
+    host, seeded = _mounted(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _notes_ready(host, pilot)
+        real = screen._list_local_source_snapshot
+
+        focus_writes: list[object] = []
+        real_set_focus = screen.set_focus
+
+        def _recording_set_focus(widget, *args, **kwargs):
+            focus_writes.append(widget)
+            return real_set_focus(widget, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "set_focus", _recording_set_focus)
+
+        def _note_rows_focused() -> list[object]:
+            return [
+                target
+                for target in focus_writes
+                if getattr(target, "has_class", lambda _c: False)("library-notes-row")
+            ]
+
+        # Control: nothing moved, so the released hand-off focuses Thesis.
+        _row_titled(screen, THESIS).press()
+        await _armed_editor(screen, pilot, seeded.thesis_id)
+        held = await _back_with_the_snapshot_held(screen, pilot, monkeypatch, real)
+        focus_writes.clear()
+        await _after_the_snapshot_lands(screen, pilot, held)
+        await _wait(
+            pilot,
+            lambda: any(
+                getattr(row, "note_id", "") == seeded.thesis_id
+                for row in _note_rows_focused()
+            ),
+            lambda: f"Back's hand-off to the Thesis row (focus {_focused_id(screen)!r})",
+        )
+
+        # The user moves first: ``/`` before the snapshot lands.
+        await _wait(
+            pilot,
+            lambda: (row := _row_titled(screen, THESIS)) is not None
+            and row.is_attached
+            and screen.focused is not None,
+            "the list to settle with the Thesis row mounted",
+        )
+        _row_titled(screen, THESIS).press()
+        await _armed_editor(screen, pilot, seeded.thesis_id)
+        held = await _back_with_the_snapshot_held(screen, pilot, monkeypatch, real)
+        await _slash_to_filter(screen, pilot)
+        focus_writes.clear()
+        await _after_the_snapshot_lands(screen, pilot, held)
+        # A recompose in flight can park focus on nothing for a frame, so the
+        # filter is waited for; the recorder catches a row that took focus
+        # even for one frame, through the typing below.
+        await _wait(
+            pilot,
+            lambda: _focused_id(screen) == "library-notes-filter",
+            lambda: (
+                "focus to stay in the filter once the snapshot landed "
+                f"(focus {_focused_id(screen)!r})"
+            ),
+        )
+        # A real key still works: the next keys type into the filter.
+        await _type_into(screen, pilot, "rec", "rec")
+        rows = [getattr(row, "id", row) for row in _note_rows_focused()]
+        assert rows == [], f"a note row took focus after `/`: {rows}"
+
+
+async def test_down_lands_on_the_result_even_when_the_box_focus_event_is_handled_first(
+    tmp_path, monkeypatch
+) -> None:
+    """``/``, ``thes``, Down: the landing on the new result's first row must
+    not depend on winning a race (PR #3259 CI fix round 1).
+
+    The landing runs in the painted result's canvas-sync ``then``, right
+    after that sync restored focus to the box. Its list-entry arm tried only
+    after the next refresh, and when the box's queued DescendantFocus was
+    handled first -- a slow runner's order -- it read as the user leaving the
+    list and disarmed the landing: focus stayed in the box (1 of 10 runs of
+    ``test_down_with_an_unsubmitted_draft_applies_it_and_lands_on_the_new_result``
+    under CPU load). Here the arm's after-refresh attempt is held until that
+    event has been handled, which makes the slow order certain.
+
+    Base (``ddb9693e3b``): focus stays in the filter.
+    """
+    host, seeded = _mounted(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _notes_ready(host, pilot)
+        await _slash_to_filter(screen, pilot)
+        await _type_into(screen, pilot, "thes", "thes")
+
+        sequence: list[tuple[str, str]] = []
+        held_attempts: list[int] = []
+        real_attempt = screen._focus_library_list_entry_if_current
+        real_arm = LibraryScreen._arm_library_list_entry_focus
+        real_focus_event = LibraryScreen.on_descendant_focus
+
+        def _arm(self, *args, **kwargs):
+            sequence.append(("arm", ""))
+            return real_arm(self, *args, **kwargs)
+
+        def _focus_event(self, event):
+            sequence.append(("focus-event", str(getattr(event.widget, "id", "") or "")))
+            return real_focus_event(self, event)
+
+        monkeypatch.setattr(LibraryScreen, "_arm_library_list_entry_focus", _arm)
+        monkeypatch.setattr(LibraryScreen, "on_descendant_focus", _focus_event)
+        monkeypatch.setattr(
+            screen, "_focus_library_list_entry_if_current", held_attempts.append
+        )
+        await pilot.press("down")
+
+        def _box_event_after_the_arm() -> bool:
+            if ("arm", "") not in sequence:
+                return False
+            after = sequence[sequence.index(("arm", "")) + 1 :]
+            return ("focus-event", "library-notes-filter") in after
+
+        await _wait(
+            pilot,
+            lambda: bool(held_attempts) and _box_event_after_the_arm(),
+            lambda: f"the landing's arm and the box's queued focus event ({sequence})",
+        )
+        for generation in list(held_attempts):
+            real_attempt(generation)
+
+        def _landed() -> bool:
+            focused = screen.focused
+            return bool(
+                screen._notes_state.filter == "thes"
+                and focused is not None
+                and focused.is_attached
+                and focused.has_class("library-notes-row")
+                and getattr(focused, "note_id", "") == seeded.thesis_id
+                and "filter: thes · 1 result" in _status(host, screen)
+            )
+
+        await _wait(
+            pilot,
+            _landed,
+            lambda: (
+                f"Down to land on the thes result (focus {_focused_id(screen)!r}, "
+                f"status {_status(host, screen)!r})"
+            ),
+        )
 
 
 async def test_a_sibling_list_filter_withholds_after_esc_keys_too(tmp_path) -> None:
@@ -400,17 +631,26 @@ async def test_down_from_an_empty_box_over_an_empty_tree_leaves_focus_in_the_box
 async def test_input_on_key_never_sees_withdraws_a_pending_down(site, event) -> None:
     """R2-2 (screen-level): the note fields' PRIORITY Tab/Shift+Tab reach the
     screen's focus actions without passing ``on_key``, and the wheel has its
-    own handlers -- each withdraws a pending Down's move to the first row."""
+    own handlers -- each withdraws a pending Down's move to the first row,
+    and (PR #3259 CI fix round 1) Back's pending hand-off to its row."""
     screen = SimpleNamespace(
         _library_notes_filter_row_handoff=("thes", True),
+        _notes_state=SimpleNamespace(
+            pending_focus_identity=object(),
+            pending_focus_waits_for_snapshot=True,
+            pending_focus_generation=7,
+        ),
         _library_pending_list_entry_focus=False,
         _mark_library_notes_user_interaction=lambda: None,
         _advance_library_ordinary_emergency_user_interaction=lambda _w: None,
         _move_library_screen_focus=lambda _d: None,
     )
-    screen._withdraw_library_notes_filter_row_handoff = partial(
-        LibraryScreen._withdraw_library_notes_filter_row_handoff, screen
+    screen._withdraw_library_notes_pending_focus_handoffs = partial(
+        LibraryScreen._withdraw_library_notes_pending_focus_handoffs, screen
     )
     handler = getattr(LibraryScreen, site)
     handler(screen) if event is None else handler(screen, event)
     assert screen._library_notes_filter_row_handoff == ("thes", False)
+    assert screen._notes_state.pending_focus_identity is None
+    assert screen._notes_state.pending_focus_waits_for_snapshot is False
+    assert screen._notes_state.pending_focus_generation is None
