@@ -429,7 +429,10 @@ empty occupancy, without creating a target.
 `workspace_plan()` preserves original rows and projects named Workspace IDs,
 collision-safe names, memberships, RAG note references, settings and exact folder
 binding locators/metadata through those shared reservations. Default selection
-remains canonical. Malformed binding metadata, ambiguous Default content,
+remains canonical. Default consent and RAG sidecars are compared in both
+directions, including native disabled/unscoped absence and ordinary-empty RAG;
+equivalent source rows never replace canonical Default sidecars. Malformed
+binding metadata, ambiguous Default content,
 unproven external Media references and nonempty handoff manifests produce exact
 body-free blockers. The DB-wide assistant-default backfill frontier is not copied;
 completion-state differences block only native-eligible imported Workspaces.
@@ -438,7 +441,9 @@ Binding holds are a proposed set, never persisted or activated by this plan.
 `authority_reference()` proves existing Persona/permission-profile references
 using the same canonical captured raw owner/member and complete bytes, installed
 strict semantics and actual source/target ownership plus generation/activation
-provenance. It imports no raw authority. Newly owned streams, members and parent
+provenance. Selector payloads are decoded by the native pure config parser only
+after bounded, pinned, custodied byte acquisition. It imports no raw authority.
+Newly owned streams, members and parent
 pins use actual custody; inherited native control readers retain their existing
 lifetimes. Evals' private passive metadata path recognizes only the actual issued
 mobile discovery scope for current `recovery_pending`; ordinary startup and

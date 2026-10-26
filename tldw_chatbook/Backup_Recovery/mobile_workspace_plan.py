@@ -132,6 +132,22 @@ def _scope(payload, identities):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _default_sidecar_meaning(table, row):
+    """Compare native Default policy, including missing and ordinary-empty rows."""
+    if table == "workspace_change_review":
+        return row is not None and bool(row["enabled"])
+    if row is None:
+        return None
+    from tldw_chatbook.Chat.rag_scope import parse_scope
+
+    scope = parse_scope(_object(row["payload"]))
+    if scope is None:
+        raise ValueError("default_scope_unrepresentable")
+    if not scope.items and not scope.empty_is_scoped:
+        return None
+    return frozenset(scope.items)
+
+
 def _plan_workspaces(reads):
     from tldw_chatbook.Workspaces.registry_service import (
         _membership_from_row,
@@ -311,23 +327,36 @@ def _plan_workspaces(reads):
         emit("workspace_memberships", row)
 
     for table in ("workspace_rag_scopes", "workspace_change_review"):
-        target_by_workspace = {row["workspace_id"]: row for row in canonical[table]}
+        source_default = next(
+            (dict(row) for row in source[table] if row["workspace_id"] == _DEFAULT),
+            None,
+        )
+        target_default = next(
+            (row for row in canonical[table] if row["workspace_id"] == _DEFAULT), None
+        )
+        try:
+            if source_default is not None and table == "workspace_rag_scopes":
+                source_default["payload"] = _scope(
+                    source_default["payload"], identities
+                )
+            if _default_sidecar_meaning(
+                table, source_default
+            ) != _default_sidecar_meaning(table, target_default):
+                raise ValueError("default_setting_conflict")
+        except (TypeError, ValueError) as error:
+            block(
+                table, _DEFAULT, _DEFAULT, "scope_or_default_dependency_unproven", error
+            )
         for original in source[table]:
             row = dict(original)
             workspace = row["workspace_id"]
+            # The canonical Default policy, including absence, remains untouched.
+            if workspace == _DEFAULT:
+                continue
             try:
                 row["workspace_id"] = identities.mapped("workspace", workspace)
                 if table == "workspace_rag_scopes":
                     row["payload"] = _scope(row["payload"], identities)
-                if workspace == _DEFAULT and workspace in target_by_workspace:
-                    other = target_by_workspace[workspace]
-                    if table == "workspace_rag_scopes":
-                        equal = _object(row["payload"]) == _object(other["payload"])
-                    else:
-                        equal = row["enabled"] == other["enabled"]
-                    if not equal:
-                        raise ValueError("default_setting_conflict")
-                    continue
             except (TypeError, ValueError) as error:
                 block(
                     table,

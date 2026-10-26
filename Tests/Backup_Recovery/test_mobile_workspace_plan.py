@@ -29,6 +29,7 @@ def workspace_reads(
     unknown_marker=False,
     unsupported_study=False,
     reserved_suffix=False,
+    default_sidecars=None,
 ):
     from tldw_chatbook.Backup_Recovery.inventory import discover, read_profile_config
     from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
@@ -47,6 +48,34 @@ def workspace_reads(
             (stores.workspace_path, target_complete),
         ):
             with sqlite3.connect(path) as connection:
+                if default_sidecars is not None:
+                    state = default_sidecars[
+                        0 if path == source / "workspaces.db" else 1
+                    ]
+                    for table in ("workspace_change_review", "workspace_rag_scopes"):
+                        connection.execute(
+                            "DELETE FROM "
+                            + table
+                            + " WHERE workspace_id='workspace-default'"
+                        )
+                    if state is not None:
+                        connection.execute(
+                            "INSERT INTO workspace_change_review VALUES ('workspace-default',?,'2026-10-25')",
+                            (int(state),),
+                        )
+                        connection.execute(
+                            "INSERT INTO workspace_rag_scopes VALUES ('workspace-default',?,'2026-10-25')",
+                            (
+                                json.dumps(
+                                    {
+                                        "version": 2,
+                                        "updated_at": "2026-10-25",
+                                        "items": [],
+                                        "empty_is_scoped": state,
+                                    }
+                                ),
+                            ),
+                        )
                 if completed:
                     connection.execute(
                         "INSERT INTO workspace_agent_backfill VALUES ('assistant_defaults', '2026-10-25')"
@@ -428,3 +457,60 @@ def test_unknown_frontier_and_malformed_binding_do_not_silently_drop_meaning(
             ("binding", "binding_unrepresentable"),
         }
         assert not plan.binding_holds
+
+
+@pytest.mark.parametrize(
+    "source_state,target_state",
+    ((True, None), (None, True), (None, None), (False, None), (None, False)),
+)
+def test_default_sidecars_compare_both_native_absence_states(
+    tmp_path, monkeypatch, source_state, target_state
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    with workspace_reads(
+        tmp_path, monkeypatch, default_sidecars=(source_state, target_state)
+    ) as reads:
+        meanings = []
+        for purpose in ("legacy", "canonical"):
+            connection = reads._connections[purpose, "workspaces"][0]
+
+            @contextmanager
+            def native_connection(connection=connection):
+                original_factory = connection.row_factory
+                connection.row_factory = sqlite3.Row
+                try:
+                    yield connection
+                finally:
+                    connection.row_factory = original_factory
+
+            registry = LocalWorkspaceRegistryService(
+                SimpleNamespace(connection=native_connection)
+            )
+            enabled = registry.change_review_enabled("workspace-default")
+            scope = registry.get_workspace_scope("workspace-default")
+            meanings.append((enabled, scope is not None))
+        assert meanings == [
+            (bool(source_state), source_state is True),
+            (bool(target_state), target_state is True),
+        ]
+        plan = reads.workspace_plan()
+        expected = (
+            set()
+            if meanings[0] == meanings[1]
+            else {
+                (table, "workspace-default", "workspace-default")
+                for table in ("workspace_change_review", "workspace_rag_scopes")
+            }
+        )
+        assert {
+            (row.table, row.identity, row.workspace_id) for row in plan.blockers
+        } == expected
+        assert all(
+            dict(row.values).get("workspace_id") != "workspace-default"
+            for row in plan.rows
+            if row.table in {"workspace_change_review", "workspace_rag_scopes"}
+        )
+        assert any(row.table == "workspace_records" for row in plan.rows)

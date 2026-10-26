@@ -521,10 +521,15 @@ def read_profile_config(selected: Path) -> dict:
     with os.fdopen(os.open(selected, flags), "rb") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError("config_unavailable")
-        raw_config = tomllib.load(stream)
-        if DISCOVERY_CONTEXT_KEY in raw_config:
-            raise ValueError("reserved_context_key")
-        return _ProfileSelectors.model_validate(raw_config).model_dump()
+        return _parse_profile_config(stream.read())
+
+
+def _parse_profile_config(payload: bytes) -> dict:
+    """Apply the installed selector decoding/validation to already owned bytes."""
+    raw_config = tomllib.loads(payload.decode("utf-8"))
+    if DISCOVERY_CONTEXT_KEY in raw_config:
+        raise ValueError("reserved_context_key")
+    return _ProfileSelectors.model_validate(raw_config).model_dump()
 
 
 def discover(

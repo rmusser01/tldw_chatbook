@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -23,13 +24,48 @@ def _raw_fault(tmp_path, monkeypatch, phase):
     native_close = archive_reader.os.close
     native_bytes = mobile_captured_authority._checked_bytes
     native_payload = mobile_captured_authority._payload
+    native_selected = mobile_captured_authority._selected_source
+    native_fdopen = archive_reader.os.fdopen
 
     def arm(scope, path):
         info = path.stat()
         reached.update(scope=scope, selected=(info.st_dev, info.st_ino))
 
+    def selected_source(scope, purpose, owner):
+        if phase == "selector":
+            selector = (
+                scope.captured.preview.source_selector
+                if purpose == "legacy"
+                else scope.captured.preview.target_selector
+            )
+            arm(scope, selector)
+        return native_selected(scope, purpose, owner)
+
+    def fdopen(fd, *args, **kwargs):
+        stream = native_fdopen(fd, *args, **kwargs)
+        if (
+            phase == "selector"
+            and "scope" in reached
+            and "fd" not in reached
+            and kwargs.get("closefd", True)
+        ):
+            info = archive_reader.os.fstat(fd)
+            if (info.st_dev, info.st_ino) == reached["selected"]:
+
+                @contextmanager
+                def unowned_selector():
+                    try:
+                        yield stream
+                    finally:
+                        # Keep the real stream alive to model its failed physical close.
+                        reached.update(fd=fd, unowned_stream=stream)
+                        raise OSError("injected reached selector close")
+
+                return unowned_selector()
+        return stream
+
     def checked_bytes(scope, path):
-        if phase != "member" and path.name == "tldw_chatbook_personas.json":
+        if phase in {"raw", "parent"} and path.name == "tldw_chatbook_personas.json":
             arm(scope, path.parent if phase == "parent" else path)
         return native_bytes(scope, path)
 
@@ -47,6 +83,8 @@ def _raw_fault(tmp_path, monkeypatch, phase):
                 raise OSError("injected reached raw descriptor close")
         return native_close(fd)
 
+    monkeypatch.setattr(mobile_captured_authority, "_selected_source", selected_source)
+    monkeypatch.setattr(archive_reader.os, "fdopen", fdopen)
     monkeypatch.setattr(mobile_captured_authority, "_checked_bytes", checked_bytes)
     monkeypatch.setattr(mobile_captured_authority, "_payload", payload)
     monkeypatch.setattr(archive_reader.os, "close", close)
@@ -96,7 +134,7 @@ raise AssertionError('raw descriptor fault released native maintenance')
     )
 
 
-@pytest.mark.parametrize("phase", ("raw", "parent", "member"))
+@pytest.mark.parametrize("phase", ("raw", "parent", "member", "selector"))
 def test_raw_resources_keep_exclusion_until_actual_process_retirement(tmp_path, phase):
     child = tmp_path / "child"
     child.mkdir(mode=0o700)

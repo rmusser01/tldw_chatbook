@@ -63,7 +63,7 @@ def _checked_bytes(scope, path):
 
 
 def _selected_source(scope, purpose, owner):
-    from .inventory import read_profile_config
+    from .inventory import _parse_profile_config
     from .owner_registry import registered
     from .profile_paths import user_data_dir
 
@@ -72,7 +72,8 @@ def _selected_source(scope, purpose, owner):
         if purpose == "legacy"
         else scope.captured.preview.target_selector
     )
-    config = read_profile_config(selector)
+    _, selector_bytes = _checked_bytes(scope, selector)
+    config = _parse_profile_config(selector_bytes)
     context = DiscoveryContext(
         selector, hashlib.sha256(str(selector).encode()).hexdigest()[:24]
     )

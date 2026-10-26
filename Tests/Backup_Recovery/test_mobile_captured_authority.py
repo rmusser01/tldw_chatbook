@@ -182,3 +182,50 @@ def test_captured_shared_raw_owners_prove_exact_references_without_writes(
             assert _fingerprints(tmp_path / "profile") == before
             with pytest.raises(ValueError, match="inactive"):
                 reads.authority_reference("persona", "persona-1")
+
+
+@pytest.mark.parametrize(
+    "payload,error_name",
+    (
+        (b"[general]\nflag=true\n[plugin]\nsetting=7\n", None),
+        (b"[general\n", "TOMLDecodeError"),
+        (b"general=7\n", "ValidationError"),
+        (b"__reserved__={}\n", "ValueError"),
+        (b"\xff", "UnicodeDecodeError"),
+    ),
+)
+def test_owned_config_parser_preserves_native_selector_decoding(
+    tmp_path, payload, error_name
+):
+    import tomllib
+
+    from pydantic import ValidationError
+
+    from tldw_chatbook.Backup_Recovery.inventory import (
+        _parse_profile_config,
+        read_profile_config,
+    )
+    from tldw_chatbook.Backup_Recovery.models import DISCOVERY_CONTEXT_KEY
+
+    if payload == b"__reserved__={}\n":
+        payload = (DISCOVERY_CONTEXT_KEY + "={}\n").encode()
+    selected = tmp_path / "selected.toml"
+    selected.write_bytes(payload)
+    errors = {
+        "TOMLDecodeError": tomllib.TOMLDecodeError,
+        "ValidationError": ValidationError,
+        "ValueError": ValueError,
+        "UnicodeDecodeError": UnicodeDecodeError,
+    }
+    for read, value in (
+        (read_profile_config, selected),
+        (_parse_profile_config, payload),
+    ):
+        if error_name is not None:
+            with pytest.raises(errors[error_name]):
+                read(value)
+        else:
+            result = read(value)
+            assert result["general"] == {"flag": True}
+            assert result["plugin"] == {"setting": 7}
+            assert result["paths"] == {}
