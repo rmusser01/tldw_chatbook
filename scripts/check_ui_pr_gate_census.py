@@ -540,10 +540,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.4's rework (2026-10-23) appends 1 whole-file entry at the
 # tail: a send's durable commit keeps the Console's whole syncs quiet
 # (about 8 s), so no existing entry changes shard: 902 -> 903.
-MINIMUM_FILES = 906
 # TASK-36012 (2026-10-26) appends 1 whole-file entry at the tail: a send's
-# start and end leave same-size widgets un-laid-out (13 tests, about 28 s
-# locally, under the lane's 30 s per-file budget): dev's 905 + 1 = 906.
+# start and end leave same-size widgets un-laid-out (20 tests, about 22 s
+# locally, under the lane's 30 s per-file budget): dev's 905 + 1 = 906. It
+# also drops a dead first `MINIMUM_FILES = 906` assignment dev carried
+# above the live 905.
 MINIMUM_FILES = 906
 
 
