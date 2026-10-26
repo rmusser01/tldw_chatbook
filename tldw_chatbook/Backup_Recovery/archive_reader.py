@@ -399,9 +399,15 @@ def _member_chunks(stream, info, offset, cancel):
 
 
 def _inspect(
-    path: Path, limits: ArchiveLimits, encrypted: bool, cancel: Event, digest: str
+    path: Path,
+    limits: ArchiveLimits,
+    encrypted: bool,
+    cancel: Event,
+    digest: str,
+    *,
+    _custody=None,
 ) -> bytes:
-    with _regular(path) as stream:
+    with _regular(path, _custody=_custody) as stream:
         central = _central_preflight(stream, limits)
         with zipfile.ZipFile(stream) as archive:
             infos = archive.infolist()
@@ -485,13 +491,16 @@ def acquire(
     limits: ArchiveLimits,
     password: bytes | None,
     cancel: Event,
+    *,
+    _custody=None,
 ) -> SealedArchive:
     """Copy, authenticate, and inspect into newly allocated private staging."""
+    custody = {} if _custody is None else {"_custody": _custody}
     _check(cancel)
     operation = None
     completed = False
     try:
-        with _regular(source) as incoming:
+        with _regular(source, **custody) as incoming:
             before = _identity(os.fstat(incoming.fileno()))
             if before[2] > limits.input_bytes:
                 raise ValueError("input_limit")
@@ -504,16 +513,16 @@ def acquire(
                 + (min(before[2], limits.decrypted_bytes) if encrypted else 0),
             )
             if not work_root.exists():
-                create_private_directory(work_root)
-            with pinned_directory(work_root) as fd:
+                create_private_directory(work_root, **custody)
+            with pinned_directory(work_root, **custody) as fd:
                 info = os.fstat(fd)
                 if info.st_uid != os.geteuid() or info.st_mode & 0o077:
                     raise ValueError("work_root_not_private")
             operation = work_root / uuid.uuid4().hex
-            create_private_directory(operation)
+            create_private_directory(operation, **custody)
             copied = operation / "input"
             total = 0
-            with create_private_file(copied) as fd:
+            with create_private_file(copied, **custody) as fd:
                 while chunk := incoming.read(_BUFFER):
                     _check(cancel)
                     total += len(chunk)
@@ -531,7 +540,7 @@ def acquire(
             ):
                 raise ValueError("source_changed")
         path = copied
-        encrypted_digest = _hash(copied, cancel) if encrypted else None
+        encrypted_digest = _hash(copied, cancel, **custody) if encrypted else None
         copied_identity = _identity(os.stat(copied, follow_symlinks=False))
         if encrypted:
             from .crypto import transform
@@ -547,17 +556,18 @@ def acquire(
                 output_limit=limits.decrypted_bytes,
                 space_check=lambda count: _space(operation, count),
                 expected_input_sha256=encrypted_digest,
+                **custody,
             )
-        digest = _hash(path, cancel)
-        manifest_bytes = _inspect(path, limits, encrypted, cancel, digest)
-        if digest != _hash(path, cancel):
+        digest = _hash(path, cancel, **custody)
+        manifest_bytes = _inspect(path, limits, encrypted, cancel, digest, **custody)
+        if digest != _hash(path, cancel, **custody):
             raise ValueError("sealed_changed")
         _check(cancel)
         provenance = None
         if encrypted:
             if (
                 copied_identity != _identity(os.stat(copied, follow_symlinks=False))
-                or _hash(copied, cancel) != encrypted_digest
+                or _hash(copied, cancel, **custody) != encrypted_digest
             ):
                 raise ValueError("encrypted_source_changed")
             provenance = EncryptedSource(
@@ -586,7 +596,7 @@ def acquire(
         raise ValueError("archive_io_failed") from None
     finally:
         # Successful return owns the operation; every incomplete stage is removed.
-        if operation is not None and not completed:
+        if operation is not None and not completed and _custody is None:
             shutil.rmtree(operation)
 
 

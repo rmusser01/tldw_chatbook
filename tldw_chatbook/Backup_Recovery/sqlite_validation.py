@@ -5,7 +5,7 @@ entry checks SQLite content and owned BLOBs; it never opens those external paths
 """
 
 import sqlite3
-from contextlib import closing, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from threading import Event
@@ -917,12 +917,19 @@ def _canvas_payload_issues(connection, restrictions):
     return ()
 
 
-def _reference(schema):
+def _reference(schema, *, _scope=None):
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
-    with closing(
-        connect_private_sqlite("recovery.validation_schema", ":memory:")
-    ) as reference:
+    with ExitStack() as resources:
+        reference = connect_private_sqlite("recovery.validation_schema", ":memory:")
+        if _scope is None:
+            resources.enter_context(closing(reference))
+        else:
+            from .storage_admission import _CaptureLease
+
+            lease = _CaptureLease(_scope)
+            lease.attach(reference)
+            resources.callback(lease.retire)
         reference.execute("PRAGMA trusted_schema=OFF")
         with _canvas_schema_access(reference, schema):
             # Execute only the installed catalog, never the candidate's SQL text.
@@ -1015,7 +1022,9 @@ def _check(connection, owner, policy, restrictions):
     if version not in policy.versions or not any(v == version for v, _ in matched):
         return ("unsupported_schema_version",), None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
-        reference_catalog, metadata = _reference(matched[0][1])
+        reference_catalog, metadata = _reference(
+            matched[0][1], _scope=getattr(restrictions, "capture_scope", None)
+        )
         if (
             actual != reference_catalog
             or _metadata(connection, actual, restrictions) != metadata

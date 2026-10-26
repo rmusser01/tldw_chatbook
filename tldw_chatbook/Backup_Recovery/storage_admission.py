@@ -1633,6 +1633,7 @@ class _CaptureLease:
     def __init__(self, scope):
         self.scope = scope
         self.connection = None
+        self.descriptor_outcome = None
         self.resource_close_failed = False
         self.resource_closed = False
         scope.resources.append(self)
@@ -1654,6 +1655,20 @@ class _CaptureLease:
             self.scope.resources.remove(self)
 
     def retire(self):
+        outcome = self.descriptor_outcome
+        if outcome is not None:
+            if (
+                outcome.connector_pending
+                or outcome.connection_pending
+                or outcome.duplicate_pending
+                or outcome.duplicate is not None
+                and not outcome.duplicate_closed
+                or outcome.connection_close_attempted
+                and not outcome.connection_closed
+            ):
+                self.resource_close_failed = True
+            if outcome.connection is not None and not outcome.connection_closed:
+                self.connection = outcome.connection
         if self.resource_close_failed:
             raise bootstrap.RecoveryRequired("capture_resources_not_retired")
         if self.connection is not None:
@@ -1668,6 +1683,8 @@ class _CaptureLease:
             finally:
                 if not closed:
                     self.resource_close_failed = True
+            if outcome is not None:
+                outcome.connection_closed = True
             self.native_closed()
         self.close()
 
@@ -3282,6 +3299,7 @@ class MaintenanceSession:
                 "capture_scope",
                 "discovery_scope",
                 "mobile_history_scope",
+                "mobile_sqlite_scope",
             )
         ):
             raise bootstrap.RecoveryRequired("mobile_native_preparation_required")

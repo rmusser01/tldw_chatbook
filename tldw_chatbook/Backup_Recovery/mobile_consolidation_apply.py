@@ -509,6 +509,12 @@ class _CapturedMobile:
             yield owner
         self.check()
 
+    def sqlite_reads(self, *, password, cancel):
+        """Issue the fixed read-only captured SQLite scope under live maintenance."""
+        from .mobile_captured_sqlite import _sqlite_reads
+
+        return _sqlite_reads(self, password=password, cancel=cancel)
+
     def retire(self):
         self.active = False
 

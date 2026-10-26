@@ -468,6 +468,7 @@ def _history_files(session, captured, *, password, cancel):
             "capture_scope",
             "discovery_scope",
             "mobile_history_scope",
+            "mobile_sqlite_scope",
         )
     ):
         raise ValueError("mobile_history_scope_busy")

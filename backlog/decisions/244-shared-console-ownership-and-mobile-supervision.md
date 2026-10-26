@@ -349,3 +349,43 @@ writes while the current consolidation operation is pending. Retirement/recovery
 of that operation belongs to the terminal recovery workflow. The cost is an
 explicitly blocked legacy capture until its native semantic history is ready;
 the retained source and authenticated captures remain unchanged.
+
+### Private typed Chat/Workspace planning boundary
+
+The pure planning increment reads only authenticated fixed owner members from the
+admitted source and rollback captures. It verifies the actual capture declaration,
+sealed archive and member size/hash before restricted disposable SQLite validation.
+Its connections and descriptors belong to the existing maintenance resource owner;
+uncertain physical retirement retains staging and native exclusion. A returned
+context manager alone is not proof of retirement. No caller path, connection,
+factory or authority predicate substitutes for these native checks.
+
+The plan records fixed table-and-column dispositions and typed identity domains,
+including composite graph references and integer ordering. It preserves native
+message metadata and checkpoint discriminators, provider continuation, normalized
+trace BLOBs, generated-memory lineage/selection proofs and the nine sync frontiers.
+Only declared ownership references map; opaque provider identities and historical
+digests retain their meaning. Mapped generated-memory prefix proofs use the native
+persisted-lineage representation. Persona and permission-profile references require
+actual captured native authority equivalence, never equal names or labels.
+
+This boundary produces immutable transformations and body-free source associations
+for later native owner transactions. It produces no imported row, hold, receipt,
+file publication or successful public composition. The later write increment must
+revalidate destination identity reservations and commit rows, identity/provenance
+associations, exact holds and receipt atomically per owner. AgentRuns retains full
+all-owner preflight and Goal/run handlers; terminal recovery retains cutover. This
+split makes native transformation proofs reviewable before effects, at the cost
+of serial review and revalidation; it does not reduce required history/settings
+coverage or turn source evidence into current execution permission.
+
+Captured raw authority reuse keeps the fixed capture partitions. Canonical raw
+material may satisfy a source Persona/profile reference only when authenticated
+native owner/member provenance proves it covers that exact source reference and
+destination meaning. Same selector, path, label or ID alone proves nothing;
+different selectors may share one actually proved owner. Equivalence includes the
+complete native effective authority: named-profile inheritance, default/global
+kill policy, lifecycle and provenance. No raw policy or grant is imported.
+Missing, unknown, ambiguous, changed or non-equivalent authority produces an
+actionable body-free exact-reference blocker before effects, without rejecting
+unrelated history or otherwise supported defaults.

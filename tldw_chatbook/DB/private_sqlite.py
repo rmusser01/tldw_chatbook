@@ -2034,6 +2034,7 @@ def open_recovery_validation(
     writable: bool,
     with_restrictions: bool = False,
     cancel=None,
+    _custody=None,
 ) -> Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]:
     """Open a disposable candidate with restrictions before any imported query.
 
@@ -2049,19 +2050,43 @@ def open_recovery_validation(
     )
 
     _installed_owner(owner_id)
-    with contextlib.closing(
-        _connect_registered_sqlite(
-            "recovery.validation",
-            candidate,
-            read_only=not writable,
-            must_exist=True,
-            immutable=not writable,
-            isolation_level=None,
-            cached_statements=0,
-            timeout=0,
-        )
-    ) as connection:
+    with contextlib.ExitStack() as resources:
+        if _custody is None:
+            connection = resources.enter_context(
+                contextlib.closing(
+                    _connect_registered_sqlite(
+                        "recovery.validation",
+                        candidate,
+                        read_only=not writable,
+                        must_exist=True,
+                        immutable=not writable,
+                        isolation_level=None,
+                        cached_statements=0,
+                        timeout=0,
+                    )
+                )
+            )
+        else:
+            if writable:
+                raise ValueError("captured_validation_is_read_only")
+            from tldw_chatbook.Backup_Recovery.archive_reader import _regular
+            from tldw_chatbook.Backup_Recovery.storage_admission import _CaptureLease
+
+            stream = resources.enter_context(_regular(candidate, _custody=_custody))
+            lease = _CaptureLease(_custody.scope)
+            lease.descriptor_outcome = _SQLiteDescriptorOutcome()
+            resources.callback(lease.retire)
+            connection = connect_private_sqlite_descriptor(
+                "recovery.validation",
+                stream.fileno(),
+                _native_outcome=lease.descriptor_outcome,
+                isolation_level=None,
+                cached_statements=0,
+                timeout=0,
+            )
+            lease.attach(connection)
         restrictions = _restrict_connection(connection, cancel)
+        restrictions.capture_scope = None if _custody is None else _custody.scope
         with _recovery_restriction_scope(connection, restrictions):
             yield (connection, restrictions) if with_restrictions else connection
 

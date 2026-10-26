@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import BinaryIO
@@ -44,6 +45,70 @@ def _child_environment() -> dict[str, str]:
     )
 
 
+class _CryptoJob:
+    """The actual child and pipe threads remain owned through uncertain cleanup."""
+
+    def __init__(self, custody):
+        self.scope = custody.scope
+        self.process = None
+        self.workers = []
+        self.closed_pipes = []
+        self.close_failed = False
+        self.scope.resources.append(self)
+
+    def close_pipe(self, pipe):
+        if pipe in self.closed_pipes:
+            return
+        # Record an attempted close before invoking it; never retry ambiguity.
+        self.closed_pipes.append(pipe)
+        try:
+            pipe.close()
+            if not pipe.closed:
+                raise OSError("crypto_pipe_not_closed")
+        except BaseException:  # noqa: BLE001 - interrupted native retirement must quarantine.
+            self.close_failed = True
+            raise CryptoError("crypto_resources_not_retired") from None
+
+    def retire(self):
+        from .bootstrap import RecoveryRequired
+
+        if self.close_failed:
+            raise RecoveryRequired("capture_resources_not_retired")
+        try:
+            if self.process is not None:
+                if self.process.poll() is None:
+                    self.process.kill()
+                self.process.wait()
+                for worker in self.workers:
+                    if worker.ident is not None:
+                        worker.join()
+                    if worker.is_alive():
+                        raise OSError("crypto_thread_not_retired")
+                for pipe in (
+                    self.process.stdin,
+                    self.process.stdout,
+                    self.process.stderr,
+                ):
+                    self.close_pipe(pipe)
+                if self.process.returncode is None:
+                    raise OSError("crypto_child_not_retired")
+        except BaseException:  # noqa: BLE001 - interrupted native retirement must quarantine.
+            self.close_failed = True
+            raise RecoveryRequired("capture_resources_not_retired") from None
+        self.scope.resources.remove(self)
+
+
+@contextmanager
+def _pipe_scope(pipe, job):
+    try:
+        yield pipe
+    finally:
+        if job is None:
+            pipe.close()
+        else:
+            job.close_pipe(pipe)
+
+
 def _pipes(
     worker_path: Path,
     mode: str,
@@ -58,8 +123,10 @@ def _pipes(
     output_limit: int | None = None,
     space_check: Callable[[int], None] | None = None,
     expected_input_sha256: str | None = None,
+    _custody=None,
 ) -> None:
     """Pump all three pipes concurrently, retaining no input or diagnostics."""
+    job = None if _custody is None else _CryptoJob(_custody)
     failed = Event()
     input_digest = hashlib.sha256()
     process = subprocess.Popen(
@@ -71,9 +138,12 @@ def _pipes(
         bufsize=0,
     )
 
+    if job is not None:
+        job.process = process
+
     def pump() -> None:
         try:
-            with process.stdin as pipe:
+            with _pipe_scope(process.stdin, job) as pipe:
                 if password is not None:
                     # Raw pipes may perform short writes; drain the complete prefix.
                     header = struct.pack(">I", len(password)) + password
@@ -86,12 +156,12 @@ def _pipes(
                         return
                     _write_all(pipe, data)
                     input_digest.update(data)
-        except (OSError, ValueError):
+        except (OSError, ValueError, CryptoError):
             failed.set()
 
     def drain() -> None:
         try:
-            with process.stdout as pipe:
+            with _pipe_scope(process.stdout, job) as pipe:
                 total = 0
                 while data := pipe.read(_BUFFER):
                     total += len(data)
@@ -101,12 +171,12 @@ def _pipes(
                     if space_check is not None:
                         space_check(len(data))
                     _write_all(output, data)
-        except (OSError, ValueError):
+        except (OSError, ValueError, CryptoError):
             failed.set()
 
     def errors() -> None:
         try:
-            with process.stderr as pipe:
+            with _pipe_scope(process.stderr, job) as pipe:
                 total = 0
                 while data := pipe.read(256):
                     total += len(data)
@@ -115,10 +185,12 @@ def _pipes(
                         return
                     # Any stderr is a failure; never retain or expose its body.
                     failed.set()
-        except (OSError, ValueError):
+        except (OSError, ValueError, CryptoError):
             failed.set()
 
     workers = [Thread(target=f, name="backup-age-pipe") for f in (pump, drain, errors)]
+    if job is not None:
+        job.workers = workers
     try:
         for worker in workers:
             worker.start()
@@ -139,8 +211,11 @@ def _pipes(
         for worker in workers:
             if worker.ident is not None:
                 worker.join()
-        for pipe in (process.stdin, process.stdout, process.stderr):
-            pipe.close()
+        if job is not None:
+            job.retire()
+        else:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                pipe.close()
     if cancel.is_set():
         raise CryptoError("cancelled")
     if (
@@ -165,7 +240,11 @@ def _write_all(output: BinaryIO, data: bytes) -> None:
         view = view[count:]
 
 
-def _open_regular(path: Path) -> BinaryIO:
+def _open_regular(path: Path, *, _custody=None) -> BinaryIO:
+    if _custody is not None:
+        from .archive_reader import _regular
+
+        return _regular(path, _custody=_custody)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     descriptor = os.open(path, flags)
     try:
@@ -177,13 +256,14 @@ def _open_regular(path: Path) -> BinaryIO:
         raise
 
 
-def _qualified_helper() -> Path:
+def _qualified_helper(*, _custody=None) -> Path:
+    custody = {} if _custody is None else {"_custody": _custody}
     root = _package_resource_root()
     worker_path = root / "age_worker.py"
     try:
         if worker_path.is_symlink():
             raise CryptoError("helper_unavailable")
-        with _open_regular(worker_path) as stream:
+        with _open_regular(worker_path, **custody) as stream:
             metadata = os.fstat(stream.fileno())
             if (
                 not stat.S_ISREG(metadata.st_mode)
@@ -210,6 +290,7 @@ def _qualified_helper() -> Path:
             cancel=Event(),
             limit=1024,
             deadline=time.monotonic() + 5,
+            **custody,
         )
         info = json.loads(output.getvalue())
         if type(info) is not dict or info != _WORKER_INFO:
@@ -243,6 +324,7 @@ def transform(
     output_limit: int = _MAX_CONTAINER,
     space_check: Callable[[int], None] | None = None,
     expected_input_sha256: str | None = None,
+    _custody=None,
 ) -> None:
     """Stream an age transform to a new private file, or raise a fixed code.
 
@@ -260,23 +342,26 @@ def transform(
         if cancel.is_set():
             raise CryptoError("cancelled")
     temporary = None
+    custody = {} if _custody is None else {"_custody": _custody}
     try:
         if cancel.is_set():
             raise CryptoError("cancelled")
         source = validate_path_simple(source, probe_existing=False)
         target = validate_path_simple(target, probe_existing=False)
-        worker_path = _qualified_helper()
+        worker_path = _qualified_helper(**custody)
         if target.exists() or target.is_symlink():
             raise CryptoError("target_exists")
         # Never read device/FIFO/link input, which could outlive child cleanup.
         if source.is_symlink() or not source.is_file():
             raise CryptoError("invalid_source")
-        with _open_regular(source) as input_stream:
+        with _open_regular(source, **custody) as input_stream:
             descriptor, name = tempfile.mkstemp(
                 prefix=".backup-age-", dir=target.parent
             )
             temporary = Path(name)
-            with os.fdopen(descriptor, "wb") as output:
+            if _custody is not None:
+                _custody.fds.append(descriptor)
+            with os.fdopen(descriptor, "wb", closefd=_custody is None) as output:
                 _pipes(
                     worker_path,
                     "decrypt" if decrypt else "encrypt",
@@ -289,9 +374,14 @@ def transform(
                     output_limit=output_limit,
                     space_check=space_check,
                     expected_input_sha256=expected_input_sha256,
+                    **custody,
                 )
                 output.flush()
                 os.fsync(output.fileno())
+            if _custody is not None:
+                from .native_files import _close_owned
+
+                _close_owned(descriptor, _custody)
             if cancel.is_set():
                 raise CryptoError("cancelled")
             # Atomic no-clobber publication: an existing/racing target survives.
@@ -300,7 +390,7 @@ def transform(
         raise CryptoError("transform_failed") from None
     finally:
         try:
-            if temporary is not None:
+            if temporary is not None and _custody is None:
                 temporary.unlink(missing_ok=True)
         except OSError:
             raise CryptoError("cleanup_failed") from None

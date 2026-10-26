@@ -361,3 +361,33 @@ and run/conversation ownership, preserve original-ID filtering and bounded pagin
 and retain existing membership/tool gates. Imported history never grants scratch,
 workspace binding, hook, tool or permission authority. Public apply, cutover and
 terminal recovery remain separate B qualification gates.
+
+### Private captured SQLite reads (R)
+
+`_CapturedMobile.sqlite_reads(password=..., cancel=...)` issues the private
+`mobile_captured_sqlite._CapturedSQLite` context from the actual live maintenance
+operation. It requalifies fixed native partition declarations and exact logical
+members, authenticates the encrypted captures, and extracts only Chat, Workspace
+and AgentRuns snapshots. Legacy 81/8/25 and canonical 82/9/26 remain distinct. Native
+installed catalog, version, integrity, foreign-key and domain checks run on
+restricted disposable descriptor-bound connections before row access; no live
+repository constructor, migration or destination connection participates.
+
+`versions` identifies the available fixed members. `page(purpose, family, table,
+*, offset=0, limit=100)` returns immutable column names and native SQLite scalar
+rows, bounded to 1000 rows and 16 MiB. `purpose` is legacy/canonical and `family` is
+chat/workspaces/runs; these select already authenticated declarations and grant
+no caller-supplied owner or path authority. The scope owns all connections and
+rechecks live native authority and candidate bytes at the read boundary.
+
+Optional native archive/crypto custody reaches acquisition before yield,
+including the packaged helper, child pipes and threads. Candidate and installed
+reference connections use the existing capture lease. Uncertain retirement
+retains staged material and real maintenance exclusion; it never retries an
+ambiguous descriptor. Existing journal/bootstrap/selector guard lifetimes remain
+their native owners' responsibility and are not a new all-control-FD guarantee.
+
+This is extraction only. Typed identities/dispositions, Chat memory/dispatch,
+normalized traces/citations, nine-entity sync and integrated pure-plan validation
+remain later increments. Reads create no imported rows, authority holds, batch
+receipts or published history and confer no public apply/cutover success.
