@@ -1149,7 +1149,24 @@ def _resume_activation_record(root, parent, name, temporary, before, after):
 
 
 def _mobile_pending(session, journal, prepared):
+    from .capture_service import _selectors
+    from .mobile_consolidation import _selector_observation
+
     session._check()
+    selectors = _selectors(
+        (Path(prepared.source_selector), Path(prepared.target_selector)),
+        include_known_profiles=True,
+    )
+    if tuple(str(path) for path in selectors) != tuple(
+        row.selector for row in prepared.selector_review
+    ):
+        raise bootstrap.RecoveryRequired("mobile_selector_review_changed")
+    for row in prepared.selector_review:
+        expected = tuple(
+            (item.path, item.device, item.inode, item.mode) for item in row.witnesses
+        )
+        if _selector_observation(Path(row.selector)) != (row.fingerprint, expected):
+            raise bootstrap.RecoveryRequired("mobile_selector_review_changed")
     root = session._control.parent
     expected = _Pending(
         operation_id=journal.operation_id,

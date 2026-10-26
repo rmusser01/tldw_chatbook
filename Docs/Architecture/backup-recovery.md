@@ -299,7 +299,13 @@ qualification gates.
 `MaintenanceSession.mobile_history_files(captured, *, password, cancel)` opens the
 private file capability for the actual live `_CapturedMobile` operation. It
 rechecks the same journal, source claim, captures and original selector content
-and physical witnesses. Copied, overlapping, mutated or retired scopes refuse.
+and physical witnesses. The single prepared-selector proof lives in
+`control_records._mobile_pending`, reached through the captured claim and every
+native mobile DB owner admission/transaction. It re-observes the complete reviewed
+source/target/candidate cohort and refuses same-byte object replacement or a
+changed cohort, including when the source contains no history files. The file
+capability uses this shared proof; ordinary non-mobile admission is unchanged.
+Copied, overlapping, mutated or retired scopes refuse.
 The capability derives its only location from the canonical selector:
 `user_data_dir(target_config)/agent_history/imports/<destination-identity>/<source-fingerprint>`.
 Each authenticated source root contributes a SHA-256 root-ID component beneath

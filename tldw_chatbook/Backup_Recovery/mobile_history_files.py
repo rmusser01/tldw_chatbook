@@ -14,7 +14,6 @@ from .archive_models import ArchiveManifest
 from .journal import (
     _evidence_digest,
     _mobile_active_owner,
-    _mobile_state,
     observe_artifact,
 )
 from .mobile_consolidation_apply import _CapturedMobile, _read_mobile_archive
@@ -106,19 +105,6 @@ def _members(captured, document):
     return tuple(sorted(result, key=lambda row: row.location))
 
 
-def _check_selectors(captured):
-    from .mobile_consolidation import _selector_observation
-
-    with captured.journal._locked(exclusive=False) as fd:
-        prepared, _ = _mobile_state(captured.journal._records(fd))
-    for row in prepared.selector_review:
-        expected = tuple(
-            (item.path, item.device, item.inode, item.mode) for item in row.witnesses
-        )
-        if _selector_observation(Path(row.selector)) != (row.fingerprint, expected):
-            raise ValueError("mobile_history_selector_changed")
-
-
 class _HistoryFiles:
     """An exact live session capability, never reconstructible from copied fields."""
 
@@ -145,7 +131,6 @@ class _HistoryFiles:
             raise ValueError("mobile_history_binding_changed")
         self.session._check()
         self.captured.check()
-        _check_selectors(self.captured)
         if (
             self.captured not in self.session._scopes
             or self.session._mobile_journal is not self.journal
@@ -476,7 +461,6 @@ def _history_files(session, captured, *, password, cancel):
     if captured.session is not session or captured not in session._scopes:
         raise ValueError("mobile_history_inactive")
     captured.check()
-    _check_selectors(captured)
     if any(
         getattr(_local, name, None) is not None
         for name in (

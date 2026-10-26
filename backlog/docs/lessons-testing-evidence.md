@@ -20388,3 +20388,16 @@ The same increment's self-review caught a traversal mismatch: delegating native
 pinning to bootstrap's descriptor owner admitted the actual root-owned macOS
 `/var` alias. A real-alias RED required retaining native per-component
 `O_NOFOLLOW` traversal and reusing only the owner's FD-close bookkeeping.
+
+### A history-only selector witness does not protect native database owners
+
+**TASK-36766 A-chat selector prerequisite, 2026-10-26.** A-files checked prepared
+selector inode/content witnesses, but native DB owners reached a pending check
+that verified only enrollment content/namespaces. Real no-history legacy81/8/25
+fixtures admitted same-byte source, target and candidate selector replacements
+at all three actual DB admissions and transaction entries (18 reached-boundary
+REDs). Moving one proof to the shared pending owner, removing the file-only copy,
+and exercising actual owner entry rather than a public wrapper closed the gap.
+Use distinct enrolled selector objects and an input without the optional file
+family when qualifying a cross-owner witness contract; same-byte replacement
+must reach the actual protected boundary to count as evidence.
