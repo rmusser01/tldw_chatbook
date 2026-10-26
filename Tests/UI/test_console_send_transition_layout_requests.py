@@ -198,7 +198,15 @@ async def _send_turn(console, composer, pilot, gateway, text: str, windows=None)
 async def test_warm_send_transitions_lay_out_no_same_size_rail_widget(
     monkeypatch, request, tmp_path
 ) -> None:
-    """A second send in a chat: its start and end leave unchanged widgets alone."""
+    """A second send in a chat: its start and end leave unchanged widgets alone.
+
+    This test stops at its first failing assertion. On the base build that is
+    the Conversations tray, so the base never reaches the Details-tray, rail
+    and unchanged-widget assertions below. Those fixes are shown red by their
+    own tests in this module (the Details tray, settings and authority rows)
+    and, for the two rail fixes, by mutating each one back to the base
+    behaviour, which this test then catches.
+    """
     from Tests.UI.test_console_composer_run_controls import _mounted
 
     requests = _LayoutRequests(monkeypatch)
@@ -439,6 +447,80 @@ async def test_marker_that_moves_rows_still_recomposes(monkeypatch) -> None:
         assert row.region.height == height + 1
 
 
+# -- A delta the patch cannot take costs no extra compose ---------------------
+
+
+def _browser_delta(**changes) -> ConsoleWorkspaceContextState:
+    """The idle tray state with its browser's first section rebuilt.
+
+    ``rows`` maps each row to its replacement; every other keyword replaces a
+    browser field.
+    """
+    state = _tray_state()
+    browser = state.conversation_browser
+    section = browser.sections[0]
+    rows = changes.pop("rows", lambda index, row: row)
+    section = replace(
+        section, rows=tuple(rows(index, row) for index, row in enumerate(section.rows))
+    )
+    return replace(
+        state,
+        conversation_browser=replace(browser, sections=(section,), **changes),
+    )
+
+
+_REBUILT_DELTAS = {
+    # The Console's most common navigation: the selection and summary move.
+    "conversation switch": lambda: _browser_delta(
+        rows=lambda index, row: replace(row, selected=index == 1),
+        selected_summary="Research thread 1 - Default",
+    ),
+    "search results": lambda: _browser_delta(query="thread 2"),
+    "rename": lambda: _browser_delta(
+        rows=lambda index, row: (
+            replace(row, title="A renamed thread") if index == 0 else row
+        ),
+    ),
+    # An attention fact that adds the row's activity line moves every row
+    # below it.
+    "approval": lambda: _tray_state(approval=True),
+}
+
+
+@pytest.mark.parametrize("delta", list(_REBUILT_DELTAS))
+async def test_delta_the_patch_refuses_composes_once(monkeypatch, delta) -> None:
+    """A rebuilt delta composes the tray once, as before the patch existed.
+
+    The patch decides by diffing two off-DOM composes; when it then refuses,
+    both are thrown away and the rebuild composes a third time, synchronously
+    on the UI thread. Measured with the app stylesheets on a 40-row tray, a
+    conversation switch went from 203 to 518 ms of CPU that way. Only a
+    browser delta in a run marker, attention fact, icon or colour that leaves
+    every row's lines where they are is worth composing for.
+    """
+    composes: list[Widget] = []
+    original = ConsoleWorkspaceContextTray.compose
+
+    def counted(self) -> ComposeResult:
+        composes.append(self)
+        yield from original(self)
+
+    host = _TrayHost(_tray_state())
+    async with host.run_test(size=(40, 30)) as pilot:
+        tray = await _settled_tray(host, pilot)
+        monkeypatch.setattr(ConsoleWorkspaceContextTray, "compose", counted)
+        state = _REBUILT_DELTAS[delta]()
+        tray.sync_state(state)
+        for _ in range(4):
+            await pilot.pause()
+        # Positive control: the delta was real and the rebuild showed it.
+        assert tray.state == state
+        assert tray._composed_publication_state == state
+        assert len(composes) == 1, (
+            f"{delta}: the tray composed {len(composes)} times for one rebuild"
+        )
+
+
 # -- The Details tray renders no conversation-browser field -------------------
 
 
@@ -629,6 +711,7 @@ def _row_tree(
     width: int | None = 4,
     extra=False,
     note: str | None = None,
+    facts: tuple = (),
 ):
     from textual.containers import Horizontal
 
@@ -647,6 +730,8 @@ def _row_tree(
             button.styles.height = 1
             button.tooltip = tip
             button.row_key = "row-1"
+            # A public attribute that is not a plain value (a tuple).
+            button.facts = facts
             yield button
             if extra:
                 yield Static("extra", id="row-extra")
@@ -758,3 +843,20 @@ async def test_delta_rebuilds_a_type_it_cannot_read_in_full() -> None:
         tree, tree, _row_tree(note="b", icon="R"), types=(_ActionButton,)
     )
     assert writes is None
+
+
+async def test_delta_rebuilds_a_changed_public_object() -> None:
+    """A public attribute the patch cannot write in place forces a rebuild.
+
+    Only plain values (str, int, float, bool, None) are patched; a tuple, a
+    list or a model object that differs between the two composes would
+    otherwise be left stale on the mounted widget.
+    """
+    tree = _row_tree(facts=("running",))
+    writes, button = await _plan(tree, tree, _row_tree(facts=("running",), icon="R"))
+    # Positive control: an equal object does not block the patch.
+    assert writes is not None
+    assert button.label.plain == "R"
+    writes, button = await _plan(tree, tree, _row_tree(facts=(), icon="R"))
+    assert writes is None
+    assert button.facts == ("running",)

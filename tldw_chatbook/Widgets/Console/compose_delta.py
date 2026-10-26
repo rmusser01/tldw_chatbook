@@ -17,15 +17,20 @@ private state, returns the writes that turn the mounted tree into ``after``:
   height are not sized by its content -- so a repaint without layout lands the
   same geometry a rebuild would.
 
-Anything else returns ``None`` and the caller rebuilds as before. Only types
-whose whole state this module reads are patched (``PATCHABLE_TYPES`` plus
-any the caller names): a widget that keeps content in other state, a list or
-a model object, would be left stale. Each delta is also checked against the
-mounted widget (``mounted`` must still show the ``before`` value), so a tree
-that drifted from the state it claims to show is rebuilt rather than
-patched. A class change that moves a layout rule still asks for its own
-layout through Textual's stylesheet, so the patch never needs to know which
-classes are visual.
+Anything else returns ``None`` and the caller rebuilds as before, including a
+public attribute that is not a plain value and differs (the patch never writes
+one). Only types whose whole state this module reads are patched
+(``PATCHABLE_TYPES`` plus any the caller names): a widget that keeps content
+in other state, a list or a model object, would be left stale. Each delta is
+also checked against the mounted widget (``mounted`` must still show the
+``before`` value), so a tree that drifted from the state it claims to show is
+rebuilt rather than patched. A class change that moves a layout rule still
+asks for its own layout through Textual's stylesheet, so the patch never needs
+to know which classes are visual.
+
+``ComposeReadView`` is the other half of the same question, asked before any
+compose runs: which state fields did the last compose read? A delta confined
+to fields it did not read needs neither a patch nor a rebuild.
 """
 
 from __future__ import annotations
@@ -58,6 +63,9 @@ _PER_INSTANCE_ATTRIBUTES = frozenset({"sort_order", "_last_idle", "_last_scroll_
 #: Private storage of the deltas compared (and written) through their public
 #: accessors below.
 _DELTA_STORAGE = frozenset({"_Static__content", "_tooltip"})
+#: Public objects Textual gives every widget instance: ``styles`` is compared
+#: through its inline rules, and the other two carry no compose-set state.
+_PER_INSTANCE_OBJECTS = frozenset({"styles", "message_signal", "lock"})
 
 
 def _flatten(
@@ -90,6 +98,20 @@ def _plain_attributes(node: Widget, *, private: bool) -> dict[str, Any]:
         and name not in _PER_INSTANCE_ATTRIBUTES
         and name not in _DELTA_STORAGE
         and isinstance(value, _PLAIN_TYPES)
+    }
+
+
+def _public_objects(node: Widget) -> dict[str, Any]:
+    """Public attributes that are not plain values (a tuple, a list, a model).
+
+    The patch never writes one, so any that differs forces a rebuild.
+    """
+    return {
+        name: value
+        for name, value in vars(node).items()
+        if not name.startswith("_")
+        and name not in _PER_INSTANCE_OBJECTS
+        and not isinstance(value, _PLAIN_TYPES)
     }
 
 
@@ -183,6 +205,8 @@ def _node_writes(
     node: Widget, was: Widget, will: Widget
 ) -> list[Callable[[], None]] | None:
     writes: list[Callable[[], None]] = []
+    if _public_objects(was) != _public_objects(will):
+        return None
     old_attributes = _plain_attributes(was, private=False)
     new_attributes = _plain_attributes(will, private=False)
     if old_attributes.keys() != new_attributes.keys():
@@ -224,3 +248,46 @@ def _node_writes(
                 lambda node=node, content=new_copy: node.update(content, layout=False)
             )
     return writes
+
+
+class ComposeReadView:
+    """Attribute-recording view of a widget's state, live only during compose.
+
+    TASK-26836: ``_can_skip_recompose`` used whole-state value equality, so a
+    delta in a field this tray's ``content`` never renders (probe-observed:
+    ``conversation_browser`` pushed into the ``content="workspace"`` tray)
+    still forced a full recompose -- and its paint-blocking App batch. The
+    tray now records which top-level state fields ``compose`` actually reads,
+    exactly as it already records the row signature of what it builds, and
+    the guard skips when only unread fields changed.
+
+    TASK-36012 gave it a second owner: the Details tray rebuilds only when a
+    field its last completed compose read changes.
+
+    The view delegates everything to the real state; reads observed while it
+    is live can only ADD fields to the recorded set, so interleaved readers
+    during a compose window bias toward recomposing more, never less.
+    """
+
+    __slots__ = ("_target", "_reads")
+
+    def __init__(self, target: object, reads: set) -> None:
+        object.__setattr__(self, "_target", target)
+        object.__setattr__(self, "_reads", reads)
+
+    def __getattr__(self, name: str):
+        if not name.startswith("_"):
+            self._reads.add(name)
+        return getattr(self._target, name)
+
+    def __eq__(self, other: object) -> bool:
+        return self._target == getattr(other, "_target", other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __bool__(self) -> bool:
+        return self._target is not None
+
+    def __repr__(self) -> str:
+        return f"ComposeReadView({self._target!r})"

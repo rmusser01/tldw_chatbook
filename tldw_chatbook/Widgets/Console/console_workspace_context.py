@@ -45,7 +45,7 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )
-from .compose_delta import plan_in_place_delta
+from .compose_delta import ComposeReadView, plan_in_place_delta
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -451,6 +451,51 @@ def _conversation_activity_text(row) -> str:
     return " · ".join(dict.fromkeys(parts))
 
 
+#: Browser row, group and section fields a run's start or end changes
+#: without moving a box: its marker, attention facts, icon and colour.
+_PATCHABLE_BROWSER_FIELDS = frozenset(
+    {"attention", "run_marker", "capped_run_marker", "icon", "color"}
+)
+
+
+def _browser_delta_may_patch(old: Any, new: Any) -> bool:
+    """Return False when a browser delta is sure to need the tray rebuilt.
+
+    TASK-36012 review: ``plan_in_place_delta`` decides by diffing two off-DOM
+    composes, and a refused patch throws both away before the rebuild
+    composes a third time, synchronously on the UI thread. A conversation
+    switch at 40 rows went from 203 to 518 ms of CPU that way. This state
+    check runs first and admits only a delta confined to
+    ``_PATCHABLE_BROWSER_FIELDS`` that leaves every row's activity line as it
+    was (that line adds a row of height). The compose diff stays the
+    authority on whether the admitted delta really moves nothing.
+
+    Args:
+        old: The browser state (or a value inside it) the tray shows.
+        new: The incoming value at the same place.
+
+    Returns:
+        True when the two differ only in patchable fields.
+    """
+    if old == new:
+        return True
+    if type(old) is not type(new):
+        return False
+    if isinstance(old, tuple):
+        return len(old) == len(new) and all(map(_browser_delta_may_patch, old, new))
+    if not dataclasses.is_dataclass(old):
+        return False
+    if isinstance(old, ConsoleConversationBrowserRow) and (
+        _conversation_activity_text(old) != _conversation_activity_text(new)
+    ):
+        return False
+    return all(
+        field.name in _PATCHABLE_BROWSER_FIELDS
+        or _browser_delta_may_patch(getattr(old, field.name), getattr(new, field.name))
+        for field in dataclasses.fields(old)
+    )
+
+
 def _conversation_row_render_height(
     name_line_count: int, subagent_count: int, progress_count: int = 0
 ) -> int:
@@ -596,46 +641,6 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
-class _ComposeReadView:
-    """Attribute-recording view of the tray state, live only during compose.
-
-    TASK-26836: ``_can_skip_recompose`` used whole-state value equality, so a
-    delta in a field this tray's ``content`` never renders (probe-observed:
-    ``conversation_browser`` pushed into the ``content="workspace"`` tray)
-    still forced a full recompose -- and its paint-blocking App batch. The
-    tray now records which top-level state fields ``compose`` actually reads,
-    exactly as it already records the row signature of what it builds, and
-    the guard skips when only unread fields changed.
-
-    The view delegates everything to the real state; reads observed while it
-    is live can only ADD fields to the recorded set, so interleaved readers
-    during a compose window bias toward recomposing more, never less.
-    """
-
-    __slots__ = ("_target", "_reads")
-
-    def __init__(self, target: object, reads: set) -> None:
-        object.__setattr__(self, "_target", target)
-        object.__setattr__(self, "_reads", reads)
-
-    def __getattr__(self, name: str):
-        if not name.startswith("_"):
-            self._reads.add(name)
-        return getattr(self._target, name)
-
-    def __eq__(self, other: object) -> bool:
-        return self._target == getattr(other, "_target", other)
-
-    def __ne__(self, other: object) -> bool:
-        return not self.__eq__(other)
-
-    def __bool__(self) -> bool:
-        return self._target is not None
-
-    def __repr__(self) -> str:
-        return f"_ComposeReadView({self._target!r})"
-
-
 class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
@@ -760,7 +765,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         reads = self._state_field_reads
         if reads is None or self._state is None:
             return self._state
-        return _ComposeReadView(self._state, reads)
+        return ComposeReadView(self._state, reads)
 
     @state.setter
     def state(self, value: Any) -> None:
@@ -823,7 +828,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         send's start, two at its end. ``plan_in_place_delta`` patches only a
         delta whose two composes have the same shape, styles and inputs, on a
         tray whose DOM is proved to show its current state (the same proof
-        ``_can_skip_recompose`` uses); anything else rebuilds as before.
+        ``_can_skip_recompose`` uses); anything else rebuilds as before. The
+        two composes run only for a browser delta ``_browser_delta_may_patch``
+        admits, so every other sync composes once, as it did before.
 
         Args:
             state: The incoming display state.
@@ -846,14 +853,23 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             self._composed_fixed_signature,
         ):
             return False
-        # A delta that also moves a field this tray does not render (the
-        # screen's out-of-band alias reads `new_conversation_enabled`) keeps
-        # the rebuild that re-syncs those controls.
+        # Only a run-shaped browser delta is worth the two composes the diff
+        # costs. A delta that also moves a field this tray does not render
+        # (the screen's out-of-band alias reads `new_conversation_enabled`)
+        # keeps the rebuild that re-syncs those controls.
         reads = self._composed_state_reads
-        if reads is None or any(
-            getattr(state, field.name) != getattr(self._state, field.name)
+        changed = {
+            field.name
             for field in dataclasses.fields(state)
-            if field.name not in reads
+            if getattr(state, field.name) != getattr(self._state, field.name)
+        }
+        if (
+            reads is None
+            or "conversation_browser" not in reads
+            or changed != {"conversation_browser"}
+            or not _browser_delta_may_patch(
+                self._state.conversation_browser, state.conversation_browser
+            )
         ):
             return False
         shown = self._state

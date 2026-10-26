@@ -11,9 +11,9 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Widgets.Console.compose_delta import ComposeReadView
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
-    _ComposeReadView,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
@@ -68,7 +68,7 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
         reads = self._state_field_reads
         if reads is None or self._state is None:
             return self._state
-        return _ComposeReadView(self._state, reads)
+        return ComposeReadView(self._state, reads)
 
     @state.setter
     def state(self, value: Any) -> None:
