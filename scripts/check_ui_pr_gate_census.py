@@ -541,7 +541,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # tail: a send's durable commit keeps the Console's whole syncs quiet
 # (about 8 s), so no existing entry changes shard: 902 -> 903.
 MINIMUM_FILES = 906
-MINIMUM_FILES = 905
+# TASK-36012 (2026-10-26) appends 1 whole-file entry at the tail: a send's
+# start and end leave same-size widgets un-laid-out (13 tests, about 28 s
+# locally, under the lane's 30 s per-file budget): dev's 905 + 1 = 906.
+MINIMUM_FILES = 906
 
 
 def read_census(path: Path) -> list[str]:
