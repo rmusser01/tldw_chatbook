@@ -232,7 +232,6 @@ def _inspect_store(path, adapter, *, external_references=True):
         # External owner bytes cannot be silently dropped or guessed from locators.
         if external_references and path.name == "chat.db":
             for query in (
-                "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
                 "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
                 "SELECT 1 FROM persona_visual_assets LIMIT 1",
                 "SELECT 1 FROM visual_identity_assets LIMIT 1",

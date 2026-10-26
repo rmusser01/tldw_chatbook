@@ -453,3 +453,48 @@ Chat/trace/citation/sync/AgentRuns transformations and integrated plan validatio
 remain required pending handlers. Planning creates no imported rows, authority
 holds, batch receipts or published history and confers no public apply/cutover
 success. The complete composed plan must be reviewed before owner writes.
+
+### Private content graph planning (C1)
+
+`content_graph_plan()` on that same captured reader projects the fixed core
+content and association graph, message bodies/embedded attachments/branches,
+Canvas revision graphs, and response-rule backing records. It accepts no paths,
+SQL, callbacks or writer. Original rows remain separate; only declared typed
+references relocate. Native `(note://...)` target capture groups map through the
+Note identity reservations, preserving display text and every other body byte.
+Native backlink regeneration must retain the mapped meaning on the next save.
+Historical Notes locators/hash/state accompany the complete captured DB body and
+do not cause filesystem probes or activation; actual dictionary/visual file
+requirements remain guarded.
+
+Native unique names and organization sync identities are preserved, with exact
+conflict blockers instead of merging or renaming. NUL-bearing source names in
+SQLite NOCASE domains refuse as unproved comparison inputs. Managed Note folder
+owner protection and unproved global rule scopes remain exact dependencies.
+Canvas projections retain immutable source/hash/sequence/origin facts and expose
+native `CanvasImportBatch` consumer inputs. Rule definitions, validation,
+fixtures, drafts and historical source/digests retain their meaning under the
+installed typed readers. The pure imported-state projection follows
+`prepare_imported_rules`: enabled source bindings become disabled with the native
+revision increment, and pending assessments become cancelled in both state
+representations. Canonical owners and original snapshots are untouched.
+
+This is a partial plan. Conversation structures are inputs to C2; every final
+conversation field and the five named message metadata/generation fields remain
+pending C2. Dictionary attachment/unresolved rows require the actual C2 metadata
+and native derivation proof before use. C3 must supply native memory/context
+proofs and compose complete C. `require_complete()` refuses; T, S, A-runs,
+all-owner/integrated review and owning writes remain separate required gates.
+Later startup qualification must exercise Notes' actual paused/review migration
+and cutover-marker behavior. These private projections do not authorize import,
+rule execution, folder access or public cutover.
+
+C1 currently refuses the ordinary collision between two constructor-seeded
+`Default Assistant` character cards: the installed character-name BINARY UNIQUE
+constraint has no approved consolidation seed-reuse exception. Distinct-name
+private fixtures prove supported transformations only; they do not prove an
+untouched default-profile happy path. Captured originals remain intact. Public
+cutover guidance must qualify a supported preoperation conflict-resolution path
+before presenting this case as migratable; the planner never renames or merges
+cards. Historical non-NULL Note locators also retain the installed BINARY partial
+unique-index conflict behavior, including deleted rows, without probing paths.

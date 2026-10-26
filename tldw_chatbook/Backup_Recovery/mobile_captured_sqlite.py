@@ -203,6 +203,12 @@ class _CapturedSQLite:
 
         return _plan_workspaces(self)
 
+    def content_graph_plan(self):
+        """Transform C1 content fields; later handlers remain required."""
+        from .mobile_content_graph import _plan_content_graph
+
+        return _plan_content_graph(self)
+
     def retire(self):
         self.active = False
         for resource in reversed(tuple(self.resources)):

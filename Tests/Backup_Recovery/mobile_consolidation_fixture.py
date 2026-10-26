@@ -25,7 +25,11 @@ def fingerprints(root: Path) -> dict[str, str]:
 
 
 def _seed(
-    stores: CanonicalConsoleStores, *, legacy: bool, artifact_root: Path | None = None
+    stores: CanonicalConsoleStores,
+    *,
+    legacy: bool,
+    artifact_root: Path | None = None,
+    chat_seed=None,
 ) -> dict:
     for path in stores.paths:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -178,6 +182,8 @@ def _seed(
                 "workspace_id": workspace.workspace_id,
             }
         )
+        if chat_seed is not None:
+            chat_seed(chat, legacy)
         return {
             "conversation_id": conversation,
             "message_ids": (user, first, second),
