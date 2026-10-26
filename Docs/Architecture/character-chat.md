@@ -48,6 +48,16 @@ All three are managed in the Personas screen.
 
 `WorldBookManager` owns world-book CRUD, conversation association, and character attachment; imports normalize lorebook JSON into the managed block shape. At send time, `apply_world_info_to_message` runs the `WorldInfoProcessor`: entries are scanned against recent history with per-book `scan_depth`, `token_budget`, and `recursive_scanning`; matching entries are sorted by `insertion_order` and injected into the ephemeral provider payload (never the stored transcript — see [chat-pipeline.md](./chat-pipeline.md)). Disabled-entry diagnostics surface candidate near-misses.
 
+Lore Settings Save admits one screen-owned worker and releases the screen message
+queue before its threaded manager operation finishes. The operation captures its
+manager, book identity/version, payload, and exact selected record/panel. Repeated
+Save cannot cancel or duplicate an admitted write; cancellation drains an active
+native write before reopening admission. Completion adopts the committed version
+only for that original selection and panel, retains newer raw controls, and labels
+those later edits as unsaved. A retired selection receives feedback naming the
+captured book without changing its replacement. This uses the existing Lore
+transition/dirty-state ownership; it does not add entry/Options draft domains.
+
 ## Chat dictionaries
 
 Dictionaries map trigger phrases to replacement text. `apply_active_chatdicts_to_text` applies active dictionaries to the ephemeral final user message under a strategy (`apply_strategy`; Console constants: max 500 tokens, "sorted_evenly"). Parsing supports user markdown dictionary files; the applier never raises on failure — the payload goes through unchanged. Console dictionary settings are currently hard-coded at the screen; world info is gated by `[character_chat] enable_world_info` (default on).

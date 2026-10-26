@@ -172,7 +172,8 @@ _BUDGETS: dict[str, int] = {
     # (one helper and five calls) and the replay moves into the list; +8
     # lines on the task's own net -3, so the row rises from dev's measured
     # 16,878 (dev 96cae7eec0) to 16,883.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16883,
+    # TASK-36932 moves the bounded Lore save operation beside existing completions.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16818,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

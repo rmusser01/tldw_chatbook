@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from ...DB.ChaChaNotes_DB import ConflictError
 from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
     PersonaProfileEditorWidget,
 )
@@ -14,6 +15,7 @@ from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     PersonasDictionaryDetailWidget,
 )
 from ...Widgets.Persona_Widgets.personas_library_pane import PersonasLibraryPane
+from ...Widgets.Persona_Widgets.personas_lore_detail import PersonasLoreDetailWidget
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
@@ -157,3 +159,139 @@ async def finish_dictionary_settings_save(
     library.mark_active_row("dictionary", entity_id)
     screen._sync_inspector_console_actions()
     await screen._refresh_dictionary_versions()
+
+
+async def save_lore_settings(
+    screen: PersonasScreen,
+    detail: PersonasLoreDetailWidget,
+    manager: Any,
+    entity_id: str,
+    expected_version: int | None,
+    payload: dict,
+    selected_record: dict | None,
+    book_name: str,
+    submitted_snapshot: tuple,
+) -> None:
+    """Persist one admitted Lore settings snapshot and reconcile its own view.
+
+    The screen captures every argument before dispatch. Native persistence drains
+    even if Textual cancels the worker; a retired view gets captured-book feedback
+    without changing its replacement's selection, controls, or version.
+    """
+    from ..Screens.personas_screen import _drain_async, _drain_to_thread
+
+    screen._lore_settings_save_started = True
+
+    def is_current() -> bool:
+        return (
+            screen.is_attached
+            and not screen._pruning
+            and detail.is_attached
+            and not detail._pruning
+            and screen.state.active_mode == "lore"
+            and screen.state.selected_entity_kind == "lore"
+            and screen.state.selected_entity_id == entity_id
+            and screen._selected_lore_book is selected_record
+            and screen._ready_center_view("lore-detail") is detail
+            and getattr(screen.app_instance, "chachanotes_db", None) is manager.db
+        )
+
+    def report(status: str, *, failed: bool = False) -> None:
+        if is_current():
+            detail.set_status(status)
+        else:
+            screen._notify(
+                f"Lore book '{book_name}' (ID {entity_id}): {status}",
+                "error" if failed else "information",
+            )
+
+    def persist() -> tuple[bool, dict | None]:
+        ok = manager.update_world_book(
+            int(entity_id),
+            name=payload.get("name"),
+            description=payload.get("description"),
+            scan_depth=payload.get("scan_depth"),
+            token_budget=payload.get("token_budget"),
+            recursive_scanning=payload.get("recursive_scanning"),
+            enabled=payload.get("enabled"),
+            expected_version=expected_version,
+        )
+        if not ok:
+            return False, None
+        try:
+            return True, manager.get_world_book(int(entity_id))
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not reload lore book {entity_id} after save."
+            )
+            return True, None
+
+    async def reconcile(ok: bool, record: dict | None) -> None:
+        nonlocal selected_record
+        if not ok:
+            report("Save failed: the lore book could not be found.", failed=True)
+            return
+        if not is_current():
+            report("Saved.")
+            return
+        if record is None:
+            report(
+                "Saved, but could not reload the lore book. Reselect before saving again."
+            )
+            return
+        raw_version = record.get("version")
+        screen._selected_lore_book_version = (
+            int(raw_version) if raw_version is not None else None
+        )
+        screen._selected_lore_book = selected_record = record
+        screen.state.selected_entity_name = str(record.get("name") or "")
+        screen.query_one(PersonasInspectorPane).show_selection(
+            name=screen.state.selected_entity_name, kind="lore"
+        )
+        screen._update_title()
+        await screen._render_lore_rows(query=screen.state.search_query)
+        if not is_current():
+            report("Saved.")
+            return
+        screen.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+        screen._sync_inspector_console_actions()
+        report(
+            "Saved. Newer settings edits are not saved."
+            if detail.settings_snapshot() != submitted_snapshot
+            else "Saved."
+        )
+
+    cancellation = None
+    try:
+        outcome = await _drain_to_thread(
+            persist, task_name="personas-lore-save-persist"
+        )
+        cancellation = outcome.cancellation
+        if isinstance(outcome.error, ConflictError):
+            report(
+                "Save failed: the lore book changed since it was loaded. Reselect and try again.",
+                failed=True,
+            )
+        elif outcome.error is not None:
+            logger.opt(exception=outcome.error).warning(
+                f"Could not save lore book {entity_id}."
+            )
+            report(f"Save failed: {outcome.error}", failed=True)
+        elif outcome.completed:
+            completion = await _drain_async(
+                reconcile(*outcome.value), task_name="personas-lore-save-reconcile"
+            )
+            cancellation = cancellation or completion.cancellation
+            if completion.error is not None:
+                logger.opt(exception=completion.error).warning(
+                    f"Lore book {entity_id} saved but presentation failed."
+                )
+                screen._notify(
+                    f"Lore book '{book_name}' (ID {entity_id}) saved, but the view could not refresh.",
+                    "warning",
+                )
+    finally:
+        screen._lore_settings_save_started = False
+        screen._lore_settings_save_worker_handle = None
+    if cancellation is not None:
+        raise cancellation

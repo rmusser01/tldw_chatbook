@@ -23,7 +23,7 @@
 - ABA context changes and replaced/detached answer panels must not restore old quiz publication.
 - Thread-affine in-memory SQLite and awaitable alternate stores must retain their contracts.
 - Store errors and runtime-policy refusal must remain nonfatal and never produce false success.
-- Repeated Lore Save admission and selection/panel replacement must not duplicate or retarget durable writes.
+- Repeated Lore Save admission and selection/panel replacement must not duplicate or retarget durable writes; cancellation before worker entry must leave an explicit Save retry available, while running native work retains admission until settlement.
 - New drafts edited during a save must survive completion, and result reloads must not paint a different selection.
 
 ### Task 1: TASK-36930 Study Submit publication
@@ -66,11 +66,11 @@ Reason: existing-boundary correction.
 
 ### Task 3: TASK-36932 Personas Lore save operation
 
-**Files:** Modify `tldw_chatbook/UI/Screens/personas_screen.py` and `Docs/Architecture/character-chat.md`; create `Tests/UI/test_personas_lore_save_responsiveness.py`. Existing adjacent tests may be extended if they give stronger actual UI coverage.
+**Files:** Modify `tldw_chatbook/UI/Screens/personas_screen.py`, the existing `tldw_chatbook/UI/Persona_Modules/persona_save_completion.py` completion helper and `Docs/Architecture/character-chat.md`; create `Tests/UI/test_personas_lore_save_responsiveness.py`. Keep the screen within its existing module-size ceiling by placing bounded operation/completion logic beside the existing save helpers. Root lowers the measured Personas row in `Tests/Architecture/test_module_size_ratchet.py` and registers exact new cases in the existing UI census; no cap or shard-count increase.
 
 **Interfaces:** Consumes existing controller/service APIs only; produces corrected publication/admission behavior without a new shared interface. No other task consumes this task.
 
-**Implementation:** Release the screen handler promptly by admitting one screen-owned, noncancelling Lore settings save worker. Capture manager, book ID, expected version, payload and original panel before dispatch. Guard publication against retired selection/panel, preserve newer edits, and report captured-book success/failure truthfully. Test mounted held and ordinary saves using actual manager/private SQLite, repeated activation, conflicts, replacement and stale failures. Preserve existing dirty/transition owners.
+**Implementation:** Release the screen handler promptly by admitting one screen-owned, noncancelling Lore settings save worker. Capture manager, book ID, expected version, payload and original panel before dispatch. Guard publication against retired selection/panel, preserve newer edits, and report captured-book success/failure truthfully. Test mounted held and ordinary saves using actual manager/private SQLite, repeated activation, conflicts, replacement, stale failures and pre-entry versus running-native cancellation. Preserve existing dirty/transition owners.
 
 ADR required: no
 ADR path: existing canonical ADRs 007, 011, 033 linked by TASK-36932.

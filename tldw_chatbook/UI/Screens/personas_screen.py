@@ -15,6 +15,7 @@ import threading
 import weakref
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import UUID
@@ -1431,6 +1432,8 @@ class PersonasScreen(BaseAppScreen):
         self._selected_lore_book: dict | None = None
         self._selected_lore_entries: list[dict] = []
         self._selected_lore_book_version: int | None = None
+        self._lore_settings_save_worker_handle: Worker[None] | None = None
+        self._lore_settings_save_started = False
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
         #: Bumped by every set and cancel of the search timer: a callback
@@ -6995,10 +6998,16 @@ class PersonasScreen(BaseAppScreen):
         await self._run_lore_entry_op(_op, "Could not reorder entries")
 
     @on(LoreBookSettingsSaveRequested)
-    async def _handle_lore_settings_save(
+    def _handle_lore_settings_save(
         self, message: LoreBookSettingsSaveRequested
     ) -> None:
         message.stop()
+        previous = self._lore_settings_save_worker_handle
+        if previous is not None and (
+            self._lore_settings_save_started
+            or not (previous.is_cancelled or previous.is_finished)
+        ):
+            return
         if (
             self.state.selected_entity_kind != "lore"
             or not self.state.selected_entity_id
@@ -7015,57 +7024,33 @@ class PersonasScreen(BaseAppScreen):
                 "Lore is not configured: the database is unavailable.", "error"
             )
             return
-        entity_id = self.state.selected_entity_id
-        try:
-            ok = await asyncio.to_thread(
-                manager.update_world_book,
-                int(entity_id),
-                name=payload.get("name"),
-                description=payload.get("description"),
-                scan_depth=payload.get("scan_depth"),
-                token_budget=payload.get("token_budget"),
-                recursive_scanning=payload.get("recursive_scanning"),
-                enabled=payload.get("enabled"),
-                expected_version=self._selected_lore_book_version,
-            )
-        except ConflictError:
-            detail.set_status(
-                "Save failed: the lore book changed since it was loaded. Reselect and try again."
-            )
-            return
-        except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not save lore book {entity_id}.")
-            detail.set_status(f"Save failed: {exc}")
-            return
-        if not ok:
-            # update_world_book() only returns False (rather than raising)
-            # when expected_version was None and the row vanished/mismatched;
-            # world_books.version is NOT NULL so this path is effectively
-            # unreachable once a book is selected, but stay defensive.
-            detail.set_status("Save failed: the lore book could not be found.")
-            return
-        try:
-            record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Could not reload lore book {entity_id} after save."
-            )
-            record = None
-        if record is not None:
-            raw_version = record.get("version")
-            self._selected_lore_book_version = (
-                int(raw_version) if raw_version is not None else None
-            )
-            self._selected_lore_book = record
-            self.state.selected_entity_name = str(record.get("name") or "")
-            self.query_one(PersonasInspectorPane).show_selection(
-                name=self.state.selected_entity_name, kind="lore"
-            )
-        detail.set_status("Saved.")
-        self._update_title()
-        await self._render_lore_rows(query=self.state.search_query)
-        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
-        self._sync_inspector_console_actions()
+        from ..Persona_Modules.persona_save_completion import save_lore_settings
+
+        submitted = message.submitted_snapshot
+        if submitted is None:
+            submitted = detail.settings_snapshot()
+        # Capture authority before dispatch. A cancelled, unstarted worker may
+        # be replaced; a running native write owns admission until it drains.
+        self._lore_settings_save_started = False
+        self._lore_settings_save_worker_handle = self.run_worker(
+            partial(
+                save_lore_settings,
+                self,
+                detail,
+                manager,
+                self.state.selected_entity_id,
+                self._selected_lore_book_version,
+                payload,
+                self._selected_lore_book,
+                self.state.selected_entity_name,
+                submitted,
+            ),
+            name="personas-lore-settings-save",
+            description="Save Lore settings",
+            group="personas-lore-save",
+            exclusive=False,
+            exit_on_error=False,
+        )
 
     @on(LoreBookExportRequested)
     async def _handle_lore_export(self, message: LoreBookExportRequested) -> None:
