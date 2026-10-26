@@ -121,8 +121,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: ``(start, query)`` completion the picker was last asked for, the one
 #: field every hot path (caret move, Tab, resize frame) reads before doing
 #: anything, and the reason one keystroke starts one candidate load
-#: (114 + 1 = 115).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 115
+#: (114 + 1 = 115). **116**: TASK-34000.28 polish-1a task 4 (2026-10-26) --
+#: ``notice_refresh_offered``, whether the folder-conflict notice offers its
+#: Refresh control (115 + 1 = 116).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 116
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

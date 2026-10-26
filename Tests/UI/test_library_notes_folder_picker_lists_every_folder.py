@@ -19,17 +19,16 @@ a real ChaChaNotes database whose folders are created through
 claim is a real key press or click and what the user then sees (painted
 text), plus the database read back through a second connection.
 
-N-24 (TASK-34000.28 AC#5, a later slice of this same task) is still open
-here: a folder mutation fails intermittently with "That folder changed
-elsewhere — refresh and try again." and writes nothing. Measured while
-building this file, on this harness AND on a full ``TldwCli`` boot, and on
-the base commit with its old ``Select`` picker (2 and 3 of 10 base moves):
-the repository's write raises SQLITE_BUSY_SNAPSHOT (extended code 517) with
-no other write to the database in the move's window. These arms pin the
-picker and the tree after a move, not N-24, so a choice that ends in exactly
-that notice is made again -- the notice's own "try again" -- at most
-``ATTEMPTS`` times, every attempt recorded and asserted. Once N-24 is fixed
-``ATTEMPTS`` drops to 1.
+Each choice is made exactly once and must succeed. Until N-24 (TASK-34000.28
+AC#5) was fixed, about one folder mutation in five here failed with SQLITE_
+BUSY_SNAPSHOT (517) and this file re-made a choice that ended in that
+notice; the repository's mutations now take the write lock up front
+(``BEGIN IMMEDIATE``), so the tolerance is gone. The harness stays
+``LibraryProductionCSSHarness``: a full ``TldwCli`` boot's deferred Notes
+wiring seeds its own ``Agent_Lessons`` root at no fixed moment after first
+paint, which moves the picker's exact folder total (lessons-testing-evidence,
+"A full `TldwCli` Pilot boot writes into the test's own database after first
+paint") -- unrelated to N-24, and still true.
 """
 
 from __future__ import annotations
@@ -72,9 +71,8 @@ ALL_FOLDERS = [
 #: Notes filed in Study before the folder move (N-28's "its own notes").
 STUDY_NOTES = ("Kanji drills", "Grammar cheat sheet")
 
-#: N-24's false conflict notice, and how many times a choice is made.
-N24_NOTICE = "That folder changed elsewhere — refresh and try again."
-ATTEMPTS = 3
+#: The notice every folder mutation here must end in.
+UPDATED = "Folder organization updated."
 
 
 class _Tree:
@@ -239,24 +237,21 @@ async def _choose(
 ) -> tuple[str, dict, bool, str]:
     """Open the picker, type ``query``, wait for ``rows`` and ``total``, Down + Enter.
 
-    Returns the mutation the choice ran; repeats only on N-24's notice.
+    Returns the mutation the choice ran.
     """
-    for _attempt in range(ATTEMPTS):
-        ran = len(outcomes)
-        await _open_picker(host, pilot, button_id)
-        await pilot.press(*query)
-        await _wait(
-            pilot,
-            lambda: _picker_rows(host) == rows and total in _painted(host),
-            lambda: f"the list narrowed to {rows} ({total}): {_picker_rows(host)} "
-            f"{_painted(host)}",
-        )
-        await pilot.press("down", "enter")
-        await _wait(pilot, lambda: host.screen is screen, "the picker to choose")
-        await _wait(pilot, lambda: len(outcomes) > ran, "the chosen mutation to run")
-        if outcomes[-1][2] or outcomes[-1][3] != N24_NOTICE:
-            return outcomes[-1]
-    raise AssertionError(f"N-24's false conflict {ATTEMPTS} times running: {outcomes}")
+    ran = len(outcomes)
+    await _open_picker(host, pilot, button_id)
+    await pilot.press(*query)
+    await _wait(
+        pilot,
+        lambda: _picker_rows(host) == rows and total in _painted(host),
+        lambda: f"the list narrowed to {rows} ({total}): {_picker_rows(host)} "
+        f"{_painted(host)}",
+    )
+    await pilot.press("down", "enter")
+    await _wait(pilot, lambda: host.screen is screen, "the picker to choose")
+    await _wait(pilot, lambda: len(outcomes) > ran, "the chosen mutation to run")
+    return outcomes[-1]
 
 
 async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narrows_by_typing(
@@ -337,15 +332,14 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
             rows=["Projects / Thesis"],
             total="1 folder",
         )
-        assert (operation, asked["destination_folder_id"], ok) == (
+        assert (operation, asked["destination_folder_id"], ok, notice) == (
             "move_placement",
             tree.ids["/Projects/Thesis"],
             True,
-        ), (outcomes, notice)
-        # Every attempt asked for Thesis: no attempt chose anything else.
-        assert {attempt[1]["destination_folder_id"] for attempt in outcomes} == {
-            tree.ids["/Projects/Thesis"]
-        }
+            UPDATED,
+        ), outcomes
+        # One choice, one mutation: nothing else was asked for.
+        assert len(outcomes) == 1, outcomes
         # Exactly one placement added -- the note in Thesis -- and nothing else
         # written (the move's source is Unfiled, so nothing is detached).
         assert _memberships(tmp_path) == sorted(
@@ -396,13 +390,14 @@ async def test_moving_a_folder_into_a_collapsed_folder_shows_the_destinations_no
             rows=["Study", "Study / Japanese"],
             total="2 folders",
         )
-        assert (operation, asked["parent_id"], ok) == (
+        assert (operation, asked["parent_id"], ok, notice) == (
             "move_folder",
             tree.ids["/Study"],
             True,
-        ), (outcomes, notice)
-        # Every attempt asked for Study: no attempt chose anything else.
-        assert {attempt[1]["parent_id"] for attempt in outcomes} == {tree.ids["/Study"]}
+            UPDATED,
+        ), outcomes
+        # One choice, one mutation: nothing else was asked for.
+        assert len(outcomes) == 1, outcomes
 
         def destination_lists_its_notes() -> bool:
             painted = _painted_list(host, screen)

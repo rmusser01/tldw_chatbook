@@ -1353,3 +1353,4 @@ Tests/UI/test_console_projection_reads_off_loop.py
 Tests/UI/test_console_durable_commit_quiet_gap.py
 Tests/UI/test_library_notes_tree_keys.py
 Tests/UI/test_library_notes_folder_picker_lists_every_folder.py
+Tests/UI/test_library_notes_move_never_false_conflicts.py

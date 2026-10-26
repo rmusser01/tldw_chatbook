@@ -2585,6 +2585,62 @@ async def test_typed_folder_failures_produce_actionable_status(failure, expected
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "expected_copy"),
+    (
+        ("folder_version", "This folder was changed elsewhere since the tree loaded."),
+        ("folder_changed", "This folder was changed elsewhere since the tree loaded."),
+        (
+            "membership_version",
+            "This note's placement changed elsewhere since the tree loaded.",
+        ),
+        (
+            "membership_changed",
+            "This note's placement changed elsewhere since the tree loaded.",
+        ),
+        ("membership_exists", "The note is already in that folder."),
+        ("busy", "The notes database was busy — nothing was written."),
+        ("unknown", "The folder organization changed elsewhere."),
+    ),
+)
+async def test_each_folder_conflict_names_what_changed_and_offers_refresh(
+    reason, expected_copy
+):
+    """TASK-34000.28 (N-24): one sentence per reason, never the old generic
+    "That folder changed elsewhere — refresh and try again." for a busy
+    database, and a Refresh offer beside it."""
+    failure = FolderConflictError("conflict", reason=reason)
+    fake = _mutation_fake(_FailingMutationService(failure))
+
+    assert not await LibraryScreen._execute_library_notes_tree_mutation(
+        fake,
+        "create_folder",
+        name="New",
+        parent_id=None,
+    )
+
+    assert fake._notes_state.notice == expected_copy
+    assert fake._notes_state.notice_refresh_offered is True
+
+
+@pytest.mark.asyncio
+async def test_the_next_successful_folder_operation_withdraws_the_conflict():
+    fake = _mutation_fake(_MutationService())
+    fake._notes_state.notice = "This note's placement changed elsewhere."
+    fake._notes_state.notice_refresh_offered = True
+
+    assert await LibraryScreen._execute_library_notes_tree_mutation(
+        fake,
+        "create_folder",
+        name="New",
+        parent_id=None,
+    )
+
+    assert fake._notes_state.notice == "Folder organization updated."
+    assert fake._notes_state.notice_refresh_offered is False
+
+
+@pytest.mark.asyncio
 async def test_move_detach_conflict_keeps_both_placements_and_refreshes():
     service = _PartialMoveService()
     fake = _mutation_fake(service)

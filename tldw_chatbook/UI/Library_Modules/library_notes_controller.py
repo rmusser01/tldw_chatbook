@@ -6883,6 +6883,22 @@ class LibraryNotesController:
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+    def handle_library_notes_notice_refresh(self, event: Button.Pressed) -> None:
+        """Reload the tree a folder-conflict notice said was out of date.
+
+        TASK-34000.28 (N-24): the notice's own next step. There is no
+        receipt; the tree reloading is the answer.
+
+        Args:
+            event: Press event emitted by the notice's Refresh button.
+        """
+        event.stop()
+        if self._library_notes_mutation_fenced():
+            return
+        self._library_notes_notice = ""
+        self._library_notes_notice_refresh_offered = False
+        self._request_library_notes_tree_initial_load()
+        _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
     @on(Button.Pressed, "#library-notes-delete-receipt-dismiss")
     def handle_library_note_delete_receipt_dismiss(self, event: Button.Pressed) -> None:
         """Dismiss the recovery receipt without changing persisted data.
@@ -7080,6 +7096,11 @@ class LibraryNotesController:
                 self._append_library_note_source_record(restored_record)
                 if self._library_note_delete_receipt == receipt:
                     self._library_note_delete_receipt = None
+                # TASK-34000.28 (N-24): a folder-conflict notice used to
+                # outlive a successful Undo until restart.
+                if getattr(self, "_library_notes_notice_refresh_offered", False):
+                    self._library_notes_notice = ""
+                    self._library_notes_notice_refresh_offered = False
                 # task-32144: the row has left the tombstones, so the
                 # "Recently deleted (N)" count and the Trash view's own rows
                 # both have to move -- here, in the ONE seam both Undo and
