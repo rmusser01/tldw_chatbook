@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from textual.widgets import Button, Input, Select, TextArea
+from textual.widgets import Button, Input, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import (
@@ -192,7 +192,13 @@ async def _title_then_escape(screen, pilot, title: str) -> None:
 
 
 async def _open_folder_picker(host, screen, pilot, button_id: str) -> list[str]:
-    """Press a toolbar folder action; return the picker's folder prompts."""
+    """Press a toolbar folder action; return the picker's folder rows.
+
+    TASK-34000.28 (N-23): the picker pages every active folder into row
+    buttons rather than a ``Select`` of the loaded branches, so its folders
+    are read once its first page has painted (the total line has replaced
+    "Loading folders…").
+    """
     button = await _wait_for_selector(screen, pilot, button_id)
     button.press()
     await _until(
@@ -200,9 +206,19 @@ async def _open_folder_picker(host, screen, pilot, button_id: str) -> list[str]:
         lambda: isinstance(host.screen, LibraryNoteFolderTargetDialog),
         "the folder picker to open",
     )
-    select = host.screen.query_one("#library-note-folder-target", Select)
+    await _until(
+        pilot,
+        lambda: any(
+            "Loading folders…" not in str(total.render())
+            for total in host.screen.query("#library-note-folder-target-total")
+        ),
+        "the folder picker's first page",
+    )
     prompts = [
-        str(prompt) for prompt, value in select._options if value is not Select.NULL
+        str(row.label)
+        for row in host.screen.query(".library-note-folder-target-row").results(
+            Button
+        )
     ]
     await pilot.press("escape")
     await _until(pilot, lambda: host.screen is screen, "the folder picker to close")

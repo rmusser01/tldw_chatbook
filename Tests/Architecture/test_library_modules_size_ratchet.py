@@ -592,7 +592,12 @@ _BUDGETS: dict[str, int] = {
     # expand/collapse step split out of the folder-row press handler
     # (``_toggle_library_notes_folder``) so Right/Left toggle without
     # selecting the folder: 7298 -> 7312 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7312,
+    # 2026-10-25, TASK-34000.28 (polish-1a task 3; same owner decision): the
+    # shared slice helper ``_ensure_library_notes_folder_slices`` (the toggle's
+    # loop, now also the locator's) and the folder pickers' all-folders loader
+    # ``_page_library_notes_folder_targets`` replacing the loaded-branches
+    # ``_library_notes_folder_target_options``: 7312 -> 7339 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7339,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
