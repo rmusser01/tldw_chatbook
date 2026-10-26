@@ -109,8 +109,12 @@ _MANAGED_ANCESTOR_SHADOW_SQL = (
 
 
 #: TASK-34000.28 (N-24): how many times a repository-owned mutation runs when
-#: SQLite reports contention (``_contention_backoff`` sleeps between runs).
+#: SQLite reports a stale snapshot (``_contention_backoff`` sleeps between).
 _CONTENTION_ATTEMPTS = 3
+
+#: SQLITE_BUSY_SNAPSHOT (``SQLITE_BUSY | 2 << 8``): the one contention code
+#: SQLite's busy handler never waits on, so the only one worth a re-run.
+_SQLITE_BUSY_SNAPSHOT = 517
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -133,34 +137,54 @@ def _repository_owns_transaction(db: CharactersRAGDB) -> bool:
     return not db.get_connection().in_transaction
 
 
+def _is_stale_snapshot(exc: FolderConflictError) -> bool:
+    """A ``busy`` conflict whose chained SQLite error is SQLITE_BUSY_SNAPSHOT.
+
+    Both contention translators chain the SQLite error (``raise ... from``),
+    so ``__cause__`` carries the extended code. A plain SQLITE_BUSY or
+    SQLITE_LOCKED arrives after the busy handler has already waited out the
+    connection's timeout, so re-running it would only wait again.
+    """
+    cause = exc.__cause__
+    return (
+        exc.reason == "busy"
+        and getattr(cause, "sqlite_errorcode", None) == _SQLITE_BUSY_SNAPSHOT
+    )
+
+
 def _retry_owned_contention(
     mutation: Callable[_P, _R],
 ) -> Callable[_P, _R]:
-    """Re-run a repository-owned mutation, whole, after SQLite contention.
+    """Re-run a repository-owned mutation, whole, after a stale snapshot.
 
     TASK-34000.28 (N-24), the belt beside ``BEGIN IMMEDIATE``: a mutation
     whose transaction this repository owns is re-run from a fresh BEGIN --
     every read and write again, so the retry is exactly as idempotent as one
-    run -- when it failed with ``FolderConflictError(reason="busy")``, at
-    most ``_CONTENTION_ATTEMPTS`` times. Inside a transaction the caller owns
-    (a ``cursor`` argument, or an enclosing ``db.transaction()`` on this
-    thread) a retry would replay half of someone else's work, so the busy
-    conflict is raised at once. Ownership is read after the failure: an owned
-    transaction has rolled back by then, and one whose rollback failed still
-    reads as in-transaction, so it is never re-run either.
+    run -- only when it failed with SQLITE_BUSY_SNAPSHOT (``_is_stale_
+    snapshot``), at most ``_CONTENTION_ATTEMPTS`` times. Every other ``busy``
+    is raised at once. Inside a transaction the caller owns (a ``cursor``
+    argument, or an enclosing ``db.transaction()`` on this thread) a retry
+    would replay half of someone else's work, so ownership is required both
+    before the first attempt and after the failure (an owned transaction has
+    rolled back by then; one whose rollback failed still reads as
+    in-transaction). A wrapped method takes no one-shot iterable: the public
+    methods normalize those before calling a retried body.
     """
 
     @functools.wraps(mutation)
     def run(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         repository = args[0]
+        owned = kwargs.get("cursor") is None and _repository_owns_transaction(
+            repository.db
+        )
         for attempt in range(_CONTENTION_ATTEMPTS):
             try:
                 return mutation(*args, **kwargs)
             except FolderConflictError as exc:
                 if (
-                    exc.reason != "busy"
+                    not owned
+                    or not _is_stale_snapshot(exc)
                     or attempt == _CONTENTION_ATTEMPTS - 1
-                    or kwargs.get("cursor") is not None
                     or not _repository_owns_transaction(repository.db)
                 ):
                     raise
@@ -1749,7 +1773,6 @@ class LocalNoteFolderRepository:
             rows = _load_managed_folder_rows(cursor, (folder_id,))
             return bool(rows and rows[0]["owner_active"] is not None)
 
-    @_retry_owned_contention
     def reconcile_managed(
         self,
         *,
@@ -1757,9 +1780,28 @@ class LocalNoteFolderRepository:
         desired: Iterable[tuple[str, str]],
         cursor: sqlite3.Cursor | None = None,
     ) -> tuple[NoteFolderMembership, ...]:
-        """Converge only one sync owner's managed placements."""
+        """Converge only one sync owner's managed placements.
+
+        ``desired`` is normalized here, once: the retried body must never
+        re-consume a one-shot iterable, which would converge to an empty set
+        and soft-delete the owner's placements (TASK-34000.28).
+        """
         _validate_owner_id(owner_id)
-        desired_pairs = _normalize_desired_memberships(desired)
+        return self._reconcile_managed_pairs(
+            owner_id=owner_id,
+            desired_pairs=_normalize_desired_memberships(desired),
+            cursor=cursor,
+        )
+
+    @_retry_owned_contention
+    def _reconcile_managed_pairs(
+        self,
+        *,
+        owner_id: str,
+        desired_pairs: tuple[tuple[str, str], ...],
+        cursor: sqlite3.Cursor | None = None,
+    ) -> tuple[NoteFolderMembership, ...]:
+        """``reconcile_managed``'s transaction, over already-normalized pairs."""
         desired_set = set(desired_pairs)
         try:
             transaction = (
@@ -1942,10 +1984,20 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
-    @_retry_owned_contention
     def mark_unknown_owners_inactive(self, *, active_owner_ids: Iterable[str]) -> int:
-        """Converge restored managed-owner flags against the known owner set."""
-        known_owners = set(_normalize_owner_ids(active_owner_ids))
+        """Converge restored managed-owner flags against the known owner set.
+
+        The owner set is normalized here, once, for the same reason as
+        ``reconcile_managed``: a re-consumed one-shot iterable would mark
+        every owner inactive.
+        """
+        return self._mark_owners_inactive_except(
+            known_owners=frozenset(_normalize_owner_ids(active_owner_ids))
+        )
+
+    @_retry_owned_contention
+    def _mark_owners_inactive_except(self, *, known_owners: frozenset[str]) -> int:
+        """``mark_unknown_owners_inactive``'s transaction."""
         try:
             with (
                 self.db.transaction(immediate=True) as cursor,

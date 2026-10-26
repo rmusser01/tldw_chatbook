@@ -2623,6 +2623,117 @@ async def test_each_folder_conflict_names_what_changed_and_offers_refresh(
     assert fake._notes_state.notice_refresh_offered is True
 
 
+def _ready_for_list_state(fake) -> None:
+    """Give a mutation fake what ``_build_library_notes_state`` reads."""
+    state = fake._notes_state
+    state.filter_records = None
+    state.sort = "newest"
+    state.filter = ""
+    state.select_mode = False
+    state.row_selection = SimpleNamespace(ids=frozenset())
+    state.sort_choices_visible = False
+    state.selected_note_id = ""
+    state.tree_attention_folder_ids = frozenset()
+    state.delete_receipt = None
+    fake._local_source_records = {"notes": ()}
+    fake._local_source_counts = {"notes": 0}
+    fake._library_notes_operation_for_active_region = lambda: None
+    fake._library_notes_mutation_fenced = lambda: False
+
+
+@pytest.mark.asyncio
+async def test_refresh_is_offered_only_beside_a_folder_conflict_sentence(
+    monkeypatch,
+):
+    """TASK-34000.28 fix round 1 (I-2): a conflict paints its sentence whole
+    (62 cells -- no 52-cell cut) with Refresh beside it. A later, unrelated
+    notice -- here a sync-managed placement's Move note, through the real
+    handler -- must not inherit the still-set offer."""
+    monkeypatch.setattr(
+        library_screen_module, "_sync_library_canvas", lambda *a, **k: None
+    )
+    failure = FolderConflictError("conflict", reason="membership_version")
+    fake = _mutation_fake(_FailingMutationService(failure))
+    _ready_for_list_state(fake)
+
+    assert not await LibraryScreen._execute_library_notes_tree_mutation(
+        fake, "create_folder", name="New", parent_id=None
+    )
+    conflict = LibraryScreen._build_library_notes_state(fake)
+
+    assert conflict.notice_refresh_offered is True
+    assert conflict.status_copy == (
+        "This note's placement changed elsewhere since the tree loaded."
+    )
+
+    fake._selected_library_notes_tree_row = lambda: SimpleNamespace(
+        kind="note", note_id="n1", protected=True
+    )
+    LibraryScreen._choose_library_notes_placement_target(fake, move=True)
+    unrelated = LibraryScreen._build_library_notes_state(fake)
+
+    assert fake._notes_state.notice == (
+        "This placement is managed by sync; change its sync root instead."
+    )
+    assert unrelated.notice_refresh_offered is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_folder_id", "reloads_unfiled"), (("", True), ("ideas", False))
+)
+async def test_a_move_out_of_unfiled_reloads_the_unfiled_slice(
+    monkeypatch, source_folder_id, reloads_unfiled
+):
+    """TASK-34000.28 (M4): a note moved out of Unfiled leaves the root
+    placements slice too -- its ``None`` source used to be dropped by the
+    ``if value`` filter, so the moved note kept painting under Unfiled. A
+    move between folders leaves Unfiled alone."""
+    fake = _mutation_fake(_MutationService())
+    for parent in (None, "ideas", "reading"):
+        key = NotesBranchKey(parent, "placements")
+        fake._notes_state.tree_branches[key] = apply_notes_slice_page(
+            begin_notes_slice_load(
+                empty_notes_slice(key, topology_epoch=1),
+                generation=1,
+                direction="replace",
+                requested_offset=0,
+                requested_limit=20,
+            ),
+            _placement_page(parent, "n1", "n2"),
+            direction="replace",
+            request_generation=1,
+            topology_epoch=1,
+        ).state
+    loaded: list[NotesBranchKey] = []
+
+    async def record_load(_screen, key, **_kwargs):
+        loaded.append(key)
+
+    async def located(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(LibraryScreen, "_load_library_notes_tree_slice", record_load)
+    monkeypatch.setattr(
+        LibraryScreen, "_locate_library_notes_tree_target", located
+    )
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "move_placement",
+        {
+            "note_id": "n1",
+            "destination_folder_id": "reading",
+            "source_folder_id": source_folder_id or None,
+        },
+        before=None,
+        result=True,
+    )
+
+    assert (NotesBranchKey(None, "placements") in loaded) is reloads_unfiled
+    assert NotesBranchKey("reading", "placements") in loaded
+
+
 @pytest.mark.asyncio
 async def test_the_next_successful_folder_operation_withdraws_the_conflict():
     fake = _mutation_fake(_MutationService())

@@ -5242,6 +5242,7 @@ class LibraryScreen(BaseAppScreen):
             # Oldest left focus in the filter). Same pair as the others, in
             # ``_library_notes_role_target``.
             "library-notes-sort": "sort",
+            "library-notes-notice-refresh": "notice-refresh",  # TASK-34000.28
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
@@ -17752,11 +17753,17 @@ class LibraryScreen(BaseAppScreen):
             state,
             note_open=bool(self._notes_state.selected_note_id),
             sync_attention=bool(self._notes_state.tree_attention_folder_ids),
-            # TASK-34000.28: only while the conflict notice is on show.
+            # TASK-34000.28: Refresh only beside a folder-conflict sentence; a
+            # notice is kept whole (the line wraps), an operation's line is not.
             notice_refresh_offered=bool(
                 operation is None
-                and self._notes_state.notice
                 and self._notes_state.notice_refresh_offered
+                and self._notes_state.notice in FOLDER_CONFLICT_COPY.values()
+            ),
+            status_copy=(
+                self._notes_state.notice
+                if operation is None and self._notes_state.notice
+                else state.status_copy
             ),
         )
         if self._notes_state.select_mode:

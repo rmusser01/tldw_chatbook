@@ -101,20 +101,19 @@ def test_list_state_filter_status_is_one_row_cell_bounded_and_plain():
     assert state.status_copy.endswith("…")
 
 
-def test_a_long_notice_is_kept_whole_for_the_wrapping_status_line():
-    """TASK-34000.28 (N-24): the review read "…refresh and try aga…" -- the
-    notice was cut at 52 cells. The status line wraps (``height: auto``), so
-    an operation notice is kept whole; only its line breaks are flattened."""
-    notice = "This note's placement changed elsewhere since the tree loaded."
-    assert cell_len(notice) > 52
+def test_an_operation_status_line_stays_one_52_cell_row():
+    """TASK-34000.28 fix round 1 (M1): an operation's own status line keeps
+    its one 52-cell row. Only the folder notice is kept whole, and the screen
+    decides that (``LibraryScreen._build_library_notes_state``), because only
+    the screen knows which line it is."""
+    line = "Exporting 12 notes to a folder with a very long name\nnext"
+    assert cell_len(line) > 52
 
-    whole = build_library_notes_list_state([NOTE_A], operation_status=notice, now=NOW)
-    flattened = build_library_notes_list_state(
-        [NOTE_A], operation_status="first\nsecond", now=NOW
-    )
+    state = build_library_notes_list_state([NOTE_A], operation_status=line, now=NOW)
 
-    assert whole.status_copy == notice
-    assert flattened.status_copy == "first second"
+    assert "\n" not in state.status_copy
+    assert cell_len(state.status_copy) <= 52
+    assert state.status_copy.endswith("…")
 
 
 def test_list_state_exposes_sort_chooser_and_active_operation_status():
