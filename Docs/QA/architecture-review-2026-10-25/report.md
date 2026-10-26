@@ -281,7 +281,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 | Concern | Owner |
 |---|---|
 | `Chat/document_generator.py` and four other dead Chat modules; the dead `_chat_api_kwargs` builder | TASK-32807.5 |
-| Provider credential precedence ruling (ADR-012 amendment 2026-09-19); TASK-36941.3 aligns the hosted engine, and custom endpoints follow a recorded owner choice | TASK-32806.2 |
+| Provider credential precedence ruling (ADR-012 amendment 2026-09-19); TASK-36941.3 aligns the hosted engine, and custom endpoints keep ADR-146's order (owner, 2026-10-26) | TASK-32806.2 |
 | Wire-or-retire policy for unreachable modules | TASK-19571 |
 | Scope-service helper consolidation (ADR first) | TASK-32898 (restates TASK-32808.6) |
 | Transaction-manager consolidation / store kernel | TASK-34905, TASK-33132 |
