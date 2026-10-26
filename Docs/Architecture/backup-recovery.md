@@ -195,7 +195,11 @@ optional-sidecar policy; they never establish a committed batch.
 Private SQLite helper wire protocol v2 adds a strict `require_private_mode` field.
 Only the actual live bound mobile grant selects it in the connection path after
 journaled preparation. The helper then refuses a needed mode change, including a
-new sidecar generation, without calling `fchmod`. Ordinary callers retain native
-hardening; read-only `preserve_source_mode` keeps its original meaning. Old/mixed
+new sidecar generation, without calling `fchmod`. After helper preparation, the
+native connection seam rechecks the exact reviewed/journaled cohort immediately
+before SQLite allocation; an already-private replacement generation also refuses.
+The helper does not create optional sidecars. Transient-generation handling starts
+only after admitted SQLite allocation. Ordinary callers retain native hardening;
+read-only `preserve_source_mode` keeps its original meaning. Old/mixed
 wire versions and missing fields fail closed. This protocol is separate from
 Canvas and HTTP protocols.

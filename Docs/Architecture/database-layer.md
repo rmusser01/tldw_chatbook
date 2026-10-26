@@ -169,7 +169,10 @@ The mobile scope supplies an internal `require_private_mode` requirement to the
 strict v2 private-SQLite helper request. This is derived from the real bound grant,
 not a public connect flag or owner string. Every existing DB/sidecar must already
 be 0600 after its journaled transition; a late nonprivate generation refuses
-without mutation. Optional-sidecar creation/revalidation and native 0600 creation
-remain unchanged. Fixed sidecar observations at ownership retirement/recovery
-allow ordinary WAL generations to change without weakening permanent DB/ancestor
+without mutation. The connection seam also rechecks the initial fixed cohort
+after helper completion and before SQLite allocation, refusing even a private
+replacement generation. The helper leaves absent optional sidecars absent.
+Optional-sidecar revalidation during SQLite ownership and native 0600 main-file
+creation remain unchanged. Fixed sidecar observations at ownership retirement or
+recovery allow ordinary WAL generations to change without weakening permanent DB/ancestor
 witnesses or writing per-row journal records.

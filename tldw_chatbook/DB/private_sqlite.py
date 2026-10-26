@@ -1966,6 +1966,9 @@ def _connect_registered_sqlite(
             verify_expected_named_identity(selected, expected_identity)
             if capture_path is not None:
                 _verify_capture_sqlite_target(capture_path)
+            if require_private_mode:
+                # Preparation cannot turn a foreign generation into SQLite ownership.
+                _mobile_private_preparation(selected)
             connection = sqlite3.connect(connection_target, uri=use_uri, **kwargs)
             try:
                 if capture_path is not None:

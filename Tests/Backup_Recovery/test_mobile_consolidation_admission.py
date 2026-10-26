@@ -1133,3 +1133,66 @@ def test_changed_sidecar_generation_refuses_before_any_native_hardening(
                 record.event.startswith("mobile_mode_")
                 for record in journal._records(parent)
             )
+
+
+@pytest.mark.parametrize("timing", ["before_helper", "after_helper"])
+def test_private_sidecar_generation_refuses_before_sqlite_allocation(
+    tmp_path, monkeypatch, timing
+):
+    from pathlib import Path
+
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.DB import private_sqlite
+
+    with prepared(tmp_path, monkeypatch, wal=True) as (
+        session,
+        journal,
+        config,
+        stores,
+        preview,
+        inventory,
+        _,
+    ):
+        prepare(session, journal, config, preview, inventory)
+        native_prepare = private_sqlite.prepare_in_helper
+        target = Path(f"{stores.workspace_path}-wal")
+        changed = []
+        scopes = []
+
+        def replace_private_generation():
+            scope = storage._local.mobile_scope
+            assert not scope.handed_off
+            scopes.append(scope)
+            previous = target.stat().st_ino
+            replacement = target.with_name("private-replacement-wal")
+            replacement.write_bytes(target.read_bytes())
+            replacement.chmod(0o600)
+            replacement.replace(target)
+            changed.append((target.stat().st_ino, target.read_bytes()))
+            assert previous != changed[-1][0]
+
+        def prepare_with_replacement(request, **kwargs):
+            if request.require_private_mode and timing == "before_helper":
+                replace_private_generation()
+            result = native_prepare(request, **kwargs)
+            if request.require_private_mode and timing == "after_helper":
+                replace_private_generation()
+            return result
+
+        monkeypatch.setattr(
+            private_sqlite, "prepare_in_helper", prepare_with_replacement
+        )
+        with (
+            pytest.raises(bootstrap.RecoveryRequired, match="mobile_sidecar_changed"),
+            session.mobile_consolidation_owner(journal, "db.workspaces") as database,
+            database.transaction() as cursor,
+        ):
+            assert cursor.execute("SELECT 1").fetchone()[0] == 1
+        assert changed and (target.stat().st_ino, target.read_bytes()) == changed[0]
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert scopes and not scopes[0].handed_off
+        with journal._locked(exclusive=False) as parent:
+            assert not any(
+                record.event == "mobile_sidecars_observed"
+                for record in journal._records(parent)
+            )

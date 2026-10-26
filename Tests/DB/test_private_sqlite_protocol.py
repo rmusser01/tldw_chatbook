@@ -834,3 +834,25 @@ def test_v2_requires_closed_mode_field_and_refuses_old_peer():
     ):
         with pytest.raises(codec.ProtocolError):
             codec.encode_frame(value)
+
+
+def test_strict_helper_creates_only_main_database_not_optional_sidecars(tmp_path):
+    target = tmp_path / "new.db"
+    result = run_child(
+        request(
+            target, writable=True, create_if_missing=True, require_private_mode=True
+        ),
+        tmp_path,
+    )
+    assert result["status"] == "ok"
+    assert result["result"]["artifacts"] == [
+        "created_private",
+        "absent",
+        "absent",
+        "absent",
+    ]
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert all(
+        not Path(f"{target}{suffix}").exists()
+        for suffix in ("-wal", "-shm", "-journal")
+    )
