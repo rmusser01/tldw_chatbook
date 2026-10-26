@@ -4465,8 +4465,6 @@ class PersonasScreen(BaseAppScreen):
                     "Could not re-render lore rows after search."
                 )
                 self._window_state.read_failed()
-            else:
-                self._land_first_match(self._list_fence())
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -4698,7 +4696,20 @@ class PersonasScreen(BaseAppScreen):
                 ),
                 recovery_copy=recovery_copy,
             )
+            if (
+                request_generation != self._dictionary_lore_request_generation
+                or not self.is_attached
+                or self._pruning
+                or not library.is_attached
+                or library._pruning
+                or not self._library_render_snapshot_is_current(
+                    expected_query=expected_query,
+                    expected_mode=expected_mode,
+                )
+            ):
+                return
             library.item_list.set_more_available(False)
+            self._land_first_match(self._list_fence())
 
     # ===== Mode switching =====
 

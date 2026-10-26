@@ -255,7 +255,9 @@ async def save_lore_settings(
             return
         library = next(iter(screen.query(PersonasLibraryPane)), None)
         if library is not None:
-            library.mark_active_row("lore", entity_id)
+            library.mark_active_row(
+                "lore", entity_id, move_cursor=False, load_through=False
+            )
         screen._sync_inspector_console_actions()
         report(
             "Saved. Newer settings edits are not saved."

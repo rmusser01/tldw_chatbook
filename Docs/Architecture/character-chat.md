@@ -57,6 +57,10 @@ only for that original selection and panel, retains newer raw controls, and labe
 those later edits as unsaved. A retired selection receives feedback naming the
 captured book without changing its replacement. This uses the existing Lore
 transition/dirty-state ownership; it does not add entry/Options draft domains.
+If Save refresh supersedes a submitted Lore search, the existing first-match
+intent stays owed until current matching rows publish. Generation, query, mode
+and attachment are rechecked after the row-update await. Background Save marks
+the loaded book without moving the search cursor or creating load-through intent.
 
 ## Chat dictionaries
 
