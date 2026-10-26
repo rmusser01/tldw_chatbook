@@ -1335,7 +1335,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: visibility predicate), the create path's per-note fact reset, and the
     #: focus capture reading an operation's origin and a pruned control's
     #: role: 38166 -> 38233 lines, 1373 -> 1374 methods (measured with
-    #: ``_measure``).
+    #: ``_measure``). Fix round 1 (same decision; review R0 I-1/M-1/M-3): the
+    #: pruned-control substitution narrowed to Textual's own landing, the
+    #: origin rule bounded to the operation's region, and the Discard tail's
+    #: docstring: 38233 -> 38244 lines, 1374 methods (measured).
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38149, 1375),
 }
 

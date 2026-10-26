@@ -1763,7 +1763,7 @@ class LibraryNotesController:
         self._return_focus_to_library_notes_operation_origin(current)
         return True
     def _return_focus_to_library_notes_operation_origin(
-        self, operation: LibraryNotesOperationState
+        self, operation: LibraryNotesOperationState, *, deferred: bool = False
     ) -> None:
         """Focus -- never press -- the control that started ``operation``.
 
@@ -1771,17 +1771,24 @@ class LibraryNotesController:
         it, and synchronously: a canvas sync captured in between would
         replay the stop Textual moved focus to when the control was disabled
         (Delete, in Info) over a deferred restore. A control the apply has
-        not re-enabled yet (a deferred apply) is focused after the refresh.
+        not re-enabled yet (a deferred apply) gets one retry after the
+        refresh, still in the operation's region and marked programmatic.
         """
         if not operation.origin_control:
             return
-        selector = f"#{operation.origin_control}"
+        if deferred and operation.region != self._library_notes_active_region():
+            return
         try:
-            target = self.query_one(selector, Widget)
+            target = self.query_one(f"#{operation.origin_control}", Widget)
         except (NoMatches, QueryError):
             return
         if not target.focusable:
-            self.call_after_refresh(self._focus_library_note_control, selector)
+            if not deferred:
+                self.call_after_refresh(
+                    self._return_focus_to_library_notes_operation_origin,
+                    operation,
+                    deferred=True,
+                )
             return
         if self.focused is not target:
             self._library_notes_programmatic_focus_target = target

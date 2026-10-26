@@ -631,7 +631,9 @@ _BUDGETS: dict[str, int] = {
     # finish or cancel, the ``use-in-console`` focus role, and the one
     # per-note fact reset (``_reset_library_note_facts`` /
     # ``_start_library_note_fact_loads``) the open and create paths share:
-    # 7394 -> 7470 (measured).
+    # 7394 -> 7470 (measured). Fix round 1 (same decision; review R0 M-3): the
+    # deferred focus return is one programmatic, region-checked retry:
+    # 7470 -> 7477 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7423,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
