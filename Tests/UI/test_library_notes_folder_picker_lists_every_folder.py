@@ -311,6 +311,22 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         assert outcomes == []
         assert _memberships(tmp_path) == before
 
+        # Add to folder reads the same all-folders page and names the note
+        # (fix round 1: the title and the nested rows had no pin).
+        await _open_picker(host, pilot, "#library-notes-placement-add")
+        await _wait(
+            pilot,
+            lambda: _picker_rows(host) == ALL_FOLDERS
+            and "5 folders" in _painted(host),
+            lambda: f"Add to folder's rows: {_picker_rows(host)} {_painted(host)}",
+        )
+        assert 'Add "Ideas inbox" to folder…' in _painted(host), _painted(host)
+        await pilot.press("escape")
+        await _wait(pilot, lambda: host.screen is screen, "Add to folder to close")
+        await pilot.pause(0.3)
+        assert outcomes == []
+        assert _memberships(tmp_path) == before
+
         operation, asked, ok, notice = await _choose(
             host,
             pilot,
@@ -330,7 +346,11 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         assert {attempt[1]["destination_folder_id"] for attempt in outcomes} == {
             tree.ids["/Projects/Thesis"]
         }
-        assert (note_id, tree.ids["/Projects/Thesis"]) in _memberships(tmp_path)
+        # Exactly one placement added -- the note in Thesis -- and nothing else
+        # written (the move's source is Unfiled, so nothing is detached).
+        assert _memberships(tmp_path) == sorted(
+            [*before, (note_id, tree.ids["/Projects/Thesis"])]
+        )
 
 
 async def test_moving_a_folder_into_a_collapsed_folder_shows_the_destinations_notes(
@@ -381,6 +401,8 @@ async def test_moving_a_folder_into_a_collapsed_folder_shows_the_destinations_no
             tree.ids["/Study"],
             True,
         ), (outcomes, notice)
+        # Every attempt asked for Study: no attempt chose anything else.
+        assert {attempt[1]["parent_id"] for attempt in outcomes} == {tree.ids["/Study"]}
 
         def destination_lists_its_notes() -> bool:
             painted = _painted_list(host, screen)

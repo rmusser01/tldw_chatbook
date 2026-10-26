@@ -31500,7 +31500,7 @@ class LibraryScreen(BaseAppScreen):
             or selected.protected
         ):
             return
-        # ADR-097: the picker is imported where it opens, not at module top.
+        # Imported here, but its module loads at boot for the Name dialog.
         from ...Widgets.Library.library_note_folder_dialog import (
             LibraryNoteFolderTargetDialog,
         )
@@ -31586,7 +31586,7 @@ class LibraryScreen(BaseAppScreen):
             )
             _sync_library_canvas(self, "notes")
             return
-        # ADR-097: the picker is imported where it opens, not at module top.
+        # Imported here, but its module loads at boot for the Name dialog.
         from ...Widgets.Library.library_note_folder_dialog import (
             LibraryNoteFolderTargetDialog,
         )
