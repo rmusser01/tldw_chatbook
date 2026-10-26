@@ -565,7 +565,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # existing entry changes shard:
 # - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
 #   160x45 boots, ~26 s): 916 -> 917.
-MINIMUM_FILES = 917
+# - task 6 fix round 1: Tests/UI/test_library_notes_focus_capture_and_export_
+#   outcomes.py (two 160x45 boots, ~27 s): 917 -> 918.
+MINIMUM_FILES = 918
 
 
 def read_census(path: Path) -> list[str]:

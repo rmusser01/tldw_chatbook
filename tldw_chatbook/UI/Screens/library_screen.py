@@ -948,7 +948,11 @@ def _library_note_exit_veto_toast(
     line shows, which already names the field and the fix ("Title begins or
     ends with whitespace — remove it to save."), so a keyword veto never
     blames the title. "Discard new note" is offered only while that control
-    is on screen. Every other kind keeps its own sentence.
+    is on screen. Today no typed edit reaches that branch: the first genuine
+    edit clears the session's ``untouched_create_token``, which hides Discard,
+    and an untouched note has nothing to veto. It stays as the correct copy
+    for any later path that shows Discard during a veto. Every other kind
+    keeps its own sentence.
 
     Args:
         outcome: The typed barrier result the flush refused with.
@@ -5403,12 +5407,18 @@ class LibraryScreen(BaseAppScreen):
         """Capture only portable focus, selection, and scroll values."""
         focused = self.focused
         if not self._library_notes_semantic_role(focused):
-            # TASK-34000.29: a Notes recompose pruned the focused control and
-            # Textual parked focus on a landing with no role; the user's place
-            # is still the control being replaced (``focus_before_prune``).
-            for canvas_id in ("#library-note-work-pane", "#library-notes-canvas"):
-                canvas = self._library_layout_ref(canvas_id)
-                focused = getattr(canvas, "focus_before_prune", None) or focused
+            # TASK-34000.29 (ruling T6-a): a Notes recompose pruned the focused
+            # control and focus is still on the landing Textual's reset picked
+            # (or on nothing). That landing is not the user's place; the pruned
+            # control is. A move the user made elsewhere is captured as made.
+            for canvas in (
+                self._library_compose_scoped_ref("#library-note-work-pane"),
+                self._library_layout_ref("#library-notes-canvas"),
+            ):
+                pruned = getattr(canvas, "focus_before_prune", None)
+                if pruned is not None and (focused is None or focused is pruned[1]):
+                    focused = pruned[0]
+                    break
         region = self._library_notes_focus_region()
         stage = (
             self._library_notes_focus_stage(focused)
@@ -5420,8 +5430,9 @@ class LibraryScreen(BaseAppScreen):
         # started it, so Textual moved focus on (to Delete, in Info). The
         # portable identity stays the ORIGIN's: a sync captured in that window
         # (the export dialog's close resyncs the tree) must replay it, never
-        # the stop focus fell to (lessons-textual: fix the ROLE).
-        operation = self._notes_state.operation
+        # the stop focus fell to (lessons-textual: fix the ROLE). Only for an
+        # operation whose region is the one on screen (review M-3).
+        operation = self._library_notes_operation_for_active_region()
         if (
             operation is not None
             and operation.running

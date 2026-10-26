@@ -411,16 +411,13 @@ def export_library_note_file(
             notify(
                 f"Note export cancelled. {validated_path.name} was left unchanged.",
                 severity="information",
+                markup=False,
             )
-        # Cancel is the user's choice, not a failure: the status line says
-        # what happened instead of the generic "Export failed" sentence.
-        screen._finish_library_notes_operation(
-            operation,
-            success=False,
-            failure_line=(
-                f"Export cancelled — {validated_path.name} was left unchanged."
-            ),
-        )
+        # TASK-34000.29 (ruling T6-b): keeping the file is the user's cancel,
+        # the same as dismissing the file dialog -- the toast is its one
+        # signal, no failure-phase line, and focus returns to the button.
+        # Only the note export's Keep; the shared prompt is unchanged.
+        screen._notes_controller._cancel_library_notes_operation(operation)
 
     request_export_write(
         screen.app, target, on_replace=_write, on_cancel=_keep, picked=validated_path
