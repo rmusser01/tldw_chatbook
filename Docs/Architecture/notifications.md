@@ -41,6 +41,16 @@ Wiring: `app_service_wiring.py` builds the DB (`get_notifications_db_path()`, `:
 
 Section switch → refresh worker (group `wc_notifications`) → controller `load_rows` behind policy `notifications.queue.list.local` → `list_notifications(limit=100)`; rows render Status/Title/Category/Severity/Created with control characters stripped and local-zone timestamps. Mark-read/dismiss run behind policy `notifications.queue.update.local` with `exit_on_error=False` (a corrupt DB must not kill the app). Row selection feeds the screen's scope reconciliation. Home's "Review notifications" deep-links to this section, and its unread count is the same inbox filtered to `not is_read`.
 
+The controller moves canonical file-backed `ClientNotificationsDB` list/read/dismiss
+calls off the event loop with `asyncio.to_thread(run_finite_local_worker, ...)`,
+after the existing policy gate. The finite-worker boundary retires only newly
+acquired worker connections after their synchronous operation finishes, including
+when the awaiting screen worker is cancelled. Borrowed handles and active
+transactions retain their owners. In-memory stores keep their constructing-thread
+connection; custom methods and awaitable test seams retain their original inline
+invocation and awaiting behavior. Mutation success still schedules the existing
+`wc_notifications` loader; exceptions keep the existing nonfatal worker behavior.
+
 ## Server parity feed
 
 `NotificationsScopeService` defaults to the server backend when a mode is configured; the local queue advertises `notifications.reminders.local` as unsupported (reminders are server-authoritative). The Schedules workbench runs the SSE observation supervisor (documented exit modes, flat-backoff restart, per-exception-class log throttling, `exit_on_error=False`); replay metadata (`retention_gap`, `server_refetch_required`) surfaces as Home's "Requery server events" state.

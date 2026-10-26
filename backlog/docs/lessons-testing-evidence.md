@@ -12469,6 +12469,13 @@ tests, so the failure looks exactly like a pre-existing red in someone else's
 area. Do not edit the tree while a run you intend to quote is running — and
 before A/B-ing any suspicious red, re-run it once against a quiescent tree.
 
+**Recurrence, TASK-36931, 2026-10-25.** Compacting a parametrization while its
+private-profile parent was running selected the old `[True-mark-read]` node,
+but the child imported the edited file and found zero matching cases. That
+receipt was retained as invalid, not counted as an expected defect failure.
+Freeze test node definitions and production source until the actual child has
+settled; verify its exact selected case and assertion before quoting RED/GREEN.
+
 ## A filing's prescribed fix is a hypothesis, not a spec (TASK-21128, 2026-08-23)
 
 The finding I filed said: scope the `messages_au` FTS trigger to `AFTER UPDATE OF
