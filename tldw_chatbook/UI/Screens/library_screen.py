@@ -356,6 +356,7 @@ from ...Local_Ingestion.parakeet_v2_artifact import (
 )
 from ...Local_Ingestion.stt_batch_routing import resolve_batch_stt_route
 from ...Notes.note_folder_models import (
+    FOLDER_CONFLICT_COPY,
     FolderCapabilityError,
     FolderCollisionError,
     FolderConflictError,
@@ -17746,6 +17747,12 @@ class LibraryScreen(BaseAppScreen):
             state,
             note_open=bool(self._notes_state.selected_note_id),
             sync_attention=bool(self._notes_state.tree_attention_folder_ids),
+            # TASK-34000.28: only while the conflict notice is on show.
+            notice_refresh_offered=bool(
+                operation is None
+                and self._notes_state.notice
+                and self._notes_state.notice_refresh_offered
+            ),
         )
         if self._notes_state.select_mode:
             projection = self._build_library_notes_tree_projection()
@@ -18997,7 +19004,9 @@ class LibraryScreen(BaseAppScreen):
             "note_delete",
             "delete_folder",
             "restore_folder",
-        }:
+        } or (operation == "move_placement" and not payload.get("source_folder_id")):
+            # TASK-34000.28: a move out of Unfiled (source None, dropped by
+            # the ``if value`` filter above) leaves the root placements too.
             placement_parents.add(None)
 
         affected = {NotesBranchKey(parent, "folders") for parent in parents}
@@ -19425,6 +19434,8 @@ class LibraryScreen(BaseAppScreen):
         }
         self._notes_state.mutation_in_flight = True
         try:
+            # TASK-34000.28: this run's outcome replaces any Refresh offer.
+            self._notes_state.notice_refresh_offered = False
             result: Any = None
             destination_membership: NoteFolderMembership | None = None
             if operation == "move_placement":
@@ -19534,10 +19545,11 @@ class LibraryScreen(BaseAppScreen):
                 "A folder with that name already exists in this location."
             )
             return False
-        except FolderConflictError:
-            self._notes_state.notice = (
-                "That folder changed elsewhere — refresh and try again."
+        except FolderConflictError as exc:
+            self._notes_state.notice = FOLDER_CONFLICT_COPY.get(
+                exc.reason, FOLDER_CONFLICT_COPY["unknown"]
             )
+            self._notes_state.notice_refresh_offered = True
             return False
         except FolderValidationError:
             self._notes_state.notice = "That folder name or destination is not valid."
@@ -31511,6 +31523,10 @@ class LibraryScreen(BaseAppScreen):
             ),
         )
 
+    @on(Button.Pressed, "#library-notes-notice-refresh")
+    def handle_library_notes_notice_refresh(self, event: Button.Pressed) -> None:
+        return self._notes_controller.handle_library_notes_notice_refresh(event)
+
     @on(Button.Pressed, "#library-notes-folder-restore")
     def handle_library_notes_folder_restore(self, event: Button.Pressed) -> None:
         """Restore the exact last removed folder subtree."""
@@ -31944,6 +31960,12 @@ class LibraryScreen(BaseAppScreen):
                 title=deleted_title or "Untitled",
                 expected_version=admission.expected_version + 1,
             )
+            # TASK-34000.28 (owner ruling, question 3): nothing stays selected
+            # -- not the neighbour the reconcile would pick -- so Move note and
+            # Add to folder never act on a note the reader did not choose.
+            selected = self._selected_library_notes_tree_row()
+            if selected is not None and selected.note_id == admission.note_id:
+                self._notes_state.tree_selected_placement_id = ""
             await LibraryScreen._reconcile_library_notes_tree_mutation(
                 self,
                 "note_delete",

@@ -101,6 +101,22 @@ def test_list_state_filter_status_is_one_row_cell_bounded_and_plain():
     assert state.status_copy.endswith("…")
 
 
+def test_a_long_notice_is_kept_whole_for_the_wrapping_status_line():
+    """TASK-34000.28 (N-24): the review read "…refresh and try aga…" -- the
+    notice was cut at 52 cells. The status line wraps (``height: auto``), so
+    an operation notice is kept whole; only its line breaks are flattened."""
+    notice = "This note's placement changed elsewhere since the tree loaded."
+    assert cell_len(notice) > 52
+
+    whole = build_library_notes_list_state([NOTE_A], operation_status=notice, now=NOW)
+    flattened = build_library_notes_list_state(
+        [NOTE_A], operation_status="first\nsecond", now=NOW
+    )
+
+    assert whole.status_copy == notice
+    assert flattened.status_copy == "first second"
+
+
 def test_list_state_exposes_sort_chooser_and_active_operation_status():
     state = build_library_notes_list_state(
         [NOTE_A],

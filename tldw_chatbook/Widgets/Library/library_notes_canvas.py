@@ -2605,6 +2605,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-canvas-action",
                     compact=True,
                 )
+            if list_state.notice_refresh_offered:
+                # TASK-34000.28 (N-24): a folder conflict's next step.
+                yield Button(
+                    "Refresh",
+                    id="library-notes-notice-refresh",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=list_state.operation_running,
+                )
         receipt = list_state.delete_receipt
         if receipt is not None:
             title = ellipsize_note_title_cells(

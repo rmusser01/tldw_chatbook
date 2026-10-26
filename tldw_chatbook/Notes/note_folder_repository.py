@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import functools
 import sqlite3
+import time
 import unicodedata
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
-from typing import NoReturn
+from typing import NoReturn, ParamSpec, TypeVar
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
@@ -106,8 +108,81 @@ _MANAGED_ANCESTOR_SHADOW_SQL = (
 )
 
 
+#: TASK-34000.28 (N-24): how many times a repository-owned mutation runs when
+#: SQLite reports contention (``_contention_backoff`` sleeps between runs).
+_CONTENTION_ATTEMPTS = 3
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _contention_backoff(attempt: int) -> None:
+    """Wait before re-running a contended mutation: 0.05 s, then 0.10 s."""
+    time.sleep(0.05 * (attempt + 1))
+
+
+def _repository_owns_transaction(db: CharactersRAGDB) -> bool:
+    """Whether the next ``db.transaction()`` on this thread BEGINs its own.
+
+    False inside an enclosing managed transaction (depth > 0) and inside a
+    caller's raw ``BEGIN`` (borrowed): the same test
+    ``console_trace_repository`` uses before it owns a transaction.
+    """
+    if getattr(db._local, "transaction_depth", 0):
+        return False
+    return not db.get_connection().in_transaction
+
+
+def _retry_owned_contention(
+    mutation: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    """Re-run a repository-owned mutation, whole, after SQLite contention.
+
+    TASK-34000.28 (N-24), the belt beside ``BEGIN IMMEDIATE``: a mutation
+    whose transaction this repository owns is re-run from a fresh BEGIN --
+    every read and write again, so the retry is exactly as idempotent as one
+    run -- when it failed with ``FolderConflictError(reason="busy")``, at
+    most ``_CONTENTION_ATTEMPTS`` times. Inside a transaction the caller owns
+    (a ``cursor`` argument, or an enclosing ``db.transaction()`` on this
+    thread) a retry would replay half of someone else's work, so the busy
+    conflict is raised at once. Ownership is read after the failure: an owned
+    transaction has rolled back by then, and one whose rollback failed still
+    reads as in-transaction, so it is never re-run either.
+    """
+
+    @functools.wraps(mutation)
+    def run(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        repository = args[0]
+        for attempt in range(_CONTENTION_ATTEMPTS):
+            try:
+                return mutation(*args, **kwargs)
+            except FolderConflictError as exc:
+                if (
+                    exc.reason != "busy"
+                    or attempt == _CONTENTION_ATTEMPTS - 1
+                    or kwargs.get("cursor") is not None
+                    or not _repository_owns_transaction(repository.db)
+                ):
+                    raise
+            _contention_backoff(attempt)
+        raise AssertionError("unreachable: the last attempt returns or raises")
+
+    return run
+
+
 class LocalNoteFolderRepository:
-    """Own local folder SQL while sharing the application's ChaChaNotes handle."""
+    """Own local folder SQL while sharing the application's ChaChaNotes handle.
+
+    TASK-34000.28 (N-24): every mutation whose transaction this repository
+    owns starts it with ``BEGIN IMMEDIATE``. Each one reads before it writes,
+    and a DEFERRED transaction that has read fails its first write with
+    SQLITE_BUSY_SNAPSHOT (517) when another connection restarts the WAL in
+    between -- which every finite worker's ``close_connection`` does with
+    ``PRAGMA wal_checkpoint(TRUNCATE)``. SQLite's busy handler is never asked
+    about that code, so no busy timeout helps; taking the write lock first
+    makes the checkpoint wait for the mutation instead. Read-only methods stay
+    deferred.
+    """
 
     def __init__(self, db: CharactersRAGDB) -> None:
         """Create a repository over an already-initialized database handle."""
@@ -115,6 +190,7 @@ class LocalNoteFolderRepository:
             raise TypeError("db must be a CharactersRAGDB instance")
         self.db = db
 
+    @_retry_owned_contention
     def create_folder(
         self,
         *,
@@ -149,7 +225,9 @@ class LocalNoteFolderRepository:
 
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor:
                 parent_path = ""
@@ -1315,6 +1393,7 @@ class LocalNoteFolderRepository:
             ),
         )
 
+    @_retry_owned_contention
     def attach_manual(
         self,
         *,
@@ -1330,7 +1409,9 @@ class LocalNoteFolderRepository:
             _validate_expected_version(expected_note_version)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as owner_cursor:
                 return self._attach_manual_with_cursor(
@@ -1523,6 +1604,7 @@ class LocalNoteFolderRepository:
             ),
         )
 
+    @_retry_owned_contention
     def detach_manual(
         self,
         *,
@@ -1537,7 +1619,9 @@ class LocalNoteFolderRepository:
         _validate_expected_version(expected_version)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 row = cursor.execute(
@@ -1550,7 +1634,8 @@ class LocalNoteFolderRepository:
                     return False
                 if int(row["version"]) != expected_version:
                     raise FolderConflictError(
-                        "Membership version does not match expected_version."
+                        "Membership version does not match expected_version.",
+                        reason="membership_version",
                     )
                 cursor.execute(
                     "UPDATE note_folder_memberships SET deleted = 1, "
@@ -1664,6 +1749,7 @@ class LocalNoteFolderRepository:
             rows = _load_managed_folder_rows(cursor, (folder_id,))
             return bool(rows and rows[0]["owner_active"] is not None)
 
+    @_retry_owned_contention
     def reconcile_managed(
         self,
         *,
@@ -1677,7 +1763,9 @@ class LocalNoteFolderRepository:
         desired_set = set(desired_pairs)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 _require_active_membership_targets(
@@ -1768,6 +1856,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @_retry_owned_contention
     def convert_owner_to_manual(
         self, *, owner_id: str, cursor: sqlite3.Cursor | None = None
     ) -> int:
@@ -1775,7 +1864,9 @@ class LocalNoteFolderRepository:
         _validate_owner_id(owner_id)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 managed_rows = cursor.execute(
@@ -1812,6 +1903,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @_retry_owned_contention
     def remove_owner_memberships(
         self, *, owner_id: str, cursor: sqlite3.Cursor | None = None
     ) -> int:
@@ -1819,7 +1911,9 @@ class LocalNoteFolderRepository:
         _validate_owner_id(owner_id)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 rows = cursor.execute(
@@ -1848,11 +1942,15 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @_retry_owned_contention
     def mark_unknown_owners_inactive(self, *, active_owner_ids: Iterable[str]) -> int:
         """Converge restored managed-owner flags against the known owner set."""
         known_owners = set(_normalize_owner_ids(active_owner_ids))
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            with (
+                self.db.transaction(immediate=True) as cursor,
+                _mutation_savepoint(cursor),
+            ):
                 rows = cursor.execute(
                     "SELECT id, owner_id, owner_active, version "
                     "FROM note_folder_memberships WHERE ownership = 'managed' "
@@ -1924,6 +2022,7 @@ class LocalNoteFolderRepository:
             for owner, group in sorted(grouped.items())
         )
 
+    @_retry_owned_contention
     def rename_folder(
         self,
         folder_id: str,
@@ -1938,7 +2037,9 @@ class LocalNoteFolderRepository:
         normalized = normalize_folder_name(name)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
@@ -1998,6 +2099,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @_retry_owned_contention
     def move_folder(
         self,
         folder_id: str,
@@ -2013,7 +2115,9 @@ class LocalNoteFolderRepository:
         _validate_expected_version(expected_version)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
@@ -2082,6 +2186,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @_retry_owned_contention
     def soft_delete_folder(
         self,
         folder_id: str,
@@ -2094,7 +2199,9 @@ class LocalNoteFolderRepository:
         _validate_expected_version(expected_version)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
@@ -2122,6 +2229,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @_retry_owned_contention
     def restore_folder(
         self,
         folder_id: str,
@@ -2134,7 +2242,9 @@ class LocalNoteFolderRepository:
         _validate_expected_version(expected_version)
         try:
             transaction = (
-                nullcontext(cursor) if cursor is not None else self.db.transaction()
+                nullcontext(cursor)
+                if cursor is not None
+                else self.db.transaction(immediate=True)
             )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
@@ -2289,7 +2399,10 @@ def _require_target(
         state = "deleted" if deleted else "active"
         raise FolderValidationError(f"Target folder is not {state}.")
     if int(row["version"]) != expected_version:
-        raise FolderConflictError("Folder version does not match expected_version.")
+        raise FolderConflictError(
+            "Folder version does not match expected_version.",
+            reason="folder_version",
+        )
     return row
 
 
@@ -2529,13 +2642,17 @@ def _mutation_result(
 def _require_one_folder_update(cursor: sqlite3.Cursor) -> None:
     """Reject a mutation when its optimistic row snapshot is no longer current."""
     if cursor.rowcount != 1:
-        raise FolderConflictError("Folder changed during mutation.")
+        raise FolderConflictError(
+            "Folder changed during mutation.", reason="folder_changed"
+        )
 
 
 def _require_one_membership_update(cursor: sqlite3.Cursor) -> None:
     """Reject a membership update whose optimistic snapshot became stale."""
     if cursor.rowcount != 1:
-        raise FolderConflictError("Membership changed during mutation.")
+        raise FolderConflictError(
+            "Membership changed during mutation.", reason="membership_changed"
+        )
 
 
 def _insert_membership(
@@ -2729,7 +2846,9 @@ def _raise_mutation_integrity_error(exc: sqlite3.IntegrityError) -> NoReturn:
 
 def _raise_membership_integrity_error(exc: sqlite3.IntegrityError) -> NoReturn:
     if _is_active_membership_owner_collision(exc):
-        raise FolderConflictError("Membership changed during mutation.") from exc
+        raise FolderConflictError(
+            "Membership changed during mutation.", reason="membership_exists"
+        ) from exc
     raise FolderValidationError(
         "Membership mutation violated stored constraints."
     ) from exc
@@ -2759,13 +2878,25 @@ def _is_active_membership_owner_collision(exc: sqlite3.IntegrityError) -> bool:
 
 
 def _raise_mutation_operational_error(exc: sqlite3.OperationalError) -> NoReturn:
-    """Translate SQLite writer/snapshot contention into a stable domain conflict."""
+    """Translate SQLite writer/snapshot contention into a stable domain conflict.
+
+    ``reason="busy"``: nothing changed; ``_retry_owned_contention`` re-runs a
+    repository-owned mutation that fails this way before it reaches the user.
+    """
     if _is_sqlite_contention(exc):
-        raise FolderConflictError("Folder changed during mutation.") from exc
+        raise FolderConflictError(
+            "Folder changed during mutation.", reason="busy"
+        ) from exc
     raise exc
 
 
 def _is_sqlite_contention(exc: sqlite3.OperationalError) -> bool:
+    """SQLITE_BUSY or SQLITE_LOCKED, including every extended code of either.
+
+    The primary code is the low byte, so SQLITE_BUSY_SNAPSHOT (517, N-24's
+    measured cause), BUSY_RECOVERY, BUSY_TIMEOUT and LOCKED_SHAREDCACHE all
+    count.
+    """
     error_code = getattr(exc, "sqlite_errorcode", None)
     primary_code = error_code & 0xFF if isinstance(error_code, int) else None
     return primary_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
@@ -2783,7 +2914,9 @@ def _raise_wrapped_repository_error(exc: CharactersRAGDBError) -> NoReturn:
         if isinstance(current, sqlite3.OperationalError) and _is_sqlite_contention(
             current
         ):
-            raise FolderConflictError("Folder changed during mutation.") from current
+            raise FolderConflictError(
+                "Folder changed during mutation.", reason="busy"
+            ) from current
         if current.__cause__ is not None:
             pending.append(current.__cause__)
         if current.__context__ is not None:
