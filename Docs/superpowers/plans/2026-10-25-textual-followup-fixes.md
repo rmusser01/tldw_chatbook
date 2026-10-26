@@ -108,7 +108,7 @@ Reason: completion of the existing finite operation and UI refresh contract; no 
 
 - [x] Express the protected post-await Lore library-pane lookup as a safe optional query, without increasing the worker-contract census.
 - [x] Review all changed diagnostic statements and regenerate only the intended inventory owner rows (two moved calls, one new ID-only presentation warning; unchanged persistent sink topology).
-- [ ] Verify both exact guard scripts, the existing nine Lore regression cases and a focused review of this CI delta before final hosted qualification.
+- [x] Verify both exact guard scripts, the existing nine Lore regression cases and a focused review of this CI delta before final hosted qualification.
 
 ADR required: no
 ADR path: existing canonical ADRs 007, 011, 033 and existing persistent-diagnostic governance.
