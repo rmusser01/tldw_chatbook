@@ -540,37 +540,28 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.4's rework (2026-10-23) appends 1 whole-file entry at the
 # tail: a send's durable commit keeps the Console's whole syncs quiet
 # (about 8 s), so no existing entry changes shard: 902 -> 903.
-# 2026-10-25, TASK-34000.28 (polish-1a batch, task 2) appends one whole-file
-# entry at the tail -- Tests/UI/test_library_notes_tree_keys.py (three 160x45
-# LibraryScreen boots, ~20 s locally; its real-app F6 arm is in the
-# `_extended` sibling, outside the census) -- so no existing entry changes
-# shard: 899 -> 900.
-# Rebased 2026-10-26 onto dev 38623632e9 (906 entries; dev carried two
-# MINIMUM_FILES assignments, 906 then 905 -- collapsed to one here):
-# 906 + 1 = 907.
-# 2026-10-25, TASK-34000.28 (polish-1a batch, task 3) appends one whole-file
-# entry at the tail -- Tests/UI/test_library_notes_folder_picker_lists_every_folder.py
-# (two 160x45 LibraryScreen boots, ~20 s locally) -- so no existing entry
-# changes shard: 900 -> 901.
-# (on dev 38623632e9: 907 -> 908.)
-# 2026-10-26, TASK-34000.28 (polish-1a batch, task 4) appends one whole-file
-# entry at the tail -- Tests/UI/test_library_notes_move_never_false_conflicts.py
-# (two 160x45 LibraryScreen boots, ~17 s locally; its ten-move arm is in the
-# `_extended` sibling, outside the census) -- so no existing entry changes
-# shard: 901 -> 902.
-# (on dev 38623632e9: 908 -> 909.)
-# 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a batch, task 5) appends
-# one whole-file entry at the tail --
-# Tests/UI/test_library_notes_filter_fast_path_and_draft.py (four 160x45
-# LibraryScreen boots, ~22 s locally) -- so no existing entry changes shard:
-# 902 -> 903.
-# (on dev 38623632e9: 909 -> 910.)
-# 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a batch, task 5 fix
-# round 2) appends one whole-file entry at the tail --
-# Tests/UI/test_library_notes_filter_fast_path_and_draft_extended.py (four
-# 160x45 LibraryScreen boots plus five boot-free pins, ~22 s locally) -- so
-# no existing entry changes shard: 910 -> 911.
-MINIMUM_FILES = 911
+# 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a batch), on dev
+# 38623632e9: dev carried two MINIMUM_FILES assignments here (906, then 905)
+# over 906 entries; collapsed to one. Each entry below is appended at the
+# tail, so no existing entry changes shard:
+# - task 2: Tests/UI/test_library_notes_tree_keys.py (three 160x45
+#   LibraryScreen boots, ~20 s locally; its real-app F6 arm is in the
+#   `_extended` sibling, outside the census): 906 -> 907.
+# - task 3: Tests/UI/test_library_notes_folder_picker_lists_every_folder.py
+#   (two 160x45 boots, ~20 s): 907 -> 908.
+# - task 4: Tests/UI/test_library_notes_move_never_false_conflicts.py (two
+#   160x45 boots, ~17 s; its ten-move arm is in the `_extended` sibling,
+#   outside the census): 908 -> 909.
+# - task 5: Tests/UI/test_library_notes_filter_fast_path_and_draft.py (four
+#   160x45 boots, ~22 s): 909 -> 910.
+# - task 5 fix round 2: its `_extended` sibling (four 160x45 boots plus five
+#   boot-free pins, ~22 s): 910 -> 911.
+# - final review M-6 (2026-10-26): five boot-free, fake-backed pins of
+#   Tests/UI/test_library_notes_folder_navigator.py as node ids -- the file
+#   carries ~10 pre-existing reds, so it cannot be listed whole. A node id is
+#   one entry, as a whole file is (an unbracketed id runs every parametrize
+#   case of that test): 911 -> 916.
+MINIMUM_FILES = 916
 
 
 def read_census(path: Path) -> list[str]:

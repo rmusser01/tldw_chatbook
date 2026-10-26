@@ -2982,23 +2982,34 @@ def test_contention_inside_a_callers_transaction_is_never_retried(
     borrowed: str,
 ) -> None:
     """Inside a transaction the repository does not own, a retry would re-run
-    half of someone else's work: the conflict is raised at once."""
-    folder = repository.create_folder(name="Inbox", parent_id=None)
-    note_id = repository.db.add_note("Note", "Body")
-    backoffs = _record_backoffs(monkeypatch)
+    half of someone else's work: the conflict is raised at once.
 
-    with _write_lock_held(repository, seconds=None):
-        with pytest.raises(FolderConflictError) as caught:
-            with repository.db.transaction() as cursor:
-                cursor.execute("SELECT COUNT(*) FROM notes").fetchone()
-                repository.attach_manual(
-                    folder_id=folder.folder_id,
-                    note_id=note_id,
-                    cursor=cursor if borrowed == "cursor" else None,
-                )
+    The failure must be the one code the retry DOES re-run (517, a stale
+    snapshot) -- a plain SQLITE_BUSY is refused by ``_is_stale_snapshot``
+    whoever owns the transaction, so it cannot tell whether the ownership
+    gate holds. ``_detached_placement`` makes ``attach_manual`` take the
+    revive path, where ``_require_one_membership_update`` runs right after a
+    write, so the injected 517 has a half-done write a retry would replay.
+    """
+    folder, note_id, first = _detached_placement(repository)
+    backoffs = _record_backoffs(monkeypatch)
+    raised = _stale_snapshot_after_the_first_write(monkeypatch, attempts=1)
+
+    with pytest.raises(FolderConflictError) as caught:
+        with repository.db.transaction() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM notes").fetchone()
+            repository.attach_manual(
+                folder_id=folder.folder_id,
+                note_id=note_id,
+                cursor=cursor if borrowed == "cursor" else None,
+            )
 
     assert caught.value.reason == "busy"
+    assert caught.value.__cause__.sqlite_errorcode == _SQLITE_BUSY_SNAPSHOT
+    assert raised["count"] == 1
     assert backoffs == []
+    # The caller's transaction rolled back: the placement is still detached.
+    assert _membership_version(repository, first.membership_id) == (2, 1)
     assert _active_manual_rows(repository, folder.folder_id, note_id) == []
 
 
