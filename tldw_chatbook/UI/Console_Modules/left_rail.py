@@ -1808,7 +1808,10 @@ class ConsoleLeftRail(Vertical):
             except QueryError:
                 continue
             if widget.content != copy:
-                widget.update(copy)
+                # TASK-35970: the name caption is a hidden seam that is never
+                # displayed; its new copy needs no layout. The painter's
+                # first write of a session lands on its first send.
+                widget.update(copy, layout=widget.display)
 
     @staticmethod
     def character_avatar_spec_is_blank(spec: dict | None) -> bool:
