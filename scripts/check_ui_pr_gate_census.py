@@ -540,8 +540,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.4's rework (2026-10-23) appends 1 whole-file entry at the
 # tail: a send's durable commit keeps the Console's whole syncs quiet
 # (about 8 s), so no existing entry changes shard: 902 -> 903.
-MINIMUM_FILES = 906
-MINIMUM_FILES = 905
+# 2026-10-25, TASK-34000.28 (polish-1a batch, task 2) appends one whole-file
+# entry at the tail -- Tests/UI/test_library_notes_tree_keys.py (three 160x45
+# LibraryScreen boots, ~20 s locally; its real-app F6 arm is in the
+# `_extended` sibling, outside the census) -- so no existing entry changes
+# shard: 899 -> 900.
+# Rebased 2026-10-26 onto dev 38623632e9 (906 entries; dev carried two
+# MINIMUM_FILES assignments, 906 then 905 -- collapsed to one here):
+# 906 + 1 = 907.
+MINIMUM_FILES = 907
 
 
 def read_census(path: Path) -> list[str]:

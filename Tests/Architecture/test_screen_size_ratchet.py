@@ -1078,7 +1078,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-24, TASK-34000 P1-B rebased onto dev 96cae7eec0 (owner decision,
     #: expand-the-limits rule): P1-B's .17/.14/.12/.11/.71 screen work on top of
     #: dev's decomposed screen: 37542 -> 37759 lines, 1354 -> 1361 methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37759, 1361),
+    #: 2026-10-25, TASK-34000.28 (polish-1a task 2 + its fix round 1, rebased
+    #: onto dev e554f25812; owner decision 2026-10-04, expand-the-limits rule):
+    #: the Notes tree's Right/Left folder branch and the Sort strip's Left/Right
+    #: branch in ``on_key``, the Sort control's portable focus role, the pager
+    #: press hand-off (``_library_notes_tree_pager_still_focused`` + the no-row
+    #: branch of ``_focus_library_notes_tree_after_page``) and the
+    #: ``_reset_focus`` override: 37759 -> 37878 lines, 1361 -> 1362 methods
+    #: (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37878, 1362),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
