@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-21 04:37'
-updated_date: '2026-10-26 12:50'
+updated_date: '2026-10-26 14:39'
 labels:
   - console
   - performance
@@ -87,4 +87,6 @@ The timer-path inventory fails identically on both arms.
 **Observed, not changed.** In most rounds on both arms (dev 5 of 7), the Chats tree's "Today" group did not list the renamed chat after its first send. It is unrelated to this change.
 
 **Files.** `Widgets/Console/console_character_context.py`, `UI/Console_Modules/left_rail.py`, `Tests/UI/test_console_character_section_collapsed_render.py`, `Tests/UI/test_console_run_tick_layout_requests.py`, `Tests/UI/test_console_character_context_sweep_gate.py`, `Tests/UI/test_console_character_avatar.py`, `Tests/UI/test_console_character_context.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, the User Guide's Character section paragraph (`Docs/User_Guide/console/sessions-tabs-workspaces.md`) and `backlog/docs/lessons-testing-evidence.md`; follow-ups TASK-37020 and TASK-37021 are filed as their own task files.
+
+**Merge evidence (2026-10-26, head d10dd6274d on dev 0d7e418db1).** New file 7 passed under the plain command (6 fail on dev for the expected reasons; the focus-return case passes on dev and failed on 8392a10927). run-tick 14 passed; sweep gate 4 passed; Character context 45 passed + 16 environmental setup errors, the same ids as dev. Bootstrap-profile pairs (probe plugin, not committed), branch vs dev, identical failure ids: left rail 5F/9P, Character context 61P, context rail content 4P, context geometry 2F/3P, switcher geometry 1F/10P (a 300 s timeout on both), async ownership 16P, progress owners 4P, rail reconciliation 4F/50P, avatar 1F/85P. Size ratchets: no touched file has a row; the module ratchet's 8 failing rows are the same on dev. ruff check/format clean. preflight passes. Live final head: 0 Character recomposes and 0 Character-section layout requests over 12 sends (dev 26 and 106).
 <!-- SECTION:NOTES:END -->
