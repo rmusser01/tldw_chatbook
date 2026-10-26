@@ -17505,14 +17505,14 @@ class ChatScreen(BaseAppScreen):
         ``NoMatches``, and killed the app -- after which every later
         ``post_message`` was silently dropped and navigation was dead.
         """
-        config_sync.begin_console_sync(self)  # TASK-33620.15.1 cadence.
+        held = config_sync.begin_console_sync(self)  # TASK-33620.15.1/.15.4 cadence.
         if _console_screen_is_torn_down(self):
             # The re-arm below is skipped for the same reason; clearing the
             # flag keeps a resurrected screen from inheriting this one's
             # coalesced request.
             self._console_sync_requested = False
             return False
-        if (
+        if held or (  # Held for a durable commit: a later poll tick serves it.
             getattr(self, "_console_sync_maintenance_paused", False)
             or getattr(self, "_console_control_bar_replay_whole_sync", False)
         ):
@@ -17933,6 +17933,7 @@ class ChatScreen(BaseAppScreen):
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
         self._record_ui_timer_created("console-transcript-sync")
+        config_sync.warm_run_presentation(self)  # TASK-33620.15.4
 
     def _stop_console_transcript_sync_timer(self) -> None:
         if self._console_transcript_sync_timer is None:

@@ -533,7 +533,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.7 (2026-10-20) appends its run-tick layout-request file, one
 # entry of ~15 s locally, after P1-B's tail: 899 -> 900 (re-based 2026-10-25
 # onto dev e554f25812).
-MINIMUM_FILES = 902
+# TASK-33620.15.4 (2026-10-23) appends 3 whole-file entries at the tail:
+# the projection's off-loop read pins (Library activity, workspace display
+# reads, checked display and run-start coalescing), each well under 30 s,
+# so no existing entry changes shard: 899 -> 902.
+# TASK-33620.15.4's rework (2026-10-23) appends 1 whole-file entry at the
+# tail: a send's durable commit keeps the Console's whole syncs quiet
+# (about 8 s), so no existing entry changes shard: 902 -> 903.
+MINIMUM_FILES = 906
+MINIMUM_FILES = 905
 
 
 def read_census(path: Path) -> list[str]:

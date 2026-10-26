@@ -3,6 +3,7 @@
 Also decides how often the 0.2 s poll pays for it (TASK-33620.15.1).
 """
 
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, nullcontext
@@ -13,8 +14,15 @@ from typing import Any
 #: ticks only while run work is live), its config projections run at least
 #: this often even when no input changed.
 RUN_BACKSTOP_SECONDS = 1.0
+#: TASK-33620.15.4: while the run poll ticks, an explicit sync that lands
+#: within this long of the last projection leaves its projection to the
+#: poll's next tick (this is the poll's own interval), so the syncs a run
+#: start requests share one projection.
+RUN_COALESCE_SECONDS = 0.2
 _clock = time.monotonic
 _POLL_TICK: ContextVar[bool] = ContextVar("console_poll_tick", default=False)
+#: The running sync is the poll's (set at its entry, for its own task).
+_POLL_SYNC: ContextVar[bool] = ContextVar("console_poll_sync", default=False)
 
 
 def run_console_config_sync(
@@ -177,6 +185,10 @@ class _Cadence:
         self.values: tuple | None = None
         self.at = 0.0
         self.owed = False  # A poll tick skipped since the last projection.
+        self.published = 0  # Snapshot publications handed to the poll (an input).
+        self.waiting_since: float | None = None  # First request left to the poll.
+        self.commit_synced: float | None = None  # The commit a sync already ran in.
+        self.commit_holding = False  # Syncs wait until the poll's next tick.
 
 
 def _cadence(screen: Any) -> _Cadence:
@@ -194,12 +206,17 @@ async def run_periodic_console_sync(
 
     Args:
         sync: Starts the poll's sync (the screen's ``sync_poll_display_ui``).
-        *args: Passed to ``sync``.
+        *args: Passed to ``sync``; the first is the Console screen (or
+            ``sync`` is a method bound to it).
 
     Returns:
         Whatever the sync returned (False: a deferred display, which the
-        poll leaves to its replay).
+        poll leaves to its replay). False, with no sync, for a tick that
+        waits out a send's durable commit (``_held_for_durable_commit``).
     """
+    screen = args[0] if args else getattr(sync, "__self__", None)
+    if screen is not None and _held_for_durable_commit(screen, poll=True):
+        return False
     token = _POLL_TICK.set(True)
     try:
         return await sync(*args)
@@ -207,7 +224,73 @@ async def run_periodic_console_sync(
         _POLL_TICK.reset(token)
 
 
-def begin_console_sync(screen: Any) -> None:
+def _durable_commit_since(screen: Any) -> float | None:
+    """When the screen's store began the durable commit now in flight, if any.
+
+    Only while the run poll ticks: a sync held for the commit is served by
+    a later poll tick, so with no poll nothing is held. Read without an
+    import: the commit's window lives in ``console_native_commit``, and a
+    process that never loaded it has never committed.
+    """
+    if getattr(screen, "_console_transcript_sync_timer", None) is None:
+        return None
+    commits = sys.modules.get("tldw_chatbook.Chat.console_native_commit")
+    if commits is None:
+        return None
+    return commits.durable_commit_started_at(getattr(screen, "_console_chat_store", None))
+
+
+def _held_for_durable_commit(screen: Any, *, poll: bool) -> bool:
+    """Whether a whole sync waits out the send's durable commit now in flight.
+
+    TASK-33620.15.4 (measured live 2026-10-23, 30 sends per arm): a send's
+    durable turn commit runs on a worker thread for 140-180 ms while the
+    send waits on it, and UI-loop work in that window lengthens it. On the
+    base build the poll's first tick in the commit deferred to a whole-sync
+    replay 0.2 s later, and every sync until that replay returned at once:
+    the loop stayed quiet for the rest of the commit by accident. Without
+    that deferral, the first tick's re-armed sync and the next tick painted
+    inside the commit, which then took 218 ms instead of 180 ms, and warm
+    sends reached the provider a median 31 ms later.
+
+    So, while the run poll ticks and a commit is in flight, the commit's
+    first whole sync runs (as the base's first tick did) and opens a hold
+    that lasts until the poll's next tick: explicit syncs started meanwhile
+    leave their request (``_console_sync_requested``) for later, and that
+    next tick skips and ends the hold. The tick after it runs and serves
+    what was held, two poll intervals at most after the first sync. Against
+    the base that is one interval later where the base deferred to its
+    replay (0.83 replays per measured send window) and up to two where it
+    did not, since the base then rendered an explicit sync at once. Each
+    commit holds once; the hold ends early if the commit does.
+
+    The window is per store, and one store holds every Console session, so
+    a commit in one session holds one tick for all of them, a streaming one
+    included (once per commit, never two ticks in a row).
+
+    Args:
+        screen: The Console screen whose sync is starting.
+        poll: The run poll's own tick (else an explicit sync).
+
+    Returns:
+        True when this sync waits for a later tick.
+    """
+    cadence = _cadence(screen)
+    since = _durable_commit_since(screen)
+    if since is None:
+        cadence.commit_synced, cadence.commit_holding = None, False
+        return False
+    if cadence.commit_synced != since:  # The commit's first sync runs.
+        cadence.commit_synced, cadence.commit_holding = since, True
+        return False
+    if not cadence.commit_holding:
+        return False
+    if poll:
+        cadence.commit_holding = False  # This tick skips; the next one runs.
+    return True
+
+
+def begin_console_sync(screen: Any) -> bool:
     """Classify a sync at its entry; every sync but the poll's asks to project.
 
     Called before the sync's first await, so the poll's mark is consumed by
@@ -216,11 +299,108 @@ def begin_console_sync(screen: Any) -> None:
 
     Args:
         screen: The Console screen whose sync is starting.
+
+    Returns:
+        True when an explicit sync waits for a later poll tick because a
+        send's durable commit is in flight (``_held_for_durable_commit``);
+        the caller records the request and returns. The poll's own tick was
+        decided before its sync started.
     """
-    if _POLL_TICK.get():
+    poll = _POLL_TICK.get()
+    if poll:
         _POLL_TICK.set(False)
     else:
         _cadence(screen).requested += 1
+    _POLL_SYNC.set(poll)
+    return not poll and _held_for_durable_commit(screen, poll=False)
+
+
+#: TASK-33620.15.4: a send's start (see ``send_start_in_progress``) ends at
+#: its provider request, or this long after acceptance if it never makes one.
+SEND_START_LIMIT_SECONDS = 3.0
+
+
+def note_send_accepted(screen: Any) -> None:
+    """Record that the Console accepted a send (its start begins now)."""
+    screen._console_send_accepted_at = time.monotonic()
+
+
+def send_start_in_progress(screen: Any) -> bool:
+    """Whether a send the screen accepted has not made its provider request yet.
+
+    TASK-33620.15.4 (measured live 2026-10-23, 8 first sends per arm): an
+    off-loop display read opens its own SQLite connection (34 ms wall, 10 ms
+    CPU measured alone; 20-60 ms CPU each in the app), and the Library
+    activity, registry and appearance re-reads started at acceptance and right
+    after the durable commit took that CPU from the send's own work, so first
+    sends reached the provider a median 66 ms later than with the same reads
+    made on the loop (0.3-3 ms each, as on the base). During a send's start
+    those reads stay synchronous; elsewhere they stay off the loop. The start
+    ends at the provider request (any send's: a later request cannot predate
+    this acceptance) or after ``SEND_START_LIMIT_SECONDS``.
+
+    Args:
+        screen: The Console screen.
+
+    Returns:
+        True from acceptance until the provider request (or the limit).
+    """
+    accepted = getattr(screen, "_console_send_accepted_at", None)
+    if accepted is None or time.monotonic() - accepted >= SEND_START_LIMIT_SECONDS:
+        return False
+    diagnostics = sys.modules.get("tldw_chatbook.Chat.console_send_diagnostics")
+    entered = diagnostics.provider_entered_at() if diagnostics is not None else 0.0
+    return entered < accepted
+
+
+def warm_run_presentation(screen: Any) -> None:
+    """Re-read an aging checked display as run work starts (TASK-33620.15.4).
+
+    The poll's first tick comes 0.2 s after this. An idle Console projects
+    nothing, so its checked display had always expired by then: the first
+    projection after a send ran the native config operation on the UI loop,
+    and the same tick's later presentation reads deferred to a whole-sync
+    replay. Starting the read here lets it land before that tick.
+
+    Args:
+        screen: The Console screen whose run poll is starting.
+    """
+    from .console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _screen_readiness_config,
+    )
+
+    if getattr(screen, "_closing", False):
+        return
+    value = _screen_readiness_config(screen)
+    if value and screen._console_config_snapshot_is_disk_loaded(value):
+        ConsoleReadinessConfigProjection.for_screen(screen).run(lambda: None)
+
+
+def publish_console_presentation(screen: Any, group: str) -> None:
+    """Hand a refreshed presentation snapshot to the next projection.
+
+    TASK-33620.15.4: each snapshot publication used to start a whole sync,
+    which projected again however recently another sync had (one to three
+    times in a send's run start). While the run poll ticks, a publication
+    is a cadence input instead: the next tick, within one poll interval,
+    projects it together with whatever else that interval asked for. One
+    landing after the tick's projection, on the tick that stops the poll,
+    is owed, so the stop renders it (``settle_stopped_poll``). With no
+    poll, a whole sync renders it at once, as before.
+
+    Args:
+        screen: The Console screen the snapshot belongs to.
+        group: The worker group of the whole sync started without a poll.
+    """
+    if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+        cadence = _cadence(screen)
+        cadence.published += 1
+        cadence.owed = True
+        return
+    screen.run_worker(
+        screen._sync_native_console_chat_ui(), exclusive=False, group=group
+    )
 
 
 def _pending_rounds(store: Any, controller: Any) -> tuple:
@@ -355,9 +535,35 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
         ),
         evidence.version if evidence is not None else None,
         _legacy_approval(screen),
+        _cadence(screen).published,
         run,
     )
     return objects, values
+
+
+def _left_to_the_poll(screen: Any, cadence: _Cadence) -> bool:
+    """Whether an explicit sync's projection waits for the run poll's next tick.
+
+    TASK-33620.15.4 (measured 2026-10-23): a send's run start asked for one to
+    four whole syncs (a deferral's replay, a sync re-armed behind the poll's
+    own, snapshot publications), and each projected at once, 40-120 ms after
+    the poll's tick had, before its next tick projected again. While the poll
+    ticks, a request that lands within ``RUN_COALESCE_SECONDS`` of the last
+    projection now stays requested (``requested`` ahead of ``served``), so
+    the next tick projects it with everything else of that interval; a
+    request already waiting that long projects in whichever sync comes
+    first. With no poll, every explicit sync projects at once, as before.
+    """
+    if getattr(screen, "_console_transcript_sync_timer", None) is None:
+        cadence.waiting_since = None
+        return False
+    now = _clock()
+    if cadence.waiting_since is None:
+        if now - cadence.at >= RUN_COALESCE_SECONDS:
+            return False
+        cadence.waiting_since = now
+        return True
+    return now - cadence.waiting_since < RUN_COALESCE_SECONDS
 
 
 def project_console_tick(screen: Any, *, force: bool = False) -> bool:
@@ -394,6 +600,12 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     fake clock (one 0.2 s tick each, a 15-chunk streamed run), a run made
     25-43 projections without this cadence and 9-18 with it.
 
+    TASK-33620.15.4: while the poll ticks, an explicit sync within a poll
+    interval of the last projection leaves its projection to the next tick
+    (``_left_to_the_poll``), and a snapshot published meanwhile is an input
+    (``publish_console_presentation``), so a run start's syncs share one
+    projection.
+
     Args:
         screen: The Console screen whose sync tick is running.
         force: Run the projections even when nothing moved.
@@ -409,6 +621,9 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
         # An unreadable input is a change: project (the parent's tick read
         # these inside the cost chip's best-effort build), and record none.
         objects, values = (), None
+    if not force and not _POLL_SYNC.get() and _left_to_the_poll(screen, cadence):
+        cadence.owed = True
+        return True
     requested = cadence.requested
     unchanged = (
         values is not None
@@ -427,6 +642,7 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     cadence.served = requested
     cadence.objects, cadence.values, cadence.at = objects, values, _clock()
     cadence.owed = False
+    cadence.waiting_since = None
     return True
 
 
@@ -453,6 +669,10 @@ def settle_stopped_poll(screen: Any, torn_down: Callable[[Any], bool]) -> None:
     if getattr(screen, "_console_sync_in_progress", False) or getattr(
         screen, "_console_control_bar_replay_whole_sync", False
     ):
+        if _cadence(screen).waiting_since is not None:
+            # TASK-33620.15.4: the running sync left its projection to a poll
+            # that is stopping; its re-armed sync (with no poll) projects.
+            screen._console_sync_requested = True
         return
     workspace = getattr(screen, "_workspace", None)
     scope = getattr(workspace, "tick_workspace_build_scope", nullcontext)

@@ -455,12 +455,17 @@ class _ConsoleRegistryDisplayReads:
       binding status straight from disk on every build.
     """
 
-    __slots__ = ("_service", "_generation", "_cache")
+    __slots__ = ("_service", "_generation", "_cache", "_calls", "_previous", "stale_reader")
 
     def __init__(self, service: Any) -> None:
         self._service = service
         self._generation: int | None = None
         self._cache: dict[tuple, Any] = {}
+        #: TASK-33620.15.4: how each cached read was made, the last generation's
+        #: reads, and (only while a run tick builds) who re-reads them off-loop.
+        self._calls: dict[tuple, tuple[str, tuple]] = {}
+        self._previous: dict[tuple, Any] = {}
+        self.stale_reader: Callable[[Any, int], None] | None = None
 
     @property
     def service(self) -> Any:
@@ -472,10 +477,13 @@ class _ConsoleRegistryDisplayReads:
         generation = getattr(self._service, "mutation_generation", None)
         if isinstance(generation, bool) or not isinstance(generation, int):
             self._cache.clear()
+            self._previous = {}
             self._generation = None
             return False
         if generation != self._generation:
-            self._cache.clear()
+            if self._cache:
+                self._previous = self._cache
+            self._cache = {}
             self._generation = generation
         return True
 
@@ -483,10 +491,43 @@ class _ConsoleRegistryDisplayReads:
         cacheable = self._cacheable()
         if cacheable and key in self._cache:
             return self._cache[key]
+        stale_reader = self.stale_reader
+        if cacheable and stale_reader is not None and key in self._previous:
+            # A run tick's build: show the last generation's read until the
+            # off-loop re-read lands and publishes (TASK-33620.15.4).
+            stale_reader(self, self._generation)
+            return self._previous[key]
         value = getattr(self._service, method_name)(*args)
         if cacheable:
             self._cache[key] = value
+            self._calls[key] = (method_name, args)
         return value
+
+    def stale_calls(self) -> dict[tuple, tuple[str, tuple]]:
+        """Return how to repeat the last generation's reads not yet re-read."""
+        return {
+            key: self._calls[key]
+            for key in self._previous
+            if key in self._calls and key not in self._cache
+        }
+
+    def install(self, generation: int, values: Mapping[tuple, Any]) -> bool:
+        """Cache reads made off-loop for ``generation`` unless it moved on.
+
+        Returns:
+            True when a read the generation lacked was cached; False when
+            none was (all already cached, so there is nothing to publish), the
+            registry mutated since (a newer re-read owns the snapshot), or
+            caching no longer applies.
+        """
+        if not self._cacheable() or generation != self._generation:
+            return False
+        added = False
+        for key, value in values.items():
+            if key not in self._cache:
+                self._cache[key] = value
+                added = True
+        return added
 
     def get_active_workspace(self) -> Any:
         return self._read(("active",), "get_active_workspace")
@@ -585,7 +626,8 @@ class ConsoleTickWorkspaceBuilds:
             return self._state
         self._building = True
         try:
-            state = controller._build_console_workspace_context_state()
+            with controller._stale_display_reads():
+                state = controller._build_console_workspace_context_state()
         finally:
             self._building = False
         # Recomputed AFTER the build: building advances canonical-owner
@@ -889,6 +931,8 @@ class ConsoleWorkspaceController:
         # recurring merge calls do not re-query per sync; cleared on write.
         self._console_appearance_map_cache: dict[str, tuple[str, str]] | None = None
         self._console_appearance_map_cached_at: float = 0.0
+        #: TASK-33620.15.4: (map, ids an off-loop re-read of it found absent).
+        self._console_appearance_map_absent: tuple[dict, frozenset[str]] | None = None
         self._character_conversation_activation_coordinator = None
 
     @property
@@ -3143,6 +3187,20 @@ class ConsoleWorkspaceController:
             and wanted <= set(cached_map)
         ):
             return cached_map
+        if cached_map is not None and self._stale_display_reads_on:
+            # An id the last re-read found absent (unknown or soft-deleted)
+            # is not re-requested while the map is fresh, or every tick's
+            # build would start another read (TASK-33620.15.4 review).
+            absent = getattr(self, "_console_appearance_map_absent", None)
+            known = set(cached_map)
+            if absent is not None and absent[0] is cached_map:
+                known |= absent[1]
+            if not (
+                now - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
+                and wanted <= known
+            ):
+                self._request_appearance_refresh(get_appearances, wanted)
+            return cached_map  # Until the off-loop re-read lands (TASK-33620.15.4).
         try:
             appearances = get_appearances(sorted(wanted))
         except Exception:
@@ -6764,6 +6822,173 @@ class ConsoleWorkspaceController:
             yield
         finally:
             self._console_tick_builds = None
+
+    #: TASK-33620.15.4: True only inside a run tick's shared context build.
+    _stale_display_reads_on = False
+
+    @contextmanager
+    def _stale_display_reads(self):
+        """Serve a run tick's display reads from their last snapshot.
+
+        TASK-33620.15.4 (measured 2026-10-23): once per send, the commit's
+        workspace-membership write moved the registry's mutation generation,
+        and the next tick's projection re-read the active workspace, the
+        workspace list and the memberships synchronously, storage admission
+        included, inside the Inspector's and rail's context build; the
+        browser rows' appearance read did the same whenever its 2 s cache
+        expired or a new conversation appeared. While the run poll ticks, a
+        tick's build shows the last snapshot and starts one off-loop re-read,
+        whose landing publishes to the next tick (within one poll interval).
+        Only the stock registry and ChaChaNotes services over file-backed
+        databases (an in-memory database's connection is per thread); with
+        no run poll, or any other owner, the reads stay live as before. So
+        do they during a send's start (``config_sync.send_start_in_progress``):
+        each re-read opens its own connection, whose CPU delayed first sends.
+        """
+        from .config_sync import send_start_in_progress
+
+        screen = self._screen
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        database = getattr(registry, "db", None)
+        if (
+            getattr(screen, "_console_transcript_sync_timer", None) is None
+            or send_start_in_progress(screen)
+            or type(registry) is not LocalWorkspaceRegistryService
+            or type(database) is not WorkspaceDB
+            or database.is_memory_db
+        ):
+            yield
+            return
+        view = self._console_registry_reads_view()
+        if view is not None:
+            view.stale_reader = self._request_registry_display_refresh
+        self._stale_display_reads_on = True
+        try:
+            yield
+        finally:
+            self._stale_display_reads_on = False
+            if view is not None:
+                view.stale_reader = None
+
+    def _request_registry_display_refresh(self, view: Any, generation: int) -> None:
+        """Start one off-loop re-read of ``view``'s reads for ``generation``."""
+        if getattr(self, "_registry_display_refresh", None) == (view, generation):
+            return
+        if not self._screen_running_accessor():
+            return
+        self._registry_display_refresh = (view, generation)
+        self.run_worker(
+            self._refresh_registry_display_reads(view, generation, view.stale_calls()),
+            group="console-workspace-display-reads",
+            exclusive=False,
+        )
+
+    async def _refresh_registry_display_reads(
+        self, view: Any, generation: int, calls: Mapping[tuple, tuple[str, tuple]]
+    ) -> None:
+        """Re-read the registry's display reads on a worker, then publish them."""
+        from .view_workers import owned_display_read
+
+        service = view.service
+
+        def read() -> dict[tuple, Any]:
+            values: dict[tuple, Any] = {}
+            for key, (name, args) in calls.items():
+                try:
+                    values[key] = getattr(service, name)(*args)
+                except Exception:  # noqa: BLE001 - a raised read is never cached.
+                    continue
+            return values
+
+        try:
+            values = await owned_display_read(getattr(service, "db", None), read)
+        except Exception:  # noqa: BLE001 - the next build reads live or retries.
+            return
+        finally:
+            if getattr(self, "_registry_display_refresh", None) == (view, generation):
+                self._registry_display_refresh = None
+        if (
+            values
+            and self._screen_running_accessor()
+            and self._console_registry_reads_view() is view
+            and view.install(generation, values)
+        ):
+            self._publish_display_reads()
+
+    def _request_appearance_refresh(
+        self, get_appearances: Callable, wanted: set[str]
+    ) -> None:
+        """Start one off-loop re-read of the cached appearance map."""
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
+        captured = self._console_appearance_map_cache
+        if getattr(self, "_appearance_refresh_for", None) is captured:
+            return
+        service = getattr(self.app_instance, "local_chat_conversation_service", None)
+        database = getattr(service, "db", None)
+        if (
+            not self._screen_running_accessor()
+            or type(database) is not CharactersRAGDB
+            or database.is_memory_db
+        ):
+            return
+        self._appearance_refresh_for = captured
+        self.run_worker(
+            self._refresh_appearances(
+                database, get_appearances, tuple(sorted(wanted)), captured
+            ),
+            group="console-workspace-display-reads",
+            exclusive=False,
+        )
+
+    async def _refresh_appearances(
+        self, database: Any, get_appearances: Callable, wanted: tuple, captured: Any
+    ) -> None:
+        """Merge an off-loop appearance read into the map it was made for."""
+        from .view_workers import owned_display_read
+
+        try:
+            appearances = await owned_display_read(
+                database, get_appearances, list(wanted)
+            )
+        except Exception:  # noqa: BLE001 - as the live read: the next one retries.
+            return
+        finally:
+            if getattr(self, "_appearance_refresh_for", None) is captured:
+                self._appearance_refresh_for = None
+        # A write cleared (or a live read replaced) the map meanwhile: drop it.
+        if not self._screen_running_accessor() or (
+            self._console_appearance_map_cache is not captured
+        ):
+            return
+        merged_map = dict(captured)
+        merged_map.update(
+            {
+                str(conversation_id): (
+                    str(appearance.icon or ""),
+                    str(appearance.color or ""),
+                )
+                for conversation_id, appearance in appearances.items()
+            }
+        )
+        # Only a changed map is published: a publication forces the next
+        # tick's projection, whose build would re-request (review 2026-10-25).
+        changed = merged_map != captured
+        current = merged_map if changed else captured
+        self._console_appearance_map_cache = current
+        self._console_appearance_map_cached_at = time.monotonic()
+        self._console_appearance_map_absent = (
+            current,
+            frozenset(wanted).difference(current),
+        )
+        if changed:
+            self._publish_display_reads()
+
+    def _publish_display_reads(self) -> None:
+        """Hand landed display reads to the next run tick (or a whole sync)."""
+        from .config_sync import publish_console_presentation
+
+        publish_console_presentation(self._screen, "console-sync")
 
     def _workspace_availability_runtime(self):
         """Read only an existing owner; a display request never constructs one."""

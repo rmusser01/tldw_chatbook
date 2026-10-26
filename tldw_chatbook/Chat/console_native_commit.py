@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import threading
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -138,6 +140,44 @@ async def _run_owned_native_call[Result](
         return None, error, caller_cancelled
 
 
+#: TASK-33620.15.4: per store (by id, live only while its commit runs), when
+#: each ordinary durable turn commit now in flight began (monotonic seconds).
+_DURABLE_COMMITS_IN_FLIGHT: dict[int, list[float]] = {}
+
+
+@contextlib.contextmanager
+def durable_commit_window(store: object) -> Iterator[None]:
+    """Mark a send's durable turn commit in flight on ``store`` until it ends.
+
+    TASK-33620.15.4 (measured live 2026-10-23): the commit's ~10 statements
+    run on a worker thread for 140-180 ms while the send waits for them, and
+    UI-loop work in that window lengthened it (warm sends reached the
+    provider 31 ms later when the Console painted during it). The Console
+    reads this window (``durable_commit_started_at``) to keep its syncs
+    quiet while it is open. It is keyed by store, not session, so any
+    session's commit opens it for the whole Console. Ends on success,
+    failure and cancellation alike.
+
+    Args:
+        store: The Console store whose turn is being committed.
+    """
+    key, started = id(store), time.monotonic()
+    starts = _DURABLE_COMMITS_IN_FLIGHT.setdefault(key, [])
+    starts.append(started)
+    try:
+        yield
+    finally:
+        starts.remove(started)
+        if not starts and _DURABLE_COMMITS_IN_FLIGHT.get(key) is starts:
+            del _DURABLE_COMMITS_IN_FLIGHT[key]
+
+
+def durable_commit_started_at(store: object) -> float | None:
+    """When ``store``'s earliest in-flight durable commit began, or None."""
+    starts = _DURABLE_COMMITS_IN_FLIGHT.get(id(store))
+    return min(starts) if starts else None
+
+
 async def commit_durable_turn_owned(
     store: ConsoleChatStore,
     acceptance: ConsoleDurableTurnAcceptance,
@@ -159,9 +199,10 @@ async def commit_durable_turn_owned(
     except BaseException as error:  # noqa: BLE001 - transport exact failure and cancellation after physical retirement.
         return ConsoleNativeCommitCompletion(None, error, False)
     binding = _ConsoleNativeBinding(store, acceptance, persistence, database)
-    return ConsoleNativeCommitCompletion(
-        *await _run_owned_native_call(binding, lambda: callback(acceptance))
-    )
+    with durable_commit_window(store):
+        return ConsoleNativeCommitCompletion(
+            *await _run_owned_native_call(binding, lambda: callback(acceptance))
+        )
 
 
 async def settle_accepted_durable_turn_owned(

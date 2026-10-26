@@ -166,6 +166,16 @@ def _readiness_runtime(screen: Any) -> Any:
     return runtime if runtime is not None else vars(screen).get("_console_runtime_fallback")
 
 
+#: TASK-33620.15.4: while the run poll ticks, a projection that finds the
+#: checked display past this share of its life re-reads it ahead while the
+#: current one still renders. Run work projects at least once a second (the
+#: config-sync backstop), so its projections keep finding a fresh display
+#: instead of an expired one, whose native fallback ran the checked config
+#: operation on the UI loop and whose deferrals each replayed a whole sync.
+#: With no run poll the display is re-read only once it has expired.
+REFRESH_AHEAD_SHARE = 0.5
+
+
 class ConsoleReadinessConfigProjection:
     """Own finite config reads shared only by synchronous presentation work."""
 
@@ -319,9 +329,10 @@ class ConsoleReadinessConfigProjection:
         key = self._key()
         current = (_same_readiness_key(key, self.key) and self.value is not None
                    and self._runtime_owner is runtime)
-        if (
-            not current or time.monotonic() - self.at >= self.max_age
-        ) and not self.pending:
+        life = self.max_age
+        if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+            life *= REFRESH_AHEAD_SHARE
+        if (not current or time.monotonic() - self.at >= life) and not self.pending:
             self.pending = True
             self._settled.clear()
             refresh = self._refresh(key)
@@ -901,8 +912,10 @@ class ConsoleContextReadSnapshot:
         refresh: Callable | None = None,
         config_projection: ConsoleReadinessConfigProjection | None = None,
         screen: Any | None = None,
+        publish: Callable[[], None] | None = None,
     ) -> None:
         self.screen = screen
+        self.publish = publish
         self.config_projection = config_projection
         self.task = None
         self.key = None
@@ -919,11 +932,16 @@ class ConsoleContextReadSnapshot:
         """Reuse one screen-owned disposable presentation reader."""
         snapshot = getattr(screen, "_console_context_read_snapshot", None)
         if snapshot is None:
+            from .config_sync import publish_console_presentation
+
             snapshot = cls(
                 max_age=max_age,
                 screen=screen,
                 schedule=screen.run_worker,
                 refresh=screen._sync_native_console_chat_ui,
+                publish=partial(
+                    publish_console_presentation, screen, "console-context-publication"
+                ),
                 config_projection=(
                     ConsoleReadinessConfigProjection.for_screen(screen)
                     if _screen_readiness_config(screen)
@@ -1083,7 +1101,9 @@ class ConsoleContextReadSnapshot:
         finally:
             if self.pending_key == key:
                 self.pending_key = None
-        if (
+        if published and previous != (self.key, self.value) and self.publish:
+            self.publish()  # TASK-33620.15.4: the next run tick, while one runs.
+        elif (
             published
             and previous != (self.key, self.value)
             and self.refresh is not None

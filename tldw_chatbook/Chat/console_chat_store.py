@@ -4810,9 +4810,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         raise RuntimeError("Library activity requires an active USER turn opener.")
 
     def library_activity_snapshot(
-        self,
-        session_id: str,
-        selected_message_id: str | None,
+        self, session_id: str, selected_message_id: str | None,
+        *, durable_rows: tuple[Any, ...] | None = None,
     ) -> tuple[
         LibraryActivityView,
         tuple[tuple[str, int], ...],
@@ -4822,7 +4821,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
         The returned count keys are native assistant message IDs so the
         transcript can render a local affordance without learning durable
-        trajectory identity.
+        trajectory identity. ``durable_rows``, when given, are the rows a
+        worker already read (TASK-33620.15.4); none is read here then.
         """
 
         session = self._session_or_raise(session_id)
@@ -4838,8 +4838,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             durable_by_native[message.id] = durable_id
             active_turn_ids.append(durable_id)
 
-        rows: list[Any] = []
-        db = getattr(self.persistence, "db", None)
+        rows: list[Any] = list(durable_rows or ())
+        db = None if durable_rows is not None else getattr(self.persistence, "db", None)
         if session.persisted_conversation_id is not None and db is not None:
             try:
                 rows.extend(db.get_trajectory_rows(session.persisted_conversation_id))

@@ -6,6 +6,8 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Chat.console_library_activity_buffer import (
     LibraryActivityFlushResult,
 )
@@ -34,6 +36,15 @@ class ConsoleLibraryActivityController:
         reveal_inspector: Callback that exposes the Inspector region.
         sync_native_ui: Async native Console synchronization callback.
         notify: User-notification callback.
+        run_worker: Starts a coroutine as a screen worker. With one, a
+            file-backed conversation's durable rows are read off the UI loop
+            (TASK-33620.15.4); without one, or for an in-memory or custom
+            store, the projection reads them synchronously as before.
+        presentation_paused: True while the Console must not render (a
+            maintenance or local storage pause); a landing read then waits
+            for the resume's replayed sync.
+        torn_down: True once the screen is closing; a read landing after it
+            publishes nothing.
     """
 
     def __init__(
@@ -47,6 +58,10 @@ class ConsoleLibraryActivityController:
         reveal_inspector: Callable[[], None],
         sync_native_ui: Callable[[], Awaitable[None]],
         notify: Callable[..., None],
+        run_worker: Callable[[Any], Any] | None = None,
+        presentation_paused: Callable[[], bool] | None = None,
+        torn_down: Callable[[], bool] | None = None,
+        live_reads: Callable[[], bool] | None = None,
     ) -> None:
         self.app_instance = app_instance
         self._ensure_store = ensure_store
@@ -56,6 +71,15 @@ class ConsoleLibraryActivityController:
         self._reveal_inspector = reveal_inspector
         self._sync_native_ui = sync_native_ui
         self._notify = notify
+        self.run_worker = run_worker
+        self.presentation_paused = presentation_paused or (lambda: False)
+        self.torn_down = torn_down or (lambda: False)
+        #: TASK-33620.15.4: True during a send's start, which reads on the loop.
+        self.live_reads = live_reads or (lambda: False)
+        #: (database, conversation id, activity revision) and the durable rows
+        #: a worker read for it; and the key of the newest read requested.
+        self._durable: tuple[tuple, tuple[Any, ...]] | None = None
+        self._durable_requested: tuple | None = None
         self.counts: dict[str, int] = {}
         self.view = LibraryActivityView(selected_turn_id=None, actions=())
         self.flush_result = LibraryActivityFlushResult(
@@ -162,9 +186,25 @@ class ConsoleLibraryActivityController:
         token = (session_id, revision, active_path, selected, citation_count)
         if token == self._projection_token:
             return
-        view, counts, flush_result = store.library_activity_snapshot(
-            session_id, selected
-        )
+        source = self._worker_source(store, session_id)
+        if source is None:
+            snapshot = store.library_activity_snapshot(session_id, selected)
+        else:
+            key, landed = (*source, revision), self._durable
+            if landed is not None and landed[0] == key:
+                rows: tuple[Any, ...] = landed[1]
+            else:
+                self._request_durable_rows(key)
+                if landed is not None and landed[0][:2] == source:
+                    # Rows read before this revision may predate a flush that
+                    # emptied the pending buffer: keep what is shown until
+                    # the newer rows land (within one read).
+                    return
+                rows = ()
+            snapshot = store.library_activity_snapshot(
+                session_id, selected, durable_rows=rows
+            )
+        view, counts, flush_result = snapshot
         self.view = view
         self.counts = dict(counts)
         self.flush_result = flush_result
@@ -176,6 +216,96 @@ class ConsoleLibraryActivityController:
                 citation_count=citation_count,
                 flush_result=flush_result,
             )
+
+    def _worker_source(self, store: Any, session_id: str) -> tuple | None:
+        """Return the (database, conversation) a worker may read, or None.
+
+        Only the stock persistence over a file-backed ChaChaNotes database:
+        an in-memory database's connection is per thread, and a custom store
+        keeps its own read. A session with no persisted conversation has no
+        durable rows to read. During a send's start the read stays on the
+        loop (``config_sync.send_start_in_progress``).
+        """
+        if self.run_worker is None or self.live_reads():
+            return None
+        from tldw_chatbook.Chat.chat_persistence_service import (
+            ChatPersistenceService,
+        )
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        persistence = getattr(store, "persistence", None)
+        database = getattr(persistence, "db", None)
+        if (
+            type(persistence) is not ChatPersistenceService
+            or type(database) is not CharactersRAGDB
+            or database.is_memory_db
+        ):
+            return None
+        session = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        return None if conversation_id is None else (database, conversation_id)
+
+    def _request_durable_rows(self, key: tuple) -> None:
+        """Start one worker read for ``key`` unless it is already in flight."""
+        if self._durable_requested == key:
+            return
+        self._durable_requested = key
+        self.run_worker(self._read_durable_rows(key))
+
+    async def _read_durable_rows(self, key: tuple) -> None:
+        """Read ``key``'s durable rows on a worker thread, then render them.
+
+        Only the newest requested read publishes, so a read overtaken by a
+        newer revision or source never overwrites it; nor does one landing
+        after teardown. A local storage pause neither renders nor caches
+        (the projection defers through one, and the next projection reads
+        again); any other failure degrades as the synchronous read did, to
+        no durable rows and the same warning.
+        """
+        try:
+            rows = await self._durable_read(key)
+        finally:
+            newest = self._durable_requested == key
+            if newest:
+                self._durable_requested = None
+        if not newest or self.torn_down():
+            return
+        self.invalidate_projection()
+        if rows is None:
+            return
+        self._durable = (key, rows)
+        if self.presentation_paused():
+            return  # The resume's replayed sync renders them.
+        transcript = self._transcript()
+        if transcript is not None:
+            self.sync_transcript(transcript)
+        else:
+            self.sync_projection()
+
+    @staticmethod
+    async def _durable_read(key: tuple) -> tuple[Any, ...] | None:
+        """Return the rows, () after a failed read, or None during a pause."""
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        from .view_workers import owned_display_read
+
+        database, conversation_id, _revision = key
+        try:
+            return tuple(
+                await owned_display_read(
+                    database, database.get_trajectory_rows, conversation_id
+                )
+            )
+        except RecoveryRequired as error:
+            if error.args == ("storage_locally_paused",):
+                return None
+            logger.warning("library_activity_projection_read_failed")
+            return ()
+        except Exception:  # noqa: BLE001 - payload-free review degradation
+            logger.warning("library_activity_projection_read_failed")
+            return ()
 
     def sync_transcript(self, transcript: Any) -> dict[str, int]:
         """Publish native-assistant footer counts and return the visible map.
