@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -101,6 +102,9 @@ class ConsoleCharacterContext(Vertical):
         self._recompose_generation = 0
         self._focus_intent_generation = 0
         self._pending_focus_restore: ConsoleCharacterFocusIdentity | None = None
+        # TASK-35970: a snapshot arrived while the browser could not be seen
+        # and is not rendered yet. compose() renders the newest one.
+        self._render_deferred = False
 
     @property
     def state(self) -> ConsoleCharacterContextState:
@@ -141,6 +145,10 @@ class ConsoleCharacterContext(Vertical):
             return
         screen = self.screen
         if screen is None or screen is not self.app.screen:
+            return
+        # A collapsed section's rows wait for it to open (TASK-35970); a
+        # count written now would request a layout no one can see.
+        if not self._presented():
             return
         for button in self.query(CharacterConversationButton):
             count = self._controller.pending_progress_count(button.character_row)
@@ -204,10 +212,57 @@ class ConsoleCharacterContext(Vertical):
         identity = getattr(widget, "character_focus_identity", None)
         return identity if isinstance(identity, ConsoleCharacterFocusIdentity) else None
 
+    def _presented(self) -> bool:
+        """Whether the browser can be seen: it and every ancestor are displayed."""
+        return all(node.display for node in self.ancestors_with_self)
+
+    def on_show(self) -> None:
+        """Render a snapshot deferred while an ancestor hid the browser."""
+        self.render_deferred()
+
+    def render_deferred(self, on_rendered: Callable[[], None] | None = None) -> bool:
+        """Render the newest snapshot if one arrived while the browser was hidden.
+
+        TASK-35970. The rail calls this as the Character section opens, before
+        its body is displayed, so the first frame already shows the newest
+        snapshot; ``on_show`` covers any other ancestor that hid it.
+
+        Args:
+            on_rendered: Called once the render has finished (or given up).
+
+        Returns:
+            True when a render was started, and ``on_rendered`` will be called.
+        """
+        if not self._render_deferred or not self.is_attached:
+            return False
+        if not self.app.screen_stack:
+            return False
+        self._render_deferred = False
+        self._sync_identity_line()
+        self._recompose_generation += 1
+        task = asyncio.create_task(
+            self._recompose_and_restore(
+                self._recompose_generation, None, None, self._focus_intent_generation
+            )
+        )
+        if on_rendered is not None:
+            task.add_done_callback(lambda _task: on_rendered())
+        return True
+
     def sync_state(self, state: ConsoleCharacterContextState) -> None:
         """Apply one complete snapshot and semantically restore focus/scroll."""
 
         if not self.is_attached or not self.app.screen_stack or state == self._state:
+            return
+        if not self._presented():
+            # TASK-35970: every send ends with a Character refresh that
+            # publishes Refreshing..., then its result. Recomposing for each
+            # while the section is collapsed cost two whole-screen reflows
+            # per send for a browser no one could see. Keep the newest
+            # snapshot (``state`` and the controller stay current) and render
+            # it when the section opens.
+            self._state = state
+            self._render_deferred = True
             return
         current_focus = (
             self._focus_identity(self.app.focused) if self.is_mounted else None
@@ -499,6 +554,7 @@ class ConsoleCharacterContext(Vertical):
             yield button
 
     def compose(self) -> ComposeResult:
+        self._render_deferred = False  # This renders the newest snapshot.
         self._sync_identity_line()
 
         search = Input(
