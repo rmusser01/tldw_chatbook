@@ -211,7 +211,11 @@ class ConsoleAgentSteeringBar(Vertical):
         except Exception:
             # Not composed yet -- compose() renders from self._state.
             return
-        queued.update(_queued_text(state.queued))
+        # TASK-33620.15.7: synced on every agent-section change during a run;
+        # unchanged copy must not request a whole-screen layout.
+        queued_text = _queued_text(state.queued)
+        if queued.content != queued_text:
+            queued.update(queued_text)
         queued.styles.display = "block" if state.queued > 0 else "none"
         if state.target_id != previous.target_id:
             self._set_note("")
