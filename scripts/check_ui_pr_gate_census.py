@@ -1202,10 +1202,12 @@ MINIMUM_FILES = 2439
 # existing entry changes shard:
 # - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
 #   160x45 boots, ~26 s): 916 -> 917.
+# - task 6 fix round 1: Tests/UI/test_library_notes_focus_capture_and_export_
+#   outcomes.py (two 160x45 boots, ~27 s): 917 -> 918.
 # Rebased 2026-11-20 onto dev d85e90bc9e (2439 entries, floor 2439): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2439 + 1 = 2440.
-MINIMUM_FILES = 2440
+# moves; the floor is the measured entry count: 2439 + 2 = 2441.
+MINIMUM_FILES = 2441
 
 
 def read_census(path: Path) -> list[str]:
