@@ -1224,6 +1224,60 @@ def _reset_config_database_instances(config_module):
         setattr(config_module, db_name, None)
 
 
+def _read_config_bytes(config_path: Path) -> bytes | None:
+    """The config file's bytes, or None when it does not exist."""
+    try:
+        return config_path.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _restore_bootstrap_profile_config(
+    config_module, config_path: Path, before: bytes | None
+) -> None:
+    """Give the shared bootstrap profile its config back as the test found it.
+
+    TASK-36478. Every ``bootstrap_profile`` test in one process shares ONE
+    ``config.toml`` (``_BOOTSTRAP_CONFIG_ROOT``), so before this nothing a
+    test wrote ever left it: a persisted ready provider
+    (``_configure_native_ready_console`` in test_console_native_chat_flow.py)
+    or a Console rail layout (``console.rail_state``, saved on every toggle)
+    reached every later test in the process. ``load_settings()`` also hands
+    out its cached dict by reference (factory apps hold it as
+    ``app.app_config``), so an in-place edit outlived its test until some
+    config write happened to rebuild the cache. Restore the bytes and drop
+    config.py's caches; the next read rebuilds from the restored file, as a
+    per-test sandbox's first read does.
+
+    Args:
+        config_module: The ``tldw_chatbook.config`` bound at setup.
+        config_path: The bootstrap profile's config file.
+        before: Its bytes when the test started, or None if it was absent.
+    """
+    # The process-wide write lock every config save holds, so a write still
+    # finishing on another thread cannot interleave with the restore.
+    with config_module._config_file_lock():
+        try:
+            if _read_config_bytes(config_path) != before:
+                if before is None:
+                    config_path.unlink(missing_ok=True)
+                else:
+                    staged = config_path.with_name(f".{config_path.name}.restore")
+                    staged.unlink(missing_ok=True)
+                    # The mode config.py's own writer gives the file
+                    # (`Utils/private_paths._PRIVATE_FILE_MODE`).
+                    descriptor = os.open(
+                        staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
+                    with os.fdopen(descriptor, "wb") as handle:
+                        handle.write(before)
+                    os.replace(staged, config_path)
+        finally:
+            # A failed write still drops the caches, so an in-place edit of
+            # the cached settings cannot outlive the test either.
+            config_module._invalidate_config_caches()
+
+
 def _shutdown_prompts_interop_if_loaded():
     """Reset the prompt singleton without importing its module into every test."""
     prompts_interop = sys.modules.get("tldw_chatbook.Prompt_Management.Prompts_Interop")
@@ -1766,15 +1820,37 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
     if wcs is not None:
         monkeypatch.setattr(wcs, "load_region_layout", lambda: wcs.RegionLayout())
 
+    # TASK-36478: the bootstrap profile's config is shared by every
+    # bootstrap-profile test in this process, so it is handed back unchanged
+    # after each one (`_restore_bootstrap_profile_config`). A private-profile
+    # child owns its profile for one test and is left alone.
+    bootstrap_config_path = test_config_dir / "config.toml"
+    reset_bootstrap_config = (
+        config is not None
+        and keep_bootstrap_profile
+        and not is_private_profile_child(request)
+    )
+    bootstrap_config_before = (
+        _read_config_bytes(bootstrap_config_path) if reset_bootstrap_config else None
+    )
+
     yield test_data_dir
 
-    if getattr(request.node, "_test_app_native_workers_uncertain", False):
-        raise RuntimeError(
-            "Native app workers remain uncertain; config retirement refused"
-        )
-    if config is not None:
-        _shutdown_prompts_interop_if_loaded()
-        _reset_config_database_instances(config)
+    try:
+        if getattr(request.node, "_test_app_native_workers_uncertain", False):
+            raise RuntimeError(
+                "Native app workers remain uncertain; config retirement refused"
+            )
+        if config is not None:
+            _shutdown_prompts_interop_if_loaded()
+            _reset_config_database_instances(config)
+    finally:
+        # Even when a step above raises: otherwise this test's config writes
+        # reach every later bootstrap-profile test (PR #3254's review).
+        if reset_bootstrap_config:
+            _restore_bootstrap_profile_config(
+                config, bootstrap_config_path, bootstrap_config_before
+            )
 
 
 # ========== Test Data Fixtures ==========
