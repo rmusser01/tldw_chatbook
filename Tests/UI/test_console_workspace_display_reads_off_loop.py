@@ -212,6 +212,7 @@ async def test_a_run_tick_build_rereads_an_expired_appearance_map_off_the_ui_loo
     tmp_path, registry
 ):
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
     from tldw_chatbook.UI.Console_Modules import workspace as module
 
     chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "display-reads")
@@ -229,6 +230,12 @@ async def test_a_run_tick_build_rereads_an_expired_appearance_map_off_the_ui_loo
         first = workspace._console_conversation_appearance_map([conversation_id])
         assert conversation_id in first
         cached = workspace._console_appearance_map_cache
+        # Another writer (not this controller's write path, which clears the
+        # map) changes the row, so the re-read has something to publish.
+        assert service.set_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🧪", color="#f87171"),
+        )
         workspace._console_appearance_map_cached_at -= (
             module.CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS + 1
         )
@@ -239,7 +246,26 @@ async def test_a_run_tick_build_rereads_an_expired_appearance_map_off_the_ui_loo
         await _settle(screen)
         assert screen.poll_asks == 1
         assert workspace._console_appearance_map_cache is not cached
-        assert conversation_id in workspace._console_appearance_map_cache
+        assert workspace._console_appearance_map_cache[conversation_id] == (
+            "🧪",
+            "#f87171",
+        )
+
+        # An unchanged re-read refreshes the map's age and publishes nothing:
+        # a publication forces the next tick's projection (review 2026-10-25).
+        unchanged = workspace._console_appearance_map_cache
+        workspace._console_appearance_map_cached_at -= (
+            module.CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS + 1
+        )
+        with _stale_reads(workspace):
+            workspace._console_conversation_appearance_map([conversation_id])
+        await _settle(screen)
+        assert screen.poll_asks == 1, "an unchanged appearance re-read published"
+        assert workspace._console_appearance_map_cache is unchanged
+        started = len(screen.workers)
+        with _stale_reads(workspace):
+            workspace._console_conversation_appearance_map([conversation_id])
+        assert len(screen.workers) == started, "a fresh map was re-read again"
 
         # A write clears the map while a re-read is in flight: it is dropped.
         workspace._console_appearance_map_cached_at -= (
@@ -290,5 +316,96 @@ async def test_a_sends_start_reads_the_registry_live_until_its_provider_request(
             view.list_workspaces()
         assert sql.main == 0
         assert screen.workers
+    finally:
+        await _settle(screen)
+
+
+@pytest.mark.asyncio
+async def test_an_id_the_appearance_read_never_returns_does_not_loop_the_run_ticks(
+    tmp_path, registry
+):
+    """Review 2026-10-25: Console delete soft-deletes a conversation but keeps
+    its workspace membership, so its id still reaches the appearance read,
+    which returns only live conversations. Every run-tick build then
+    re-requested the map and every landing published (a projection input):
+    one forced projection plus one connection-opening read per 0.2 s tick
+    for the whole run. An unchanged landing publishes nothing, and an id a
+    read found absent is not re-requested while the map is fresh."""
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+
+    chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "display-reads")
+    try:
+        kept = chat_db.add_conversation({"title": "Kept"})
+        gone = chat_db.add_conversation({"title": "Gone"})
+        version = chat_db.get_conversation_by_id(gone)["version"]
+        assert chat_db.soft_delete_conversation(gone, version)
+        screen = _RunScreen()
+        workspace = _workspace_controller(
+            screen=screen,
+            app_instance=SimpleNamespace(
+                workspace_registry_service=registry,
+                local_chat_conversation_service=ChatConversationService(chat_db),
+            ),
+        )
+        wanted = [kept, gone]
+        assert gone not in workspace._console_conversation_appearance_map(wanted)
+        reads = 0
+        for _tick in range(6):
+            started = len(screen.workers)
+            with _Statements() as sql, _stale_reads(workspace):
+                shown = workspace._console_conversation_appearance_map(wanted)
+            assert sql.main == 0, "a run tick's build read appearances on the UI loop"
+            assert kept in shown
+            reads += len(screen.workers) - started
+            await _settle(screen)
+        assert screen.poll_asks <= 1, (
+            f"6 run-tick builds published {screen.poll_asks} times for a map "
+            "whose rows never changed"
+        )
+        assert reads <= 1, f"6 run-tick builds started {reads} appearance re-reads"
+    finally:
+        chat_db.close()
+
+
+@pytest.mark.asyncio
+async def test_a_registry_read_that_keeps_failing_off_loop_publishes_once(registry):
+    """Review 2026-10-25: one display read that always raises off-loop left its
+    key stale, so every build re-requested the whole snapshot and every
+    landing re-installed the reads that had already landed and published
+    again -- the same self-sustaining tick loop. A landing that installs
+    nothing new publishes nothing."""
+    screen = _RunScreen()
+    workspace = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+    )
+    view = workspace._console_registry_reads_view()
+    view.list_workspaces()
+    view.list_workspace_memberships("alpha")
+    registry.create_workspace(workspace_id="beta", name="Beta")
+    original = registry.list_workspace_memberships
+
+    def fails_off_loop(*args, **kwargs):
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError("the memberships read keeps failing")
+        return original(*args, **kwargs)
+
+    registry.list_workspace_memberships = fails_off_loop
+    try:
+        for _tick in range(6):
+            with _Statements() as sql, _stale_reads(workspace):
+                shown = view.list_workspaces()
+                view.list_workspace_memberships("alpha")
+            assert sql.main == 0
+            await _settle(screen)
+        assert "beta" in {item.workspace_id for item in shown}
+        assert screen.poll_asks == 1, (
+            f"6 run-tick builds published {screen.poll_asks} times; only the "
+            "first landing installed anything"
+        )
+        # Each guard on its own: a landed read is not re-requested, and a
+        # landing that adds nothing reports nothing to publish.
+        assert ("workspaces",) not in view.stale_calls()
+        assert not view.install(view._generation, {("workspaces",): shown})
     finally:
         await _settle(screen)

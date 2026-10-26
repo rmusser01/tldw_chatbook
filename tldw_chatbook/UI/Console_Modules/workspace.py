@@ -504,21 +504,30 @@ class _ConsoleRegistryDisplayReads:
         return value
 
     def stale_calls(self) -> dict[tuple, tuple[str, tuple]]:
-        """Return how to repeat the last generation's reads."""
-        return {key: self._calls[key] for key in self._previous if key in self._calls}
+        """Return how to repeat the last generation's reads not yet re-read."""
+        return {
+            key: self._calls[key]
+            for key in self._previous
+            if key in self._calls and key not in self._cache
+        }
 
     def install(self, generation: int, values: Mapping[tuple, Any]) -> bool:
         """Cache reads made off-loop for ``generation`` unless it moved on.
 
         Returns:
-            True when installed; False when the registry mutated since (a
-            newer re-read owns the snapshot) or caching no longer applies.
+            True when a read the generation lacked was cached; False when
+            none was (all already cached, so there is nothing to publish), the
+            registry mutated since (a newer re-read owns the snapshot), or
+            caching no longer applies.
         """
         if not self._cacheable() or generation != self._generation:
             return False
+        added = False
         for key, value in values.items():
-            self._cache.setdefault(key, value)
-        return True
+            if key not in self._cache:
+                self._cache[key] = value
+                added = True
+        return added
 
     def get_active_workspace(self) -> Any:
         return self._read(("active",), "get_active_workspace")
@@ -922,6 +931,8 @@ class ConsoleWorkspaceController:
         # recurring merge calls do not re-query per sync; cleared on write.
         self._console_appearance_map_cache: dict[str, tuple[str, str]] | None = None
         self._console_appearance_map_cached_at: float = 0.0
+        #: TASK-33620.15.4: (map, ids an off-loop re-read of it found absent).
+        self._console_appearance_map_absent: tuple[dict, frozenset[str]] | None = None
         self._character_conversation_activation_coordinator = None
 
     @property
@@ -3177,7 +3188,18 @@ class ConsoleWorkspaceController:
         ):
             return cached_map
         if cached_map is not None and self._stale_display_reads_on:
-            self._request_appearance_refresh(get_appearances, wanted)
+            # An id the last re-read found absent (unknown or soft-deleted)
+            # is not re-requested while the map is fresh, or every tick's
+            # build would start another read (TASK-33620.15.4 review).
+            absent = getattr(self, "_console_appearance_map_absent", None)
+            known = set(cached_map)
+            if absent is not None and absent[0] is cached_map:
+                known |= absent[1]
+            if not (
+                now - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
+                and wanted <= known
+            ):
+                self._request_appearance_refresh(get_appearances, wanted)
             return cached_map  # Until the off-loop re-read lands (TASK-33620.15.4).
         try:
             appearances = get_appearances(sorted(wanted))
@@ -6949,9 +6971,18 @@ class ConsoleWorkspaceController:
                 for conversation_id, appearance in appearances.items()
             }
         )
-        self._console_appearance_map_cache = merged_map
+        # Only a changed map is published: a publication forces the next
+        # tick's projection, whose build would re-request (review 2026-10-25).
+        changed = merged_map != captured
+        current = merged_map if changed else captured
+        self._console_appearance_map_cache = current
         self._console_appearance_map_cached_at = time.monotonic()
-        self._publish_display_reads()
+        self._console_appearance_map_absent = (
+            current,
+            frozenset(wanted).difference(current),
+        )
+        if changed:
+            self._publish_display_reads()
 
     def _publish_display_reads(self) -> None:
         """Hand landed display reads to the next run tick (or a whole sync)."""
