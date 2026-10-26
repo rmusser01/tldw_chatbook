@@ -175,6 +175,36 @@ def _previous_folder_row_above(row: Widget) -> Widget | None:
     return None
 
 
+def _move_library_choice_strip_focus(focused: Widget, key: str) -> None:
+    """Move focus to the previous/next option of ``focused``'s choice strip.
+
+    TASK-34000.28 fix round 1 (I-2): with the Notes Sort strip open and a
+    choice focused, Left/Right did nothing -- only Tab moved. A strip's
+    options are Button siblings in one row carrying ``library-choice-option``
+    (``library_choice_strip``), so the walk is that row in display order. No
+    wrap at either end, and moving never presses: Enter chooses.
+
+    Args:
+        focused: The focused strip option.
+        key: ``"left"`` or ``"right"``.
+    """
+    parent = focused.parent
+    if parent is None:
+        return
+    options = [
+        child
+        for child in parent.children
+        if child.has_class("library-choice-option") and child.focusable
+    ]
+    try:
+        index = options.index(focused)
+    except ValueError:
+        return
+    new_index = index + (1 if key == "right" else -1)
+    if 0 <= new_index < len(options):
+        options[new_index].focus(scroll_visible=False)
+
+
 # --- task-252: targeted (non-recompose) selection-interaction updates ------
 #
 # Docs/Design/2026-07-16-performance-audit.md §P1 B2: library_screen.py

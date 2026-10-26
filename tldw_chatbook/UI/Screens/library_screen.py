@@ -845,6 +845,7 @@ from ..Library_Modules.screen_support_types import (
 from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
 from ..Library_Modules.canvas_sync import (
     _adjacent_library_list_row,
+    _move_library_choice_strip_focus,
     _move_library_list_row_focus,
     _patch_library_disabled_marker_label,
     _apply_library_row_toggle,
@@ -1035,20 +1036,6 @@ class LibraryScreen(BaseAppScreen):
             "shift+f6",
             "focus_previous_workbench_pane",
             "Previous pane",
-            show=False,
-            priority=True,
-        ),
-        # TASK-34000.28 (N-32): Textual's ``TextArea`` binds f6 to
-        # ``select_line`` (non-priority), and the app's own F6 is
-        # non-priority by ADR-031, so with the note body focused F6 SELECTED
-        # the current line and the next keystroke replaced it. A priority
-        # binding on this screen -- the same shape as shift+f6 above --
-        # resolves before the key reaches the focused widget; the action
-        # and the app-level binding are unchanged.
-        Binding(
-            "f6",
-            "focus_next_workbench_pane",
-            "Next pane",
             show=False,
             priority=True,
         ),
@@ -4093,6 +4080,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_landing_responsive_focus_id: str = ""
         self._library_notes_restoring_focus = False
         self._library_notes_programmatic_focus_target: Widget | None = None
+        #: TASK-34000.28 fix round 1 (M2): where Textual's own ``_reset_focus``
+        #: last put focus, until that landing's DescendantFocus is read.
+        self._library_focus_reset_target: Widget | None = None
+        #: TASK-34000.28 fix round 1 (M2): (pager id, focus generation) of
+        #: the last tree pager pressed with focus on it, and where Textual
+        #: parked focus when the loading recompose pruned that pager.
+        self._library_notes_tree_pager_press: tuple[str, int] | None = None
+        self._library_notes_tree_pager_parked: Widget | None = None
         self._transcribe_cpp_configured = False
         self._transcription_default_model = "base"
         # One provisional external-root scope exists only while its captured
@@ -9202,10 +9197,22 @@ class LibraryScreen(BaseAppScreen):
         ):
             # TASK-34000.28 N-22: on a folder row Right expands, Left
             # collapses or climbs to the parent when already collapsed --
-            # expansion state only, through the row's own press (the one
-            # toggle path). The key stays untouched on a note row (Textual's
-            # Button ignores it) and inside any Input/TextArea (the early
-            # return above precedes this branch).
+            # expansion state only, never the row's press (which also
+            # selects; fix round 1, I-3). The key stays untouched on a note
+            # row (Textual's Button ignores it) and inside any Input/TextArea
+            # (the early return above precedes this branch).
+            event.stop()
+            event.prevent_default()
+            return
+        if (
+            event.key in ("right", "left")
+            and self.focused is not None
+            and self.focused.has_class("library-notes-sort-choice")
+        ):
+            # TASK-34000.28 fix round 1 (I-2): the open Sort strip is one row
+            # of choices; Left/Right move between them (no wrap, never a
+            # choice -- Enter chooses).
+            _move_library_choice_strip_focus(self.focused, event.key)
             event.stop()
             event.prevent_default()
             return
@@ -11025,6 +11032,34 @@ class LibraryScreen(BaseAppScreen):
     def _disarm_library_media_return_for_route_change(self) -> None:
         return self._media_controller._disarm_library_media_return_for_route_change()
 
+    def _reset_focus(
+        self, widget: Widget, avoiding: list[Widget] | None = None
+    ) -> None:
+        """Textual's focus reset after a removal, remembering where it landed.
+
+        TASK-34000.28 fix round 1 (M2): a recompose that prunes the focused
+        control makes Textual move focus to a neighbour -- for the Notes
+        tree pager, the Library grip. That landing is the framework's, not
+        the user's, but ``on_descendant_focus`` counted it as a focus move,
+        which vetoed the pager's own hand-off (focus the first added row) and
+        left focus in the filter. Marked here so that handler can tell.
+
+        Args:
+            widget: The widget being removed.
+            avoiding: Nodes Textual must not move focus onto.
+        """
+        before = self.focused
+        super()._reset_focus(widget, avoiding)
+        landed = self.focused
+        if before is not widget or landed is widget or landed is None:
+            return  # Textual's no-op: focus was elsewhere, nothing moved.
+        self._library_focus_reset_target = landed
+        press = self._library_notes_tree_pager_press
+        if press is not None and widget.id == press[0]:
+            # The pressed tree pager was pruned: remember where focus was
+            # parked (``_library_notes_tree_pager_still_focused``).
+            self._library_notes_tree_pager_parked = landed
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Record Notes focus intent and disarm foreign list-entry focus.
 
@@ -11055,6 +11090,13 @@ class LibraryScreen(BaseAppScreen):
             None.
         """
         focused = event.widget
+        # TASK-34000.28 fix round 1 (M2): Textual's own reset is not a user
+        # focus move (see ``_reset_focus``).
+        reset_landing = (
+            focused is not None and focused is self._library_focus_reset_target
+        )
+        if reset_landing:
+            self._library_focus_reset_target = None
         if focused is not self.focused:
             # Focus bubbles are queued. A transactional Media rollback may
             # restore its prior live focus before the abandoned target's
@@ -11123,7 +11165,7 @@ class LibraryScreen(BaseAppScreen):
             )
             if target_restore:
                 self._library_notes_programmatic_focus_target = None
-            user_intent = relevant and not programmatic
+            user_intent = relevant and not programmatic and not reset_landing
             if user_intent:
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
@@ -17988,6 +18030,11 @@ class LibraryScreen(BaseAppScreen):
         if pager_owned:
             focus_identity = self._capture_library_notes_focus_identity()
             focus_generation = self._notes_state.focus_intent_generation
+            # TASK-34000.28 fix round 1 (M2): the press, for
+            # ``_library_notes_tree_pager_still_focused`` once the loading
+            # recompose below has pruned the focused pager.
+            self._library_notes_tree_pager_press = (pager_focus_id, focus_generation)
+            self._library_notes_tree_pager_parked = None
             guard = partial(
                 LibraryScreen._library_notes_tree_deferred_authority_is_current,
                 self,
@@ -18368,8 +18415,29 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_notes_tree_pager_still_focused(self, pager_focus_id: str) -> bool:
+        """Whether the pager the user pressed still owns focus.
+
+        TASK-34000.28 fix round 1 (M2): focus literally on the pager, OR
+        focus still sits exactly where Textual parked it when the loading
+        recompose pruned that pressed pager (the Library grip), with no user
+        focus move counted since. Parking is not the user leaving the pager,
+        so the page still hands focus to its first added row instead of the
+        restore's fallback, the filter. A control the user moved to is never
+        the parked widget, so the hand-off cannot steal it.
+        """
         focused = getattr(self, "focused", None)
-        return bool(focused is not None and focused.id == pager_focus_id)
+        if focused is None:
+            return False
+        if focused.id == pager_focus_id:
+            return True
+        press = getattr(self, "_library_notes_tree_pager_press", None)
+        notes_state = getattr(self, "_notes_state", None)
+        return bool(
+            press is not None
+            and notes_state is not None
+            and press == (pager_focus_id, notes_state.focus_intent_generation)
+            and focused is getattr(self, "_library_notes_tree_pager_parked", None)
+        )
 
     def _focus_library_notes_tree_after_page(
         self,
@@ -18408,6 +18476,15 @@ class LibraryScreen(BaseAppScreen):
             row.kind == "pager" and row.focus_id == pager_focus_id
             for row in projection.rows
         ):
+            # TASK-34000.28 fix round 1 (M2): nothing added -- stay on the
+            # pager by id, not through the captured identity, which names
+            # wherever Textual parked focus while the pager was pruned.
+            for pager in self.query(".library-notes-tree-pager"):
+                if getattr(pager, "id", None) == pager_focus_id and getattr(
+                    pager, "focusable", False
+                ):
+                    pager.focus()
+                    return False
             return True
         if key.parent_id is None:
             return True
@@ -26726,10 +26803,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_item_traversal_active()
                 and self._review_set_active()
             )
-        if action in {"focus_previous_workbench_pane", "focus_next_workbench_pane"}:
-            # TASK-34000.28 (N-32): F6 joins Shift+F6 as this screen's own
-            # priority pane key; both resolve only visible targets and no-op
-            # safely when none exist.
+        if action == "focus_previous_workbench_pane":
             return bool(self._library_selected_row_id)
         return True
 

@@ -381,6 +381,15 @@ class FileNotesEditorTextArea(TextArea):
 
     BINDINGS = _FILE_NOTES_EDITOR_BINDINGS
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # TASK-34000.28 (N-32, fix round 1): the Library note body's F6
+        # release, one widget over -- F6 leaves the file body for the next
+        # pane instead of selecting the line. Imported here (ADR-097).
+        from tldw_chatbook.Widgets.text_area_pane_key import release_pane_key
+
+        release_pane_key(self)
+
     def action_cursor_document_end(self) -> None:
         """Move the caret to the end of the file body."""
         self.move_cursor(self.document.end)
