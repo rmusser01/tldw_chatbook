@@ -464,7 +464,7 @@ def _browser_delta_may_patch(old: Any, new: Any) -> bool:
     TASK-36012 review: ``plan_in_place_delta`` decides by diffing two off-DOM
     composes, and a refused patch throws both away before the rebuild
     composes a third time, synchronously on the UI thread. A conversation
-    switch at 40 rows went from 203 to 518 ms of CPU that way. This state
+    switch at 40 rows went from 203 to 382 ms of CPU that way. This state
     check runs first and admits only a delta confined to
     ``_PATCHABLE_BROWSER_FIELDS`` that leaves every row's activity line as it
     was (that line adds a row of height). The compose diff stays the

@@ -253,13 +253,14 @@ def _node_writes(
 class ComposeReadView:
     """Attribute-recording view of a widget's state, live only during compose.
 
-    TASK-26836: ``_can_skip_recompose`` used whole-state value equality, so a
-    delta in a field this tray's ``content`` never renders (probe-observed:
-    ``conversation_browser`` pushed into the ``content="workspace"`` tray)
-    still forced a full recompose -- and its paint-blocking App batch. The
-    tray now records which top-level state fields ``compose`` actually reads,
-    exactly as it already records the row signature of what it builds, and
-    the guard skips when only unread fields changed.
+    TASK-26836: the Conversations tray's ``_can_skip_recompose`` used
+    whole-state value equality, so a delta in a field the tray's ``content``
+    never renders (probe-observed: ``conversation_browser`` pushed into the
+    ``content="workspace"`` tray) still forced a full recompose -- and its
+    paint-blocking App batch. The tray now records which top-level state
+    fields ``compose`` actually reads, exactly as it already records the row
+    signature of what it builds, and the guard skips when only unread fields
+    changed.
 
     TASK-36012 gave it a second owner: the Details tray rebuilds only when a
     field its last completed compose read changes.

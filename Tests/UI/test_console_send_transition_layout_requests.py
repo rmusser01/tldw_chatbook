@@ -494,7 +494,7 @@ async def test_delta_the_patch_refuses_composes_once(monkeypatch, delta) -> None
     The patch decides by diffing two off-DOM composes; when it then refuses,
     both are thrown away and the rebuild composes a third time, synchronously
     on the UI thread. Measured with the app stylesheets on a 40-row tray, a
-    conversation switch went from 203 to 518 ms of CPU that way. Only a
+    conversation switch went from 203 to 382 ms of CPU that way. Only a
     browser delta in a run marker, attention fact, icon or colour that leaves
     every row's lines where they are is worth composing for.
     """
