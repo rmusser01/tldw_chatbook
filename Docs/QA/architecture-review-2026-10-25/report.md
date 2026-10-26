@@ -211,7 +211,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 
   ADR-012 (`backlog/decisions/012-provider-credential-settings-boundary.md`, Accepted) rules in its 2026-09-19 amendment (TASK-32806.2) that the stored `api_settings` key outranks the env var, which is the fallback; CLAUDE.md says the same. Its 2026-10-17 amendment from TASK-33641.11 makes a recorded `credential_source` decisive, and its keychain amendment is not built yet (TASK-34100.31). The engine and the custom-endpoint registry are the resolvers out of line; ADR-146 (`backlog/decisions/146-console-custom-endpoint-registry.md`) recorded the registry's env-first order as mirroring the provider semantics of its time. A user with both set gets a different key depending on the provider family.
 - **Kwargs-builder drift:** the drifted builder is the dead `_chat_api_kwargs` (zero production callers, 23 test calls), already owned by **TASK-32807.5**. Not re-filed.
-- **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25, with ADR-012 in view: keep ADR-012 for the hosted engine; the custom-endpoint order is an owner choice recorded in the task), TASK-36946.1–.2. Gaps already owned elsewhere: TASK-35227 (key readers ignoring a recorded source) and TASK-35369 (Moonshot/Z.ai readiness leftover key).
+- **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25, with ADR-012 in view: keep ADR-012 for the hosted engine; owner decided 2026-10-26: custom endpoints keep ADR-146's order), TASK-36946.1–.2. Gaps already owned elsewhere: TASK-35227 (key readers ignoring a recorded source) and TASK-35369 (Moonshot/Z.ai readiness leftover key).
 
 ### F12 — Shared code lives in widget/screen files; Chat identity-checks UI internals · Medium · Layering · Module
 - **Evidence:** pure helpers sit in Textual modules:
@@ -281,7 +281,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 | Concern | Owner |
 |---|---|
 | `Chat/document_generator.py` and four other dead Chat modules; the dead `_chat_api_kwargs` builder | TASK-32807.5 |
-| Provider credential precedence ruling (ADR-012 amendment 2026-09-19); TASK-36941.3 aligns the hosted engine, and custom endpoints follow a recorded owner choice | TASK-32806.2 |
+| Provider credential precedence ruling (ADR-012 amendment 2026-09-19); TASK-36941.3 aligns the hosted engine, and custom endpoints keep ADR-146's order (owner, 2026-10-26) | TASK-32806.2 |
 | Wire-or-retire policy for unreachable modules | TASK-19571 |
 | Scope-service helper consolidation (ADR first) | TASK-32898 (restates TASK-32808.6) |
 | Transaction-manager consolidation / store kernel | TASK-34905, TASK-33132 |

@@ -29,7 +29,7 @@ Every structural PR lowers the ratchet it affects in the same commit.
   - No test or probe may write the real profile; a sandboxed launch denies writes to `~/.config/tldw_cli` and `~/.local/share/tldw_cli`.
 - **Preflight:** run `./scripts/preflight.sh` before opening a PR, and again after any rebase that touches `backlog/`.
 - **Owner decisions (all made 2026-10-25) are not reopened by implementers:**
-  - TASK-36941.3: keep ADR-012 and align the hosted engine to it (stored key before the environment variable when no credential source is recorded). Re-confirmed with ADR-012 in view. Custom endpoints are an owner choice recorded inside that task.
+  - TASK-36941.3: keep ADR-012 and align the hosted engine to it (stored key before the environment variable when no credential source is recorded). Re-confirmed with ADR-012 in view. Custom endpoints (owner, 2026-10-26): keep ADR-146's order, the entry's `api_key_env` reference then its stored `api_key`; no ADR-146 amendment.
   - TASK-36943.2/.3: on an ADR-number collision the oldest file keeps the number and each younger file is renumbered with provenance.
   - TASK-36947.1: adopt a frozen, typed, per-feature services bundle built once in `app_service_wiring`, with a shared factory for the other entry points and no DI container. TASK-36947.1 writes the ADR; TASK-36947.2 waits for the owner to accept it.
 - **Defer to existing owners:** TASK-32807.5 (dead Chat modules and `_chat_api_kwargs`), TASK-32898 (Interop helpers), TASK-34905 and TASK-33132 (transaction consolidation), TASK-34906 (migration registry), TASK-32463 (over-budget screens). Do not re-solve their scope inside these tasks.
