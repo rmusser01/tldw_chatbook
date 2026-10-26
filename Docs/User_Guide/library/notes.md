@@ -1527,20 +1527,23 @@ permanent delete.
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list). In the filter: leave the field, keeping what you typed; the applied filter is unchanged. |
 | **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter; Enter again on the same filter opens the first result |
-| ↓ (in the filter) | Focus the first result row. Text you have not applied yet is applied first, the way Enter applies it, and focus lands on the first row of the new result; with no result, focus stays in the filter. An emptied box clears the filter, as Enter does. |
+| ↓ (in the filter) | Focus the first result row. Text you have not applied yet is applied first, the way Enter applies it, and focus lands on the first row of the new result; with no result, focus stays in the filter. An emptied box clears the filter, as Enter does, and focus lands on the first folder or note of the list. A key or click while the result is still loading cancels that move to the first row. |
 | **‹ \<note\>** (note heading) | After following a link or a backlink, returns to the note you came from (one hop) |
 | ↑ / ↓ (New note view) | Move between **Blank note**, **From a template…** and the template rows it opens |
 | Enter (New note view) | Create from the focused row |
 
 The footer advertises these as `n new note | / find note | g go to folder |
-esc focus rail`. While a text field (the filter, or the rail's own search box)
-has focus the printable ones are literal characters, not accelerators, so the
-footer says so the way the rest of Library does: `typing in field | esc focus
-rail | after esc: n new note · / find note · g go to folder`. A note's Title,
-Keywords and body announce themselves the same way — `typing in field | esc
-back to notes`, plus `ctrl+end end of note` in the body. Below 64 columns the
-Escape chip comes first, because the footer may have room for only one chip
-there. In select mode the tier becomes
+esc focus rail`. While a text field has focus the printable ones are literal
+characters, not accelerators, so the footer says so the way the rest of
+Library does. In the filter it reads `typing in field | esc focus rail` and
+names no keys "after esc", because Escape there moves the caret into the
+rail's "Search Library…" box, another text field (every Library list filter
+behaves the same). In that search box Escape leaves for the list, so the
+footer adds `after esc: n new note · / find note · g go to folder`. A note's
+Title, Keywords and body announce themselves the same way — `typing in field
+| esc back to notes`, plus `ctrl+end end of note` in the body. Below 64
+columns the Escape chip comes first, because the footer may have room for
+only one chip there. In select mode the tier becomes
 `enter select note | e export selected | esc done`, with the **e** chip
 present only while something is checked. Notes does not register **Ctrl+S** and does not replace it with
 another save shortcut. Use the visible

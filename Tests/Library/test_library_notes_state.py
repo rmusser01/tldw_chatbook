@@ -673,3 +673,40 @@ def test_focus_identity_is_portable_immutable_value_state():
     )
     with pytest.raises(FrozenInstanceError):
         identity.semantic_role = "title"
+
+
+def test_a_presentation_state_with_a_link_origin_carries_the_back_controls_data():
+    """TASK-34000.28 (N-21): ``link_origin`` is the ``‹ <title>`` control's data.
+
+    The label escapes markup, keeps a short title whole and fits a long one
+    to the editor width (a third; a quarter when compact); no origin, no
+    label. Pure: the label method reads only these three canvas facts.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+        LibraryNotePresentationState,
+        LibraryNotesCanvas,
+    )
+
+    def label(origin, *, width=90, compact=False) -> str:
+        state = LibraryNotePresentationState(
+            snapshot=None, metadata_line="", status_line="", link_origin=origin
+        )
+        canvas = SimpleNamespace(
+            presentation_state=state,
+            compact=compact,
+            _effective_work_width=lambda: width,
+        )
+        return LibraryNotesCanvas._link_back_label(canvas)
+
+    assert LibraryNotePresentationState(
+        snapshot=None, metadata_line="", status_line=""
+    ).link_origin is None
+    assert label(("n-1", "Recipes index")) == "‹ Recipes index"
+    assert label(("n-1", "[draft] Q3 plan")) == "‹ \\[draft] Q3 plan"
+    long_title = "Advisor meeting 2026-09-24 with the whole committee"
+    # 90 columns // 3 = a 30-cell title
+    assert label(("n-1", long_title)) == "‹ Advisor meeting 2026-09-24 wi…"
+    assert cell_len(label(("n-1", long_title), width=60, compact=True)) == 2 + 15
+    assert label(None) == ""
