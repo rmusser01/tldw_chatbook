@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
@@ -469,6 +470,7 @@ class StudyQuizzesController:
         *,
         preserve_selection: bool = True,
         preferred_selection: Optional[str] = None,
+        publication_allowed: Optional[Callable[[], bool]] = None,
     ) -> None:
         service = self._scope_service()
         if service is None:
@@ -489,13 +491,20 @@ class StudyQuizzesController:
             self._set_attempt_history_summary("")
             return
 
-        attempts = await service.list_attempts(
-            mode=self._current_mode(),
-            **self._scope_arguments(),
-            quiz_id=quiz_id,
-            limit=100,
-            offset=0,
-        )
+        try:
+            attempts = await service.list_attempts(
+                mode=self._current_mode(),
+                **self._scope_arguments(),
+                quiz_id=quiz_id,
+                limit=100,
+                offset=0,
+            )
+        except Exception:
+            if publication_allowed is not None and not publication_allowed():
+                return
+            raise
+        if publication_allowed is not None and not publication_allowed():
+            return
         self.current_attempt_history = list(attempts or [])
         options = [
             (
@@ -846,16 +855,47 @@ class StudyQuizzesController:
             self._notify_shell_state_changed()
             return
 
+        submit_mode = self._current_mode()
+        submit_scope = self._scope_arguments()
+        submit_context = self._scope_generation, submit_mode, submit_scope
+        submit_attempt_id = self.current_attempt_id
+        publication_attempt_id = submit_attempt_id
+        publication_questions = self.current_attempt_questions
+
+        def publication_allowed() -> bool:
+            return (
+                submit_context == self._start_context_key()
+                and self.current_attempt_id == publication_attempt_id
+                and self.current_attempt_questions is publication_questions
+                and answer_widget.is_attached
+                and self.window.current_view == "quizzes"
+            )
+
+        previous_success = (
+            f"Quiz attempt {escape(submit_attempt_id)} submitted "
+            "in the previous Study context."
+        )
         try:
             submitted = await service.submit_attempt(
-                mode=self._current_mode(),
-                **self._scope_arguments(),
-                attempt_id=self.current_attempt_id,
+                mode=submit_mode,
+                **submit_scope,
+                attempt_id=submit_attempt_id,
                 answers=[*self.current_attempt_answers, current_answer],
             )
         except Exception:
             logger.opt(exception=True).error("Failed to submit quiz attempt")
-            self._notify("Failed to submit quiz attempt.", severity="error")
+            self._notify(
+                "Failed to submit quiz attempt."
+                if publication_allowed()
+                else (
+                    f"Failed to submit quiz attempt {escape(submit_attempt_id)} "
+                    "in the previous Study context."
+                ),
+                severity="error",
+            )
+            return
+        if not publication_allowed():
+            self._notify(previous_success, severity="information")
             return
 
         score = submitted.get("score")
@@ -870,10 +910,18 @@ class StudyQuizzesController:
         self.current_attempt_questions = []
         self.current_attempt_answers = []
         self.current_question_index = 0
+        # The completed presentation still owns its history await, until a new
+        # attempt, scope or panel replaces it.
+        publication_attempt_id = None
+        publication_questions = self.current_attempt_questions
         await self.refresh_attempt_history(
             preserve_selection=False,
             preferred_selection=submitted_attempt_id or None,
+            publication_allowed=publication_allowed,
         )
+        if not publication_allowed():
+            self._notify(previous_success, severity="information")
+            return
         self._sync_quiz_controls()
         self._notify_shell_state_changed()
 
