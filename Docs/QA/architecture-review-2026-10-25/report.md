@@ -120,7 +120,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
   - **Not pure:** `agent_runtime.py:400-404` says the module is "a pure module today (no Textual, app, DB, or I/O imports)". A sandboxed probe shows importing it loads `sqlite3`, `httpx`, **`textual`**, `DB.ChaChaNotes_DB`, `Chat` and `config` (207 tldw_chatbook modules). Three import chains cause it:
     - `:22` and `project_instruction_runtime.py:15` import `EPHEMERAL_ORIGIN_KEY` from `Chat.console_project_instructions` (httpx at `:12`), which runs `Chat/__init__` and loads the DB.
     - `:23` and `agent_models.py:24/:28` import Chat provider modules, which also run `Chat/__init__`.
-    - `project_instruction_runtime.py:40` imports `tool_catalog`, whose built-in provider chain reaches `RAG_Search`, `config`, the DB and `UI.destination_recovery`.
+    - `project_instruction_runtime.py:40` imports `tool_catalog`, which itself imports `Chat.console_library_policy` (`:37`) and `Library.library_tool_contract` (`:40`; the Library package init loads sqlite3 and `DB.Library_Collections_DB`). Its built-in providers (`:44-45`) reach `RAG_Search`, `config`, the DB and `UI.destination_recovery`.
     - Even with `Chat/__init__` treated as empty, the static closure is 188 modules. The first pass named only the first chain.
   - **No guard:** `agent_models` has a purity test (`Tests/Agents/test_agent_models.py:409`); `agent_runtime` has none.
 - **Recommended structure:** a special-tool dispatch table, then phase functions over a `LoopState`; `_run_one`'s fleet closures become a per-run class.
@@ -209,7 +209,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 | `moonshot.py:626`, `zai.py:595`, `qwencloud.py:365` | explicit → **stored** → env |
 | Custom-endpoint registry (`Chat/custom_endpoint_registry.py:495`) | env → stored |
 
-  ADR-012 (`backlog/decisions/012-provider-credential-settings-boundary.md`, Accepted) rules in its 2026-09-19 amendment (TASK-32806.2) that the stored `api_settings` key outranks the env var, which is the fallback. Its 2026-10-17 amendment makes a recorded `credential_source` decisive, and its keychain amendment is not built yet (TASK-34100.31). CLAUDE.md says the same. The engine and the custom-endpoint registry are the resolvers out of line; ADR-146 (`backlog/decisions/146-console-custom-endpoint-registry.md`) recorded the registry's env-first order as mirroring the provider semantics of its time. A user with both set gets a different key depending on the provider family.
+  ADR-012 (`backlog/decisions/012-provider-credential-settings-boundary.md`, Accepted) rules in its 2026-09-19 amendment (TASK-32806.2) that the stored `api_settings` key outranks the env var, which is the fallback; CLAUDE.md says the same. Its 2026-10-17 amendment from TASK-33641.11 makes a recorded `credential_source` decisive, and its keychain amendment is not built yet (TASK-34100.31). The engine and the custom-endpoint registry are the resolvers out of line; ADR-146 (`backlog/decisions/146-console-custom-endpoint-registry.md`) recorded the registry's env-first order as mirroring the provider semantics of its time. A user with both set gets a different key depending on the provider family.
 - **Kwargs-builder drift:** the drifted builder is the dead `_chat_api_kwargs` (zero production callers, 23 test calls), already owned by **TASK-32807.5**. Not re-filed.
 - **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25, with ADR-012 in view: keep ADR-012 for the hosted engine; the custom-endpoint order is an owner choice recorded in the task), TASK-36946.1–.2. Gaps already owned elsewhere: TASK-35227 (key readers ignoring a recorded source) and TASK-35369 (Moonshot/Z.ai readiness leftover key).
 
@@ -281,7 +281,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 | Concern | Owner |
 |---|---|
 | `Chat/document_generator.py` and four other dead Chat modules; the dead `_chat_api_kwargs` builder | TASK-32807.5 |
-| Provider credential precedence ruling (ADR-012 amendment 2026-09-19); TASK-36941.3 aligns the two remaining resolvers | TASK-32806.2 |
+| Provider credential precedence ruling (ADR-012 amendment 2026-09-19); TASK-36941.3 aligns the hosted engine, and custom endpoints follow a recorded owner choice | TASK-32806.2 |
 | Wire-or-retire policy for unreachable modules | TASK-19571 |
 | Scope-service helper consolidation (ADR first) | TASK-32898 (restates TASK-32808.6) |
 | Transaction-manager consolidation / store kernel | TASK-34905, TASK-33132 |
