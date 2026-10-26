@@ -561,7 +561,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     build_library_shell_state,
 )
-from ...Notes.note_folder_models import NoteFolder
+from ...Notes.note_folder_models import NoteFolderChildPage
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...Utils.adaptive_reader_state import (
@@ -3383,31 +3383,41 @@ class LibraryNotesController:
         if projection is None:
             return None
         return projection.row(self._library_notes_tree_selected_placement_id)
-    def _library_notes_folder_target_options(
-        self, *, exclude_folder_id: str | None = None
-    ) -> tuple[tuple[str, str], ...]:
-        """Return bounded loaded folder choices, excluding a moved subtree."""
-        folders = {
-            folder.folder_id: folder
-            for state in self._library_notes_tree_branches.values()
-            if state.key.slice_kind == "folders"
-            for folder in state.items
-            if isinstance(folder, NoteFolder)
-        }
-        excluded_path = (
-            folders[exclude_folder_id].normalized_path
-            if exclude_folder_id in folders
-            else ""
+    async def _page_library_notes_folder_targets(
+        self,
+        query: str,
+        offset: int,
+        *,
+        exclude_subtree_of: str | None = None,
+    ) -> NoteFolderChildPage:
+        """One folder-picker page over EVERY active folder (TASK-34000.28, N-23).
+
+        Replaces ``_library_notes_folder_target_options``, which offered only
+        the folders this visit's tree had loaded -- so a nested folder under a
+        collapsed parent could not be chosen. The picker
+        (``LibraryNoteFolderTargetDialog``) calls this as its loader.
+
+        Args:
+            query: The picker's filter text, matched anywhere in a path.
+            offset: Zero-based offset into the path order.
+            exclude_subtree_of: The folder being moved, offered neither itself
+                nor beneath itself; ``None`` for a note placement.
+
+        Returns:
+            The scope service's exact page of matching folders.
+        """
+        from ...Widgets.Library.library_note_folder_dialog import (
+            FOLDER_TARGET_PAGE_SIZE,
         )
-        choices = [
-            (folder.path.strip("/").replace("/", " / "), folder.folder_id)
-            for folder in folders.values()
-            if folder.folder_id != exclude_folder_id
-            and not (
-                excluded_path and folder.normalized_path.startswith(f"{excluded_path}/")
-            )
-        ]
-        return tuple(sorted(choices, key=lambda item: (item[0].casefold(), item[1])))
+
+        return await self.app_instance.notes_scope_service.page_note_folders(
+            scope="local_note",
+            query=query,
+            limit=FOLDER_TARGET_PAGE_SIZE,
+            offset=offset,
+            exclude_subtree_of=exclude_subtree_of,
+            user_id=self._library_notes_user_id(),
+        )
     def _remove_library_note_source_record(self, note_id: str) -> None:
         """Patch one successful delete into the cached Notes rows and count."""
         target_id = str(note_id)
@@ -6503,17 +6513,34 @@ class LibraryNotesController:
             _sync_library_canvas(self, "notes")
             return
         self._library_notes_tree_expanded_ids.add(folder_id)
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=partial(self._ensure_library_notes_folder_slices, folder_id),
+        )
 
-        def _load_expanded_folder() -> None:
-            if folder_id not in self._library_notes_tree_expanded_ids:
-                return
-            for kind in ("folders", "placements"):
-                key = NotesBranchKey(folder_id, kind)
-                state = self._library_notes_tree_branches.get(key)
-                if state is None or state.freshness == "uninitialized":
-                    self._request_library_notes_tree_slice(key)
+    def _ensure_library_notes_folder_slices(self, folder_id: str) -> None:
+        """Request the folders AND placements slices of one expanded folder, once each.
 
-        _sync_library_canvas(self, "notes", then=_load_expanded_folder)
+        TASK-34000.28 N-28: the locator expanded a destination by loading only
+        its ``folders`` slice; its notes stayed ``uninitialized`` until the user
+        collapsed and re-expanded it. The toggle path already loaded both -- this
+        is that loop, shared by the toggle and the tree locator. It only
+        REQUESTS reads (worker slices); a slice that is already loaded,
+        loading, or stale is left to its own refresh.
+
+        Args:
+            folder_id: The expanded folder's stable identity. A folder that is
+                no longer expanded (collapsed before the deferred call ran)
+                requests nothing.
+        """
+        if folder_id not in self._library_notes_tree_expanded_ids:
+            return
+        for kind in ("folders", "placements"):
+            key = NotesBranchKey(folder_id, kind)
+            state = self._library_notes_tree_branches.get(key)
+            if state is None or state.freshness == "uninitialized":
+                self._request_library_notes_tree_slice(key)
 
     def _library_notes_folder_row_arrow(self, row: Button, key: str) -> bool:
         """Right expands a focused folder row; Left collapses it or climbs to its parent.

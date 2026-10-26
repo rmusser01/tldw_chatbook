@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · That folder changed elsewhere — refresh and  │  o    ‹ Notes   Quotes                                                                 │
+│   v  │ try again.                                                   │  t                                                                                     │
+│      │ Notes (122)                                                  │  e                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  s   In the Library database only — no file on disk                                    │
+│      │ that live in a folder on disk, switch to Folder files. To    │     Saved                                                                              │
+│      │ copy or keep a folder synced, choose Add from files.         │         Edit     Preview     Info                                                      │
+│      │                                                              │         Save     Use in Console                                                        │
+│      │ Filter                                                       │     Title                                                                              │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊ Quotes                                                                         ▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│ ---> │    New     Sort: Newest     Select                           │     Keywords                                                                           │
+│      │    Add from files…     Export                                │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ Folders & placement                                          │     ▊ quotes                                                                         ▎ │
+│      │    New folder     Add to folder     Move note                │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    ○ Remove placement                                        │                                                                                        │
+│      │ That folder changed elsewhere — refresh and try aga…         │<--- Body                                                                               │
+│      │                                                              │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Agent_Lessons                                             │     ┃ > Writing is thinking.                                                         ┃ │
+│      │  ▸ Journal                                                   │     ┃                                                                                ┃ │
+│      │  ▸ Meetings                                                  │     ┃                                                                                ┃ │
+│ ---> │  ▸ Projects                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Recipes                                                   │     ┃                                                                                ┃ │
+│      │  ▸ Research                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Study                                                     │     ┃                                                                                ┃ │
+│      │  ▾ Unfiled                                                   │     ┃                                                                                ┃ │
+│      │    Quotes · 1m                                               │     ┃                                                                                ┃ │
+│      │    Scratch · 1m                                              │     ┃                                                                                ┃ │
+│      │    Untitled · 1m                                             │     ┃                                                                                ┃ │
+│      │    A very long note title that keeps going so we can test…   │     ┃                                                                                ┃ │
+│      │    📚 Reading queue 2026 ✨ · 1m                             │     ┃                                                                                ┃ │
+│      │    Gardening log · 1m                                        │     ┃                                                                                ┃ │
+│      │    Meeting Notes 2026-09-30 · 1m                           ▆ │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    Index — start here · 1m                                   │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                         4 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

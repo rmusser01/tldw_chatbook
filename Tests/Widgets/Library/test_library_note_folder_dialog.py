@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual import events
 from textual.app import App
-from textual.widgets import Input, Select, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+from tldw_chatbook.Notes.note_folder_models import NoteFolder, NoteFolderChildPage
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
@@ -29,48 +32,96 @@ async def test_name_dialog_echoes_action_and_initial_name():
         assert app.screen.query_one("#library-note-folder-name", Input).value == "Ideas"
 
 
+class _FolderLoader:
+    """A picker loader over a fixed folder list, recording every request.
+
+    Matches the way ``LocalNoteFolderRepository.page_folders`` does: the
+    query anywhere in the case-folded path, path order, exact total.
+    """
+
+    def __init__(self, *paths: str, page_size: int = 20) -> None:
+        self.folders = tuple(
+            NoteFolder(
+                folder_id=path.strip("/").replace("/", "-").casefold(),
+                parent_id=None,
+                name=path.rsplit("/", 1)[-1],
+                path=path,
+                normalized_path=path.casefold(),
+                version=1,
+                deleted=False,
+            )
+            for path in paths
+        )
+        self.page_size = page_size
+        self.calls: list[tuple[str, int]] = []
+
+    async def __call__(self, query: str, offset: int) -> NoteFolderChildPage:
+        self.calls.append((query, offset))
+        matching = sorted(
+            (f for f in self.folders if query.casefold() in f.normalized_path),
+            key=lambda folder: folder.normalized_path,
+        )
+        page = tuple(matching[offset : offset + self.page_size])
+        end = offset + len(page)
+        return NoteFolderChildPage(
+            folders=page,
+            total_folders=len(matching),
+            start_offset=offset,
+            previous_offset=max(0, offset - self.page_size) if offset else None,
+            next_offset=end if end < len(matching) else None,
+        )
+
+
+def _row_labels(screen) -> list[str]:
+    return [
+        str(row.label)
+        for row in screen.query(".library-note-folder-target-row").results(Button)
+    ]
+
+
+def _total(screen) -> str:
+    return str(screen.query_one("#library-note-folder-target-total", Static).render())
+
+
+async def _until(pilot, predicate, timeout: float = 5.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await pilot.pause(0.02)
+
+
 @pytest.mark.asyncio
-async def test_target_dialog_includes_root_and_bounded_folder_choices():
+async def test_target_dialog_includes_root_and_every_folder_the_loader_pages():
+    loader = _FolderLoader("/Personal", "/Personal/Ideas")
     app = ConsolidatedCSSApp()
     async with app.run_test() as pilot:
         await app.push_screen(
             LibraryNoteFolderTargetDialog(
-                title="Move folder",
-                folders=(("Personal", "personal"), ("Personal / Ideas", "ideas")),
-                include_root=True,
+                title="Move folder", loader=loader, include_root=True
             )
         )
-        await pilot.pause()
-        select = app.screen.query_one("#library-note-folder-target", Select)
-        assert select.value == ""
-        assert len(select._options) == 3
+        await _until(pilot, lambda: _total(app.screen) == "2 folders")
+        assert _row_labels(app.screen) == ["Top level", "Personal", "Personal / Ideas"]
+        assert loader.calls == [("", 0)]
+        # The filter owns focus on open; the pager hides on a single page.
+        assert app.screen.focused is app.screen.query_one(
+            "#library-note-folder-target-filter", Input
+        )
+        assert not app.screen.query_one("#library-note-folder-target-pager").display
 
 
 @pytest.mark.asyncio
-async def test_target_dialog_without_root_mounts_with_a_blank_selection():
-    """TASK-32533: the P0 site. Add note to folder / Move note open this dialog
-    with ``include_root=False``; its blank value was ``Select.BLANK``, which is
-    not a Select attribute at all and resolves to ``Widget.BLANK`` (False) --
-    an illegal value that raised InvalidSelectValueError at mount and, before
-    this task, exited the whole app."""
+async def test_target_dialog_without_root_mounts_with_no_preselected_folder():
+    """TASK-32533's site, without its ``Select``: no folder is pre-chosen."""
+    loader = _FolderLoader("/Personal", "/Personal/Ideas")
     app = ConsolidatedCSSApp()
     async with app.run_test() as pilot:
         await app.push_screen(
-            LibraryNoteFolderTargetDialog(
-                title="Add note to folder",
-                folders=(("Personal", "personal"), ("Personal / Ideas", "ideas")),
-            )
+            LibraryNoteFolderTargetDialog(title="Add note to folder", loader=loader)
         )
-        await pilot.pause()
+        await _until(pilot, lambda: _total(app.screen) == "2 folders")
         assert app._exception is None
-        select = app.screen.query_one("#library-note-folder-target", Select)
-        assert select.value is Select.NULL
-        # Both folders, plus the blank prompt row `allow_blank` prepends.
-        assert [value for _, value in select._options] == [
-            Select.NULL,
-            "personal",
-            "ideas",
-        ]
+        assert _row_labels(app.screen) == ["Personal", "Personal / Ideas"]
+        assert not app.screen.query(".library-note-folder-target-row.-highlighted")
 
 
 @pytest.mark.asyncio
@@ -79,16 +130,103 @@ async def test_target_dialog_choose_with_nothing_selected_stays_open():
     app = ConsolidatedCSSApp()
     results: list[str | None] = []
     modal = LibraryNoteFolderTargetDialog(
-        title="Add note to folder",
-        folders=(("Personal", "personal"),),
+        title="Add note to folder", loader=_FolderLoader("/Personal")
     )
     async with app.run_test(size=(90, 30)) as pilot:
         await app.push_screen(modal, callback=results.append)
-        await pilot.pause()
+        await _until(pilot, lambda: _total(modal) == "1 folder")
         await pilot.click("#library-note-folder-target-confirm")
         await pilot.pause()
         assert app.screen is modal
         assert results == []
+
+
+@pytest.mark.asyncio
+async def test_target_dialog_typing_narrows_the_list_after_a_debounce():
+    """TASK-34000.28 (N-23): type-to-filter over every folder, exact total."""
+    loader = _FolderLoader(
+        "/Projects", "/Projects/Thesis", "/Projects/App launch", "/Study"
+    )
+    app = ConsolidatedCSSApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(LibraryNoteFolderTargetDialog(title="Move", loader=loader))
+        await _until(pilot, lambda: _total(app.screen) == "4 folders")
+        await pilot.press("t", "h", "e", "s")
+        await _until(pilot, lambda: _total(app.screen) == "1 folder")
+        assert _row_labels(app.screen) == ["Projects / Thesis"]
+        # One request for the settled text, not one per keystroke.
+        assert loader.calls == [("", 0), ("thes", 0)]
+
+        await pilot.press("z")
+        await _until(pilot, lambda: _total(app.screen) == "No folder matches “thesz”")
+        assert _row_labels(app.screen) == []
+
+
+@pytest.mark.asyncio
+async def test_target_dialog_pages_with_the_exact_total():
+    loader = _FolderLoader(*(f"/Folder {index:02d}" for index in range(37)))
+    app = ConsolidatedCSSApp()
+    async with app.run_test(size=(90, 40)) as pilot:
+        await app.push_screen(LibraryNoteFolderTargetDialog(title="Move", loader=loader))
+        await _until(pilot, lambda: _total(app.screen) == "Showing 1–20 of 37 folders")
+        assert len(_row_labels(app.screen)) == 20
+        assert app.screen.query_one("#library-note-folder-target-pager").display
+        assert app.screen.query_one("#library-note-folder-target-previous").disabled
+
+        app.screen.query_one("#library-note-folder-target-next", Button).press()
+        await _until(pilot, lambda: _total(app.screen) == "Showing 21–37 of 37 folders")
+        assert _row_labels(app.screen)[0] == "Folder 20"
+        assert app.screen.query_one("#library-note-folder-target-next").disabled
+        assert loader.calls == [("", 0), ("", 20)]
+
+
+@pytest.mark.asyncio
+async def test_target_dialog_down_from_the_filter_and_enter_choose_a_row():
+    loader = _FolderLoader("/Projects", "/Projects/Thesis")
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(
+            LibraryNoteFolderTargetDialog(title="Move", loader=loader),
+            callback=results.append,
+        )
+        await _until(pilot, lambda: _total(app.screen) == "2 folders")
+        await pilot.press("down")
+        await pilot.pause()
+        assert str(app.screen.focused.label) == "Projects"
+        await pilot.press("down")
+        await pilot.pause()
+        assert str(app.screen.focused.label) == "Projects / Thesis"
+        await pilot.press("up", "up")
+        await pilot.pause()
+        assert app.screen.focused.id == "library-note-folder-target-filter"
+        await pilot.press("down", "down", "enter")
+        await pilot.pause()
+
+    assert results == ["projects-thesis"]
+
+
+@pytest.mark.asyncio
+async def test_target_dialog_paints_user_text_literally():
+    """A title or folder name that looks like markup is painted as typed."""
+    # (A folder NAME cannot hold "/", the path separator.)
+    loader = _FolderLoader("/[b]Bold", "/x [red] y")
+    app = ConsolidatedCSSApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(
+            LibraryNoteFolderTargetDialog(title='Move "[/]odd[b]" to…', loader=loader)
+        )
+        await _until(pilot, lambda: _total(app.screen) == "2 folders")
+        assert app._exception is None
+        title = app.screen.query_one("#library-note-folder-target-title", Static)
+        assert str(title.render()) == 'Move "[/]odd[b]" to…'
+        labels = [
+            str(row.label.plain)
+            for row in app.screen.query(".library-note-folder-target-row").results(
+                Button
+            )
+        ]
+        assert labels == ["[b]Bold", "x [red] y"]
 
 
 def _note_folder_modal(kind: str):
@@ -97,7 +235,7 @@ def _note_folder_modal(kind: str):
         if kind == "name"
         else LibraryNoteFolderTargetDialog(
             title="Move folder",
-            folders=(("Personal", "personal"), ("Ideas", "ideas")),
+            loader=_FolderLoader("/Personal", "/Ideas"),
             include_root=True,
         )
     )
@@ -183,7 +321,13 @@ async def test_note_folder_library_modal_contract_positive_is_str(kind: str) -> 
         if kind == "name":
             modal.query_one("#library-note-folder-name", Input).value = "Archive"
         else:
-            modal.query_one("#library-note-folder-target", Select).value = "ideas"
+            await _until(pilot, lambda: len(_row_labels(modal)) == 3)
+            next(
+                row
+                for row in modal.query(".library-note-folder-target-row").results(Button)
+                if row.choice_value == "ideas"
+            ).focus()
+            await pilot.pause()
         await pilot.click(_note_folder_control(kind, "confirm"))
         await pilot.pause()
 

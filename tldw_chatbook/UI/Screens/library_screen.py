@@ -362,6 +362,7 @@ from ...Notes.note_folder_models import (
     FolderPlacementId,
     FolderValidationError,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
     NotePlacementRecord,
 )
@@ -473,7 +474,6 @@ from ...Library.meeting_speaker_rename import (
 )
 from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
-    LibraryNoteFolderTargetDialog,
 )
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
@@ -18555,6 +18555,7 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.navigation_generation = navigation_generation
         topology_epoch = self._notes_state.tree_topology_epoch
         lifecycle_generation = self._notes_state.tree_lifecycle_generation
+        expanded_before = frozenset(self._notes_state.tree_expanded_ids)
         # task-32100: only a locator that will take focus has a stake in the
         # focus intent. The one every note open starts (``focus=False``) just
         # reveals and marks a row, and fencing it on focus meant the row
@@ -18658,8 +18659,18 @@ class LibraryScreen(BaseAppScreen):
             the two bail-outs that run while this navigation is still
             current -- a SUPERSEDED locate still leaves no trace, which
             the abandoned-locator pins require.
+
+            TASK-34000.28 (N-28): every folder this opens that was not open
+            before also owes its OWN two slices -- the walk above loaded only
+            each parent's folders slice to find it, so a folder move's
+            destination opened listing its sub-folders but none of its notes.
+            The toggle's shared helper requests them (worker reads; a slice
+            already loaded, like a note target's placements, is skipped).
             """
             self._notes_state.tree_expanded_ids.update(located_folder_ids)
+            for folder_id in located_folder_ids:
+                if folder_id not in expanded_before:
+                    self._ensure_library_notes_folder_slices(folder_id)
 
         for step in location.path:
             key = NotesBranchKey(step.parent_id, "folders")
@@ -19580,12 +19591,19 @@ class LibraryScreen(BaseAppScreen):
     def _selected_library_notes_tree_row(self):
         return self._notes_controller._selected_library_notes_tree_row()
 
-    def _library_notes_folder_target_options(
-        self, *, exclude_folder_id: str | None = None
-    ) -> tuple[tuple[str, str], ...]:
-        return self._notes_controller._library_notes_folder_target_options(
-            exclude_folder_id=exclude_folder_id
+    async def _page_library_notes_folder_targets(
+        self,
+        query: str,
+        offset: int,
+        *,
+        exclude_subtree_of: str | None = None,
+    ) -> NoteFolderChildPage:
+        return await self._notes_controller._page_library_notes_folder_targets(
+            query, offset, exclude_subtree_of=exclude_subtree_of
         )
+
+    def _ensure_library_notes_folder_slices(self, folder_id: str) -> None:
+        return self._notes_controller._ensure_library_notes_folder_slices(folder_id)
 
     def _remove_library_note_source_record(self, note_id: str) -> None:
         return self._notes_controller._remove_library_note_source_record(note_id)
@@ -31426,7 +31444,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-notes-folder-move")
     def handle_library_notes_folder_move(self, event: Button.Pressed) -> None:
-        """Move the selected folder beneath another loaded folder or root."""
+        """Move the selected folder beneath any other active folder or the root."""
         event.stop()
         selected = self._selected_library_notes_tree_row()
         if (
@@ -31436,11 +31454,17 @@ class LibraryScreen(BaseAppScreen):
             or selected.protected
         ):
             return
+        # ADR-097: the picker is imported where it opens, not at module top.
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderTargetDialog,
+        )
+
         self.app.push_screen(
             LibraryNoteFolderTargetDialog(
-                title=f"Move {selected.label}",
-                folders=self._library_notes_folder_target_options(
-                    exclude_folder_id=selected.folder_id
+                title=f'Move folder "{selected.label}" to…',
+                loader=partial(
+                    self._page_library_notes_folder_targets,
+                    exclude_subtree_of=selected.folder_id,
                 ),
                 include_root=True,
             ),
@@ -31516,10 +31540,21 @@ class LibraryScreen(BaseAppScreen):
             )
             _sync_library_canvas(self, "notes")
             return
+        # ADR-097: the picker is imported where it opens, not at module top.
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderTargetDialog,
+        )
+
         self.app.push_screen(
             LibraryNoteFolderTargetDialog(
-                title="Move note" if move else "Add note to folder",
-                folders=self._library_notes_folder_target_options(),
+                # TASK-34000.28 (N-23): the title names the note (user text --
+                # the dialog paints it with ``markup=False``).
+                title=(
+                    f'Move "{selected.label}" to…'
+                    if move
+                    else f'Add "{selected.label}" to folder…'
+                ),
+                loader=self._page_library_notes_folder_targets,
             ),
             lambda target_id: (
                 self._schedule_library_notes_tree_mutation(

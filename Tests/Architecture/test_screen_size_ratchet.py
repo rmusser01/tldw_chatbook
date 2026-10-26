@@ -1087,7 +1087,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: pager press's own ``set_focus`` parking (fix round 2 replaced the
     #: round-1 private-API override with it): 37759 -> 37862 lines, methods
     #: unchanged at 1361 (measured; the override was the round-1 +1).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37862, 1361),
+    #: 2026-10-25, TASK-34000.28 (polish-1a task 3; owner decision 2026-10-04,
+    #: expand-the-limits rule): the folder pickers page every active folder
+    #: (two call sites rewritten, the picker imported where it opens), the
+    #: locator's newly-opened folders ask the shared slice helper for both
+    #: slices, and two delegators in (``_page_library_notes_folder_targets``,
+    #: ``_ensure_library_notes_folder_slices``) for one out
+    #: (``_library_notes_folder_target_options``): 37862 -> 37897 lines,
+    #: 1361 -> 1362 methods (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37897, 1362),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

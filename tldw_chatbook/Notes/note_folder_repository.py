@@ -379,6 +379,89 @@ class LocalNoteFolderRepository:
             ),
         )
 
+    def page_folders(
+        self,
+        *,
+        query: str = "",
+        limit: int,
+        offset: int,
+        exclude_subtree_of: str | None = None,
+    ) -> NoteFolderChildPage:
+        """Page every ACTIVE folder at any depth whose path contains ``query``.
+
+        TASK-34000.28 (N-23): the Move note / Move folder / Add to folder
+        pickers listed only the folders the tree had already loaded this
+        visit, so a nested folder under a collapsed parent could not be
+        chosen. This is the all-folders seam they page instead.
+
+        Args:
+            query: Breadcrumb text to match anywhere in a folder's stored
+                path, case-folded exactly as ``load_tree_search`` matches it
+                (``_normalize_folder_search_query``). Matched with ``instr``,
+                so ``%`` and ``_`` are literal characters. Empty lists all.
+            limit: Maximum folders to return.
+            offset: Zero-based offset into the ``normalized_path`` order.
+            exclude_subtree_of: A folder that must not be offered together
+                with every folder beneath it (a folder cannot move into
+                itself). An unknown or deleted id excludes only that id.
+
+        Returns:
+            One exact page with the exact matching total and both cursors.
+
+        Raises:
+            FolderValidationError: If the query, an identifier or a page
+                bound is invalid.
+        """
+        _validate_int_bound("limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE)
+        _validate_int_bound("offset", offset, minimum=0)
+        normalized_query = _normalize_folder_search_query(query)
+        if exclude_subtree_of is not None:
+            _validate_folder_id(exclude_subtree_of, field="exclude_subtree_of")
+        with self.db.transaction() as cursor:
+            predicates = ["deleted = 0"]
+            parameters: list[object] = []
+            if normalized_query:
+                predicates.append("instr(normalized_path, ?) > 0")
+                parameters.append(normalized_query)
+            if exclude_subtree_of is not None:
+                predicates.append("id != ?")
+                parameters.append(exclude_subtree_of)
+                excluded = cursor.execute(
+                    "SELECT normalized_path FROM note_folders "
+                    "WHERE id = ? AND deleted = 0",
+                    (exclude_subtree_of,),
+                ).fetchone()
+                if excluded is not None:
+                    # The repository's own subtree idiom (``_load_subtree``):
+                    # a prefix compared with ``substr``, never ``LIKE``, so a
+                    # ``%`` or ``_`` in a folder name needs no escaping.
+                    excluded_path = str(excluded["normalized_path"])
+                    predicates.append(
+                        "substr(normalized_path, 1, length(?) + 1) != ? || '/'"
+                    )
+                    parameters.extend((excluded_path, excluded_path))
+            where = " AND ".join(predicates)
+            total = int(
+                cursor.execute(
+                    f"SELECT COUNT(*) AS total FROM note_folders WHERE {where}",
+                    tuple(parameters),
+                ).fetchone()["total"]
+            )
+            rows = cursor.execute(
+                f"SELECT {_FOLDER_COLUMNS} FROM note_folders WHERE {where} "
+                "ORDER BY normalized_path, id LIMIT ? OFFSET ?",
+                (*parameters, limit, offset),
+            ).fetchall()
+        folders = tuple(_folder_from_row(row) for row in rows)
+        end = offset + len(folders)
+        return NoteFolderChildPage(
+            folders=folders,
+            total_folders=total,
+            start_offset=offset,
+            previous_offset=_previous_page_offset(offset, limit, total),
+            next_offset=end if end < total else None,
+        )
+
     def page_note_placements(
         self,
         *,

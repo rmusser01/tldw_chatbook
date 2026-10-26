@@ -439,6 +439,112 @@ def test_list_children_rejects_invalid_bounds(
         repository.list_children(parent_id=None, limit=limit, offset=offset)
 
 
+def _seed_picker_folders(repository: LocalNoteFolderRepository) -> dict[str, str]:
+    """The review's nested shape: two parents, three children, ids by path."""
+    projects = repository.create_folder(name="Projects", parent_id=None)
+    thesis = repository.create_folder(name="Thesis", parent_id=projects.folder_id)
+    launch = repository.create_folder(name="App launch", parent_id=projects.folder_id)
+    study = repository.create_folder(name="Study", parent_id=None)
+    japanese = repository.create_folder(name="Japanese", parent_id=study.folder_id)
+    return {
+        folder.path: folder.folder_id
+        for folder in (projects, thesis, launch, study, japanese)
+    }
+
+
+def _paths(page) -> list[str]:
+    return [folder.path for folder in page.folders]
+
+
+def test_page_folders_lists_every_active_folder_at_any_depth_in_path_order(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.28 N-23: nested folders are offered without loading a branch."""
+    ids = _seed_picker_folders(repository)
+    removed = repository.create_folder(name="Old", parent_id=None)
+    repository.soft_delete_folder(removed.folder_id, expected_version=removed.version)
+
+    page = repository.page_folders(query="", limit=20, offset=0)
+
+    assert _paths(page) == [
+        "/Projects",
+        "/Projects/App launch",
+        "/Projects/Thesis",
+        "/Study",
+        "/Study/Japanese",
+    ]
+    assert page.total_folders == 5
+    assert page.start_offset == 0
+    assert page.previous_offset is None and page.next_offset is None
+    assert {folder.folder_id for folder in page.folders} == set(ids.values())
+
+
+def test_page_folders_narrows_by_a_case_folded_path_query(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    ids = _seed_picker_folders(repository)
+
+    thesis = repository.page_folders(query="thes", limit=20, offset=0)
+    breadcrumb = repository.page_folders(query="PROJECTS / Th", limit=20, offset=0)
+    literal = repository.page_folders(query="%", limit=20, offset=0)
+    underscore = repository.page_folders(query="_", limit=20, offset=0)
+
+    assert _paths(thesis) == ["/Projects/Thesis"]
+    assert thesis.total_folders == 1
+    assert thesis.folders[0].folder_id == ids["/Projects/Thesis"]
+    assert _paths(breadcrumb) == ["/Projects/Thesis"]
+    # ``%`` and ``_`` are literal characters, not wildcards.
+    assert literal.folders == () and literal.total_folders == 0
+    assert underscore.folders == () and underscore.total_folders == 0
+
+
+def test_page_folders_pages_with_an_exact_total_and_both_cursors(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    _seed_picker_folders(repository)
+
+    middle = repository.page_folders(query="", limit=2, offset=2)
+    last = repository.page_folders(query="", limit=2, offset=4)
+
+    assert _paths(middle) == ["/Projects/Thesis", "/Study"]
+    assert middle.total_folders == 5
+    assert (middle.previous_offset, middle.next_offset) == (0, 4)
+    assert _paths(last) == ["/Study/Japanese"]
+    assert (last.previous_offset, last.next_offset) == (2, None)
+
+
+def test_page_folders_excludes_a_moved_folder_and_its_whole_subtree(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    ids = _seed_picker_folders(repository)
+    # A sibling whose path merely STARTS with the excluded name stays offered.
+    lookalike = repository.create_folder(name="Projects archive", parent_id=None)
+
+    page = repository.page_folders(
+        query="", limit=20, offset=0, exclude_subtree_of=ids["/Projects"]
+    )
+    child = repository.page_folders(
+        query="", limit=20, offset=0, exclude_subtree_of=ids["/Projects/Thesis"]
+    )
+
+    assert _paths(page) == ["/Projects archive", "/Study", "/Study/Japanese"]
+    assert page.total_folders == 3
+    assert lookalike.folder_id in {folder.folder_id for folder in page.folders}
+    assert "/Projects/Thesis" not in _paths(child)
+    assert "/Projects" in _paths(child) and child.total_folders == 5
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset", "query"),
+    [(0, 0, ""), (501, 0, ""), (1, -1, ""), (True, 0, ""), (1, 0, "x" * 201)],
+)
+def test_page_folders_rejects_invalid_bounds_and_queries(
+    repository: LocalNoteFolderRepository, limit: int, offset: int, query: str
+) -> None:
+    with pytest.raises(FolderValidationError):
+        repository.page_folders(query=query, limit=limit, offset=offset)
+
+
 @pytest.mark.parametrize("note_limit", [0, 1001, True])
 def test_load_tree_batch_rejects_invalid_note_limit(
     repository: LocalNoteFolderRepository, note_limit: int

@@ -548,7 +548,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Rebased 2026-10-26 onto dev 38623632e9 (906 entries; dev carried two
 # MINIMUM_FILES assignments, 906 then 905 -- collapsed to one here):
 # 906 + 1 = 907.
-MINIMUM_FILES = 907
+# 2026-10-25, TASK-34000.28 (polish-1a batch, task 3) appends one whole-file
+# entry at the tail -- Tests/UI/test_library_notes_folder_picker_lists_every_folder.py
+# (two 160x45 LibraryScreen boots, ~20 s locally) -- so no existing entry
+# changes shard: 900 -> 901.
+# (on dev 38623632e9: 907 -> 908.)
+MINIMUM_FILES = 908
 
 
 def read_census(path: Path) -> list[str]:

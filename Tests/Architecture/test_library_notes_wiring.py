@@ -375,6 +375,18 @@ _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     )
 )
 
+#: Moved names a later task DELETED outright -- from the controller AND the
+#: screen -- because nothing calls them any more. They stay in the 185-name
+#: census above (it records what the extraction moved), and the ownership and
+#: delegation pins instead assert each is absent from both classes, so an
+#: accidental re-add fails loudly. 2026-10-25, TASK-34000.28 (N-23):
+#: ``_library_notes_folder_target_options`` built the folder pickers' choices
+#: from the branches this visit had loaded; the pickers now page every active
+#: folder through ``_page_library_notes_folder_targets``.
+_NOTES_CLUSTER_RETIRED: frozenset[str] = frozenset(
+    ("_library_notes_folder_target_options",)
+)
+
 
 #: Every method Task 2 moved into ``LibraryNotesController``, under its
 #: original ``LibraryScreen`` name. Derived from a full ``ast`` census of every
@@ -734,9 +746,19 @@ def test_notes_controller_owns_its_cluster() -> None:
     missing = [
         name
         for name in _NOTES_CLUSTER_METHOD_NAMES
-        if not callable(getattr(LibraryNotesController, name, None))
+        if name not in _NOTES_CLUSTER_RETIRED
+        and not callable(getattr(LibraryNotesController, name, None))
     ]
     assert not missing, f"LibraryNotesController is missing: {missing!r}"
+    revived = [
+        name
+        for name in sorted(_NOTES_CLUSTER_RETIRED)
+        if getattr(LibraryNotesController, name, None) is not None
+    ]
+    assert not revived, (
+        f"retired names are back on the controller: {revived!r} -- drop them "
+        "from _NOTES_CLUSTER_RETIRED if that is deliberate"
+    )
 
 
 @pytest.mark.unit
@@ -757,6 +779,11 @@ def test_screen_delegates_notes_handlers() -> None:
 
     not_delegators = []
     for name in _NOTES_CLUSTER_METHOD_NAMES:
+        if name in _NOTES_CLUSTER_RETIRED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was retired but is back on the screen"
+            )
+            continue
         if name in _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED:
             assert getattr(LibraryScreen, name, None) is None, (
                 f"{name!r} was pruned from the screen but is back -- either "

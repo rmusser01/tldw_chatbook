@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save         │
+│   a  │ Library notes · Ready                                  │  o  automatically.                                   │
+│   v  │ Notes (122)        ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                           │
+│      │ These notes live in▊                                                              ▎                           │
+│      │ notes that live in ▊  Move "Quotes" to…                                           ▎                           │
+│      │ files. To copy or k▊  ┌────────────────────────────────────────────────────────┐  ▎se only — no file on disk  │
+│      │ from files.        ▊  │  Type to narrow folders…                               │  ▎                           │
+│      │                    ▊  └────────────────────────────────────────────────────────┘  ▎   Info                    │
+│      │ Filter             ▊    Agent_Lessons                                             ▎nsole                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▊    Journal                                                   ▎                           │
+│      │ ▊ Filter notes… (En▊    Meetings                                                  ▎▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▊    Projects                                                  ▎                         ▎ │
+│      │                    ▊    Projects / App launch                                     ▎▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Ne▊    Projects / Thesis                                         ▎                           │
+│      │    Add from files… ▊    Recipes                                                   ▎                           │
+│      │ Folders & placement▊    Research                                                  ▎▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     A▊    Study                                                     ▎                         ▎ │
+│      │    ○ Remove placeme▊  9 folders                                                   ▎▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │                    ▊                                 Cancel          Choose       ▎                           │
+│      │                    ▊                                                              ▎                           │
+│      │  ▸ Agent_Lessons   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │  ▸ Journal                                             │     ▊ > Writing is thinking.                       ▎ │
+│      │  ▸ Meetings                                          ▂ │     ▊                                              ▎ │
+│      │  ▸ Projects                                            │     ▊                                              ▎ │
+│      │  ▸ Recipes                                             │     ▊                                              ▎ │
+│      │  ▸ Research                                            │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │  ▸ Study                                               │                                                      │
+│      └────────────────────────────────────────────────────────┘                                       4 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
