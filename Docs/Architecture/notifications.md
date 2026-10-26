@@ -48,8 +48,12 @@ acquired worker connections after their synchronous operation finishes, includin
 when the awaiting screen worker is cancelled. Borrowed handles and active
 transactions retain their owners. In-memory stores keep their constructing-thread
 connection; custom methods and awaitable test seams retain their original inline
-invocation and awaiting behavior. Mutation success still schedules the existing
-`wc_notifications` loader; exceptions keep the existing nonfatal worker behavior.
+invocation and awaiting behavior. Mark-read and dismiss use nonexclusive mutation
+workers so each admitted native write retains its completion-to-refresh path when
+another row is updated. Every successful mutation schedules the existing
+latest-request-wins `wc_notifications` loader; exceptions keep the existing
+nonfatal worker behavior. Cancelling a UI waiter cannot undo an already running
+native write, so cancellation must not supersede these finite mutations.
 
 ## Server parity feed
 

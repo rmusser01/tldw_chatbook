@@ -992,6 +992,22 @@ When every dispatch must actually land, that is the wrong primitive: hold an
 `asyncio.Lock` keyed by whatever must serialize, and leave the worker non-exclusive.
 The group name is then only a label for observability.
 
+
+**PR #3251, TASK-36931, Superpowers whole-branch review (2026-10-25).** Offloading
+inbox SQLite calls exposed the same cancellation boundary in a different form.
+The existing exclusive Mark-read/Dismiss worker could lose its awaiter while the
+native write kept running. Mounted tests held row A before its UPDATE, allowed
+row B's mutation and actual loader to finish first, then released A. Both real
+SQLite flags were correct, but A's cancelled continuation never requested the
+last refresh, leaving the visible row stale. Both action variants failed that
+exact final-table assertion, with no child errors.
+
+Keep each admitted finite mutation's completion-to-refresh path alive; cancelling
+its coroutine does not cancel its physical native write. These independent,
+idempotent row-flag updates need nonexclusive mutation workers, without another
+lock or queue; the shared read loader keeps latest-wins exclusivity. Connection
+retirement after physical work is necessary but does not itself publish UI completion.
+
 ---
 
 ## A `Select` posts `Changed` the moment it MOUNTS with a value preselected — a close-on-first-Changed handler self-destructs

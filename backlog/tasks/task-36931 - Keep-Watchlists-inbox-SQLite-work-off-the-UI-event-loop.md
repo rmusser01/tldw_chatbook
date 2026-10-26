@@ -13,7 +13,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md
 assignee:
 - '@codex'
-updated_date: 2026-10-26 00:08
+updated_date: 2026-10-26 01:38
 ---
 
 ## Description
@@ -25,7 +25,7 @@ Keep the application responsive while the Watchlists inbox reads or updates its 
 
 Verified on merged dev `7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05` after PR #3248. With the production mounted destination and an explicit private file-backed ClientNotificationsDB, a real competing writer held for 0.7 seconds made Mark read execute on the main thread for about 0.75 seconds and delayed a 10ms heartbeat by about 0.84 seconds. The ordinary control also persisted the read flag; it is a correctness control, not a storage-speed guarantee. A later merged-tree uncontended repeat measured a 1.31-second write and a 1.91-second heartbeat gap on the same UI thread. No fake slow DB result was injected; natural contention frequency and native terminal frames are unmeasured. Source also shows list and dismiss evaluated synchronously before _maybe_await.
 
-Affected source: tldw_chatbook/UI/Watchlists_Modules/notifications_inbox_controller.py:79-90,141,156-158; UI/Screens/watchlists_collections_screen.py:1209-1211,7940-8066.
+Affected source: tldw_chatbook/UI/Subscription_Modules/notifications_inbox_controller.py:79-90,141,156-158; UI/Screens/watchlists_collections_screen.py:1209-1211,7940-8066.
 
 Book: Chapter 17 PDF335 (printed326), threaded work for synchronous blocking calls; Chapter 7 PDF145-146/158 (printed136-137/149), async handlers alone do not make blocking work safe.
 
@@ -41,7 +41,6 @@ Reason: Use existing controller/store boundaries and preserve policy gates plus 
 
 [Post-merge audit and reproducible evidence](../../Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md).
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 File-backed inbox list, mark-read and dismiss operations leave the UI loop responsive during controlled slow reads or competing SQLite writes.

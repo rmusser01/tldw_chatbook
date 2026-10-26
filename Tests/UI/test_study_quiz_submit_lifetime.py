@@ -39,6 +39,7 @@ class SubmitClient(ScopedClient):
         self.failure = failure
         self.payloads = []
         self.hold_history = False
+        self.history_failure = False
         self.history_entered = asyncio.Event()
         self.history_release = asyncio.Event()
 
@@ -60,6 +61,8 @@ class SubmitClient(ScopedClient):
             self.hold_history = False
             self.history_entered.set()
             await self.history_release.wait()
+            if self.history_failure:
+                raise OSError("Controlled history failure after completed submission")
             return [{"id": 21, "quiz_id": 1, "score": 1, "total_possible": 1}]
         return []
 
@@ -237,9 +240,13 @@ async def test_current_submit_completes_and_preserves_normal_history_refresh(req
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("history_failure", [False, True], ids=["success", "failure"])
 @private_profile_test
-async def test_submit_history_completion_cannot_publish_after_runtime_reset(request):
+async def test_submit_history_completion_cannot_publish_after_runtime_reset(
+    request, history_failure
+):
     client = SubmitClient()
+    client.history_failure = history_failure
     client.submit_release.set()
     db = CharactersRAGDB(db_path=":memory:", client_id="task-36930-history")
     quiz = db.create_quiz(name="Local current quiz")
@@ -265,7 +272,9 @@ async def test_submit_history_completion_cannot_publish_after_runtime_reset(requ
             await asyncio.wait_for(client.history_entered.wait(), 5)
             held = set(app.workers)
             await replace_context(app, pilot, screen, window, "runtime-local", held)
-            window.query_one("#quiz-answer-input", Input).value = "  local draft  "
+            answer = window.query_one("#quiz-answer-input", Input)
+            answer.value = "  local draft  "
+            answer.cursor_position = 6
             await pilot.pause()
             before = snapshot(window)
             client.history_release.set()
@@ -273,9 +282,12 @@ async def test_submit_history_completion_cannot_publish_after_runtime_reset(requ
             assert snapshot(window) == before
             assert client.submit_completed == 1 and client.submit_cancelled == 0
             assert any(
-                "21" in notice and "previous Study context" in notice
+                "21" in notice
+                and "submitted" in notice
+                and "previous Study context" in notice
                 for notice in app.notices
             )
+            assert not any("Failed to submit" in notice for notice in app.notices)
             assert app._exception is None
     finally:
         db.close()

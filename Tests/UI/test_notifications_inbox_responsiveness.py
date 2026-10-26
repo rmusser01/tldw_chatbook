@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, DataTable
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
@@ -39,7 +39,7 @@ async def inbox(tmp_path):
             screen.query_one("#wl-tab-notifications", Button).press()
             await until(lambda: len(screen._loaded_notifications) == 1)
             await pilot.pause()
-            yield app, screen, store, row
+            yield app, screen, store, row, pilot
     finally:
         store.close()
 
@@ -63,7 +63,7 @@ async def progress_during_hold(entered, release):
 async def test_inbox_mutations_persist_and_refresh_without_blocking(
     request, tmp_path, monkeypatch, action
 ):
-    async with inbox(tmp_path) as (_, screen, store, row):
+    async with inbox(tmp_path) as (_, screen, store, row, _):
         assert not store.is_memory_db
         entered, release, holder_ready = (threading.Event() for _ in range(3))
         holder_errors = []
@@ -142,11 +142,123 @@ async def test_inbox_mutations_persist_and_refresh_without_blocking(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["mark-read", "dismiss"])
+@private_profile_test
+async def test_each_admitted_inbox_mutation_refreshes_after_its_native_commit(
+    request, tmp_path, monkeypatch, action
+):
+    async with inbox(tmp_path) as (_, screen, store, first, pilot):
+        second = store.insert(
+            category="research", title="Second", message="Later action"
+        )
+        screen.query_one("#notifications-refresh-button", Button).press()
+        await until(lambda: len(screen._loaded_notifications) == 2)
+        await until(
+            lambda: bool(screen.query("#notifications-table"))
+            and screen.query_one("#notifications-table", DataTable).row_count == 2
+        )
+        entered, release, finished = (threading.Event() for _ in range(3))
+        completed = []
+        original = store._update_flags
+
+        def update(notification_id, **fields):
+            try:
+                if notification_id == first["id"]:
+                    entered.set()
+                    assert release.wait(30), "First native mutation was never released"
+                result = original(notification_id, **fields)
+                completed.append(notification_id)
+                return result
+            finally:
+                if notification_id == first["id"]:
+                    finished.set()
+
+        monkeypatch.setattr(store, "_update_flags", update)
+        selector = f"#notifications-{action}-button"
+        mutation_group = (
+            "wc_mark_notification_read"
+            if action == "mark-read"
+            else "wc_dismiss_notification"
+        )
+
+        async def activate(row):
+            pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+            old_button = pane.query_one(selector, Button)
+            pane.select_notification_by_id(str(row["id"]))
+            # TASK-33283: selection rebuilds the pane; use its replacement control.
+            await until(
+                lambda: bool(screen.query(selector))
+                and not screen.query_one(selector, Button).disabled
+                and screen.selected_notification is not None
+                and screen.selected_notification["id"] == row["id"]
+                and screen.query_one(selector, Button) is not old_button
+            )
+            await pilot.pause()
+            screen.query_one(selector, Button).press()
+
+        def workers_settled():
+            return not any(
+                not worker.is_finished
+                and worker.group in {mutation_group, "wc_notifications"}
+                for worker in screen.app.workers
+            )
+
+        try:
+            await activate(first)
+            await until(entered.is_set)
+            await activate(second)
+            await until(lambda: completed == [second["id"]])
+            # B's real mutation AND its loader must publish before A can commit.
+            if action == "mark-read":
+                await until(
+                    lambda: any(
+                        row["id"] == second["id"] and row["is_read"]
+                        for row in screen._loaded_notifications
+                    )
+                )
+            else:
+                await until(
+                    lambda: [row["id"] for row in screen._loaded_notifications]
+                    == [first["id"]]
+                )
+            await pilot.pause()
+            assert not release.is_set()
+            assert not store.get_notification(first["id"])["is_read"]
+            assert not store.get_notification(first["id"])["is_dismissed"]
+            release.set()
+            await until(finished.is_set)
+            await until(workers_settled)
+            await pilot.pause()
+            assert completed == [second["id"], first["id"]]
+            for row in (first, second):
+                persisted = store.get_notification(row["id"])
+                assert persisted["is_read"] is (action == "mark-read")
+                assert persisted["is_dismissed"] is (action == "dismiss")
+            pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+            table = pane.query_one("#notifications-table", DataTable)
+            if action == "mark-read":
+                assert all(row["is_read"] for row in screen._loaded_notifications)
+                assert all(row["is_read"] for row in pane.notifications)
+                assert table.row_count == 2
+                for row in (first, second):
+                    assert str(table.get_row(str(row["id"]))[0]) == "Read"
+            else:
+                assert screen._loaded_notifications == []
+                assert pane.notifications == []
+                assert table.row_count == 0
+            assert screen.app._exception is None
+        finally:
+            release.set()
+            if entered.is_set():
+                await until(finished.is_set)
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_inbox_read_hold_leaves_ui_loop_responsive(
     request, tmp_path, monkeypatch
 ):
-    async with inbox(tmp_path) as (_, screen, store, row):
+    async with inbox(tmp_path) as (_, screen, store, row, _):
         entered, release = threading.Event(), threading.Event()
         observed_threads = []
         original = store._normalize_row
@@ -184,7 +296,7 @@ async def test_inbox_read_hold_leaves_ui_loop_responsive(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_inbox_corrupt_store_reports_load_failure(request, tmp_path):
-    async with inbox(tmp_path) as (app, screen, _, row):
+    async with inbox(tmp_path) as (app, screen, _, row, _):
         path = tmp_path / "corrupt.db"
         path.write_bytes(b"This is not a SQLite database")
         corrupt = ClientNotificationsDB(path)

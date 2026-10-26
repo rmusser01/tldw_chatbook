@@ -38,31 +38,31 @@ ADR required: no
 ADR path: existing canonical ADRs 011, 033 linked by TASK-36930.
 Reason: existing-boundary correction.
 
-- [ ] Write behavioral regression cases in `Tests/UI/test_study_quiz_submit_lifetime.py` using production mounted surfaces and private real SQLite where applicable.
-- [ ] Run the focused new regression selection. Expected: assertion failure reproducing the task defect, not setup/teardown errors.
-- [ ] Implement the bounded correction in `tldw_chatbook/UI/Study_Modules/quizzes_handler.py` using the established local pattern.
-- [ ] Run `Tests/UI/test_study_quiz_submit_lifetime.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
-- [ ] Run scoped ruff/format checks, update `Docs/Architecture/study.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
-- [ ] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
+- [x] Write behavioral regression cases in `Tests/UI/test_study_quiz_submit_lifetime.py` using production mounted surfaces and private real SQLite where applicable.
+- [x] Run the focused new regression selection. Expected: assertion failure reproducing the task defect, not setup/teardown errors.
+- [x] Implement the bounded correction in `tldw_chatbook/UI/Study_Modules/quizzes_handler.py` using the established local pattern.
+- [x] Run `Tests/UI/test_study_quiz_submit_lifetime.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
+- [x] Run scoped ruff/format checks, update `Docs/Architecture/study.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
+- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
 
 ### Task 2: TASK-36931 Watchlists inbox store dispatch
 
-**Files:** Modify `tldw_chatbook/UI/Subscription_Modules/notifications_inbox_controller.py` and `Docs/Architecture/notifications.md`; create `Tests/UI/test_notifications_inbox_responsiveness.py`. Existing adjacent tests may be extended if they give stronger actual UI coverage.
+**Files:** Modify `tldw_chatbook/UI/Subscription_Modules/notifications_inbox_controller.py`, the existing mutation-worker admission in `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`, and `Docs/Architecture/notifications.md`; create `Tests/UI/test_notifications_inbox_responsiveness.py`. Existing adjacent tests may be extended if they give stronger actual UI coverage.
 
 **Interfaces:** Consumes existing controller/service APIs only; produces corrected publication/admission behavior without a new shared interface. No other task consumes this task.
 
-**Implementation:** Dispatch synchronous file-backed ClientNotificationsDB list/read/dismiss calls with asyncio.to_thread before evaluation. Keep thread-affine in-memory stores valid and retain awaitable seams, policy gates, nonfatal errors and existing loader serialization. Test real private file-backed durable state and controlled blocking/competing writes, in-memory compatibility and refusal/error paths. Do not repair Notifications pane rebuilding (TASK-33283).
+**Implementation:** Dispatch synchronous file-backed ClientNotificationsDB list/read/dismiss calls with asyncio.to_thread before evaluation. Keep thread-affine in-memory stores valid and retain awaitable seams, policy gates, nonfatal errors and existing loader serialization. Test real private file-backed durable state and controlled blocking/competing writes, in-memory compatibility and refusal/error paths. Keep admitted finite mutations alive through their completion-to-refresh path; retain latest-wins ownership for the loader. Add real SQLite A-held/B-completes-first coverage for mark-read and dismiss after the whole-branch review identified cancellation at this newly asynchronous boundary. Do not repair Notifications pane rebuilding (TASK-33283).
 
 ADR required: no
 ADR path: existing canonical ADRs 011, 033, 042 linked by TASK-36931.
 Reason: existing-boundary correction.
 
-- [ ] Write behavioral regression cases in `Tests/UI/test_notifications_inbox_responsiveness.py` using production mounted surfaces and private real SQLite where applicable.
-- [ ] Run the focused new regression selection. Expected: assertion failure reproducing the task defect, not setup/teardown errors.
-- [ ] Implement the bounded correction in `tldw_chatbook/UI/Subscription_Modules/notifications_inbox_controller.py` using the established local pattern.
-- [ ] Run `Tests/UI/test_notifications_inbox_responsiveness.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
-- [ ] Run scoped ruff/format checks, update `Docs/Architecture/notifications.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
-- [ ] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
+- [x] Write behavioral regression cases in `Tests/UI/test_notifications_inbox_responsiveness.py` using production mounted surfaces and private real SQLite where applicable.
+- [x] Run the focused new regression selection. Expected: assertion failure reproducing the task defect, not setup/teardown errors.
+- [x] Implement the bounded correction in `tldw_chatbook/UI/Subscription_Modules/notifications_inbox_controller.py` using the established local pattern.
+- [x] Run `Tests/UI/test_notifications_inbox_responsiveness.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
+- [x] Run scoped ruff/format checks, update `Docs/Architecture/notifications.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
+- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
 
 ### Task 3: TASK-36932 Personas Lore save operation
 
@@ -76,9 +76,29 @@ ADR required: no
 ADR path: existing canonical ADRs 007, 011, 033 linked by TASK-36932.
 Reason: existing-boundary correction.
 
-- [ ] Write behavioral regression cases in `Tests/UI/test_personas_lore_save_responsiveness.py` using production mounted surfaces and private real SQLite where applicable.
-- [ ] Run the focused new regression selection. Expected: assertion failure reproducing the task defect, not setup/teardown errors.
-- [ ] Implement the bounded correction in `tldw_chatbook/UI/Screens/personas_screen.py` using the established local pattern.
-- [ ] Run `Tests/UI/test_personas_lore_save_responsiveness.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
-- [ ] Run scoped ruff/format checks, update `Docs/Architecture/character-chat.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
-- [ ] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
+- [x] Write behavioral regression cases in `Tests/UI/test_personas_lore_save_responsiveness.py` using production mounted surfaces and private real SQLite where applicable.
+- [x] Run the focused new regression selection. Expected: assertion failure reproducing the task defect, not setup/teardown errors.
+- [x] Implement the bounded correction in `tldw_chatbook/UI/Screens/personas_screen.py` using the established local pattern.
+- [x] Run `Tests/UI/test_personas_lore_save_responsiveness.py` and adjacent owner tests with the private-profile harness. Expected: all selected tests pass, including actual child receipts.
+- [x] Run scoped ruff/format checks, update `Docs/Architecture/character-chat.md` and self-review the diff. Expected: no newly introduced lint/format errors or unrelated changes.
+- [x] Report exact RED/GREEN commands and results; root integrates and commits only owned files after task review.
+
+
+## Delivery checks
+
+- [ ] Finish the fresh whole-branch Superpowers review and address actionable findings.
+- [ ] Create and attach the PR against dev; verify hosted CI and current-head review feedback.
+- [ ] Complete task acceptance criteria and Implementation Notes via Backlog CLI after CI.
+
+Verification record: `Docs/superpowers/qa/2026-10-25-textual-followup-fixes.md`.
+
+
+## Whole-branch review follow-up
+
+- [x] Reproduce and correct exclusive mutation-worker cancellation losing the late native write refresh (TASK-36931 AC2/4); preserve nonfatal policy/store behavior and loader ownership.
+- [x] Add the optional direct obsolete-history-exception witness (TASK-36930 AC1/4) without changing production semantics.
+- [ ] Correct the historical TASK-36931 affected-source path through the task CLI; complete one scoped re-review of the entire fix wave.
+
+ADR required: no
+ADR path: existing canonical ADRs 011, 033, 042.
+Reason: completion of the existing finite operation and UI refresh contract; no new architecture.
