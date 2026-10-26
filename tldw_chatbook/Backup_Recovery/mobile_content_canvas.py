@@ -27,6 +27,13 @@ def _canvas(builder):
     limits = CanvasRepositoryLimits()
     documents = builder.by_id["canvas_documents"]
     revisions = builder.by_id["canvas_revisions"]
+    # Native _require_ids_available treats both tables, including deleted rows,
+    # as one occupied namespace. Keep I reservations and refuse exact conflicts.
+    canonical_ids = {
+        row["id"]
+        for table in ("canvas_documents", "canvas_revisions")
+        for row in builder.canonical[table]
+    }
 
     def native(transform):
         def checked(row):
@@ -66,6 +73,8 @@ def _canvas(builder):
         if total > limits.max_source_bytes_per_conversation:
             raise ValueError("invalid_canvas_source_capacity")
         mapped = builder.ref("canvas", row["id"])
+        if mapped in canonical_ids:
+            raise _UnprovedReference("canvas_canonical_identity", mapped)
         if mapped in {
             builder.identities.mapped("canvas_revision", r["id"])
             for r in revisions.values()
@@ -123,12 +132,15 @@ def _canvas(builder):
                 or parent["sequence"] >= row["sequence"]
             ):
                 raise _UnprovedReference("canvas_revision", row["parent_revision_id"])
+        mapped = builder.ref("canvas_revision", row["id"])
+        if mapped in canonical_ids:
+            raise _UnprovedReference("canvas_canonical_identity", mapped)
         builder.emit(
             "canvas_revisions",
             row,
             row
             | {
-                "id": builder.ref("canvas_revision", row["id"]),
+                "id": mapped,
                 "canvas_id": builder.ref("canvas", row["canvas_id"]),
                 "parent_revision_id": builder.ref(
                     "canvas_revision", row["parent_revision_id"], optional=True

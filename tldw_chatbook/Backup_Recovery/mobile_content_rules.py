@@ -2,21 +2,22 @@
 
 import json
 from dataclasses import asdict, replace
+from typing import Literal, TypedDict
+
+from pydantic import TypeAdapter
 
 from tldw_chatbook.Chat.response_rules.models import (
     RULE_SCHEMA_VERSION,
     RuleAssessment,
     RuleBinding,
-    RuleCheck,
-    RuleLearningResult,
+    RuleInput,
+    RuleRevision,
     RuleScope,
     RuleSource,
+    RuleValidation,
     canonical_json,
 )
 from tldw_chatbook.Chat.response_rules.repository import (
-    read_input,
-    read_revision,
-    read_validation,
     revision_document,
     validate_activation,
 )
@@ -31,6 +32,35 @@ _RULE_TABLES = (
     "console_response_rule_drafts",
     "console_response_rule_assessments",
 )
+
+
+class _DraftDocument(TypedDict):
+    state: Literal["active", "inactive", "cancelled", "stale"]
+    rule: RuleRevision | None
+    validation: RuleValidation | None
+    reason: str
+
+
+# JSON mode validates original array/scalar shapes before native dataclass
+# __post_init__ can coerce them. Only these fixed installed types are admitted.
+_SOURCE_JSON = TypeAdapter(RuleSource)
+_REVISION_JSON = TypeAdapter(RuleRevision)
+_VALIDATION_JSON = TypeAdapter(RuleValidation)
+_INPUT_JSON = TypeAdapter(RuleInput)
+_ASSESSMENT_JSON = TypeAdapter(RuleAssessment)
+_DRAFT_JSON = TypeAdapter(_DraftDocument)
+
+# Installed response-rule CHECK limits (DB/recovery_core_schema.py), UTF-8 bytes.
+_SOURCE_JSON_BYTES = 8192
+_VALIDATION_JSON_BYTES = 32768
+_RESULT_JSON_BYTES = 65536
+
+
+def _encoded_rule_json(document, max_bytes):
+    encoded = canonical_json(document)
+    if len(encoded.encode("utf-8")) > max_bytes:
+        raise ValueError("native_rule_json_too_large")
+    return encoded
 
 
 def _source(builder, source):
@@ -142,17 +172,22 @@ def _rules(builder):
     native_revisions, native_validations = {}, {}
 
     def revision(row):
-        original = read_revision(
-            {
-                "rule_id": row["rule_id"],
-                "revision": row["revision"],
-                "candidate": json.loads(row["definition_json"]),
-                "schema_version": row["schema_version"],
-                "origin": json.loads(row["origin_json"]),
-                "created_at": row["created_at"],
-            }
+        original = _REVISION_JSON.validate_json(
+            canonical_json(
+                {
+                    "rule_id": row["rule_id"],
+                    "revision": row["revision"],
+                    "candidate": json.loads(row["definition_json"]),
+                    "schema_version": row["schema_version"],
+                    "origin": json.loads(row["origin_json"]),
+                    "created_at": row["created_at"],
+                }
+            ),
+            strict=True,
+            extra="forbid",
         )
         mapped = _revision(builder, original)
+        origin_json = _encoded_rule_json(asdict(mapped.origin), _SOURCE_JSON_BYTES)
         native_revisions[(row["rule_id"], row["revision"])] = mapped
         builder.emit(
             "console_response_rule_revisions",
@@ -160,7 +195,7 @@ def _rules(builder):
             row
             | {
                 "rule_id": mapped.rule_id,
-                "origin_json": canonical_json(asdict(mapped.origin)),
+                "origin_json": origin_json,
             },
         )
 
@@ -168,7 +203,9 @@ def _rules(builder):
 
     def validation(row):
         rule_id, _ = _rule_key(builder, row["rule_id"], row["revision"])
-        original = read_validation(json.loads(row["validation_json"]))
+        original = _VALIDATION_JSON.validate_json(
+            row["validation_json"], strict=True, extra="forbid"
+        )
         association = row["conversation_id"], row["message_id"]
         expected = (
             original.source.conversation_id,
@@ -181,13 +218,14 @@ def _rules(builder):
         ):
             raise ValueError("invalid_validation_association")
         mapped = _validation(builder, original)
+        validation_json = _encoded_rule_json(asdict(mapped), _VALIDATION_JSON_BYTES)
         native_validations[(row["rule_id"], row["revision"])] = mapped
         builder.emit(
             "console_response_rule_validations",
             row,
             row
             | _optional_source_columns(builder, row)
-            | {"rule_id": rule_id, "validation_json": canonical_json(asdict(mapped))},
+            | {"rule_id": rule_id, "validation_json": validation_json},
         )
 
     builder.handle("console_response_rule_validations", validation)
@@ -202,7 +240,7 @@ def _rules(builder):
         }:
             raise ValueError("invalid_rule_fixture_kind")
         if row["input_json"] is not None:
-            read_input(json.loads(row["input_json"]))
+            _INPUT_JSON.validate_json(row["input_json"], strict=True, extra="forbid")
         builder.emit(
             "console_response_rule_fixtures",
             row,
@@ -213,20 +251,20 @@ def _rules(builder):
 
     def draft(row):
         scope = _scope(builder, row["scope_kind"], row["scope_id"])
-        original_source = RuleSource(**json.loads(row["source_json"]))
+        original_source = _SOURCE_JSON.validate_json(
+            row["source_json"], strict=True, extra="forbid"
+        )
         if (row["conversation_id"], row["message_id"]) != (
             original_source.conversation_id,
             original_source.message_id if original_source.conversation_id else None,
         ):
             raise ValueError("invalid_draft_association")
         source = _source(builder, original_source)
-        document = json.loads(row["result_json"])
-        if set(document) != {"state", "rule", "validation", "reason"} or document[
-            "state"
-        ] not in {"active", "inactive", "cancelled", "stale"}:
-            raise ValueError("invalid_rule_draft")
+        document = _DRAFT_JSON.validate_json(
+            row["result_json"], strict=True, extra="forbid"
+        )
         rule = (
-            _revision(builder, read_revision(document["rule"]))
+            _revision(builder, document["rule"])
             if document["rule"] is not None
             else None
         )
@@ -236,13 +274,12 @@ def _rules(builder):
         ):
             raise ValueError("invalid_draft_revision")
         validation = (
-            _validation(builder, read_validation(document["validation"]))
+            _validation(builder, document["validation"])
             if document["validation"] is not None
             else None
         )
-        RuleLearningResult(document["state"], rule, validation, {}, document["reason"])
         if (row["rule_id"], row["revision"]) != (
-            (document["rule"]["rule_id"], document["rule"]["revision"])
+            (document["rule"].rule_id, document["rule"].revision)
             if rule
             else (None, None)
         ):
@@ -260,8 +297,8 @@ def _rules(builder):
                 "draft_id": builder.ref("response_draft", row["draft_id"]),
                 "scope_id": scope.owner_id,
                 "rule_id": rule.rule_id if rule else None,
-                "source_json": canonical_json(asdict(source)),
-                "result_json": canonical_json(mapped_document),
+                "source_json": _encoded_rule_json(asdict(source), _SOURCE_JSON_BYTES),
+                "result_json": _encoded_rule_json(mapped_document, _RESULT_JSON_BYTES),
             },
         )
 
@@ -317,15 +354,8 @@ def _rules(builder):
     builder.handle("console_response_rule_bindings", binding)
 
     def assessment(row):
-        document = json.loads(row["assessment_json"])
-        original = RuleAssessment(
-            **(
-                document
-                | {
-                    "source": RuleSource(**document["source"]),
-                    "checks": tuple(RuleCheck(**check) for check in document["checks"]),
-                }
-            )
+        original = _ASSESSMENT_JSON.validate_json(
+            row["assessment_json"], strict=True, extra="forbid"
         )
         if (
             original.assessment_id,
@@ -366,7 +396,9 @@ def _rules(builder):
             | {
                 "assessment_id": mapped.assessment_id,
                 "state": mapped.state,
-                "assessment_json": canonical_json(asdict(mapped)),
+                "assessment_json": _encoded_rule_json(
+                    asdict(mapped), _RESULT_JSON_BYTES
+                ),
             },
         )
 
