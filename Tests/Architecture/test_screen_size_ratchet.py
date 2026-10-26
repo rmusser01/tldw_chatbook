@@ -160,7 +160,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-25 owner rule (raise the row to the exact measurement): dev itself
     #: measures one line over its own row (24345 vs 24344); rebased onto it this
     #: branch measures 24346.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24346, 736),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24323, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
