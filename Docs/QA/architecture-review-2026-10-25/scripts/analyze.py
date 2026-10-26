@@ -108,4 +108,14 @@ if section in ("all", "pkg"):
     for c in pct:
         print("  ", len(c), sorted(c))
 
+if section in ("all", "cycles", "pkg"):
+    exe = defaultdict(set)
+    for s, d, k, _ in edges:
+        if k in ("top", "lazy") and s != d:
+            exe[s].add(d)
+    ce = sorted(scc(list(mods), exe), key=len, reverse=True)
+    print("== executable (top+lazy) largest SCC:", len(ce[0]), "modules /", len({pkg(m) for m in ce[0]}), "packages")
+    mut = lambda gr: sum(1 for a in gr for b in gr[a] if a < b and a in gr.get(b, ()))
+    print("== mutually-importing package pairs: top-level", mut(pet), "/ all kinds", mut(pe))
+
 json.dump({k: dict(v) for k, v in pe.items()}, open(sys.argv[1] + ".pkg.json", "w"))

@@ -3,6 +3,8 @@ id: TASK-36949
 title: 'Work stream: CharactersRAGDB split by aggregate'
 status: To Do
 created_date: 2026-10-26 01:11
+dependencies:
+- TASK-36942.1
 labels:
 - architecture-review-2026-10-25
 - db

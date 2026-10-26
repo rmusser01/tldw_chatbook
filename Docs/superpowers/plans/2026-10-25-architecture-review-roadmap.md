@@ -29,7 +29,7 @@ Every structural PR lowers the ratchet it affects in the same commit.
   - No test or probe may write the real profile; a sandboxed launch denies writes to `~/.config/tldw_cli` and `~/.local/share/tldw_cli`.
 - **Preflight:** run `./scripts/preflight.sh` before opening a PR, and again after any rebase that touches `backlog/`.
 - **Owner decisions (all made 2026-10-25) are not reopened by implementers:**
-  - TASK-36941.3: a set environment variable wins over the stored key.
+  - TASK-36941.3: keep ADR-012. A stored credential (config or keychain) wins over the environment variable; the hosted engine and the custom-endpoint registry are aligned to it, re-confirmed with ADR-012 in view.
   - TASK-36943.2/.3: on an ADR-number collision the oldest file keeps the number and each younger file is renumbered with provenance.
   - TASK-36947.1: adopt a frozen, typed, per-feature services bundle built once in `app_service_wiring`, with a shared factory for the other entry points and no DI container. TASK-36947.1 writes the ADR; TASK-36947.2 waits for the owner to accept it.
 - **Defer to existing owners:** TASK-32807.5 (dead Chat modules and `_chat_api_kwargs`), TASK-32898 (Interop helpers), TASK-34905 and TASK-33132 (transaction consolidation), TASK-34906 (migration registry), TASK-32463 (over-budget screens). Do not re-solve their scope inside these tasks.
@@ -40,15 +40,15 @@ The failure modes most likely to bite users that no single task's tests cover by
 
 1. **A move silently detaches a test patch.** Patching the old module path stops reaching code that moved; this has happened before (`test_app_extracted_patch_targets.py`). Every move task greps `Tests/` for patches on the moved names and either retargets them or proves the shim keeps them effective. A patch that no longer reaches its code is the bug class that once wrote the real config.
 2. **A DB split or injected coordinator moves work outside the write transaction** (TASK-36949.2–.4). The semantic-mutation authorizer fails closed, so the symptom is a refused write, not corruption. Each task asserts the moved writes and the coordination run inside one `transaction()`, including a rollback case.
-3. **Boot import cost regresses** because a new package or shim imports eagerly (TASK-36944.x, 36945.1, 36947.2). The boot-import snapshot and pre-import ratchets (ADR-097, TASK-33276) must stay green; new neutral packages must not import Chat, DB or Textual at module level.
-4. **Settings save order changes** when a category moves into the panel registry (TASK-1378.x). Pin ADR-033 commit behaviour per category, including unsaved-change prompts on navigation, before moving it.
-5. **The credential-precedence change silently switches a user's key** (TASK-36941.3). Under the decided env-first order, users with both an env var and a stored key will see the env key used for every provider family. The task records the order, adds a test with both present, and adds a CHANGELOG entry.
+3. **Boot import cost regresses** because a new package or shim imports eagerly (TASK-36944.x, 36945.1, 36947.2). The boot-import snapshot and pre-import ratchets (ADR-097 `097-boot-budget-ratchets.md`, TASK-33276) must stay green; new neutral packages must not import Chat, DB or Textual at module level.
+4. **Settings save order changes** when a category moves into the panel registry (TASK-1378.x). Pin ADR-033 (`backlog/decisions/033-settings-commit-models-three-honestly-labeled.md`) commit behaviour per category, including unsaved-change prompts on navigation, before moving it.
+5. **The credential alignment silently switches a user's key** (TASK-36941.3). Users of engine presets or custom endpoints who have both an env var and a stored key will now see the stored key used. The task pins the order with both present (including a keychain-recorded key) and adds a CHANGELOG entry.
 
 ---
 
 ## Phase 0 — Land the record (this PR)
 
-- The report, verification ledger, measurement scripts, 67 task files and this roadmap.
+- The report, verification ledger, measurement scripts, 69 task files and this roadmap.
 - **Gate:**
   - `./scripts/preflight.sh` green;
   - `scripts/check_backlog_task_ids.py` re-run against a freshly fetched `origin/dev` immediately before merge (IDs 36941–36953 and 1378.1–.2 are provisional until they land);
@@ -59,7 +59,7 @@ The failure modes most likely to bite users that no single task's tests cover by
 | Order | Task | Why first | Lowers / adds |
 |---|---|---|---|
 | 1 | TASK-36941.1 Subscriptions rollback | Data integrity: abandoned writes can be committed later | — |
-| 2 | TASK-36942.2 agent_runtime import purity | Smallest guard; unblocks clean phase-4 work on the loop | Adds the purity test |
+| 2 | TASK-36942.2 agent_runtime import-footprint ratchet | Freezes today's footprint so it cannot grow; full purity is TASK-36944.10 after the provider-contract move | Adds the pinned module set |
 | 3 | TASK-36942.1 size rows for all 4,000+ line modules | Later streams lower these rows | Adds 40 rows and the auto-guard |
 | 4 | TASK-36942.3 layer-direction test | Every phase-2 move shrinks its allowlist | Adds the allowlist |
 | 5 | TASK-36942.4 app string-lookup ratchet | Phase-3 services work lowers it | Adds the census |
@@ -76,18 +76,18 @@ The failure modes most likely to bite users that no single task's tests cover by
 
 | Lane | Sequence | Shared-file hotspots to serialize |
 |---|---|---|
-| A: dependency direction | 36944.1 → 36944.2. Then 36944.3, .4, .6, .7, .8 in any order. 36944.5 and 36944.9 last (Console files) | `Chat/console_*`, `Widgets/Console/*` |
-| B: config | 36945.1, 36945.2, 36945.3 in any order; 36945.4 → 36945.5 | `config.py`: one config PR in flight at a time |
-| C: providers | 36946.1 → 36946.2; 36941.3 (decided: env wins when set) | `Chat/Chat_Functions.py`, `provider_registry.py` |
+| A: dependency direction | 36944.1 → 36944.2, and 36944.1 → 36944.10 (agent runtime purity; lowers 36942.2's pinned set). Then 36944.3, .4, .6, .7, .8 in any order. 36944.5 and 36944.9 last (Console files) | `Chat/console_*`, `Widgets/Console/*` |
+| B: config | 36945.1, 36945.2, 36945.3, 36945.4 in any order (TASK-36947.6 retires config's DB singletons in phase 3) | `config.py`: one config PR in flight at a time |
+| C: providers | 36946.1 → 36946.2; 36941.3 (decided: keep ADR-012, stored credential first) | `Chat/Chat_Functions.py`, `provider_registry.py` |
 | D: small independents | 36949.1, 36949.5, 36948.2, 36953.2, 36953.3; 36943.3 (ADR renumbering) after 36943.2 | `DB/ChaChaNotes_DB.py` (36949.x and 36948.2 both touch its imports) |
 
 **Cross-task interfaces fixed here, which later tasks consume:**
 
-- **TASK-36944.1:** the neutral package is `tldw_chatbook/Provider_Contract/`. Its modules hold the provider exceptions (from `Chat/Chat_Deps.py`), continuation, sampling-parameter and thinking-block types. Importing it loads no other `tldw_chatbook` package; TASK-36944.2's boundary test imports from it.
-- **TASK-36949.1:** `CharactersRAGDB.in_managed_transaction() -> bool` (thread-local depth > 0). TASK-36949.2–.4 and the existing repositories call it instead of reading `_local.transaction_depth`.
+- **TASK-36944.1:** the neutral package is `tldw_chatbook/Provider_Contract/`. Its modules hold the provider exceptions (from `Chat/Chat_Deps.py`), continuation, sampling-parameter and thinking-block types. Importing it loads none of the Chat, DB, Agents, LLM_Calls, UI, Widgets or Event_Handlers packages, nor config, textual, httpx or sqlite3. TASK-36944.2's boundary test and TASK-36944.10 import from it.
+- **TASK-36949.1:** `CharactersRAGDB.managed_transaction_depth() -> int` (0 outside a managed transaction). It serves both kinds of caller, those asking whether a transaction is open and the Persona_Visual guards asking whether they own the outermost one. TASK-36949.2–.4 and the existing repositories call it instead of reading `_local.transaction_depth`.
 - **TASK-36942.3:** the allowlist is a TSV beside the test, one `src_module<TAB>dst_module<TAB>kind` row per allowed upward edge. Phase-2 PRs delete rows.
 - **TASK-36942.4:** the census is a TSV of `package<TAB>count`, plus a frozen list of allowed private names. Phase-3 PRs lower counts.
-- **TASK-36945.4:** the tools receive the database from the provider that registers them (`Agents/tool_catalog.py`'s builtin construction path). TASK-36945.5 then deletes the config globals.
+- **TASK-36945.4:** the tools receive the database from the provider that registers them (`Agents/tool_catalog.py`'s builtin construction path). TASK-36947.6 later deletes the config DB globals, once the services factory exists.
 
 **Exit gate:** the layer allowlist has shrunk by at least the edges lanes A and D remove, and `config.py` is at least 2,584 lines shorter (TASK-36945.1).
 
@@ -99,7 +99,8 @@ The failure modes most likely to bite users that no single task's tests cover by
 | TASK-36947.3 RAG service move | 36947.2, 36942.4 | First consumer cluster; removes RAG_Search → Event_Handlers |
 | TASK-36947.4 Console controller without the app | 36947.2 | Land before TASK-36951.3 (same file) |
 | TASK-36947.5 ConsoleRuntime hook-review state | — | Independent; can start in phase 2 |
-| TASK-1378.1 → TASK-1378.2 Settings panel registry | — | Network proves the registry, then Providers & Models; pin ADR-033 behaviour first |
+| TASK-36947.6 config exposes no DB instances | 36947.2, 36945.4 | Every entry point gets its DB from the bundle or the shared factory |
+| TASK-1378.1 → TASK-1378.2 Settings panel registry | — | Network proves the registry, then Providers & Models; pin the settings commit-model behaviour (ADR-033 `033-settings-commit-models-three-honestly-labeled.md`) first |
 | TASK-36948.1 participant declarations, TASK-36948.3 unsaved-editor state | — | Both touch `Backup_Recovery/`; serialize |
 | TASK-36949.2 learning repository | 36949.1 | ~45 call sites in two Study_Interop services |
 | TASK-36949.3 semantic coordinator injected; TASK-36949.4 chat-sync adapter | — | Each must keep its work inside the write transaction (Review Focus 2) |
@@ -117,7 +118,7 @@ The failure modes most likely to bite users that no single task's tests cover by
 | Task | Depends on | Notes |
 |---|---|---|
 | TASK-36950.1 → TASK-36950.2 agent loop table, then phases | — | 54 test files pin `run_agent_loop`; pure moves only |
-| TASK-36950.3 → TASK-36950.4 fleet class, then run-log tools | — | `_run_one` shrinks by ≥2,000 lines in .3 |
+| TASK-36950.3 → TASK-36950.4 fleet class, then run-log tools | — | `_run_one` shrinks by ≥1,800 lines in .3 |
 | TASK-36951.1, TASK-36951.2 Console hosts own state | — | Serialize: both edit `console_chat_controller.__init__` |
 | TASK-36951.3 reply request object | after 36947.4 | Same file as 36947.4 |
 | TASK-36952.1 → .2 → .3 Library media | — | Follow recipe §3 and §24; measure click-to-paint before and after .3 |
@@ -135,11 +136,11 @@ The failure modes most likely to bite users that no single task's tests cover by
 
 | Measure | At filing (7a5e2513c5) | Source |
 |---|---|---|
-| Lazy-inclusive SCC size | 1,496 modules | `scripts/analyze.py` |
-| Upward imports: domain→presentation / DB→feature / kernel→higher | 83 / 358 / 99 | `scripts/layers.py` |
+| Executable SCC size (top-level + function-level imports) | 1,217 modules / 67 packages (1,496 incl. TYPE_CHECKING) | `scripts/analyze.py` |
+| Executable upward imports: domain→presentation / DB→feature / kernel→higher | 80 / 335 / 89 (83 / 358 / 99 incl. TYPE_CHECKING) | `scripts/layers.py` |
 | App string lookups (UI / non-UI) | 1,176 / 222 | TASK-36942.4 census |
 | Unbudgeted 4,000+ line modules | 40 | TASK-36942.1 guard |
-| `LibraryScreen` lines / methods / `__init__` lambdas | 36,411 / 1,354 / 413 | screen ratchet, TASK-36952.1 |
+| `library_screen.py` file lines (class lines) / methods / `__init__` lambdas | 37,542 (36,411) / 1,354 / 413 | screen ratchet (file lines, methods), `scripts/deleg.py` (class), TASK-36952.1 (lambdas) |
 | `SettingsScreen` category comparisons | 239 | TASK-1378.1 ratchet |
-| `_run_one` / `run_agent_loop` lines | 4,163 / 2,451 | `scripts/deleg.py` |
+| `_run_one` / `run_agent_loop` lines | 4,163 / 2,451 | `scripts/classes.py graph.json funcs` |
 | `config.py` lines | 12,258 | TASK-36942.1 row |

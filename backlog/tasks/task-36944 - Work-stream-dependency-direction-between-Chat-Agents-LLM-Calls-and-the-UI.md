@@ -4,6 +4,8 @@ title: 'Work stream: dependency direction between Chat, Agents, LLM_Calls and th
   UI'
 status: To Do
 created_date: 2026-10-26 01:07
+dependencies:
+- TASK-36942.3
 labels:
 - architecture-review-2026-10-25
 - architecture

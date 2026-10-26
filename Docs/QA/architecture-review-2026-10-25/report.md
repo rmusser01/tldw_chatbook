@@ -1,6 +1,6 @@
 # Architecture review — 2026-10-25
 
-**Verdict:** The import graph is clean at import time but not structurally: lazy imports hide a 1,496-module cycle, and nothing checks layer direction globally. Most of the coupling runs through one object. `TldwCli` holds 397 attributes, and code in every layer reaches it with `getattr(app, "...")` strings. The god classes and god functions sit on the busiest paths, and their size ratchets now raise their rows instead of holding them. The repo's own decomposition doctrine works where it was run to completion (the store and bridge, `ToolProvider`, `LoopDeps`). Where it stopped halfway (Library controllers bound by lambdas, Console hosts, `_run_one`), the result is a file split, not a seam.
+**Verdict:** The import graph is clean at import time but not structurally: function-level imports hide a 1,217-module cycle, and nothing checks layer direction globally. Most of the coupling runs through one object. `TldwCli` holds 397 attributes, and code in every layer reaches it with `getattr(app, "...")` strings. The god classes and god functions sit on the busiest paths, and their size ratchets now raise their rows instead of holding them. The repo's own decomposition doctrine works where it was run to completion (the store and bridge, `ToolProvider`, `LoopDeps`). Where it stopped halfway (Library controllers bound by lambdas, Console hosts, `_run_one`), the result is a file split, not a seam.
 
 ## Scope and provenance
 
@@ -18,12 +18,21 @@ The session report's first finding, "agent note tools always fail in production"
 - `Tools/note_management_tools.py` reads `config.chachanotes_db` at call time, so the tools work inside the running TUI.
 - What is true: the tools work only after *something in the process* has called the lazy getter. A fresh process reproduces `"No unified database template for NotesInteropService."` That is temporal coupling through a lazily-populated singleton. It is now part of **F9**.
 
+## Corrections from the PR review (2026-10-25)
+
+A local review of the filing PR found more mistakes, all fixed here and in the tasks:
+- **F5's cause was wrong.** `agent_runtime` loads the DB, UI and config through several import chains, not one constant. So TASK-36942.2 is now a footprint ratchet, and TASK-36944.10 does the full purity fix.
+- **F9 overstated the temporal coupling.** The lazy getters create their database themselves; only the note tools read the bare global.
+- **The headline SCC included TYPE_CHECKING-only imports.** The executable figure is 1,217 modules across 67 packages.
+- **F11 omitted the governing ruling.** It did not cite ADR-012's 2026-09-19 precedence amendment. The owner then re-decided with it in view.
+- **Smaller items:** a few counts, plus task wording for transaction depth, exception hierarchies, the provider-contract import rule and the CI wiring of the ADR guard.
+
 ## Scorecard
 
 | Dimension | Verdict |
 |---|---|
 | Import-time cycles | ✅ Only 2 strongly-connected components, both inside the app shell (3 and 2 modules) |
-| Structural dependency graph | ❌ With lazy imports: one SCC of **1,496 modules / 93 packages**. Package level, top-level imports only: 91 packages in one SCC; 55 mutually-importing package pairs |
+| Structural dependency graph | ❌ Counting executable function-level imports: one SCC of **1,217 modules / 67 packages** (1,496 / 93 if TYPE_CHECKING-only imports are included). Package level, top-level imports only: 91 packages in one SCC; 55 package pairs import each other at top level (129 counting all import kinds) |
 | Layer enforcement | ⚠️ 72 architecture tests, but forbidden-import checks are per feature (8 files); no global layer-direction rule |
 | God objects | ❌ 102 classes over 2,000 lines; 50 functions with approximate cyclomatic complexity over 100 |
 | Dependency inversion | ⚠️ The core seams are good. Elsewhere dependencies come from the app object or from config module globals |
@@ -38,7 +47,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 ### F1 — The application object is a service locator · Critical · Pattern/DIP · Entire codebase
 - **Evidence:**
   - `app.py` plus the `app_*.py` mixins assign **397 distinct attributes** on `TldwCli`. About 199 are named like services (`local_X_service` / `server_X_service` / `X_scope_service` for ~30 domains).
-  - Outside `UI/`, `Widgets/` and `css/`, **352 functions in 71 modules** take `app`/`app_instance`. They read 233 distinct attributes from it, **222 via `getattr(app, "<literal>")`**.
+  - Outside `UI/`, `Widgets/` and `css/`, **352 functions in 71 modules** take `app`/`app_instance`. They read 233 distinct attribute names from it and make **222 `getattr(app, "<literal>")` calls** over 86 names.
   - Inside `UI/`, there are **1,176** such string lookups across **247 names**, 71 of them private (135 private call sites). This holds even though `UI/Navigation/base_app_screen.py:101` types `app_instance` as `TldwCli`.
   - `library_screen.py:11828` writes an undeclared private app attribute (`_library_source_snapshot_cache`).
   - `ConsoleChatController` holds a settable `self.app` (`console_chat_controller.py:4590`, assigned at `chat_screen.py:9256` and `console_launch_wake.py:223`). It reads ≥18 app attributes and forwards the whole app into 5 helpers (`:8886`, `:20998`, `:21010-21014`, `:21070`, `:21126-21129`).
@@ -57,7 +66,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 - **Tasks:** TASK-36942.4, TASK-36947.1–.5.
 
 ### F2 — LibraryScreen keeps growing; its controllers are a file split, not a seam · Critical · Coupling/SRP · Module (busiest)
-- **Size:** `LibraryScreen` is lines 1006–37416 (36,411 lines, 1,354 methods); the file is 37,542 lines. The decomposition recipe declares the program COMPLETE (`library-decomposition-recipe.md:17`) at **32,230 / 1,258** (`:7228`). That is **+5,312 lines / +96 methods** since close. The spec targeted a ~4–6k-line shell (spec `:64`).
+- **Size:** `LibraryScreen` is lines 1006–37416 (36,411 lines, 1,354 methods); the file is 37,542 lines. The decomposition recipe declares the program COMPLETE (`library-decomposition-recipe.md:17`) at **32,230 / 1,258** (`:7228`). That is **+5,312 file lines / +96 methods** since close (the recipe and the screen ratchet measure file lines). The spec targeted a ~4–6k-line shell (spec `:64`).
 - **What the class holds:**
   - 653 single-call bodies, 631 of them controller delegators. Everything else is real logic.
   - `__init__` (2313–4195, 1,883 lines) builds **21 controllers with 436 keyword arguments, 413 of them lambdas**.
@@ -87,10 +96,10 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
   - **`action_settings_save_category`** (33004–33960, 957 lines) has a 580-line PROVIDERS_MODELS arm inline (33085–33664). PROVIDERS_MODELS appears in 59 methods; the contract-driven categories (SKILLS, PERSONAS, ARTIFACTS) appear in 2.
   - **A working contract already exists:** `speech_tts_settings_panel.py:3918` / `:4049` (`has_unsaved_changes` / `request_save`).
   - **Status:** TASK-1378 (split Settings) is still To Do. It was filed at ~10.8k lines; the file is now 35.6k.
-- **Recommended structure:** a `SettingsCategoryId`-keyed panel registry generalizing the Speech contract (render, save, unsaved, revert, scope text, ADR-033 commit model).
+- **Recommended structure:** a `SettingsCategoryId`-keyed panel registry generalizing the Speech contract (render, save, unsaved, revert, scope text, ADR-033 (`backlog/decisions/033-settings-commit-models-three-honestly-labeled.md`) commit model).
 - **Strategy:** NETWORK first as the proof, then PROVIDERS_MODELS; ratchet the comparison count.
 - **Tests affected:** 125 test files reference `SettingsScreen`.
-- **Effort:** Medium–High. **Risk:** ADR-033 save ordering; pin it per category before each move.
+- **Effort:** Medium–High. **Risk:** the settings commit-model save ordering (ADR-033 `033-settings-commit-models-three-honestly-labeled.md`); pin it per category before each move.
 - **Tasks:** TASK-1378.1, TASK-1378.2.
 
 ### F4 — Console controller collaborators are bound through lambdas; replies take 78 keywords · High · Coupling · Module
@@ -108,21 +117,25 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 - **Evidence:**
   - **`_run_one`:** `AgentService._run_one` (`agent_service.py:5006-9168`) is **4,163 lines** with 45 nested functions. The biggest are `spawn` 551 (`:6281`), `_launch_fleet_child` 490 (`:5707`) and `_resume_retained_child` 324 (`:7078`).
   - **`run_agent_loop`** (`agent_runtime.py:1073-3523`): its `while True` (1729–3523) is 1,795 lines. The per-call loop (2637–3506) is 870 lines with 20 `call.name ==` and 3 `call.name in` branches. A dict dispatch already exists at `:3103-3108`.
-  - **Not pure:** `agent_runtime.py:400-404` says the module is "a pure module today (no Textual, app, DB, or I/O imports)". A sandboxed probe shows importing it loads `sqlite3`, `httpx`, **`textual`**, `DB.ChaChaNotes_DB`, `Chat` and `config` (207 tldw_chatbook modules). The cause is `:22` importing `Chat.console_project_instructions` (which imports httpx) through `Chat/__init__` (which imports the DB).
+  - **Not pure:** `agent_runtime.py:400-404` says the module is "a pure module today (no Textual, app, DB, or I/O imports)". A sandboxed probe shows importing it loads `sqlite3`, `httpx`, **`textual`**, `DB.ChaChaNotes_DB`, `Chat` and `config` (207 tldw_chatbook modules). There is no single cause:
+    - `:23` (and `agent_models.py:24/:28`) import Chat provider modules, which run `Chat/__init__` and load the DB.
+    - `project_instruction_runtime.py:40` imports `tool_catalog`, whose built-in provider chain reaches `RAG_Search`, `config`, the DB and `UI.destination_recovery`.
+    - Even with `Chat/__init__` treated as empty, the static closure is 188 modules.
+    - A PR review corrected the first claim that the `:22` constant import was the cause.
   - **No guard:** `agent_models` has a purity test (`Tests/Agents/test_agent_models.py:409`); `agent_runtime` has none.
 - **Recommended structure:** a special-tool dispatch table, then phase functions over a `LoopState`; `_run_one`'s fleet closures become a per-run class.
 - **Tests affected:** 144 test files reference `AgentService`; 54 reference `run_agent_loop`.
 - **Effort:** High. **Risk:** very high if rushed; pure moves only.
-- **Tasks:** TASK-36942.2 (purity guard), TASK-36950.1–.4.
+- **Tasks:** TASK-36942.2 (footprint ratchet), TASK-36944.10 (full purity, after the provider-contract move), TASK-36950.1–.4.
 
 ### F6 — No enforced layer map · High · Layering · Entire codebase
 - **Evidence:**
 
 | Upward direction | Edges | Of which top-level | Source modules |
 |---|---|---|---|
-| Domain → presentation | 83 | 42 | ~45 |
-| DB → feature packages | 358 | 169 | — |
-| Kernel (Utils/config/runtime_policy) → higher | 99 | — | — |
+| Domain → presentation | 80 (83 incl. TYPE_CHECKING) | 42 | ~45 |
+| DB → feature packages | 335 (358) | 169 | — |
+| Kernel (Utils/config/runtime_policy) → higher | 89 (99) | 26 | — |
 
   - DB importing domain `*_models` modules is the correct direction; DB importing services is not.
 - **Recommended structure:** the layer ranks kernel < DB < domain < presentation, enforced by one stdlib AST test (`scripts/graph.py` is the starting point) with a frozen allowlist that may only shrink.
@@ -160,22 +173,22 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
   - canvas policy (165–446);
   - Console capture/trace policy (9312–9735; lazy Chat imports);
   - top-level DB class imports (`:70-72`).
-- **DB singletons with hidden init order:** `get_chachanotes_db_lazy` / `get_prompts_db_lazy` / `get_media_db_lazy` (`:11873`, `:11908`, `:11938`) fill module globals.
-  - **Consumers depend on someone having called the getter first:** `app.py:750/:2084`, `app_feature_glue.py:291`, `UI/CCP_Modules/ccp_character_handler.py:46`, `Tools/document_expansion_tool.py:173/:215`, `Utils/doctor.py:143`, `MCP/local_runtime_delegate.py:672` and `Character_Chat/Character_Chat_Lib.py:854`.
-  - **Note tools:** `Tools/note_management_tools.py:69` reads the global itself; a fresh process reproduces the failure.
+- **DB singletons as a service locator:** `get_chachanotes_db_lazy` / `get_prompts_db_lazy` / `get_media_db_lazy` (`:11873`, `:11908`, `:11937`) create module-global databases on first use.
+  - **Consumers:** `app.py:750/:2084`, `app_feature_glue.py:291`, `UI/CCP_Modules/ccp_character_handler.py:46`, `Tools/document_expansion_tool.py:173/:215`, `Utils/doctor.py:143`, `MCP/local_runtime_delegate.py:672` and `Character_Chat/Character_Chat_Lib.py:854`. They use the self-initializing getters, so they need no prior set-up; the coupling is to hidden global state.
+  - **Note tools:** `Tools/note_management_tools.py:69` reads the bare global instead of calling the getter. That works only after something else created the DB, and a fresh process reproduces the failure.
   - **Dead initializer:** `initialize_all_databases` (`:11827`) has no production caller.
 - **Settings reads:**
   - `get_cli_setting` is called from 356 sites in 104 modules across 30 packages, reading ~240 keys in ~46 sections.
   - Import-time reads freeze values against hot reload: `Local_Ingestion/Document_Processing_Lib.py:79-86`, `PDF_Processing_Lib.py:57-62`, `Utils/optional_deps.py:1540`, `RAG_Search/simplified/rag_service.py:96`, `app.py:693`.
   - Tests patch `get_cli_setting` ~246 times.
 - **Recommended structure:** config loads, merges and saves. The template is package data, policies live with their features, DB instances come from composition roots, and readers use typed section accessors.
-- **Tasks:** TASK-36945.1–.5.
+- **Tasks:** TASK-36945.1–.4, TASK-36947.6 (retires the DB singletons once the services factory exists).
 
 ### F10 — Backup_Recovery hard-codes every participant · Medium-High · OCP/DIP · Entire codebase
 - **Evidence:**
   - **Hard-coded registration:**
     - `_repository_types()` (`participants.py:293-366`) lists 24 exact types (13 eager, 11 gated on `sys.modules`).
-    - There are **two closers tables that disagree** (`:66-78`, 11 entries; `:125-145`, 15 entries) and a `policy_id` chain (`:531-553`).
+    - There are **two closers tables that disagree** (`:66-78`, 11 entries; `:125-145`, 19 keys, 15 with a closer) and a `policy_id` chain (`:531-553`).
     - The type table is rebuilt ≥3 times per `CharactersRAGDB.get_connection`.
   - **66 production modules** import participants; stores import its private `_core_*` names at top level (`ChaChaNotes_DB.py:119-125`).
   - **`unsaved_editors.py`:** 36 `_exact()` checks, reads of ChatScreen private fields (`:584-592`), and lazy imports of 10 modules.
@@ -194,11 +207,11 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 |---|---|
 | Engine (`hosted_provider_engine.py:601`; 33 presets) | explicit → **env** → stored |
 | `moonshot.py:626`, `zai.py:595`, `qwencloud.py:365` | explicit → **stored** → env |
-| Custom-endpoint registry (`:495`) | env → stored |
+| Custom-endpoint registry (`Chat/custom_endpoint_registry.py:495`) | env → stored |
 
-  CLAUDE.md states the stored `api_settings` key outranks the env var; the engine's own comment states the opposite rule. A user with both set gets a different key depending on the provider family.
+  ADR-012 (`backlog/decisions/012-provider-credential-settings-boundary.md`, Accepted) rules in its 2026-09-19 amendment (TASK-32806.2) that a stored credential (config or keychain) outranks the env var, which is the fallback. CLAUDE.md says the same. The engine and the custom-endpoint registry are the resolvers out of line; ADR-146 (`backlog/decisions/146-console-custom-endpoint-registry.md`) recorded the registry's env-first order as mirroring the provider semantics of its time. A user with both set gets a different key depending on the provider family.
 - **Kwargs-builder drift:** the drifted builder is the dead `_chat_api_kwargs` (zero production callers, 23 test calls), already owned by **TASK-32807.5**. Not re-filed.
-- **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25: a set environment variable wins), TASK-36946.1–.2.
+- **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25, with ADR-012 in view: keep ADR-012 and align the engine and the custom-endpoint registry), TASK-36946.1–.2.
 
 ### F12 — Shared code lives in widget/screen files; Chat identity-checks UI internals · Medium · Layering · Module
 - **Evidence:** pure helpers sit in Textual modules:
@@ -212,7 +225,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 - **Tasks:** TASK-36944.3–.9.
 
 ### F13 — 26 transaction implementations; Subscriptions can commit abandoned writes · Medium (defect: High) · Pattern · Module
-- **Transaction managers:** ~26 SQLite transaction managers, 6 on the kernel. The store-kernel ADR-228 is still Proposed. The same three exception classes are defined in 4 DB modules (Prompts `:82-94`, Media `:90-102`, Evals `:131-143`, ChaChaNotes `:442-454`).
+- **Transaction managers:** ~26 SQLite transaction managers, 6 on the kernel. The store-kernel ADR-228 (`backlog/decisions/228-sqlite-store-kernel.md`) is still Proposed. Three exception class names are defined separately, with different bases and constructors, in 4 DB modules (Prompts `:82-94`, Media `:90-102`, Evals `:131-143`, ChaChaNotes `:442-454`).
 - **Defect, reproduced:** `Subscriptions_DB.transaction()` (`:2104-2116`) rolls back only on `Exception`, on a reused thread-local connection with legacy implicit BEGIN (`:647`). After a `BaseException` (KeyboardInterrupt, SystemExit, GeneratorExit) the depth resets while the transaction stays open. The probe:
 
   ```
@@ -268,6 +281,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 | Concern | Owner |
 |---|---|
 | `Chat/document_generator.py` and four other dead Chat modules; the dead `_chat_api_kwargs` builder | TASK-32807.5 |
+| Provider credential precedence ruling (ADR-012 amendment 2026-09-19); TASK-36941.3 aligns the two remaining resolvers | TASK-32806.2 |
 | Wire-or-retire policy for unreachable modules | TASK-19571 |
 | Scope-service helper consolidation (ADR first) | TASK-32898 (restates TASK-32808.6) |
 | Transaction-manager consolidation / store kernel | TASK-34905, TASK-33132 |

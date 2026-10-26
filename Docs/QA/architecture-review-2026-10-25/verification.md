@@ -10,21 +10,34 @@ Verdicts: **CONFIRMED**, **CORRECTED** (true in substance; the number or locatio
 - **Cause of the error:** the assignment grep listed `config.py:11886/11904`, which sit inside the lazy getter, but they were attributed to `initialize_all_databases`. The standalone probe had no app boot.
 - **What stands:** in a fresh process where nothing has called the getter, `create_note` returns `{'error': 'Failed to create note: No unified database template for NotesInteropService.'}`, and `search_notes` fails the same way. That is temporal coupling through a lazily-populated global; it was folded into report F9.
 
+## PR review corrections (2026-10-25)
+A local review of the filing PR re-checked about 40 claims against the base. Its confirmed corrections:
+- **F5 cause:** several import chains, not one. See the `agent_runtime` row below.
+- **Lazy DB getters:** they self-initialize; only the note tools read the bare global.
+- **Executable SCC:** 1,217 modules / 67 packages.
+- **Executable upward edges:** 80 / 335 / 89.
+- **Closers table:** the second one has 19 keys, 15 with a closer.
+- **Getter lines:** `:11873` / `:11908` / `:11937`.
+- **Widgets→`UI/Screens` targets:** `model_browser_state` ×3, `settings_speech_tts` ×2, video and image defaults, advanced config, web search and `provider_model_resolution`.
+- **F11:** ADR-012's 2026-09-19 precedence amendment governs.
+
+Each was re-verified in source before the fix.
+
 ## Runtime probes
 | Probe | Result |
 |---|---|
 | Import `tldw_chatbook.Agents.agent_runtime` in a fresh interpreter | Loads `sqlite3`, `httpx`, `textual`, `tldw_chatbook.DB.ChaChaNotes_DB`, `tldw_chatbook.Chat`, `tldw_chatbook.config`; 207 tldw_chatbook modules. Contradicts `agent_runtime.py:400-404` ("pure module today"). |
 | `SubscriptionsDB.transaction(immediate=True)` with `KeyboardInterrupt` raised in the body | Afterwards `conn.in_transaction = True`, depth `0`. The next `transaction(immediate=True)` raises `OperationalError: cannot start a transaction within a transaction`. The verifier read the source: with legacy implicit BEGIN (`:647`), the next *plain* `transaction()` commits the abandoned writes. |
-| Bind `Chat/document_generator.py`'s call shape to every handler in its table | 21 of 21 entries fail (`missing a required argument: 'input_data'`); 25 keys map to 20 functions. Owned by TASK-32807.5. |
+| Bind `Chat/document_generator.py`'s call shape to every handler in its table | Every entry the probe matched (21 key/function pairs) fails (`missing a required argument: 'input_data'`); the table has 25 keys over 20 functions, and none of them accepts the call shape. Owned by TASK-32807.5. |
 | `CreateNoteTool` / `SearchNotesTool` in a fresh process | Error dict as above (see self-correction). |
 
 ## Scripted measurements (reproducible with `scripts/`)
 - `graph.py <export> graph.json` gives 2,820 modules and 30,674 internal edges, classed as top / lazy / TYPE_CHECKING.
 - `analyze.py graph.json` gives:
   - import-time SCCs: 2, both in the app shell, sizes 3 and 2;
-  - an SCC of 1,496 modules over 93 packages when lazy and typing edges are included;
+  - an SCC of 1,217 modules over 67 packages from executable (top-level plus function-level) edges, or 1,496 over 93 when TYPE_CHECKING-only edges are included;
   - a 91-package SCC at package level from top-level edges only;
-  - 55 mutually-importing package pairs.
+  - 55 package pairs that import each other at top level, or 129 counting every import kind.
 - `layers.py graph.json` gives the upward edges:
   - domain → presentation: 83, of which 42 top-level;
   - DB → feature: 358, of which 169 top-level;
@@ -92,7 +105,7 @@ Exact `_BUDGETS` keys were read with the AST from `test_module_size_ratchet.py`,
 | ConsoleRuntime private screen reads | CORRECTED | `screen_stack` walk at `:1558` (a ModalScreen check only); private `_console_hook_review_projection` reads at `:4981` and `:5296-5297` via `self.view.app` |
 | `_run_one` | CONFIRMED | 5006–9168 (4,163 lines), 45 nested defs; `spawn` 551, `_launch_fleet_child` 490, `_resume_retained_child` 324 |
 | `run_agent_loop` | CORRECTED | 1073–3523; `while True` 1729–3523; per-call loop 2637–3506 (870 lines) with 20 `==` and 3 `in` comparisons on `call.name`; dict dispatch at `:3103-3108` |
-| `agent_runtime` purity | CONFIRMED | `:22` imports `Chat.console_project_instructions` (httpx `:12`); `Chat/__init__.py:6` → `chat_conversation_service:17` → ChaChaNotes_DB; no purity test for `agent_runtime` (one exists for `agent_models` at `:409`) |
+| `agent_runtime` purity | CORRECTED (by the PR review) | The `:22` chain is real (`console_project_instructions` imports httpx at `:12`; `Chat/__init__.py:6` → `chat_conversation_service:17` → ChaChaNotes_DB), but it is not the only cause. `:23` and `agent_models.py:24/:28` import Chat provider modules, and `project_instruction_runtime.py:40` imports `tool_catalog`, which reaches config, DB and UI. The static closure is 188 modules even with `Chat/__init__` empty. No purity test exists for `agent_runtime`; `agent_models`' test at `:409` scans source text only |
 | Chat composition | CORRECTED | 250 files / 247,053 lines; 167 `console_*` files / 194,740 lines (78.8%); **42** files import DB; `console.md:120` claim confirmed false |
 | Private cross-imports | CORRECTED | Agents→Chat private names: 2 (`agent_routing.py:208`, `:407`); Chat→Agents private: 5 names / 8 sites; `ChatProviderError` in 12 LLM_Calls files; `Chat_Deps.py` has no imports |
 | `chat_models.py` dead | CONFIRMED | `textual.worker` at `:7`; only `Tests/UI/test_console_internals_decomposition.py:36` |
@@ -108,11 +121,11 @@ Exact `_BUDGETS` keys were read with the AST from `test_module_size_ratchet.py`,
 | Private `_local.transaction_depth` reads | CONFIRMED | 10 sites / 5 files |
 | Learning call sites | CORRECTED | Only ~45 hit CharactersRAGDB (`local_study_service.py` 31, `local_quiz_service.py` 14); the other ~80 same-name calls are scope services, the server client or the UI |
 | `transaction_observer` | CONFIRMED | 1 producer, 3 consumers |
-| config.py spans | CORRECTED | Spans confirmed (template 4078–6661; `_load_settings_uncached` 2272–3943; encryption 10159–10854; canvas 165–446; capture/trace 9312–9735). DB globals are **also** assigned in the `get_*_db_lazy` getters (`:11871`, `:11908`, `:11938`) |
+| config.py spans | CORRECTED | Spans confirmed (template 4078–6661; `_load_settings_uncached` 2272–3943; encryption 10159–10854; canvas 165–446; capture/trace 9312–9735). DB globals are **also** assigned in the `get_*_db_lazy` getters (`:11873`, `:11908`, `:11937`); they create the DB when the global is None, so their callers need no prior set-up |
 | `get_cli_setting` census | CONFIRMED | 356 calls / 104 modules / 30 packages; ~240 keys / ~46 sections; import-time reads incl. `RAG_Search/simplified/rag_service.py:96` and `app.py:693` |
-| Participants registration | CORRECTED (worse) | 24 types (13 eager / 11 gated); **two disagreeing closers tables** (`:66-78` 11 entries vs `:125-145` 15); `policy_id` chain `:531-553`; table rebuilt ≥3× per `get_connection`; **66** production importers |
+| Participants registration | CORRECTED (worse) | 24 types (13 eager / 11 gated); **two disagreeing closers tables** (`:66-78` 11 entries vs `:125-145` 19 keys, 15 with a closer); `policy_id` chain `:531-553`; table rebuilt ≥3× per `get_connection`; **66** production importers |
 | `unsaved_editors` | CONFIRMED | 36 `_exact()`; lazy imports reach 10 modules; ChatScreen privates at `:584-592`; `staging.py:75-82` imports 8 feature-private classes |
-| Transaction managers | CONFIRMED | ~26 managers; 6 kernel subclasses; store-kernel ADR-228 Proposed |
+| Transaction managers | CONFIRMED | ~26 managers; 6 kernel subclasses; store-kernel ADR-228 (`228-sqlite-store-kernel.md`) Proposed |
 | Subscriptions rollback | CORRECTED (worse) | Implicit BEGIN means a later plain `transaction()` commits the abandoned writes; Kanban and Scheduling are mitigated (connection closed in `finally`) |
 | Duplicate exception classes | CONFIRMED | Prompts `:82-94`, Media `:90-102`, Evals `:131-143`, ChaChaNotes `:442-454` |
 | Utils composition | CONFIRMED | 161 files, 96 Splash; `input_validation` 2,457 lines; all upward imports lazy |

@@ -16,7 +16,7 @@ documentation:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Import-time cycles are nearly gone, but lazy imports hide a 1,496-module dependency cycle, nothing checks layer direction globally, 40 modules of 4,000+ lines have no size ratchet row, the 'pure' agent runtime loads Textual and the DB at import, and string lookups on the app object grow unchecked. These guards are cheap and make every later structural task measurable.
+Import-time cycles are nearly gone, but function-level imports hide a 1,217-module dependency cycle, nothing checks layer direction globally, 40 modules of 4,000+ lines have no size ratchet row, the 'pure' agent runtime loads Textual and the DB at import, and string lookups on the app object grow unchecked. These guards are cheap and make every later structural task measurable.
 
 Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/report.md` §F1, F5, F6, F16; claim-by-claim verification in `Docs/QA/architecture-review-2026-10-25/verification.md` (origin/dev 7a5e2513c5).
 <!-- SECTION:DESCRIPTION:END -->

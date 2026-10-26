@@ -16,7 +16,7 @@ documentation:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Backup_Recovery's participant contract is clean, but registration is hard-coded: 24 exact types, two closers tables that disagree (11 versus 15 entries), a policy if-chain, a type table rebuilt at least three times per connection, and an unsaved-editor probe that reads ChatScreen private fields. 66 production modules import participants, many using private names.
+Backup_Recovery's participant contract is clean, but registration is hard-coded: 24 exact types, two closers tables that disagree (11 entries versus 19 keys, 15 of them with a closer), a policy if-chain, a type table rebuilt at least three times per connection, and an unsaved-editor probe that reads ChatScreen private fields. 66 production modules import participants, many using private names.
 
 Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/report.md` §F10; claim-by-claim verification in `Docs/QA/architecture-review-2026-10-25/verification.md` (origin/dev 7a5e2513c5).
 <!-- SECTION:DESCRIPTION:END -->

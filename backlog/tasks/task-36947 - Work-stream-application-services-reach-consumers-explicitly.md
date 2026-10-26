@@ -3,6 +3,8 @@ id: TASK-36947
 title: 'Work stream: application services reach consumers explicitly'
 status: To Do
 created_date: 2026-10-26 01:09
+dependencies:
+- TASK-36942.4
 labels:
 - architecture-review-2026-10-25
 - architecture

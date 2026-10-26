@@ -3,6 +3,8 @@ id: TASK-36950
 title: 'Work stream: agent loop decomposition'
 status: To Do
 created_date: 2026-10-26 01:12
+dependencies:
+- TASK-36942.1
 labels:
 - architecture-review-2026-10-25
 - agents
