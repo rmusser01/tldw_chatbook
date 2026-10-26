@@ -1636,6 +1636,8 @@ class LibraryScreen(BaseAppScreen):
     )
     LIBRARY_NOTES_CONFLICT_SHORTCUTS = (("enter", "choose version"),)
     LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT = (("enter", "choose version"),)
+    #: M-2: read on suspend, so a screen built by ``__new__`` has it too.
+    _library_notes_filter_row_handoff: tuple[str, bool] | None = None
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
