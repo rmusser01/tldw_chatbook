@@ -1812,7 +1812,7 @@ LibraryNoteFolderNameDialog > Vertical {
 
 LibraryNoteFolderTargetDialog { align: center middle; }
 LibraryNoteFolderTargetDialog > Vertical {
-    width: 64; height: auto; padding: 1 2;
+    width: 64; height: auto; max-height: 100%; padding: 1 2;
     border: tall $accent; background: $surface;
 }
 

@@ -57,6 +57,9 @@ from tldw_chatbook.Notes.note_folder_models import (
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+    LibraryNotesController,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
@@ -279,7 +282,48 @@ def _branch_screen_fake(service: _BranchService):
     fake._focus_library_notes_tree_after_page = lambda *args, **kwargs: (
         fake._focus_calls.append((args, kwargs))
     )
+    # The default worker records the group and closes the coroutine unrun,
+    # so a test that wants a requested read to happen swaps ``run_worker``
+    # for one that keeps it.
+    fake._worker_groups = []
+
+    def _run_worker(work, **kwargs):
+        fake._worker_groups.append(kwargs.get("group"))
+        close = getattr(work, "close", None)
+        if callable(close):
+            close()
+
+    fake.run_worker = _run_worker
+    _bind_folder_slice_helper(fake)
     return fake
+
+
+def _bind_folder_slice_helper(fake) -> None:
+    """Give a screen fake the notes controller's shared slice helper.
+
+    TASK-34000.28 (N-28): the locator asks
+    ``_ensure_library_notes_folder_slices`` for every folder it newly
+    expands. Bound lazily to the CONTROLLER function over a view of the
+    fake's live state (tests reassign ``tree_branches``), requesting
+    through the real ``_request_library_notes_tree_slice`` -- which hands
+    the read to the fake's ``run_worker``.
+    """
+    if not hasattr(fake, "_request_library_notes_tree_slice"):
+        fake._request_library_notes_tree_slice = (
+            lambda *args, **kwargs: LibraryScreen._request_library_notes_tree_slice(
+                fake, *args, **kwargs
+            )
+        )
+    fake._ensure_library_notes_folder_slices = (
+        lambda folder_id: LibraryNotesController._ensure_library_notes_folder_slices(
+            SimpleNamespace(
+                _library_notes_tree_expanded_ids=fake._notes_state.tree_expanded_ids,
+                _library_notes_tree_branches=fake._notes_state.tree_branches,
+                _request_library_notes_tree_slice=fake._request_library_notes_tree_slice,
+            ),
+            folder_id,
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -984,6 +1028,69 @@ async def test_deep_link_locator_loads_root_to_target_exact_ranges() -> None:
     ]
     assert fake._notes_state.tree_expanded_ids == {"root-40", "target"}
     assert fake._notes_state.tree_selected_placement_id.endswith("m-preferred")
+    # TASK-34000.28 (N-28): the two folders this opened also owe the slices
+    # the walk did not load -- root-40's notes and target's sub-folders --
+    # REQUESTED as worker reads (this fake closes them unrun), never awaited
+    # by the locate, so the four awaited calls above are unchanged.
+    assert sorted(fake._worker_groups) == sorted(
+        f"library_notes_tree:{NotesBranchKey(parent, kind).pager_id}"
+        for parent, kind in (("root-40", "placements"), ("target", "folders"))
+    )
+
+
+@pytest.mark.asyncio
+async def test_locating_a_folder_loads_its_placements_slice_too() -> None:
+    """TASK-34000.28 N-28 (AC#7): a folder the locator expands lists its own notes.
+
+    The locator expanded a destination by loading only the PARENT's folders
+    slice to find it, so after a folder move the destination opened with
+    its notes slice ``uninitialized`` -- the review's "▾ Research" showing
+    only "▾ Recipes". The folder toggle always loaded both of an expanded
+    folder's slices; the locator now asks the same helper, which REQUESTS
+    them (worker reads, here kept and then awaited).
+    """
+
+    class _FolderLocator(_BranchService):
+        async def locate_note_tree_folder(self, **kwargs):
+            self.calls.append(("locator", kwargs["folder_id"], 0, kwargs["page_size"]))
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.folder("research"),
+                note_id=None,
+                membership_id=None,
+                path=(NoteTreePathStep("research", None, 0),),
+                placement_offset=None,
+            )
+
+    service = _FolderLocator()
+    service.folder_pages[None] = _folder_page(None, "research")
+    fake = _branch_screen_fake(service)
+    workers: list = []
+    fake.run_worker = lambda work, **kwargs: workers.append((kwargs.get("group"), work))
+
+    located = await LibraryScreen._locate_library_notes_tree_target(
+        fake, folder_id="research", focus=False
+    )
+    for _group, work in workers:
+        await work
+
+    assert located
+    assert fake._notes_state.tree_expanded_ids == {"research"}
+    assert ("placements", "research", 0, 20) in service.calls, service.calls
+    assert ("folders", "research", 0, 20) in service.calls, service.calls
+    placements = fake._notes_state.tree_branches[
+        NotesBranchKey("research", "placements")
+    ]
+    assert placements.freshness == "fresh" and not placements.loading
+
+    # The helper is idempotent: a second locate of the same, now expanded,
+    # folder requests neither slice again.
+    calls_before = list(service.calls)
+    workers.clear()
+    assert await LibraryScreen._locate_library_notes_tree_target(
+        fake, folder_id="research", focus=False
+    )
+    assert workers == []
+    assert service.calls == [*calls_before, ("locator", "research", 0, 20)]
 
 
 @pytest.mark.asyncio
@@ -1907,6 +2014,7 @@ def _mutation_fake(service: _MutationService):
             close()
 
     fake.run_worker = _run_worker
+    _bind_folder_slice_helper(fake)
     return fake
 
 

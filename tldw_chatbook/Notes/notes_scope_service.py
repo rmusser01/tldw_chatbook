@@ -557,6 +557,49 @@ class NotesScopeService:
             load_notes=load_notes,
         )
 
+    async def page_note_folders(
+        self,
+        *,
+        scope: ScopeType | str,
+        query: str,
+        limit: int,
+        offset: int,
+        exclude_subtree_of: str | None = None,
+        user_id: str | None = None,
+    ) -> NoteFolderChildPage:
+        """Page every active folder at any depth, narrowed by a path query.
+
+        TASK-34000.28 (N-23): the seam the Library folder pickers page, so a
+        nested folder is offered whether or not the tree has loaded it.
+
+        Args:
+            scope: Note scope to query.
+            query: Breadcrumb text matched anywhere in a folder's path; empty
+                lists every active folder.
+            limit: Maximum folders to return.
+            offset: Zero-based offset into the path order.
+            exclude_subtree_of: A folder offered neither itself nor beneath
+                itself (the folder being moved).
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact page of matching folders.
+
+        Raises:
+            FolderCapabilityError: If the scope cannot list note folders.
+            FolderValidationError: If the query or a page bound is invalid.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.page_folders,
+            query=query,
+            limit=limit,
+            offset=offset,
+            exclude_subtree_of=exclude_subtree_of,
+        )
+
     async def create_note_folder(
         self,
         *,
