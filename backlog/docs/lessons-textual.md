@@ -1870,6 +1870,23 @@ Pilot pins were green.
   yourself (public `set_focus`, marked programmatic) before the recompose,
   scoped to the flow that needs it, over reclassifying the framework's reset
   globally.
+- **Two more incidents (PR #3259 CI fix round 1, 2026-10-26).**
+  - **A generation stamp at Back went stale with no key pressed.** Back's
+    hand-off to the row the note came from waits for the list's source
+    snapshot, and a `/` in that window had focus taken back to the row
+    (`focus_intent_generation` stamped at Back looked like the fix). The
+    editor's prune reset focus to the Library grip, the stamp was stale
+    before any key, and the no-move control went red. The fix withdraws the
+    hand-off from the real-input sites T5-a already uses (`on_key`, mouse,
+    wheel, the priority focus actions, suspend), never from
+    `on_descendant_focus`.
+  - **A restore's own queued event disarmed the arm made right after it.**
+    The Notes filter's Down landing restored focus to the box and then armed
+    the list-entry focus, whose first attempt runs after the next refresh.
+    When the box's queued `DescendantFocus` was handled first, it read as
+    the user leaving the list and disarmed the landing (1 of 10 runs under
+    CPU load; certain once the attempt is held). Landing at once, while the
+    rows are known to be mounted, takes the race away.
 
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 

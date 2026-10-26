@@ -847,6 +847,12 @@ sample indexes do not establish elapsed blank time. Hold native Unmount, use the
 production interval callback, and always release/drain in `finally`; retain the
 original end-to-end allowance and cancellation-safe `finish_removal` contract.
 
+## A keyboard-walk change must run every test that walks the same list (PR #3259, 2026-10-26)
+
+**Incident.** TASK-34000.28 (N-22) added the Notes tree's folder rows and its "more" pager to `_LIBRARY_LIST_ROW_CLASSES`, the one table the Library's Up/Down walk reads. Its task reviews and the final whole-branch review ran the census files the branch added or changed. `Tests/UI/test_library_notes_tree_scrolls_wide.py`, a census file the branch never touched, pressed Down 30 times from the first note row and asserted a note row held focus; with the pager now the walk's last stop, it was red 10 of 10 on the branch head and green 10 of 10 on dev. UI Fast Lane shard 5 found it, after the PR opened.
+
+**What to do.** When a change alters which widgets a shared key walk visits, grep `Tests/` for the walk's row classes together with the keys (`rg -l 'library-notes-row|library-notes-folder-row|library-notes-tree-pager' Tests | xargs rg -l '"down"|"up"'`) and run every hit, census file or not, before review. A test the diff does not touch still pins the old walk.
+
 ## set_timer and set_interval run their callbacks in different tasks (TASK-34982, 2026-10-18)
 
 **Incident.** A test meant to stop the Console poll's timer in the middle of a row removal passed on the unfixed code twice. Both versions drove the paint with `app.set_timer(...)`, and in Textual 8.2.8 `set_timer` wraps its callback in `call_next`, so the paint ran on the app's own pump and stopping the timer cancelled nothing. In the first, the removal was not even the timer's: `set_messages` had already queued its own refresh on the transcript's pump, which removed the row first. The poll uses `set_interval`, which runs the callback inside the timer's own task; only then did the test fail on dev. A `pilot.pause()` while the row's Unmount was held also hung the test for 30 s, because Pilot waits for a callback from every mounted pump.
