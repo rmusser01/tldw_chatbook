@@ -1203,8 +1203,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: pair, Shift+F6) and from ``on_screen_suspend`` (R2-2), and Down from an
     #: empty, unfiltered box landing on the tree's first row (R2-4): 38138 ->
     #: 38164 lines, 1372 -> 1373 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 (polish-1a final review M-2; same owner
+    #: decision): a class-level ``_library_notes_filter_row_handoff = None``
+    #: default, so a screen built by ``__new__`` reads it on suspend: 38164 ->
+    #: 38166 lines, 1373 methods (measured with ``_measure``).
     #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38210, 1374),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38212, 1374),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

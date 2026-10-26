@@ -434,11 +434,20 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
         return True
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        """A focused row becomes the one Choose confirms."""
+        """A focused row becomes the one Choose confirms.
+
+        Final review M-10: focus that lands anywhere but a row or the filter
+        -- Tab to Cancel, Choose or the pager -- withdraws a pending "focus
+        the first row on load", so the landing page never pulls focus off the
+        control the user went to (and the Enter meant for it never chooses
+        row 0). Choose and the pager re-arm it on their press, after this.
+        """
         widget = event.widget
         if not isinstance(widget, Button) or not widget.has_class(
             "library-note-folder-target-row"
         ):
+            if getattr(widget, "id", None) != "library-note-folder-target-filter":
+                self._focus_first_row_on_load = False
             return
         self._highlighted = widget.choice_value
         for row in self._rows():

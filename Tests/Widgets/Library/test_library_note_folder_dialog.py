@@ -424,6 +424,61 @@ async def test_a_failed_page_leaves_nothing_to_choose():
         assert app.screen is modal
 
 
+class _HeldFirstPageLoader(_FolderLoader):
+    """Holds even the FIRST page until ``release`` is set."""
+
+    def __init__(self, *paths: str) -> None:
+        super().__init__(*paths)
+        self.release = asyncio.Event()
+
+    async def __call__(self, query: str, offset: int) -> NoteFolderChildPage:
+        self.calls.append((query, offset))
+        await self.release.wait()
+        self.calls.pop()
+        return await super().__call__(query, offset)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_root", [False, True], ids=["move-note", "move-folder"])
+async def test_a_down_the_user_then_tabbed_away_from_never_lands_on_row_zero(
+    include_root: bool,
+):
+    """Final review M-10: Down before the first page lands arms "focus the
+    first row on load". Tab then takes the user to Cancel; the landing page
+    used to pull focus back to row 0 anyway, so the Enter meant for Cancel
+    chose that row (a move the user never asked for). A move of the user's
+    own to anything but a row or the filter withdraws the arm."""
+    loader = _HeldFirstPageLoader(*_PROBE_PATHS)
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    modal = LibraryNoteFolderTargetDialog(
+        title="Move", loader=loader, include_root=include_root
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await _until(pilot, lambda: loader.calls == [("", 0)])
+        assert modal.focused is modal.query_one(
+            "#library-note-folder-target-filter", Input
+        )
+        await pilot.press("down", "tab")
+        await _until(
+            pilot,
+            lambda: getattr(modal.focused, "id", None)
+            == "library-note-folder-target-cancel",
+        )
+
+        loader.release.set()
+        await _until(pilot, lambda: _total(modal) == "3 folders")
+        await pilot.pause()
+        assert getattr(modal.focused, "id", None) == "library-note-folder-target-cancel", (
+            f"the landing page took focus to {modal.focused!r}"
+        )
+        await pilot.press("enter")
+        await _until(pilot, lambda: bool(results))
+
+    assert results == [None], f"Enter on Cancel chose a folder: {results}"
+
+
 def _note_folder_modal(kind: str):
     return (
         LibraryNoteFolderNameDialog(title="Rename folder", initial_name="Ideas")
