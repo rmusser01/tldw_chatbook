@@ -846,6 +846,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             self._composed_fixed_signature,
         ):
             return False
+        # A delta that also moves a field this tray does not render (the
+        # screen's out-of-band alias reads `new_conversation_enabled`) keeps
+        # the rebuild that re-syncs those controls.
+        reads = self._composed_state_reads
+        if reads is None or any(
+            getattr(state, field.name) != getattr(self._state, field.name)
+            for field in dataclasses.fields(state)
+            if field.name not in reads
+        ):
+            return False
         shown = self._state
         record = (
             self._composed_row_signature,

@@ -401,6 +401,27 @@ async def test_running_marker_patch_matches_a_recompose(monkeypatch) -> None:
     assert patched == built
 
 
+async def test_marker_with_an_unrendered_field_change_still_recomposes(
+    monkeypatch,
+) -> None:
+    """A delta that also moves a field the tray does not render rebuilds.
+
+    The screen mounts the legacy "New conversation" alias into the tray from
+    ``new_conversation_enabled``, a field the tray never reads, and re-syncs
+    it only after a rebuild; a patch must not swallow that field's change.
+    """
+    requests = _LayoutRequests(monkeypatch)
+    host = _TrayHost(_tray_state())
+    async with host.run_test(size=(40, 30)) as pilot:
+        tray = await _settled_tray(host, pilot)
+        assert "new_conversation_enabled" not in tray._composed_state_reads
+        with requests.counting() as calls:
+            tray.sync_state(
+                replace(_tray_state(running=True), new_conversation_enabled=False)
+            )
+        assert tray in calls
+
+
 async def test_marker_that_moves_rows_still_recomposes(monkeypatch) -> None:
     """Positive control: an approval adds an activity line, so rows move."""
     requests = _LayoutRequests(monkeypatch)
