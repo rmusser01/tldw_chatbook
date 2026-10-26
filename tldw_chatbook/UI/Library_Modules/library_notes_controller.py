@@ -1977,6 +1977,8 @@ class LibraryNotesController:
             # TASK-34000.28 (N-30): see the matching pair in
             # ``_library_notes_semantic_role``.
             "sort": "#library-notes-sort",
+            # TASK-34000.28: the folder-conflict notice's Refresh control.
+            "notice-refresh": "#library-notes-notice-refresh",
         }.get(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"

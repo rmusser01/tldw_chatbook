@@ -32,6 +32,7 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _wait_for_library_shell,
 )
+from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -510,11 +511,38 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
         assert "…" not in _status_line(host, screen)
         assert screen._notes_state.notice_refresh_offered is True
 
-        await _press(
+        # M5 (fix round 1): Refresh has a portable focus role. A background
+        # canvas sync while it holds focus -- the real Trash reload here --
+        # recomposes it, and focus returns to the NEW Refresh, not to the
+        # filter fallback (measured on e9ec76b170: the filter).
+        refresh = screen.query_one("#library-notes-notice-refresh", Button)
+        screen.set_focus(refresh)
+        await _wait(pilot, lambda: screen.focused is refresh, "Refresh focused")
+        assert screen._library_notes_semantic_role(refresh) == "notice-refresh"
+        screen._refresh_library_notes_trash()
+        await _wait(
             pilot,
-            host,
-            screen,
-            lambda: next(iter(screen.query("#library-notes-notice-refresh")), None),
+            lambda: screen.focused is not None
+            and screen.focused is not refresh
+            and screen.focused.id == "library-notes-notice-refresh",
+            lambda: f"focus kept on the recomposed Refresh: {screen.focused!r}",
+        )
+        assert (
+            screen._library_notes_role_target(
+                LibraryNotesFocusIdentity(
+                    stage="notes",
+                    region="navigator",
+                    note_id=None,
+                    semantic_role="notice-refresh",
+                )
+            )
+            is screen.focused
+        )
+
+        # A real Enter on the focused Refresh.
+        await pilot.press("enter")
+        await _wait(
+            pilot,
             lambda: not screen._notes_state.notice
             and (row := _folder_row(screen, recipes)) is not None
             and row.folder_version == loaded_version + 1,
@@ -527,6 +555,25 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
             lambda: f"the notice and Refresh gone: {_status_line(host, screen)!r}",
         )
         assert screen._notes_state.notice_refresh_offered is False
+
+        # Where focus lands: Refresh starts a fresh visit, so the tree is
+        # empty while it reloads, and the list-entry focus Refresh arms hands
+        # an empty Notes list to the filter (task-31946's designed landing).
+        # Waited on, never read straight after a mount.
+        await _wait(
+            pilot,
+            lambda: screen.focused is not None
+            and screen.focused.id == "library-notes-filter",
+            lambda: f"focus on the filter after Refresh: {screen.focused!r}",
+        )
+        # And a real key still works on the recomposed screen: Tab moves on.
+        await pilot.press("tab")
+        await _wait(
+            pilot,
+            lambda: screen.focused is not None
+            and screen.focused.id != "library-notes-filter",
+            lambda: f"Tab to move focus off the filter: {screen.focused!r}",
+        )
 
         # The reloaded tree carries the new version: the same move now works.
         await _press(

@@ -1151,14 +1151,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: ``_ensure_library_notes_folder_slices``) for one out
     #: (``_library_notes_folder_target_options``): 37862 -> 37897 lines,
     #: 1361 -> 1362 methods (measured).
-    #: 2026-10-26, TASK-34000.28 (polish-1a task 4; owner decision 2026-10-04,
-    #: expand-the-limits rule): the per-reason folder-conflict copy table
-    #: (``_FOLDER_CONFLICT_COPY``) and its handler, the Refresh offer's
-    #: wiring plus its press handler (``handle_library_notes_notice_refresh``),
-    #: the delete path clearing the selection it deleted, and the move
-    #: reconcile reloading Unfiled for a note moved out of it: 37897 -> 37955
-    #: lines, 1362 -> 1363 methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37955, 1363),
+    #: 2026-10-26, TASK-34000.28 (polish-1a task 4 and its fix round 1;
+    #: owner decision 2026-10-04, expand-the-limits rule): the Refresh
+    #: delegator (``handle_library_notes_notice_refresh``, the +1 method) and
+    #: its portable focus role, the derived Refresh offer bound to the
+    #: conflict copy plus the whole-notice status line, the conflict branch
+    #: reading ``FOLDER_CONFLICT_COPY`` (the table itself lives in
+    #: ``Notes/note_folder_models.py``), the delete clearing the selection it
+    #: deleted, and the Unfiled reconcile line: 37897 -> 37926 lines,
+    #: 1362 -> 1363 methods (measured with ``_measure``; the first cut's
+    #: 37955 was taken before the copy table moved out).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37926, 1363),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
