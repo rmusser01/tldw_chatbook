@@ -29,6 +29,7 @@ live: the avatar painter's first write to the never-shown name caption.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -421,6 +422,115 @@ async def test_return_from_roleplay_keeps_focus_on_search_over_a_deferred_render
             f"focus after the return: {focused!r}"
         )
         assert focused.is_attached and browser in focused.ancestors
+
+
+async def test_a_reopen_before_the_first_render_settles_holds_passes_for_both(
+    monkeypatch,
+) -> None:
+    """Open, collapse, a new snapshot, open again: two renders are in flight.
+
+    The rail holds allocation passes while an opened section's render mounts
+    (a pass over the half-mounted body measured 0 rows and dropped the open's
+    reveal). The first render settling must not release that hold while the
+    second is still mounting.
+    """
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    revision = [7]
+    _install_loading_controller(monkeypatch, revision)
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        controller = screen._character_context
+        await _collapse_loaded_character_section(pilot)
+        revision[0] = 8
+        assert await character_presentation_work(controller, screen) is True
+        await pilot.pause(0.3)
+
+        gates: list[asyncio.Event] = []
+        recompose = ConsoleCharacterContext.recompose
+
+        async def held_recompose(widget):
+            gate = asyncio.Event()
+            gates.append(gate)
+            await gate.wait()
+            return await recompose(widget)
+
+        passes: list[int] = []
+        descriptors = ConsoleLeftRail._mounted_descriptors
+
+        def counted_descriptors(rail):
+            passes.append(1)
+            return descriptors(rail)
+
+        monkeypatch.setattr(ConsoleCharacterContext, "recompose", held_recompose)
+        monkeypatch.setattr(
+            ConsoleLeftRail, "_mounted_descriptors", counted_descriptors
+        )
+        try:
+            screen._toggle_console_rail_section("character", next_open=True)
+            await _wait_for(pilot, lambda: len(gates) == 1, "no first render")
+            screen._toggle_console_rail_section("character", next_open=False)
+            revision[0] = 9
+            assert await character_presentation_work(controller, screen) is True
+            screen._toggle_console_rail_section("character", next_open=True)
+            await _wait_for(pilot, lambda: len(gates) == 2, "no second render")
+
+            passes.clear()
+            gates[0].set()
+            await pilot.pause(0.3)
+            assert passes == [], (
+                f"{len(passes)} allocation passes ran while the second render "
+                "was still mounting"
+            )
+            gates[1].set()
+            await _wait_for(
+                pilot, lambda: passes, "no allocation pass after both renders"
+            )
+        finally:
+            for gate in gates:
+                gate.set()
+            await pilot.pause(0.2)
+
+
+async def test_opening_shows_progress_counts_without_waiting_for_the_sweep(
+    monkeypatch,
+) -> None:
+    """The deferred render writes the rows' progress counts as it opens."""
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    revision = [7]
+    _install_loading_controller(monkeypatch, revision)
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        controller = screen._character_context
+        await _collapse_loaded_character_section(pilot)
+        browser = screen.query_one(ConsoleCharacterContext)
+        # Only the render path may write the counts in this test.
+        for timer in list(browser._timers):
+            timer.pause()
+        monkeypatch.setattr(controller, "pending_progress_count", lambda _row: 2)
+        revision[0] = 8
+        assert await character_presentation_work(controller, screen) is True
+        await pilot.pause(0.3)
+
+        screen._toggle_console_rail_section("character", next_open=True)
+
+        def titles() -> list[str]:
+            return [
+                str(button.label) for button in browser.query(".console-character-row")
+            ]
+
+        await _wait_for(
+            pilot,
+            lambda: any("Chat r8-2" in title for title in titles()),
+            lambda: f"the opened section shows {titles()}",
+        )
+        await pilot.pause(0.1)
+        assert titles() and all(
+            title.startswith("Progress: 2 · ") for title in titles()
+        ), titles()
 
 
 class _HiddenRailApp(App):
