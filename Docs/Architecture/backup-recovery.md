@@ -118,3 +118,53 @@ source heads while canonical fixtures use installed heads. Candidate migration
 authorization permits only the fixed owner tables/indexes and native version
 stamps, and continues rejecting unknown catalogs. This installs receipts and
 quarantine consumers; the preview still performs no import or cutover.
+
+
+## Native mobile consolidation admission (ADR-244/125/126)
+
+`MaintenanceSession.prepare_mobile_consolidation(journal, *, source_config,
+target_config, selections, approved_scope, source_fingerprint,
+destination_witnesses)` prepares an internal in-place operation. It accepts checked
+config selectors and the reviewed native inventory digest and preview witnesses.
+Both selectors must have compatible, positive ADR-126 enrollment; their own
+selected roots must cover their respective source/canonical paths. The actual
+session holds the unbound gate and every selected namespace exclusively after
+cooperative OS leases retire. Missing enrollment refuses with close-old-instance
+guidance; a schema, PID, heartbeat, advisory execution lock or newly registered
+namespace cannot establish old-writer retirement.
+
+Preparation rechecks source evidence read-only and writes `mobile_prepared` into
+the existing private hash-chain journal, then registers the existing typed pending
+record before any canonical write. The prepared evidence fixes selector paths and
+fingerprints, inventory/source digests, bootstrap root, namespaces and the three
+ordered native owner targets. Each target has an independent full ancestor/object
+presence, device, inode and mode chain. The normalized canonical path hash remains
+metadata only. Reopening requires the original review, exact pending/control
+association and selectors, and current witnesses reconstructed only from journaled
+native creation transitions.
+
+`session.mobile_consolidation_owner(journal, owner_id)` yields one installed
+ChaChaNotes, Workspace or AgentRuns owner (`db.chachanotes.primary`,
+`db.workspaces`, `db.agent_runs`). Its private grant is bound to that exact live
+session, PID, thread, repository instance/type, target, witnesses and journal
+operation. Ordinary owner opens inside maintenance still refuse; capture still
+reads source and writes only staging. Missing canonical parents and databases use
+pinned native exclusive creation, with `mobile_path_intended` before creation and
+`mobile_path_observed` before accepting the new witness. Changed objects, foreign
+operations and unresolved creation intents refuse. This path does not adopt an
+unexpected object, replace an existing object or harden an existing run store.
+
+`mobile_owner_opened` and `mobile_owner_retired` bracket actual native handle
+ownership. Scope exit closes physical SQLite handles before releasing the separate
+AgentRuns execution descriptor. Close failures or retained execution users keep
+the actual maintenance resources quarantined; observer cancellation is no evidence
+of retirement. After process interruption the same opened owner can be reacquired
+under native exclusion (and the exact AgentRuns lock) before new owner progress.
+Neither journal labels nor retirement establish that an import batch committed.
+
+RecoveryService reports this typed mode as `recovery_required` with no finish,
+rollback or abort action. Durable pending records override cached worker success
+and continue fencing startup, including corrupt or mismatched journal/pending
+records. The importer must add checked preview provenance, source claims, complete
+mapping/reference and byte closure, native owner batch receipts, validated recovery
+and cutover before any public apply or terminal fence-release route is exposed.

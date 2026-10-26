@@ -1510,22 +1510,30 @@ def _with_storage_admission(function):
             return function(owner_id, database, **kwargs)
         from tldw_chatbook.Backup_Recovery.storage_admission import (
             _acquire_capture_storage,
+            _acquire_mobile_storage,
             _CaptureLease,
+            _MobileScope,
         )
 
+        factory = kwargs.get("factory", sqlite3.Connection)
         try:
-            lease = _acquire_capture_storage(
-                Path(database),
-                owner_id=owner_id,
-                read_only=kwargs.get("read_only", False),
+            lease = _acquire_mobile_storage(
+                Path(database), owner_id=owner_id, factory=factory
             )
+            if lease is None:
+                lease = _acquire_capture_storage(
+                    Path(database),
+                    owner_id=owner_id,
+                    read_only=kwargs.get("read_only", False),
+                )
         except BaseException:
             if outcome is not None:
                 outcome.admission_refused = True
             raise
         factory = kwargs.get("factory", sqlite3.Connection)
         capture_lease = type(lease) is _CaptureLease
-        if lease is not None and factory is not sqlite3.Connection:
+        mobile_lease = capture_lease and type(lease.scope) is _MobileScope
+        if lease is not None and factory is not sqlite3.Connection and not mobile_lease:
             # Custom __new__/__init__ may retain a native handle then raise before
             # the seam receives it. Capture qualifies only the native constructor;
             # ordinary owner factory compatibility remains unchanged below.
@@ -1549,6 +1557,21 @@ def _with_storage_admission(function):
             ):
                 raise RecoveryRequired("connection_factory_not_qualified")
 
+            if mobile_lease:
+
+                class MobileCursor(sqlite3.Cursor):
+                    def execute(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().execute(*args, **options)
+
+                    def executemany(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().executemany(*args, **options)
+
+                    def executescript(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().executescript(*args, **options)
+
             class AdmittedConnection(factory):
                 _admission_close_attempted = False
 
@@ -1560,6 +1583,39 @@ def _with_storage_admission(function):
                         # Bind the actual native handle before connector-level
                         # post-open validation can reject it.
                         lease.attach(self)
+
+                if mobile_lease:
+
+                    def cursor(self, factory=None):
+                        sqlite3.Connection.in_transaction.__get__(self)
+                        from tldw_chatbook.DB.base_db import _QuiescentSQLiteCursor
+
+                        _MobileScope.check(lease.scope)
+                        if factory not in (
+                            None,
+                            sqlite3.Cursor,
+                            _QuiescentSQLiteCursor,
+                        ):
+                            raise RecoveryRequired("mobile_cursor_factory_unqualified")
+
+                        return super().cursor(MobileCursor)
+
+                    def execute(self, *args, **options):
+                        return self.cursor().execute(*args, **options)
+
+                    def executemany(self, *args, **options):
+                        return self.cursor().executemany(*args, **options)
+
+                    def executescript(self, *args, **options):
+                        return self.cursor().executescript(*args, **options)
+
+                    def commit(self):
+                        _MobileScope.check(lease.scope)
+                        return super().commit()
+
+                    def rollback(self):
+                        _MobileScope.check(lease.scope)
+                        return super().rollback()
 
                 def __new__(cls, *args, **options):
                     nonlocal allocation_started

@@ -408,6 +408,8 @@ def _core_access(repository):
     from . import storage_admission as storage
     from .bootstrap import RecoveryRequired
 
+    if storage._mobile_repository_scope(repository) is not None:
+        return
     participant = (
         _repository_participant(repository)
         if type(repository) in _repository_types()
@@ -432,7 +434,11 @@ def _core_access(repository):
 @contextmanager
 def _core_operation(repository):
     """Count an installed core scope without revoking its native borrowers."""
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    from . import storage_admission as storage
+
+    if storage._mobile_repository_scope(repository) is not None:
+        yield
+    elif repository.is_memory_db or type(repository) not in _repository_types():
         _core_access(repository)
         yield
     else:
@@ -554,9 +560,18 @@ def _register_core_connection(repository, connection):
             policy_id = (
                 "db.subscriptions.agent_read" if participant.read_only else "db.base"
             )
+        mobile = storage._mobile_repository_scope(repository)
         if (
             lease is None
-            or lease not in storage._live_leases
+            or (
+                lease not in storage._live_leases
+                and not (
+                    mobile is not None
+                    and type(lease) is storage._CaptureLease
+                    and lease.scope is mobile
+                    and lease in mobile.resources
+                )
+            )
             or lease.resource_policy is not _validated_owner_policy(policy_id)
             or lease.resource_path != participant.path
             or lease.resource_thread is not threading.current_thread()

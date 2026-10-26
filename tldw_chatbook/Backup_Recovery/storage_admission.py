@@ -1617,7 +1617,10 @@ class _CaptureLease:
             # Retire the native handle before releasing its capture authority.
             closed = False
             try:
-                sqlite3.Connection.close(self.connection)
+                if type(self.scope) is _MobileScope:
+                    self.connection.close()
+                else:
+                    sqlite3.Connection.close(self.connection)
                 closed = True
             finally:
                 if not closed:
@@ -2190,6 +2193,148 @@ def _preview_reads(*, limits=None, byte_budget=None):
             _local.preview_scope = None
 
 
+def _mobile_witness(path):
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return {"path": str(path), "device": None, "inode": None, "mode": None}
+    if stat.S_ISLNK(info.st_mode) or (
+        stat.S_ISREG(info.st_mode) and info.st_nlink != 1
+    ):
+        raise bootstrap.RecoveryRequired("mobile_unsafe_alias")
+    return {
+        "path": str(path),
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "mode": info.st_mode,
+    }
+
+
+class _MobileScope:
+    """One native-constructed owner; a path string or copied grant grants nothing."""
+
+    def __init__(self):
+        raise TypeError("mobile_scope_is_native_issued")
+
+    def check(self):
+        from .journal import _mobile_state
+
+        session = getattr(self, "session", None)
+        if (
+            type(session) is not MaintenanceSession
+            or session is not getattr(_local, "maintenance_session", None)
+            or self not in session._scopes
+            or not self.active
+            or getattr(_local, "mobile_scope", None) is not self
+            or self.journal is not getattr(session, "_mobile_journal", None)
+        ):
+            raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+        MaintenanceSession._check(session)
+        with self.journal._locked(exclusive=False) as parent:
+            records = self.journal._records(parent)
+        prepared, witnesses = _mobile_state(records)
+        control_records._mobile_pending(self.session, self.journal, prepared)
+        if (
+            records[-1].event != "mobile_owner_opened"
+            or records[-1].evidence != self.owner
+        ):
+            raise bootstrap.RecoveryRequired("mobile_journal_operation_changed")
+        if witnesses != self.witnesses or any(
+            _mobile_witness(Path(path)) != row for path, row in witnesses.items()
+        ):
+            raise bootstrap.RecoveryRequired("mobile_object_changed")
+
+    def require_repository(self, repository):
+        _MobileScope.check(self)
+        from .participants import _repository_types
+
+        if (
+            repository is not self.repository
+            or _repository_types().get(type(repository)) != self.owner["owner_id"]
+            or repository.db_path != Path(self.owner["path"])
+            or getattr(repository, "_read_only", False)
+        ):
+            raise bootstrap.RecoveryRequired("mobile_repository_scope_invalid")
+
+    def retire(self):
+        if self.close_failed:
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        # A failed native close retains both maintenance gates and execution ownership.
+        try:
+            for resource in tuple(self.resources):
+                resource.retire()
+            if self.execution_use is not None:
+                self.execution_use.__exit__(None, None, None)
+                self.execution_use = None
+            if self.execution_owner is not None:
+                self.execution_owner.close()
+                if (
+                    not self.execution_owner._stream.closed
+                    or self.execution_owner._users
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_execution_not_retired")
+                self.execution_owner = None
+            if self.execution_stream is not None:
+                self.execution_stream.close()
+                if not self.execution_stream.closed:
+                    raise bootstrap.RecoveryRequired("mobile_execution_not_retired")
+                self.execution_stream = None
+                self.execution_fd = None
+            elif self.execution_fd is not None:
+                os.close(self.execution_fd)
+                self.execution_fd = None
+        except BaseException:
+            self.close_failed = True
+            raise
+        finally:
+            self.active = False
+
+
+def _mobile_repository_scope(repository):
+    scope = getattr(repository, "_mobile_consolidation_scope", None)
+    current = getattr(_local, "mobile_scope", None)
+    if scope is None and current is None:
+        return None
+    if type(scope) is not _MobileScope or scope is not current:
+        raise bootstrap.RecoveryRequired("mobile_repository_scope_invalid")
+    _MobileScope.require_repository(scope, repository)
+    return scope
+
+
+def _acquire_mobile_storage(path, *, owner_id, factory):
+    scope = getattr(_local, "mobile_scope", None)
+    if scope is None:
+        return None
+    if type(scope) is not _MobileScope:
+        raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+    _MobileScope.require_repository(scope, scope.repository)
+    from tldw_chatbook.DB.base_db import _QuiescentSQLiteConnection
+
+    expected_policy = (
+        "db.chachanotes.primary"
+        if scope.owner["owner_id"] == "db.chachanotes.primary"
+        else "db.base"
+    )
+    expected_factory = (
+        _QuiescentSQLiteConnection
+        if expected_policy == "db.chachanotes.primary"
+        else sqlite3.Connection
+    )
+    if (
+        lexical_path(path) != Path(scope.owner["path"])
+        or owner_id != expected_policy
+        or factory is not expected_factory
+    ):
+        raise bootstrap.RecoveryRequired("mobile_connection_scope_invalid")
+    lease = _CaptureLease(scope)
+    from tldw_chatbook.DB.private_sqlite import SQLITE_OWNER_REGISTRY
+
+    lease.resource_path = lexical_path(path)
+    lease.resource_policy = SQLITE_OWNER_REGISTRY[owner_id]
+    lease.resource_thread = threading.current_thread()
+    return lease
+
+
 class MaintenanceSession:
     """Opaque native-held executor authority; only Admission can mint a session.
 
@@ -2441,6 +2586,312 @@ class MaintenanceSession:
             finally:
                 if getattr(_local, "capture_scope", None) is scope:
                     _local.capture_scope = None
+
+    def prepare_mobile_consolidation(
+        self,
+        journal,
+        *,
+        source_config,
+        target_config,
+        selections,
+        approved_scope,
+        source_fingerprint,
+        destination_witnesses,
+    ):
+        """Bind reviewed selectors under native gates, then persist the startup fence.
+
+        This initial preparation grants no owner access. Reopening the same journal
+        uses its typed witnesses and the same checked selectors; batch recovery is
+        the importer owner's responsibility.
+        """
+        from .inventory import read_profile_config
+        from .journal import Journal, _mobile_state, _MobilePrepared
+        from .mobile_consolidation import CanonicalConsoleStores, _preview
+        from .profile_paths import canonical_console_paths, legacy_mobile_dir
+
+        self._check()
+        if type(journal) is not Journal:
+            raise TypeError("mobile_native_journal_required")
+        selectors = tuple(lexical_path(path) for path in (source_config, target_config))
+        root = self._control.parent
+        if (
+            root != bootstrap.default_bootstrap_root()
+            or UNBOUND_NAMESPACE not in self._names
+        ):
+            raise bootstrap.RecoveryRequired("mobile_session_scope_changed")
+        pending, profiles = bootstrap._records(root)
+        registry = bootstrap._registry(root)
+        bindings = [bootstrap._binding(path, profiles, registry) for path in selectors]
+        if any(
+            row is None or not set(row["namespaces"]) <= set(self._names)
+            for row in bindings
+        ):
+            raise bootstrap.RecoveryRequired(
+                "mobile_close_old_instance_enrollment_required"
+            )
+        with journal._locked(exclusive=False) as parent:
+            records = journal._records(parent)
+        if records:
+            if records[0].event != "mobile_prepared":
+                raise ValueError("mobile_journal_operation_changed")
+            prepared, witnesses = _mobile_state(records)
+            control_records._mobile_pending(self, journal, prepared)
+            if selectors != (
+                Path(prepared.source_selector),
+                Path(prepared.target_selector),
+            ):
+                raise ValueError("mobile_selector_changed")
+        else:
+            if pending:
+                raise bootstrap.RecoveryRequired("recovery_pending")
+            self._discover_capture_inventory(
+                tuple(dict.fromkeys(selectors)), selections, approved_scope
+            )
+        source = read_profile_config(selectors[0])
+        target = CanonicalConsoleStores(
+            *canonical_console_paths(read_profile_config(selectors[1]))
+        )
+        with self._discovery_reads(private_sqlite=True):
+            preview = _preview(
+                legacy_mobile_dir(source), target, source, review_destination=False
+            )
+        if (
+            preview.issues
+            or not preview.has_data
+            or preview.source_fingerprint != source_fingerprint
+        ):
+            raise ValueError("mobile_source_changed")
+        for binding, paths in zip(
+            bindings, (preview.capture_scope, target.paths), strict=True
+        ):
+            roots = bootstrap.effective_roots(
+                binding["roots"], (registry[name] for name in binding["namespaces"])
+            )
+            if any(not _contains_capture_path(roots, path) for path in paths):
+                raise bootstrap.RecoveryRequired("mobile_path_outside_scope")
+        if records:
+            reviewed_witnesses = tuple(
+                (
+                    row.witnesses[-1].path,
+                    tuple(
+                        (item.path, item.device, item.inode, item.mode)
+                        for item in row.witnesses
+                    ),
+                )
+                for row in prepared.targets
+            )
+            if (
+                prepared.inventory_digest != approved_scope
+                or reviewed_witnesses != destination_witnesses
+            ):
+                raise ValueError("mobile_review_changed")
+            if prepared.source_fingerprint != source_fingerprint or tuple(
+                row.witnesses[-1].path for row in prepared.targets
+            ) != tuple(map(str, target.paths)):
+                raise ValueError("mobile_review_changed")
+            if any(
+                _mobile_witness(Path(path)) != row for path, row in witnesses.items()
+            ):
+                raise bootstrap.RecoveryRequired("mobile_object_changed")
+            if records[-1].event == "mobile_path_intended":
+                raise bootstrap.RecoveryRequired("mobile_creation_unsettled")
+        else:
+            if preview.destination_witnesses != destination_witnesses:
+                raise ValueError("mobile_destination_changed")
+            prepared = _MobilePrepared(
+                bootstrap_root=str(root),
+                namespaces=sorted(
+                    {name for row in bindings for name in row["namespaces"]}
+                ),
+                source_selector=str(selectors[0]),
+                target_selector=str(selectors[1]),
+                source_fingerprint=source_fingerprint,
+                inventory_digest=approved_scope,
+                selector_fingerprints=[row["fingerprint"] for row in bindings],
+                targets=[
+                    {
+                        "owner_id": owner,
+                        "witnesses": [
+                            dict(
+                                zip(
+                                    ("path", "device", "inode", "mode"),
+                                    witness,
+                                    strict=True,
+                                )
+                            )
+                            for witness in chain
+                        ],
+                    }
+                    for owner, (_, chain) in zip(
+                        ("db.chachanotes.primary", "db.workspaces", "db.agent_runs"),
+                        destination_witnesses,
+                        strict=True,
+                    )
+                ],
+            )
+            with journal._locked(exclusive=True) as parent:
+                journal._append(parent, "mobile_prepared", prepared.model_dump())
+            control_records.register_pending(
+                root,
+                journal.operation_id,
+                tuple(prepared.namespaces),
+                journal.root.parent,
+                tuple(dict.fromkeys(selectors)),
+            )
+        self._mobile_journal = journal
+
+    @contextmanager
+    def mobile_consolidation_owner(self, journal, owner_id):
+        """Construct one exact installed owner; retire physical handles before return."""
+        from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+        from .journal import _mobile_state
+        from .native_files import flush_directory, pinned_directory
+        from .native_platform import flush_file
+
+        self._check()
+        if journal is not getattr(self, "_mobile_journal", None) or any(
+            getattr(_local, name, None) is not None
+            for name in ("mobile_scope", "capture_scope", "discovery_scope")
+        ):
+            raise bootstrap.RecoveryRequired("mobile_native_preparation_required")
+        classes = {
+            "db.chachanotes.primary": CharactersRAGDB,
+            "db.workspaces": WorkspaceDB,
+            "db.agent_runs": AgentRunsDB,
+        }
+        if owner_id not in classes:
+            raise ValueError("mobile_owner_scope_invalid")
+        with journal._locked(exclusive=False) as parent:
+            records = journal._records(parent)
+        prepared, witnesses = _mobile_state(records)
+        control_records._mobile_pending(self, journal, prepared)
+        if records[-1].event not in {
+            "mobile_prepared",
+            "mobile_path_observed",
+            "mobile_owner_retired",
+            "mobile_owner_opened",
+        }:
+            raise bootstrap.RecoveryRequired("mobile_owner_not_retired")
+        if (
+            records[-1].event == "mobile_owner_opened"
+            and records[-1].evidence["owner_id"] != owner_id
+        ):
+            raise bootstrap.RecoveryRequired("mobile_owner_not_retired")
+        recovering_owner = records[-1].event == "mobile_owner_opened"
+        target = next(row for row in prepared.targets if row.owner_id == owner_id)
+        for witness in target.witnesses:
+            if any(
+                _mobile_witness(Path(path)) != row for path, row in witnesses.items()
+            ):
+                raise bootstrap.RecoveryRequired("mobile_object_changed")
+            current = witnesses[witness.path]
+            if current["inode"] is not None:
+                continue
+            path = Path(witness.path)
+            kind = "database" if witness is target.witnesses[-1] else "directory"
+            with journal._locked(exclusive=True) as journal_fd:
+                journal._append(
+                    journal_fd,
+                    "mobile_path_intended",
+                    {"before": current, "kind": kind},
+                )
+                with pinned_directory(path.parent) as parent:
+                    parent_info = os.fstat(parent)
+                    expected_parent = witnesses[str(path.parent)]
+                    if (
+                        parent_info.st_dev,
+                        parent_info.st_ino,
+                        parent_info.st_mode,
+                    ) != (
+                        expected_parent["device"],
+                        expected_parent["inode"],
+                        expected_parent["mode"],
+                    ) or any(
+                        _mobile_witness(Path(name)) != row
+                        for name, row in witnesses.items()
+                    ):
+                        raise bootstrap.RecoveryRequired("mobile_object_changed")
+                    if kind == "directory":
+                        os.mkdir(path.name, mode=0o700, dir_fd=parent)
+                        created_info = os.stat(
+                            path.name, dir_fd=parent, follow_symlinks=False
+                        )
+                    else:
+                        fd = os.open(
+                            path.name,
+                            os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                            0o600,
+                            dir_fd=parent,
+                        )
+                        try:
+                            created_info = os.fstat(fd)
+                            flush_file(fd)
+                        finally:
+                            os.close(fd)
+                    flush_directory(parent)
+                observed = _mobile_witness(path)
+                if (observed["device"], observed["inode"], observed["mode"]) != (
+                    created_info.st_dev,
+                    created_info.st_ino,
+                    created_info.st_mode,
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_object_changed")
+                if any(
+                    _mobile_witness(Path(name)) != row
+                    for name, row in witnesses.items()
+                    if name != str(path)
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_object_changed")
+                journal._append(journal_fd, "mobile_path_observed", {"after": observed})
+                witnesses[str(path)] = observed
+        owner = {"owner_id": owner_id, "path": target.witnesses[-1].path}
+        scope = object.__new__(_MobileScope)
+        scope.session, scope.journal, scope.owner = self, journal, owner
+        scope.witnesses, scope.resources = witnesses, []
+        scope.active, scope.close_failed = True, False
+        scope.execution_owner = None
+        scope.execution_use = None
+        scope.execution_stream = None
+        scope.execution_fd = None
+        scope.repository = object.__new__(classes[owner_id])
+        scope.repository._mobile_consolidation_scope = scope
+        self._scopes.append(scope)
+        if not recovering_owner:
+            with journal._locked(exclusive=True) as parent:
+                journal._append(parent, "mobile_owner_opened", owner)
+        _local.mobile_scope = scope
+        owner_admitted = False
+        try:
+            kwargs = {}
+            if owner_id == "db.agent_runs":
+                scope.execution_owner = ConsoleExecutionOwner._acquire_consolidation(
+                    scope
+                )
+                kwargs = {
+                    "execution_owner": scope.execution_owner,
+                    "reconcile_on_init": False,
+                }
+            owner_admitted = True
+            if recovering_owner:
+                with journal._locked(exclusive=True) as parent:
+                    journal._append(parent, "mobile_owner_retired", owner)
+                    journal._append(parent, "mobile_owner_opened", owner)
+            classes[owner_id].__init__(
+                scope.repository, Path(owner["path"]), "mobile-consolidation", **kwargs
+            )
+            yield scope.repository
+        finally:
+            try:
+                scope.retire()
+                if not recovering_owner or owner_admitted:
+                    with journal._locked(exclusive=True) as parent:
+                        journal._append(parent, "mobile_owner_retired", owner)
+            finally:
+                _local.mobile_scope = None
 
     def _retire(self):
         self._active = False

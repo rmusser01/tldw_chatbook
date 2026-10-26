@@ -145,3 +145,21 @@ holds exact `workspace_runtime_bindings.binding_id` values. The corresponding
 holds; `DB/mobile_import_authority.py` adds linked run and allowance-family
 checks for automatic consumers. There is no release API: manual work or saving
 a binding never constitutes review.
+
+
+The internal consolidation owner scope in `Backup_Recovery/storage_admission.py`
+can construct these three exact installed repositories under native maintenance.
+`participants.py` checks the actual tagged repository before core operations and
+connection registration; `private_sqlite.py` accepts only the exact native
+ChaChaNotes quiescent factory or the native base SQLite factory for its matching
+owner/path. Retained cursors and transaction commits revalidate the live grant,
+selector binding and object witnesses. Ordinary maintenance constructors and
+foreign factories remain refused.
+
+For AgentRuns, `ConsoleExecutionOwner._acquire_consolidation(scope)` accepts only
+the actual live native run-owner scope. It uses the ordinary stable adjacent lock,
+nonblocking flock and identity/refcount checks, and requires an already-private
+store. Ordinary acquisition retains its legacy 0644-to-0600 behavior. The native
+scope holds an execution use through physical SQLite retirement; a call to
+`close()` while users remain cannot release the execution fence. No imported
+transaction or batch receipt is manufactured by this admission machinery.

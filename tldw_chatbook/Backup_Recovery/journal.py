@@ -593,12 +593,168 @@ class _Committed(_Evidence):
     credential_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
+_MOBILE_OWNERS = ("db.chachanotes.primary", "db.workspaces", "db.agent_runs")
+
+
+class _MobileWitness(_Evidence):
+    path: str
+    device: int | None = Field(ge=0)
+    inode: int | None = Field(ge=0)
+    mode: int | None = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileTarget(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    witnesses: list[_MobileWitness] = Field(min_length=2, max_length=256)
+
+
+class _MobilePrepared(_Evidence):
+    mode: Literal["mobile_consolidation"] = "mobile_consolidation"
+    bootstrap_root: str
+    namespaces: list[str] = Field(min_length=1, max_length=4096)
+    source_selector: str
+    target_selector: str
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    inventory_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selector_fingerprints: list[str] = Field(min_length=2, max_length=2)
+    targets: list[_MobileTarget] = Field(min_length=3, max_length=3)
+
+    @field_validator("bootstrap_root", "source_selector", "target_selector")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobilePathIntent(_Evidence):
+    before: _MobileWitness
+    kind: Literal["directory", "database"]
+
+
+class _MobilePathObserved(_Evidence):
+    after: _MobileWitness
+
+
+class _MobileOwner(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    path: str
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+def _mobile_state(records):
+    """Replay only typed path transitions; owner records never prove a batch commit."""
+    prepared = _MobilePrepared.model_validate(records[0].evidence)
+    witnesses = {
+        row.path: row.model_dump()
+        for target in prepared.targets
+        for row in target.witnesses
+    }
+    for record in records:
+        if record.event == "mobile_path_observed":
+            row = record.evidence["after"]
+            witnesses[row["path"]] = row
+    return prepared, witnesses
+
+
+def _validate_mobile(event, evidence, prior):
+    models = {
+        "mobile_prepared": _MobilePrepared,
+        "mobile_path_intended": _MobilePathIntent,
+        "mobile_path_observed": _MobilePathObserved,
+        "mobile_owner_opened": _MobileOwner,
+        "mobile_owner_retired": _MobileOwner,
+    }
+    if event not in models:
+        raise ValueError("journal_transition_invalid")
+    value = models[event].model_validate(dict(evidence))
+    if not prior:
+        if event != "mobile_prepared":
+            raise ValueError("journal_transition_invalid")
+        if tuple(row.owner_id for row in value.targets) != _MOBILE_OWNERS:
+            raise ValueError("mobile_owner_scope_invalid")
+        seen = {}
+        targets = []
+        for target in value.targets:
+            path = Path(target.witnesses[-1].path)
+            expected = tuple(reversed((path, *path.parents)))
+            if tuple(Path(row.path) for row in target.witnesses) != expected:
+                raise ValueError("mobile_witness_chain_invalid")
+            targets.append(str(path))
+            for row in target.witnesses:
+                fields = (row.device, row.inode, row.mode)
+                if any(v is None for v in fields) and fields != (None, None, None):
+                    raise ValueError("mobile_witness_invalid")
+                if seen.setdefault(row.path, row) != row:
+                    raise ValueError("mobile_witness_conflict")
+        if len(set(targets)) != 3:
+            raise ValueError("mobile_target_alias")
+    else:
+        if prior[0].event != "mobile_prepared" or event == "mobile_prepared":
+            raise ValueError("journal_transition_invalid")
+        prepared, witnesses = _mobile_state(prior)
+        last = prior[-1]
+        if last.event == "mobile_path_intended":
+            if event != "mobile_path_observed":
+                raise ValueError("mobile_creation_unsettled")
+            before = last.evidence["before"]
+            if value.after.path != before["path"] or any(
+                item is None
+                for item in (value.after.device, value.after.inode, value.after.mode)
+            ):
+                raise ValueError("mobile_creation_unverified")
+            check = (
+                stat.S_ISDIR if last.evidence["kind"] == "directory" else stat.S_ISREG
+            )
+            if not check(value.after.mode):
+                raise ValueError("mobile_creation_kind_invalid")
+        elif last.event == "mobile_owner_opened":
+            if event != "mobile_owner_retired" or value.model_dump() != last.evidence:
+                raise ValueError("mobile_owner_not_retired")
+        elif event == "mobile_path_intended":
+            if (
+                witnesses.get(value.before.path) != value.before.model_dump()
+                or value.before.inode is not None
+            ):
+                raise ValueError("mobile_creation_unreviewed")
+            leaves = {target.witnesses[-1].path for target in prepared.targets}
+            if (value.kind == "database") != (value.before.path in leaves):
+                raise ValueError("mobile_creation_kind_invalid")
+            parent = witnesses.get(str(Path(value.before.path).parent))
+            if parent is None or parent["inode"] is None:
+                raise ValueError("mobile_creation_parent_missing")
+        elif event == "mobile_owner_opened":
+            target = next(
+                row for row in prepared.targets if row.owner_id == value.owner_id
+            )
+            if (
+                value.path != target.witnesses[-1].path
+                or witnesses[value.path]["inode"] is None
+            ):
+                raise ValueError("mobile_owner_scope_invalid")
+        else:
+            raise ValueError("journal_transition_invalid")
+    return value.model_dump()
+
+
 class _Event(_Evidence):
     version: Literal[1] = 1
     operation_id: str
     sequence: int = Field(ge=0, lt=MAX_EVENTS)
     previous: str
     event: Literal[
+        "mobile_prepared",
+        "mobile_path_intended",
+        "mobile_path_observed",
+        "mobile_owner_opened",
+        "mobile_owner_retired",
         "candidate_staged",
         "prepublication_aborted",
         "prepared",
@@ -636,6 +792,8 @@ def _encoded(record: _Event) -> bytes:
 
 
 def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -> dict:
+    if event.startswith("mobile_") or (prior and prior[0].event == "mobile_prepared"):
+        return _validate_mobile(event, evidence, prior)
     events = [record.event for record in prior]
     lifecycle = [
         value
@@ -1560,6 +1718,8 @@ class Journal:
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
+        if event.startswith("mobile_"):
+            raise ValueError("mobile_native_session_required")
         if event in {
             "prepublication_aborted",
             "move_intended",

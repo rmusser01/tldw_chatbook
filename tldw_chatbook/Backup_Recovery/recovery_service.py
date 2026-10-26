@@ -1333,8 +1333,11 @@ class RecoveryService:
     def status(self, operation_id):
         """An immutable snapshot remains valid after subsequent worker updates."""
         with self._lock:
-            if operation_id in self._states:
-                return self._states[operation_id]
+            cached = self._states.get(operation_id)
+        if cached is not None and not any(
+            row["operation_id"] == operation_id for row in self.pending_operations()
+        ):
+            return cached
         from .recovery_copies import _journal
 
         journal = _journal(self.control_root, operation_id)
@@ -1354,6 +1357,8 @@ class RecoveryService:
         mode = next(
             (row.evidence["mode"] for row in records if row.event == "prepared"), None
         )
+        if records[0].event == "mobile_prepared":
+            mode = "mobile_consolidation"
         if mode is None:
             from .plan_records import load_plan
 

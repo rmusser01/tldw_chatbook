@@ -1146,3 +1146,38 @@ def _resume_activation_record(root, parent, name, temporary, before, after):
         flush_directory(parent)
     if _read(parent, name) != after:
         raise ValueError("activation_record_changed")
+
+
+def _mobile_pending(session, journal, prepared):
+    session._check()
+    root = session._control.parent
+    expected = _Pending(
+        operation_id=journal.operation_id,
+        control_root=str(journal.root.parent),
+        namespaces=prepared.namespaces,
+        selectors=list(
+            dict.fromkeys((prepared.source_selector, prepared.target_selector))
+        ),
+    )
+    pending, profiles = bootstrap._records(root)
+    if pending != [expected.model_dump()]:
+        raise bootstrap.RecoveryRequired("mobile_pending_scope_changed")
+    registry = bootstrap._registry(root)
+    for selector, fingerprint in zip(
+        (prepared.source_selector, prepared.target_selector),
+        prepared.selector_fingerprints,
+        strict=True,
+    ):
+        binding = bootstrap._binding(Path(selector), profiles, registry)
+        if (
+            binding is None
+            or binding["fingerprint"] != fingerprint
+            or not set(binding["namespaces"]) <= set(session._names)
+        ):
+            raise bootstrap.RecoveryRequired(
+                "mobile_close_old_instance_enrollment_required"
+            )
+    if prepared.bootstrap_root != str(root) or not set(prepared.namespaces) <= set(
+        session._names
+    ):
+        raise bootstrap.RecoveryRequired("mobile_session_scope_changed")

@@ -110,6 +110,54 @@ class ConsoleExecutionOwner:
                 raise
             raise ConsoleExecutionUnavailable("console_execution_unavailable") from exc
 
+    @classmethod
+    def _acquire_consolidation(cls, scope) -> ConsoleExecutionOwner:
+        """Acquire only the current native session's already-private run store."""
+        from tldw_chatbook.Backup_Recovery.admission import Admission
+        from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+        from tldw_chatbook.Backup_Recovery.storage_admission import _MobileScope
+
+        if cls is not ConsoleExecutionOwner or type(scope) is not _MobileScope:
+            raise ConsoleExecutionUnavailable("consolidation_scope_required")
+        _MobileScope.check(scope)
+        if (
+            scope.owner["owner_id"] != "db.agent_runs"
+            or scope.execution_owner is not None
+        ):
+            raise ConsoleExecutionUnavailable("consolidation_run_scope_required")
+        path = Path(scope.owner["path"])
+        result = verify_trusted_directory(path.parent, allow_shared_sticky=False)
+        if (
+            result.status != PrivatePathStatus.TRUSTED_DIRECTORY
+            or _store_identity(path) is None
+        ):
+            raise ConsoleExecutionUnavailable("unverified_run_store_parent")
+        leaf = f".{path.name}.execution.lock"
+        with pinned_directory(path.parent) as parent:
+            try:
+                Admission._create_lock(parent, leaf)
+            except FileExistsError:
+                pass
+            fd = Admission._open(parent, leaf, os.O_RDWR)
+            # The native scope owns the descriptor even if fdopen/locking fails.
+            scope.execution_fd = fd
+            stream = os.fdopen(fd, "r+")
+            scope.execution_stream = stream
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno in (errno.EACCES, errno.EAGAIN):
+                    raise ConsoleExecutionBusy("console_execution_busy") from None
+                raise
+            owner = cls(path, stream)
+            scope.execution_owner = owner
+            cls._live.add(owner)
+            owner.require_current(path)
+            scope.execution_use = owner._use(path)
+            scope.execution_use.__enter__()
+            _MobileScope.check(scope)
+            return owner
+
     def require_current(self, run_store: Path) -> None:
         """Require this process's retained lease and the admitted resource identity."""
         try:
