@@ -1161,7 +1161,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: deleted, and the Unfiled reconcile line: 37897 -> 37926 lines,
     #: 1362 -> 1363 methods (measured with ``_measure``; the first cut's
     #: 37955 was taken before the copy table moved out).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37926, 1363),
+    #: 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a task 5; owner
+    #: decision 2026-10-04, expand-the-limits rule): the Notes filter's Down
+    #: branch in ``on_key`` and its four helpers (``_library_notes_filter_down``,
+    #: ``_library_notes_filter_loading``, ``_first_library_notes_note_row``,
+    #: ``_land_library_notes_filter`` -- the ruling T5-a hand-off), Enter on an
+    #: applied filter opening its first result (``_apply_library_notes_filter``
+    #: split out of the Enter handler), the shared typing-field footer
+    #: transform extracted into ``_library_typing_field_footer`` and called by
+    #: the Notes navigator, editor and Info tiers, Clear filter emptying the
+    #: box, and the link-back delegator plus its focus role: 37926 -> 38076
+    #: lines, 1363 -> 1370 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38076, 1370),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

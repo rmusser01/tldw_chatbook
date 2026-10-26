@@ -603,7 +603,14 @@ _BUDGETS: dict[str, int] = {
     # selector, and a successful delete Undo withdrawing that notice and its
     # Refresh offer, which used to outlive it until restart: 7339 -> 7362
     # (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7362,
+    # 2026-10-26, TASK-34000.28 (polish-1a task 5; same owner decision): the
+    # one-hop way back after a followed link -- ``link_origin`` set by the
+    # backlink and note-link opens and cleared by every other open in
+    # ``_begin_library_note_load``, their shared flush-then-open tail
+    # ``_open_library_note_from_link``, the ``‹ <title>`` handler
+    # ``handle_library_note_link_back`` and its focus role's selector:
+    # 7362 -> 7393 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7393,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

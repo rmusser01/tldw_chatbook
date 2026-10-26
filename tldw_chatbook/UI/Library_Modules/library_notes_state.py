@@ -546,6 +546,13 @@ class LibraryNotesState:
     #: link here yet" before -- or without ever -- checking.
     backlinks_status: Literal["loading", "ready", "failed"] = "loading"
 
+    #: TASK-34000.28 (N-21): ``(note_id, title)`` of the note a backlink or a
+    #: note link was followed FROM, which the editor heading offers as
+    #: ``‹ <title>``. Set by those two opens only; every other open -- the
+    #: control's own included -- clears it in ``_begin_library_note_load``,
+    #: so the way back is one hop by construction.
+    link_origin: tuple[str, str] | None = None
+
     #: TASK-34000.11: the ``[[`` picker's candidate-load generation. Bumped
     #: on every new completion context; a loader that answers for an older
     #: generation is dropped, so a slow query never paints stale rows over
