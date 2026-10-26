@@ -20,7 +20,7 @@ Local receipts are retained privately under `.test-tmp/task36930/` and `.test-tm
 
 ## CI coverage
 
-All 36 new exact cases are registered in the existing UI gate: 15 Study, 12 inbox and 9 Lore. The census floor is 929. The three review-follow-up cases add an obsolete history exception and both late native mutation refreshes. The original dev 893 selectors retain their exact order; only the appended new tail was balanced across the existing 17 shards. No test, shard or timeout guard was removed or increased.
+All 36 new exact cases are registered in the existing UI gate: 15 Study, 12 inbox and 9 Lore. After integration onto live dev, the census floor is 935. The three review-follow-up cases add an obsolete history exception and both late native mutation refreshes. All 899 live-dev selectors retain their exact order, including the six Library files merged in PR #3234; only this PR’s appended 36-case tail was balanced across the existing 17 shards. No test, shard or timeout guard was removed or increased.
 
 Placement used actual PR #3248 job durations (run 40241711952, UI shards 776–1,081 seconds) and local case timings. These estimates are not hosted CI results. Hosted outcomes and execution counts will be recorded after this PR runs.
 
@@ -59,3 +59,10 @@ Initial hosted run [40254312374](https://github.com/rmusser01/tldw_chatbook/acti
 
 
 The initial aggregate also identified two integration omissions: the moved Lore completion diagnostics needed their derived inventory updated, and its post-await library-pane `query_one` was not protected in the worker scanner's accepted form. The lookup now uses the existing safe optional-query pattern; the W002 census is not increased. Statement review found two moved save/reload warnings and one new presentation-failure warning, all interpolating only the captured book ID. Existing `diagnose=False`, structured persistent-diagnostic sanitization and sink topology are unchanged. Both exact guard scripts now pass; the inventory reproduces (697 owners, 7,754 TASK-494 calls, 16 sink files), and all nine Lore cases plus nine actual private children pass on the safe-query source. The artifact changes only the two expected owner rows. The focused CI-delta review approved the correction with no findings and independently matched all frozen source/artifact/test hashes. Hosted final-head qualification remains pending.
+
+
+## Integration onto live dev
+
+Dev advanced to `e554f25812e28338a64e7c7649797e98dd056930` (PR #3234) while this work was being verified. Rebasing retained all nine reviewed implementation/test Git blobs exactly. The only conflicts were the shared census and numeric floor; both dev’s six Library files and this PR’s 36 exact cases are preserved, for 935 entries. The checker logic and 17-shard/1,200-second caps are unchanged.
+
+Placement now uses live dev’s green run 40256127519 (UI jobs 633–1,128 seconds) and qualified earlier per-case hosted durations, with conservative estimates for the new native-ordering witnesses. These are placement estimates, not final combined-run results. The two real fast contracts on the heaviest existing shard protect its remaining headroom. The combined 166 census/module/queue contracts pass. Both exact guard scripts pass on the rebased tree: no new worker/lookup violation, and diagnostic reproduction matches 698 owners, 7,757 TASK-494 calls and the same 16 sink files. Final hosted qualification is pending.
