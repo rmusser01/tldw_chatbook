@@ -269,3 +269,64 @@ publication plus committed DB batches remains the later terminal qualification.
 Custody reuse retains native per-component `O_NOFOLLOW`; it does not substitute
 bootstrap's trusted-system-symlink traversal. The resource owner supplies close
 bookkeeping only, never an alternate pathname resolver.
+
+
+### Fixed Chat/Workspace consolidation and shared selector proof
+
+The native mobile pending owner re-observes every prepared selector's content
+fingerprint and physical witnesses: source, target and the complete reviewed
+candidate cohort. This proof is shared by native database admission, each native
+owner transaction and history-file custody. Same-byte replacement is a changed
+reviewed object. Enrollment content/namespaces alone are insufficient; no
+history-only or public-wrapper guard substitutes for this owner check. Ordinary
+non-mobile admission remains unchanged.
+
+Chat/Workspace import uses fixed table/column dispositions and a pure typed
+cross-owner identity/dependency plan before effects. Unused identities survive;
+reuse requires native schema and authority equivalence. Colliding UUIDs may map
+deterministically; numeric identities stay integers and their allocations commit
+with the owning rows, exact holds and receipt. Only declared typed references
+map, including actual console_trace_calls.run_id. Original file roots, binding
+locators, exclusions and instruction restrictions retain their meaning without
+activation, permission grants or manual-send release. Unsupported populated
+families or unresolved dependencies refuse prewrite with an actionable reason.
+
+Only Console trace maintenance/graph epoch/migration/compaction and character
+search state/revision receive operational-singleton disposition: exact typed
+source row digests/identity associations plus authenticated capture provenance in
+the Chat receipt, with no body-bearing shadow history. Destination lease, GC,
+cursor and index authority remain native; ordinary mapped inserts retain their
+normal monotonic/index effects. Busy/unresolved maintenance and populated
+unsupported GC marks/scopes/runs refuse; no expiry repair. Every imported exchange
+must have a complete readable semantic graph, independent of the destination
+migration cursor. Schema version, FTS and sqlite_sequence remain native metadata
+or derived state, never source schema replay.
+
+The installed nine-entity sync frontier uses fixed typed payload references and
+native mapped hashes. Native INSERT-generated current proof remains unique;
+required representable v-1 live-message proof survives, and deleted entities
+retain only body-free native tombstones. Missing, ambiguous or unrepresentable
+required proof refuses. Original proof digests remain capture provenance, never
+receipt body copies. Source Sync profiles, grants, outbox and receipts are not
+imported, and consolidation does not reconcile Sync. Configured native restore
+keeps its idempotent outbox policy; qualification must cover continuation,
+previous hashes, deletion privacy and zero provider/tool dispatch.
+
+Default remains workspace-default, with its Chats placement and no imported
+runtime bindings. Source activation/timestamps cannot replace desktop selection;
+Default policy/content conflicts require explicit prewrite refusal rather than
+silent settings merge or ensure_default_workspace repair/deletion. Named
+conflicts use native casefold/suffix uniqueness and retain original names in
+identity associations. Citation identity is outside the singleton exception:
+only ADR126's exact unused-default predicate permits inert seed disposition.
+Populated key/fingerprint/provenance requires an actually readable native mapping
+or prewrite refusal; no second context, key provisioning or invented approval.
+
+The private Chat/Workspace increment cannot claim complete import. The run-owner
+increment supplies Goal/AgentRuns mappings, all-owner preflight before file
+publication and the first database batch, receipt-first resume and full closure;
+public terminal recovery/cutover remains separate. ADR227's historical Goal
+digests and explicit removed-payload tombstones retain the rules above. Retained
+captures never authorize resurrection of erased bodies. These fixed rules avoid
+replaying mutable process authority or silently discarding user history; failures
+require revising the specific disposition while preserving recovery copies.
