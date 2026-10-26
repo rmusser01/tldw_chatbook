@@ -578,3 +578,41 @@ module or tests exist yet; only the private field-ownership matrix and initial
 source-boundary handoff were written. Existing controller TASK-36766 metadata
 remains outside this amendment. This records current policy before its new code
 and tests; it does not reconstruct earlier A-files or hook chronology.
+
+
+### Historical Notes locators in captured content planning
+
+Retire only the legacy Notes `file_path_on_disk`/`sync_root_folder` presence
+query from `_inspect_store`'s external-reference check. Those fields accompany
+the complete DB note body and preserve historical locators, sync hashes and
+state; their presence alone proves neither missing body bytes nor activated
+file authority. Preserve all their values in the private content plan without
+filesystem probes, external reads/copies, hash falsification, activation or
+Sync protocol replay. Keep the external-reference default, dictionary and
+visual-asset queries, and every preview count/fingerprint/schema/physical,
+capture and claim check. Populated unsupported source protocol obligations
+continue to refuse through the fixed manifest.
+
+The actual preview currently refuses before preparation and encrypted capture
+for this historical-field case. Qualify the real preview → native preparation →
+encrypted capture → content-preservation path with unchanged profile bytes,
+modes and journal events during planning. Do not simulate admission by changing
+a fixture guard. Native `notes_sync_legacy.snapshot_legacy_notes_sync` performs
+metadata/identity/freshness probes and creates PAUSED roots, CANDIDATE bindings
+and pending-review plans; explicit fresh review/activation remains necessary.
+Later startup qualification must separately exercise the marker-absent native
+migrator and canonical cutover-marker semantics. Pure content planning does not
+prove startup behavior or grant filesystem access. A genuinely unrepresentable
+dependency still blocks before writes with its exact source identity.
+
+Contemporary state: HEAD `0faa12dc91` already records native note-token policy.
+Uncommitted partial `mobile_content_graph.py`, its captured-reader entry point,
+`test_mobile_content_graph.py` and a test-only native seed callback now exist.
+Two captured Note token tests passed; two native core tests reached missing
+entity/uniqueness behavior. Earlier NOT NULL/attachment-guard fixture failures
+are not product RED evidence. The historical Notes fixture reaches the actual
+pre-capture presence refusal. This amendment precedes changing that guard; it
+does not describe the current partial content handler as complete. Original
+`d74175b0fd319aef9d17f94d697bbbfd7fdf0895` review base and all subsequent private
+plan/integrated/write gates remain in force. Controller TASK-36766 metadata is
+outside this amendment, and historical hook limitations remain unchanged.
