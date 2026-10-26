@@ -303,6 +303,72 @@ def test_vault_import_reports_a_users_own_date_property(tmp_path):
     assert payload.unimported_frontmatter_keys == ("date", "mood")
 
 
+# Final review I-2 (ruling F-1): a block is the app's own export only when it
+# carries the exporters' provenance -- Export Markdown's ``note_id``, or a
+# bundle's ``id`` + ``created_at`` + ``updated_at``. Both shapes below hold
+# nothing but keys those exporters also write, yet a person wrote them.
+HAND_WRITTEN_DATE_BLOCKS = {
+    # An Obsidian daily note.
+    "daily": "---\ndate: 2024-01-01\ntags: [journal]\n---\n\nWent for a walk.\n",
+    # A Hugo / Jekyll post.
+    "post": "---\ntitle: Hello\ndate: 2024-01-01\ntags: [blog]\n---\n\nFirst post.\n",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(HAND_WRITTEN_DATE_BLOCKS))
+def test_vault_import_reports_a_hand_written_date_beside_only_honoured_keys(
+    tmp_path, shape
+):
+    """``{date, tags}`` and ``{title, date, tags}`` carry no export provenance,
+    so the ``date`` the vault import drops is the user's and is reported, as
+    it was before this branch."""
+    payload = _import_once(
+        tmp_path / "vault", {"n.md": HAND_WRITTEN_DATE_BLOCKS[shape]}, obsidian_mode=True
+    )["n.md"]
+    assert payload.unimported_frontmatter_keys == ("date",)
+
+
+@pytest.mark.parametrize("shape", sorted(HAND_WRITTEN_DATE_BLOCKS))
+def test_non_vault_import_keeps_a_hand_written_date_block_whole(tmp_path, shape):
+    """Outside a vault nothing is dropped: the block stays in the body exactly
+    as written, so the ``date`` is still there to read."""
+    text = HAND_WRITTEN_DATE_BLOCKS[shape]
+    payload = _import_once(tmp_path / "plain", {"n.md": text})["n.md"]
+    assert payload.content == text
+    assert payload.keywords == ()
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_non_vault_import_still_strips_a_block_of_only_honoured_keys(tmp_path):
+    """A block holding only what the import reads (``title``, ``tags``,
+    ``keywords``, ``aliases``) loses nothing when it is stripped."""
+    text = "---\ntitle: Hello\ntags: [blog]\n---\n\nFirst post.\n"
+    payload = _import_once(tmp_path / "plain", {"n.md": text})["n.md"]
+    assert payload.title == "Hello"
+    assert payload.keywords == ("blog",)
+    assert payload.content == "First post.\n"
+    assert payload.unimported_frontmatter_keys == ()
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["current", "legacy-keywords"])
+def test_vault_import_of_the_apps_own_export_markdown_reports_nothing(tmp_path, legacy):
+    """Guard: the Export Markdown file -- today's ``tags`` list or the pre-fix
+    ``keywords:`` line -- carries ``note_id``, so its ``date`` is provenance."""
+    text = (
+        "---\ntitle: Lisbon trip\ndate: 2026-07-07 09:30:15\n"
+        "keywords: travel, lisbon\nnote_id: n-1\n---\n\n# Lisbon trip\n\nThree days."
+        if legacy
+        else build_note_export_content(
+            "Lisbon trip", "Three days.", "travel, lisbon", "n-1", "markdown", now=EXPORT_NOW
+        )
+    )
+    payload = _import_once(tmp_path / "vault", {"n.md": text}, obsidian_mode=True)["n.md"]
+    assert payload.title == "Lisbon trip"
+    assert payload.keywords == ("travel", "lisbon")
+    assert "---" not in payload.content
+    assert payload.unimported_frontmatter_keys == ()
+
+
 @pytest.mark.parametrize("raw", ["3.10", "12:30", "0755", "2026-10-24"])
 def test_vault_import_keeps_a_scalar_title_exactly_as_written(tmp_path, raw):
     """R2-4: YAML 1.1 types ``3.10`` as 3.1, ``12:30`` as 750 (base 60) and
@@ -352,6 +418,32 @@ def test_a_title_holding_a_fence_line_round_trips_through_the_single_note_export
     assert metadata["title"] == FENCE_TITLE
 
 
+FRONTMATTER_BYTE_CAP = 64 * 1024
+
+
+def _note_with_a_block_of(size: int) -> str:
+    """A note whose front matter block (between the fences) is ``size`` bytes."""
+    head = "title: Big\nnote: "
+    return f"---\n{head}{'a' * (size - len(head))}\n---\n\nBody."
+
+
+def test_a_frontmatter_block_over_the_byte_cap_stays_in_the_body():
+    """Final review M-11: the block is capped at 200 lines but a line can be
+    any length, and the YAML reader takes ~0.25 s per MB -- a bundle member may
+    be 128 MB. A block over 64 KiB is read as no front matter at all: the file
+    stays in the body exactly as written and nothing is parsed."""
+    from tldw_chatbook.Notes import note_import_parsers
+
+    cap = getattr(note_import_parsers, "_MAX_FRONTMATTER_BYTES", FRONTMATTER_BYTE_CAP)
+    assert cap == FRONTMATTER_BYTE_CAP
+    at_the_cap = _note_with_a_block_of(cap)
+    metadata, body = split_frontmatter(at_the_cap)
+    assert metadata is not None and metadata["title"] == "Big"
+    assert body == "Body."
+    over_the_cap = _note_with_a_block_of(cap + 1)
+    assert split_frontmatter(over_the_cap) == (None, over_the_cap)
+
+
 def test_legacy_single_note_export_with_a_keywords_key_still_imports_its_keywords():
     """Files users exported before this fix wrote ``keywords: a, b``; the
     importer reads that key as a tags alias so those files are not orphaned."""
@@ -372,7 +464,11 @@ def test_legacy_single_note_export_with_a_keywords_key_still_imports_its_keyword
 # --- Bundles: the same renderer, the real creator and importer ---------------
 
 
-BUNDLE_TITLES = (*AWKWARD_TITLES, FENCE_TITLE)
+INLINE_FENCE_TITLE = "before --- after"
+"""The original RED for the importer's naive ``content.split("---", 2)``: an
+inline ``---`` (``Q3 --- planning``) inside a quoted title scalar."""
+
+BUNDLE_TITLES = (*AWKWARD_TITLES, FENCE_TITLE, INLINE_FENCE_TITLE)
 TAGGED_TITLE = "Lisbon trip"
 
 
@@ -421,6 +517,23 @@ def test_bundle_note_tags_are_a_list_and_survive_the_import(bundle_round_trip):
         "lisbon",
         "travel",
     ]
+
+
+@pytest.mark.parametrize("obsidian_mode", [False, True], ids=["plain", "vault"])
+def test_a_bundle_note_file_reimports_through_add_from_files_without_a_report(
+    bundle_round_trip, tmp_path, obsidian_mode
+):
+    """Guard (final review I-2): a note file the real creator wrote carries
+    ``id`` + ``created_at`` + ``updated_at``, so picked through Add from files
+    its block is stripped and none of those keys is reported."""
+    text = bundle_round_trip["files"][TAGGED_TITLE]
+    payload = _import_once(
+        tmp_path / "bundle", {"lisbon.md": text}, obsidian_mode=obsidian_mode
+    )["lisbon.md"]
+    assert payload.title == TAGGED_TITLE
+    assert set(payload.keywords) == {"lisbon", "travel"}
+    assert payload.content.strip() == f"Body of {TAGGED_TITLE}"
+    assert payload.unimported_frontmatter_keys == ()
 
 
 def test_a_pre_fix_bundle_with_an_unparseable_block_still_imports_a_clean_body(tmp_path):
