@@ -21851,3 +21851,23 @@ The first quiz Start RED run stopped at the cross-entry duplicate assertion, but
 ## Scroll before capturing Pilot coordinates, then let layout settle (PR #3248)
 
 CI's existing Library receipt-open test timed out waiting for its Reader. A mouse-only trace of the unchanged test captured all three mouse events at (48, 30), hitting LibraryIngestQueuePanel, while the live enabled receipt button occupied row 34; no Button.press fired. The immediate scroll/hit check had used pre-layout geometry. Wait across layout turns for a stable, live hit-tested region, then reacquire the button before Pilot captures its coordinates. Keep the real click and the original Reader/DB outcome assertions. A delegation-property wrapper in the initial diagnostic caused its own TypeError and was excluded; the valid mouse-only trace established the missed target.
+
+
+## A syntax-level guard cannot read a computed value: a splat of None resets is an opaque write (TASK-33620.15.7, 2026-10-25)
+
+PR #3211 changed the Send-reason strip's `set_styles(width=None, height=None)`
+to clear only the rules that exist: `set_styles(**dict.fromkeys(stale))`. The
+behaviour was identical and every touched suite, the size ratchets and preflight
+passed. The merge queue evicted the PR twice on
+`test_component_pattern_governance.py::test_python_style_ratchet`: ADR-161's
+Python style inventory is an AST scan, so a `**` keyword has no property name
+and no literal value and is recorded as an opaque runtime write (`set_styles *
+(runtime)`), which the HARD-ZERO floor rejects. Only a literal `None` counts as
+a reset. Two guarded `set_styles(<name>=None)` calls passed the scan with the
+same layout-request counts.
+
+**What to do.** When a change touches a Python `styles`/`set_styles` write in
+`tldw_chatbook/`, even a refactor of a reset, run
+`Tests/UI/test_component_pattern_governance.py` before pushing. Name each
+property as a literal keyword; a reset must be a literal `None`, and a computed
+value is legal only as measured runtime geometry with a `# ds-runtime:` reason.
