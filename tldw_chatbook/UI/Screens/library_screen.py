@@ -8569,8 +8569,7 @@ class LibraryScreen(BaseAppScreen):
             target = None
         self._advance_library_ordinary_emergency_user_interaction(target)
         self._mark_library_notes_user_interaction()
-        if handoff := self._library_notes_filter_row_handoff:
-            self._library_notes_filter_row_handoff = (handoff[0], False)
+        self._withdraw_library_notes_filter_row_handoff()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -8580,6 +8579,7 @@ class LibraryScreen(BaseAppScreen):
             getattr(event, "widget", None)
         )
         self._mark_library_notes_user_interaction()
+        self._withdraw_library_notes_filter_row_handoff()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -8589,6 +8589,7 @@ class LibraryScreen(BaseAppScreen):
             getattr(event, "widget", None)
         )
         self._mark_library_notes_user_interaction()
+        self._withdraw_library_notes_filter_row_handoff()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -9194,8 +9195,7 @@ class LibraryScreen(BaseAppScreen):
                     focused = self._move_library_screen_focus(-1)
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
-        if handoff := self._library_notes_filter_row_handoff:
-            self._library_notes_filter_row_handoff = (handoff[0], False)
+        self._withdraw_library_notes_filter_row_handoff()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         if emergency_tab:
@@ -9446,11 +9446,13 @@ class LibraryScreen(BaseAppScreen):
         marking twice is a no-op).
         """
         self._mark_library_notes_user_interaction()
+        self._withdraw_library_notes_filter_row_handoff()
         self._move_library_screen_focus(1)
 
     def action_focus_previous(self) -> None:
         """Shift+Tab: the reverse of ``action_focus_next``."""
         self._mark_library_notes_user_interaction()
+        self._withdraw_library_notes_filter_row_handoff()
         self._move_library_screen_focus(-1)
 
     #: task-32246: the Tab region INSIDE the open Notes work pane -- the
@@ -9594,6 +9596,8 @@ class LibraryScreen(BaseAppScreen):
 
     def action_focus_previous_workbench_pane(self) -> None:
         """Shift+F6: move focus to the previous Library workbench pane."""
+        # A priority binding never reaches ``on_key`` (TASK-34000.28 R2-2).
+        self._withdraw_library_notes_filter_row_handoff()
         focus_relative_workbench_pane(
             self,
             self._library_workbench_focus_targets(),
@@ -9684,6 +9688,7 @@ class LibraryScreen(BaseAppScreen):
             self._artifacts_controller.suspend()
         self._unavailable_navigation.clear_character_return(self)
         self._disarm_library_list_entry_focus()
+        self._withdraw_library_notes_filter_row_handoff()
         self._stop_library_media_selection_debounce()
         self._stop_library_media_filter_timer()
         for attr in ("_library_source_snapshot_timeout_timer",):
@@ -25503,6 +25508,21 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._focus_library_notes_filter_input()
 
+    def _withdraw_library_notes_filter_row_handoff(self) -> None:
+        """The user's own input takes over from a pending Down (ruling T5-a).
+
+        TASK-34000.28 R2-2: called from every site real input reaches --
+        ``on_key``, ``on_mouse_down``, the wheel, the priority-bound focus
+        actions ``on_key`` never sees (the note fields' Tab/Shift+Tab, and
+        Shift+F6) -- and from ``on_screen_suspend`` (a dialog over Library,
+        e.g. Ctrl+Q's). Not from ``on_descendant_focus``: the apply's own
+        recompose prunes the focused box, and Textual's focus reset there
+        reads as a user move -- that withdrew every hand-off (measured: both
+        T5-a Pilot pins red).
+        """
+        if handoff := self._library_notes_filter_row_handoff:
+            self._library_notes_filter_row_handoff = (handoff[0], False)
+
     def _library_notes_filter_down(self) -> bool:
         """Down in the Notes filter: the first result row (TASK-34000.28 N-21).
 
@@ -25522,7 +25542,13 @@ class LibraryScreen(BaseAppScreen):
             if draft != self._notes_state.filter:
                 self._apply_library_notes_filter(draft)
             return True
-        first = self._first_library_notes_note_row()
+        # An applied result lands on its first note; an empty box -- nothing
+        # applied -- on the browse tree's first row, as after a clear (R2-4).
+        first = (
+            self._first_library_notes_note_row()
+            if draft
+            else self._first_library_notes_tree_row()
+        )
         if first is None:
             return False
         first.focus(scroll_visible=False)
