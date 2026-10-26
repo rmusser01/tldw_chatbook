@@ -112,7 +112,7 @@ class ConsoleExecutionOwner:
 
     @classmethod
     def _acquire_consolidation(cls, scope) -> ConsoleExecutionOwner:
-        """Acquire only the current native session's already-private run store."""
+        """Acquire the exact run lock before journaled native mode preparation."""
         from tldw_chatbook.Backup_Recovery.admission import Admission
         from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
         from tldw_chatbook.Backup_Recovery.storage_admission import _MobileScope
@@ -127,10 +127,7 @@ class ConsoleExecutionOwner:
             raise ConsoleExecutionUnavailable("consolidation_run_scope_required")
         path = Path(scope.owner["path"])
         result = verify_trusted_directory(path.parent, allow_shared_sticky=False)
-        if (
-            result.status != PrivatePathStatus.TRUSTED_DIRECTORY
-            or _store_identity(path) is None
-        ):
+        if result.status != PrivatePathStatus.TRUSTED_DIRECTORY:
             raise ConsoleExecutionUnavailable("unverified_run_store_parent")
         leaf = f".{path.name}.execution.lock"
         with pinned_directory(path.parent) as parent:
@@ -149,6 +146,9 @@ class ConsoleExecutionOwner:
                 if exc.errno in (errno.EACCES, errno.EAGAIN):
                     raise ConsoleExecutionBusy("console_execution_busy") from None
                 raise
+            if scope.recovering_owner:
+                _MobileScope.observe_sidecars(scope, "recovered")
+            _MobileScope.harden_store(scope)
             owner = cls(path, stream)
             scope.execution_owner = owner
             cls._live.add(owner)

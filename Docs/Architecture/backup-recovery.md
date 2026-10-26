@@ -124,8 +124,8 @@ quarantine consumers; the preview still performs no import or cutover.
 
 `MaintenanceSession.prepare_mobile_consolidation(journal, *, source_config,
 target_config, selections, approved_scope, source_fingerprint,
-destination_witnesses)` prepares an internal in-place operation. It accepts checked
-config selectors and the reviewed native inventory digest and preview witnesses.
+destination_witnesses, destination_sidecars)` prepares an internal in-place
+operation. It accepts checked config selectors and the reviewed native inventory digest and preview witnesses.
 Both selectors must have compatible, positive ADR-126 enrollment; their own
 selected roots must cover their respective source/canonical paths. The actual
 session holds the unbound gate and every selected namespace exclusively after
@@ -152,7 +152,8 @@ reads source and writes only staging. Missing canonical parents and databases us
 pinned native exclusive creation, with `mobile_path_intended` before creation and
 `mobile_path_observed` before accepting the new witness. Changed objects, foreign
 operations and unresolved creation intents refuse. This path does not adopt an
-unexpected object, replace an existing object or harden an existing run store.
+unexpected object or replace an existing object. Existing destination DBs and
+their fixed SQLite sidecars use the qualified mode transition described below.
 
 `mobile_owner_opened` and `mobile_owner_retired` bracket actual native handle
 ownership. Scope exit closes physical SQLite handles before releasing the separate
@@ -168,3 +169,33 @@ and continue fencing startup, including corrupt or mismatched journal/pending
 records. The importer must add checked preview provenance, source claims, complete
 mapping/reference and byte closure, native owner batch receipts, validated recovery
 and cutover before any public apply or terminal fence-release route is exposed.
+
+Before native owner construction, `mobile_mode_intended` records an exact existing
+owned regular file witness, and `mobile_mode_observed` accepts only the same
+path/device/inode changed to 0600. All three DB owners use this transition;
+AgentRuns first wins its stable execution flock. Interrupted transitions remain
+pending and refuse adoption on reopen. Source bytes and permissions are unchanged.
+
+`destination_sidecars` is separate immutable preview evidence: for each canonical
+DB it records exactly `-wal`, `-shm` and `-journal` presence/path/device/inode/mode,
+bound to that DB's strict ancestor evidence and native parent qualification.
+Preview refuses unsafe objects, physical aliases and name collisions, including
+absent main/sidecar names. It neither expands the canonical namespace hash nor
+changes the three permanent destination witness chains.
+
+The native scope revalidates this fixed cohort before hardening and factory
+handoff. Mode changes on an existing sidecar receive the same strict before/after
+journal evidence as main files. SQLite owns subsequent optional sidecar generations;
+they are not frozen as permanent DB objects. Bounded `mobile_sidecars_observed`
+records observe the cohort after actual connection retirement, or after native
+exclusion and the run execution lock are reacquired for an interrupted owner.
+These observations permit same-operation reopening through the normal native
+optional-sidecar policy; they never establish a committed batch.
+
+Private SQLite helper wire protocol v2 adds a strict `require_private_mode` field.
+Only the actual live bound mobile grant selects it in the connection path after
+journaled preparation. The helper then refuses a needed mode change, including a
+new sidecar generation, without calling `fchmod`. Ordinary callers retain native
+hardening; read-only `preserve_source_mode` keeps its original meaning. Old/mixed
+wire versions and missing fields fail closed. This protocol is separate from
+Canvas and HTTP protocols.

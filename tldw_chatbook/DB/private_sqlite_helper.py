@@ -176,7 +176,7 @@ def run(parent_pid: int) -> int:
             except ProtocolError:
                 pipe.write(
                     encode_frame(
-                        {"version": 1, "operation": "close", "status": "protocol_error"}
+                        {"version": 2, "operation": "close", "status": "protocol_error"}
                     )
                 )
                 return 0
@@ -185,7 +185,7 @@ def run(parent_pid: int) -> int:
             if os.getppid() != parent_pid:
                 return 0
             operation = payload["operation"]
-            response = {"version": 1, "operation": operation}
+            response = {"version": 2, "operation": operation}
             try:
                 if "status" in payload:
                     raise ProtocolError()
@@ -266,6 +266,7 @@ def run(parent_pid: int) -> int:
                                 "writable",
                                 "create_if_missing",
                                 "preserve_source_mode",
+                                "require_private_mode",
                             )
                         }
                     )

@@ -28,6 +28,8 @@ def prepared(
     enrolled=True,
     ordinary_execution=False,
     run_mode=None,
+    destination_mode=None,
+    wal=False,
 ):
     from Tests.Backup_Recovery.mobile_consolidation_fixture import (
         seed_canonical_console,
@@ -50,6 +52,32 @@ def prepared(
     stores = CanonicalConsoleStores(*canonical_console_paths(values))
     if not fresh:
         seed_canonical_console(stores)
+    if wal:
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import os,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA journal_mode=WAL'); c.execute('PRAGMA wal_autocheckpoint=0'); c.execute(\"INSERT INTO mobile_consolidation_batches VALUES ('test-owned-wal','test','{}','test','test')\"); c.commit(); os._exit(0)",
+                str(stores.workspace_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        for suffix in ("-wal", "-shm"):
+            from pathlib import Path
+
+            sidecar = Path(f"{stores.workspace_path}{suffix}")
+            assert sidecar.exists()
+            sidecar.chmod(0o644)
+    if destination_mode is not None:
+        for path in stores.paths:
+            path.chmod(destination_mode)
     if run_mode is not None:
         stores.run_path.chmod(run_mode)
     root = tmp_path / "bootstrap"
@@ -85,6 +113,7 @@ def prepare(session, journal, config, preview, inventory):
         approved_scope=inventory.scope_digest,
         source_fingerprint=preview.source_fingerprint,
         destination_witnesses=preview.destination_witnesses,
+        destination_sidecars=preview.destination_sidecars,
     )
 
 
@@ -636,33 +665,88 @@ def test_corrupt_durable_evidence_cannot_reopen_or_clear_pending(
             service.close()
 
 
-def test_native_execution_uses_ordinary_lock_and_never_hardens(tmp_path, monkeypatch):
+def test_ordinary_execution_owner_prevents_native_maintenance(tmp_path, monkeypatch):
     from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
-    from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionUnavailable
 
     with (
         pytest.raises(AdmissionTimeout),
         prepared(tmp_path, monkeypatch, ordinary_execution=True),
     ):
         pytest.fail("ordinary execution ownership must prevent maintenance admission")
-    other = tmp_path / "private-mode"
-    other.mkdir(mode=448)
-    with prepared(other, monkeypatch, run_mode=420) as (
+
+
+@pytest.mark.parametrize(
+    "owner_id", ["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+)
+def test_reviewed_mode_hardening_is_journaled_before_actual_owner_construction(
+    tmp_path, monkeypatch, owner_id
+):
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import fingerprints
+
+    with prepared(tmp_path, monkeypatch, destination_mode=0o644) as (
         session,
         journal,
         config,
         stores,
         preview,
         inventory,
-        _,
+        authority,
     ):
+        source_bytes = fingerprints(preview.source_dir)
+        source_modes = {
+            path: path.stat().st_mode for path in preview.source_dir.rglob("*")
+        }
+        target = dict(
+            zip(
+                ("db.chachanotes.primary", "db.workspaces", "db.agent_runs"),
+                stores.paths,
+                strict=True,
+            )
+        )[owner_id]
+        append = journal._append
+        transitions = []
+
+        def observed_append(parent, event, evidence):
+            if event.startswith("mobile_mode_"):
+                transitions.append((event, target.stat().st_mode & 0o777))
+            return append(parent, event, evidence)
+
+        monkeypatch.setattr(journal, "_append", observed_append)
         prepare(session, journal, config, preview, inventory)
         with (
-            pytest.raises(ConsoleExecutionUnavailable),
-            session.mobile_consolidation_owner(journal, "db.agent_runs"),
+            session.mobile_consolidation_owner(journal, owner_id) as database,
+            database.transaction() as cursor,
         ):
-            pass
-        assert stores.run_path.stat().st_mode & 511 == 420
+            cursor.execute(
+                "INSERT INTO mobile_consolidation_batches VALUES (?, ?, ?, ?, ?)",
+                ("test-mode-change", "test", "{}", "test", "test"),
+            )
+        assert transitions == [
+            ("mobile_mode_intended", 0o644),
+            ("mobile_mode_observed", 0o600),
+        ]
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert fingerprints(preview.source_dir) == source_bytes
+        assert {
+            path: path.stat().st_mode for path in preview.source_dir.rglob("*")
+        } == source_modes
+    reopened = Journal(journal.root.parent, journal.operation_id)
+    with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session:
+        prepare(session, reopened, config, preview, inventory)
+        with (
+            session.mobile_consolidation_owner(reopened, owner_id) as database,
+            database.transaction() as cursor,
+        ):
+            assert (
+                cursor.execute(
+                    "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id='test-mode-change'"
+                ).fetchone()[0]
+                == 1
+            )
+    assert bootstrap.startup_permission(config, authority.control_root.parent) == (
+        False,
+        "recovery_pending",
+    )
 
 
 def test_reopen_rejects_changed_review_and_creation_rejects_swapped_parent(
@@ -689,6 +773,7 @@ def test_reopen_rejects_changed_review_and_creation_rejects_swapped_parent(
                 approved_scope="0" * 64,
                 source_fingerprint=preview.source_fingerprint,
                 destination_witnesses=preview.destination_witnesses,
+                destination_sidecars=preview.destination_sidecars,
             )
         native_pinned = native_files.pinned_directory
 
@@ -749,6 +834,7 @@ def test_killed_native_owner_reopens_same_journal_under_fresh_exclusion(
                             "config": str(config),
                             "fingerprint": preview.source_fingerprint,
                             "witnesses": preview.destination_witnesses,
+                            "sidecars": preview.destination_sidecars,
                             "inventory": inventory.scope_digest,
                         }
                     )
@@ -783,6 +869,10 @@ def test_killed_native_owner_reopens_same_journal_under_fresh_exclusion(
     authority = admission_authority(root)
     preview = SimpleNamespace(
         source_fingerprint=evidence["fingerprint"],
+        destination_sidecars=tuple(
+            (path, tuple(tuple(item) for item in rows))
+            for path, rows in evidence["sidecars"]
+        ),
         destination_witnesses=tuple(
             (
                 (path, tuple((tuple(item) for item in chain)))
@@ -804,3 +894,242 @@ def test_killed_native_owner_reopens_same_journal_under_fresh_exclusion(
                 == 1
             )
     assert bootstrap.startup_permission(config, root) == (False, "recovery_pending")
+
+
+def test_real_wal_hardening_lifecycle_and_original_review_reopen(tmp_path, monkeypatch):
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import fingerprints
+
+    with prepared(tmp_path, monkeypatch, wal=True) as (
+        session,
+        journal,
+        config,
+        stores,
+        preview,
+        inventory,
+        authority,
+    ):
+        original_main_witnesses = preview.destination_witnesses
+        original_sidecars = dict(preview.destination_sidecars)[
+            str(stores.workspace_path)
+        ]
+        assert all(row[3] & 0o777 == 0o644 for row in original_sidecars[:2])
+        source_bytes = fingerprints(preview.source_dir)
+        source_modes = {
+            path: path.stat().st_mode for path in preview.source_dir.rglob("*")
+        }
+        prepare(session, journal, config, preview, inventory)
+        with (
+            session.mobile_consolidation_owner(journal, "db.workspaces") as database,
+            database.transaction() as cursor,
+        ):
+            assert (
+                cursor.execute(
+                    "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id='test-owned-wal'"
+                ).fetchone()[0]
+                == 1
+            )
+            cursor.execute(
+                "INSERT INTO mobile_consolidation_batches VALUES ('native-wal-write','test','{}','test','test')"
+            )
+        with journal._locked(exclusive=False) as parent:
+            records = journal._records(parent)
+        modes = [record for record in records if record.event == "mobile_mode_observed"]
+        assert [row.evidence["after"]["path"] for row in modes] == [
+            str(stores.workspace_path) + suffix for suffix in ("-wal", "-shm")
+        ]
+        assert all(row.evidence["after"]["mode"] & 0o777 == 0o600 for row in modes)
+        assert any(
+            row.event == "mobile_sidecars_observed"
+            and row.evidence["phase"] == "retired"
+            for row in records
+        )
+        assert preview.destination_witnesses == original_main_witnesses
+        assert fingerprints(preview.source_dir) == source_bytes
+        assert {
+            path: path.stat().st_mode for path in preview.source_dir.rglob("*")
+        } == source_modes
+    reopened = Journal(journal.root.parent, journal.operation_id)
+    with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session:
+        prepare(session, reopened, config, preview, inventory)
+        with (
+            session.mobile_consolidation_owner(reopened, "db.workspaces") as database,
+            database.transaction() as cursor,
+        ):
+            assert (
+                cursor.execute(
+                    "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id='native-wal-write'"
+                ).fetchone()[0]
+                == 1
+            )
+
+
+@pytest.mark.parametrize("change", ["mode", "generation"])
+def test_helper_handoff_refuses_unjournaled_sidecar_changes(
+    tmp_path, monkeypatch, change
+):
+    from pathlib import Path
+
+    from tldw_chatbook.DB import private_sqlite
+
+    with prepared(tmp_path, monkeypatch, wal=True) as (
+        session,
+        journal,
+        config,
+        stores,
+        preview,
+        inventory,
+        _,
+    ):
+        prepare(session, journal, config, preview, inventory)
+        native_prepare = private_sqlite.prepare_in_helper
+        target = Path(f"{stores.workspace_path}-wal")
+        changed = []
+
+        def change_before_helper(request, **kwargs):
+            if request.require_private_mode:
+                assert target.stat().st_mode & 0o777 == 0o600
+                if change == "generation":
+                    replacement = target.with_name("replacement-wal")
+                    replacement.write_bytes(target.read_bytes())
+                    replacement.chmod(0o644)
+                    replacement.replace(target)
+                else:
+                    target.chmod(0o644)
+                changed.append((target.stat().st_ino, target.read_bytes()))
+            return native_prepare(request, **kwargs)
+
+        monkeypatch.setattr(private_sqlite, "prepare_in_helper", change_before_helper)
+        with (
+            pytest.raises(Exception, match="private_sqlite_mode_change_refused"),
+            session.mobile_consolidation_owner(journal, "db.workspaces"),
+        ):
+            pytest.fail("unreviewed sidecar reached SQLite owner")
+        assert changed and (target.stat().st_ino, target.read_bytes()) == changed[0]
+        assert target.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.parametrize("change", ["before", "after"])
+def test_interrupted_native_mode_transition_remains_fenced(
+    tmp_path, monkeypatch, change
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    with prepared(tmp_path, monkeypatch, destination_mode=0o644) as (
+        session,
+        journal,
+        config,
+        stores,
+        preview,
+        inventory,
+        authority,
+    ):
+        prepare(session, journal, config, preview, inventory)
+        native_chmod = storage.os.fchmod
+        inode = stores.workspace_path.stat().st_ino
+
+        def interrupt_chmod(fd, mode):
+            if storage.os.fstat(fd).st_ino == inode:
+                if change == "after":
+                    native_chmod(fd, mode)
+                raise OSError("interrupted-mode-transition")
+            return native_chmod(fd, mode)
+
+        with monkeypatch.context() as changed:
+            changed.setattr(storage.os, "fchmod", interrupt_chmod)
+            with (
+                pytest.raises(OSError, match="interrupted-mode-transition"),
+                session.mobile_consolidation_owner(journal, "db.workspaces"),
+            ):
+                pass
+        assert stores.workspace_path.stat().st_mode & 0o777 == (
+            0o644 if change == "before" else 0o600
+        )
+        with journal._locked(exclusive=False) as parent:
+            assert journal._records(parent)[-1].event == "mobile_mode_intended"
+    assert bootstrap.startup_permission(config, authority.control_root.parent) == (
+        False,
+        "recovery_pending",
+    )
+    with (
+        authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session,
+        pytest.raises(bootstrap.RecoveryRequired),
+    ):
+        prepare(
+            session,
+            Journal(journal.root.parent, journal.operation_id),
+            config,
+            preview,
+            inventory,
+        )
+
+
+def test_preview_rejects_absent_main_sidecar_name_overlap(tmp_path):
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        CanonicalConsoleStores,
+        preview_mobile_consolidation,
+    )
+
+    target = CanonicalConsoleStores(
+        tmp_path / "chat.db", tmp_path / "chat.db-wal", tmp_path / "run.db"
+    )
+    preview = preview_mobile_consolidation(tmp_path / "source", target)
+    assert "mobile_unsafe_alias" in preview.issues
+    assert not any(path.exists() for path in target.paths)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "main_link", "sidecar_link", "directory"])
+def test_sidecar_preview_refuses_unsafe_objects_and_aliases(tmp_path, kind):
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        CanonicalConsoleStores,
+        preview_mobile_consolidation,
+    )
+
+    stores = CanonicalConsoleStores(
+        tmp_path / "chat.db", tmp_path / "workspace.db", tmp_path / "run.db"
+    )
+    stores.chat_path.touch(mode=0o600)
+    sidecar = tmp_path / "chat.db-wal"
+    if kind == "symlink":
+        sidecar.symlink_to(stores.chat_path)
+    elif kind == "main_link":
+        sidecar.hardlink_to(stores.chat_path)
+    elif kind == "sidecar_link":
+        sidecar.touch(mode=0o600)
+        (tmp_path / "workspace.db-shm").hardlink_to(sidecar)
+    else:
+        sidecar.mkdir(mode=0o700)
+    preview = preview_mobile_consolidation(tmp_path / "absent-source", stores)
+    assert "mobile_unsafe_alias" in preview.issues
+
+
+def test_changed_sidecar_generation_refuses_before_any_native_hardening(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    with prepared(tmp_path, monkeypatch, wal=True) as (
+        session,
+        journal,
+        config,
+        stores,
+        preview,
+        inventory,
+        _,
+    ):
+        prepare(session, journal, config, preview, inventory)
+        sidecar = Path(f"{stores.workspace_path}-wal")
+        replacement = sidecar.with_name("changed-wal")
+        replacement.write_bytes(sidecar.read_bytes())
+        replacement.chmod(0o644)
+        replacement.replace(sidecar)
+        with (
+            pytest.raises(bootstrap.RecoveryRequired, match="mobile_sidecar_changed"),
+            session.mobile_consolidation_owner(journal, "db.workspaces"),
+        ):
+            pass
+        assert sidecar.stat().st_mode & 0o777 == 0o644
+        with journal._locked(exclusive=False) as parent:
+            assert not any(
+                record.event.startswith("mobile_mode_")
+                for record in journal._records(parent)
+            )

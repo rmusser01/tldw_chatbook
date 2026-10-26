@@ -15,13 +15,14 @@ from tldw_chatbook.Utils.private_paths import PrivatePathError
 
 
 def _request(path: Path, operation: str) -> dict[str, object]:
-    payload: dict[str, object] = {"version": 1, "operation": operation}
+    payload: dict[str, object] = {"version": 2, "operation": operation}
     if operation in {"prepare", "pin_source"}:
         payload.update(
             path=str(path),
             writable=operation == "prepare",
             create_if_missing=operation == "prepare",
             preserve_source_mode=False,
+            require_private_mode=False,
         )
     return payload
 

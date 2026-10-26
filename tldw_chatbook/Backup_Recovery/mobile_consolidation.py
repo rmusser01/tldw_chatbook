@@ -103,6 +103,7 @@ class MobileConsolidationPreview:
     rollback_scope: tuple[Path, ...] = ()
     candidate_destinations: tuple[CanonicalConsoleStores, ...] = ()
     destination_witnesses: tuple[tuple[str, tuple], ...] = ()
+    destination_sidecars: tuple[tuple[str, tuple], ...] = ()
     identity_conflicts: tuple[tuple[str, str, tuple], ...] = ()
 
 
@@ -269,6 +270,55 @@ def _destination_witnesses(destination):
     return tuple(result)
 
 
+def _sqlite_sidecars(path):
+    """Observe only the installed fixed cohort under a qualified native parent."""
+    import stat
+
+    from tldw_chatbook.Utils.platform_files import os
+
+    from .native_files import pinned_directory
+
+    parent = path.parent
+    while not parent.exists():
+        parent = parent.parent
+    with pinned_directory(parent):
+        pass
+    result = []
+    for suffix in ("-wal", "-shm", "-journal"):
+        selected = Path(f"{path}{suffix}")
+        _resource_identity(selected)
+        try:
+            info = selected.lstat()
+        except FileNotFoundError:
+            result.append((str(selected), None, None, None))
+            continue
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_uid != os.geteuid()
+        ):
+            raise ValueError("mobile_unsafe_alias")
+        result.append((str(selected), info.st_dev, info.st_ino, info.st_mode))
+    return tuple(result)
+
+
+def _destination_sidecars(destination):
+    paths = tuple(
+        path
+        for main in destination.paths
+        for path in (
+            main,
+            *(Path(f"{main}{suffix}") for suffix in ("-wal", "-shm", "-journal")),
+        )
+    )
+    if len(set(paths)) != len(paths):
+        raise ValueError("mobile_unsafe_alias")
+    physical = [_resource_identity(path)[1:] for path in paths if path.exists()]
+    if len(set(physical)) != len(physical):
+        raise ValueError("mobile_unsafe_alias")
+    return tuple((str(path), _sqlite_sidecars(path)) for path in destination.paths)
+
+
 def _preview(source_dir, destination, config=None, *, review_destination=True):
     source_dir = lexical_path(source_dir)
     issues, schemas, counts, mappings, dependencies, derived, scope = (
@@ -283,7 +333,9 @@ def _preview(source_dir, destination, config=None, *, review_destination=True):
     identities, references, evidence = {}, {}, []
     conflicts = []
     witnesses = _destination_witnesses(destination)
+    sidecars = ()
     try:
+        sidecars = _destination_sidecars(destination)
         _ = destination.identity  # Validate the explicit namespace before observation.
         _refuse_witness_aliases(witnesses)
         resources = tuple(
@@ -310,6 +362,7 @@ def _preview(source_dir, destination, config=None, *, review_destination=True):
                 (),
                 rollback_scope=destination.paths,
                 destination_witnesses=witnesses,
+                destination_sidecars=sidecars,
             )
         root = _inventory_root(source_dir, owner="db.agent_runs", external=False)
         if root.status not in {"unused", "included_directory"}:
@@ -324,6 +377,7 @@ def _preview(source_dir, destination, config=None, *, review_destination=True):
                 (),
                 rollback_scope=destination.paths,
                 destination_witnesses=witnesses,
+                destination_sidecars=sidecars,
             )
         adapters = _adapters()
         known = {
@@ -512,6 +566,7 @@ def _preview(source_dir, destination, config=None, *, review_destination=True):
         tuple(scope),
         destination.paths,
         destination_witnesses=witnesses,
+        destination_sidecars=sidecars,
         identity_conflicts=tuple(conflicts),
     )
 

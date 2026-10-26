@@ -1927,6 +1927,11 @@ def _connect_registered_sqlite(
         if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             _warn_unverified_platform(owner_id)
         deadline = OperationDeadline(operation_deadline)
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _mobile_private_preparation,
+        )
+
+        require_private_mode = _mobile_private_preparation(selected)
         with _helper_operation(1, deadline, reservation) as envelope:
             request = PrepareRequest(
                 path=str(selected),
@@ -1935,11 +1940,17 @@ def _connect_registered_sqlite(
                 preserve_source_mode=(
                     read_only and policy.preserve_read_only_source_mode
                 ),
+                require_private_mode=require_private_mode,
             )
             if private_paths._WINDOWS_PLATFORM:
+                if require_private_mode:
+                    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                    raise RecoveryRequired("mobile_native_preparation_unqualified")
                 deadline.remaining(5.0)
                 _prepare_artifact(
-                    selected, writable=request.writable,
+                    selected,
+                    writable=request.writable,
                     create_if_missing=request.create_if_missing,
                     enforce_private_mode=not request.preserve_source_mode,
                 )

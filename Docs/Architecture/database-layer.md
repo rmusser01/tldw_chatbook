@@ -158,8 +158,18 @@ foreign factories remain refused.
 
 For AgentRuns, `ConsoleExecutionOwner._acquire_consolidation(scope)` accepts only
 the actual live native run-owner scope. It uses the ordinary stable adjacent lock,
-nonblocking flock and identity/refcount checks, and requires an already-private
-store. Ordinary acquisition retains its legacy 0644-to-0600 behavior. The native
-scope holds an execution use through physical SQLite retirement; a call to
-`close()` while users remain cannot release the execution fence. No imported
+nonblocking flock and identity/refcount checks. After acquiring that lock, native
+consolidation journals any required main/sidecar 0644-to-0600 transition before
+constructing the repository. Ordinary acquisition retains its existing hardening
+behavior. The native scope holds an execution use through physical SQLite
+retirement; a call to `close()` while users remain cannot release the execution fence. No imported
 transaction or batch receipt is manufactured by this admission machinery.
+
+The mobile scope supplies an internal `require_private_mode` requirement to the
+strict v2 private-SQLite helper request. This is derived from the real bound grant,
+not a public connect flag or owner string. Every existing DB/sidecar must already
+be 0600 after its journaled transition; a late nonprivate generation refuses
+without mutation. Optional-sidecar creation/revalidation and native 0600 creation
+remain unchanged. Fixed sidecar observations at ownership retirement/recovery
+allow ordinary WAL generations to change without weakening permanent DB/ancestor
+witnesses or writing per-row journal records.

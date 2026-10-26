@@ -790,7 +790,7 @@ def test_unsolicited_extra_reply_is_rejected(tmp_path, fault_child):
     identity = codec.FileIdentity.from_stat(path.stat()).to_payload()
     frame = codec.encode_frame(
         {
-            "version": 1,
+            "version": 2,
             "operation": "prepare",
             "status": "ok",
             "result": {
@@ -973,12 +973,13 @@ HelperLease.start(PrepareRequest({str(target)!r},True,True,False),operation='pre
         os.write(gate_write, b"go")
         frame = codec.encode_frame(
             {
-                "version": 1,
+                "version": 2,
                 "operation": "prepare",
                 "path": str(target),
                 "writable": True,
                 "create_if_missing": True,
                 "preserve_source_mode": False,
+                "require_private_mode": False,
             }
         )
         try:

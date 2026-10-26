@@ -611,6 +611,7 @@ class _MobileWitness(_Evidence):
 class _MobileTarget(_Evidence):
     owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
     witnesses: list[_MobileWitness] = Field(min_length=2, max_length=256)
+    sidecars: list[_MobileWitness] = Field(min_length=3, max_length=3)
 
 
 class _MobilePrepared(_Evidence):
@@ -649,6 +650,53 @@ class _MobileOwner(_Evidence):
         return _Object.absolute_path(value)
 
 
+class _MobileSidecars(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    phase: Literal["recovered", "retired"]
+    witnesses: list[_MobileWitness] = Field(min_length=3, max_length=3)
+
+
+def _mobile_sidecar_state(records, owner_id):
+    prepared = _MobilePrepared.model_validate(records[0].evidence)
+    target = next(target for target in prepared.targets if target.owner_id == owner_id)
+    result = {row.path: row.model_dump() for row in target.sidecars}
+    for record in records:
+        if (
+            record.event == "mobile_mode_observed"
+            and record.evidence["after"]["path"] in result
+        ):
+            row = record.evidence["after"]
+            result[row["path"]] = row
+        if (
+            record.event == "mobile_sidecars_observed"
+            and record.evidence["owner_id"] == owner_id
+        ):
+            result = {row["path"]: row for row in record.evidence["witnesses"]}
+    return result
+
+
+def _validate_mobile_sidecars(path, rows):
+    if tuple(row.path for row in rows) != tuple(
+        path + suffix for suffix in ("-wal", "-shm", "-journal")
+    ):
+        raise ValueError("mobile_sidecar_scope_invalid")
+    for row in rows:
+        if row.inode is None:
+            if (row.device, row.mode) != (None, None):
+                raise ValueError("mobile_sidecar_witness_invalid")
+        elif row.device is None or row.mode is None or not stat.S_ISREG(row.mode):
+            raise ValueError("mobile_sidecar_witness_invalid")
+
+
+def _mobile_active_owner(records):
+    for record in reversed(records):
+        if record.event == "mobile_owner_opened":
+            return record.evidence
+        if record.event == "mobile_owner_retired":
+            return None
+    return None
+
+
 def _mobile_state(records):
     """Replay only typed path transitions; owner records never prove a batch commit."""
     prepared = _MobilePrepared.model_validate(records[0].evidence)
@@ -658,9 +706,10 @@ def _mobile_state(records):
         for row in target.witnesses
     }
     for record in records:
-        if record.event == "mobile_path_observed":
+        if record.event in {"mobile_path_observed", "mobile_mode_observed"}:
             row = record.evidence["after"]
-            witnesses[row["path"]] = row
+            if row["path"] in witnesses:
+                witnesses[row["path"]] = row
     return prepared, witnesses
 
 
@@ -671,6 +720,9 @@ def _validate_mobile(event, evidence, prior):
         "mobile_path_observed": _MobilePathObserved,
         "mobile_owner_opened": _MobileOwner,
         "mobile_owner_retired": _MobileOwner,
+        "mobile_mode_intended": _MobileWitness,
+        "mobile_mode_observed": _MobilePathObserved,
+        "mobile_sidecars_observed": _MobileSidecars,
     }
     if event not in models:
         raise ValueError("journal_transition_invalid")
@@ -687,14 +739,15 @@ def _validate_mobile(event, evidence, prior):
             expected = tuple(reversed((path, *path.parents)))
             if tuple(Path(row.path) for row in target.witnesses) != expected:
                 raise ValueError("mobile_witness_chain_invalid")
-            targets.append(str(path))
+            _validate_mobile_sidecars(str(path), target.sidecars)
+            targets.extend((str(path), *(row.path for row in target.sidecars)))
             for row in target.witnesses:
                 fields = (row.device, row.inode, row.mode)
                 if any(v is None for v in fields) and fields != (None, None, None):
                     raise ValueError("mobile_witness_invalid")
                 if seen.setdefault(row.path, row) != row:
                     raise ValueError("mobile_witness_conflict")
-        if len(set(targets)) != 3:
+        if len(set(targets)) != 12:
             raise ValueError("mobile_target_alias")
     else:
         if prior[0].event != "mobile_prepared" or event == "mobile_prepared":
@@ -715,8 +768,29 @@ def _validate_mobile(event, evidence, prior):
             )
             if not check(value.after.mode):
                 raise ValueError("mobile_creation_kind_invalid")
-        elif last.event == "mobile_owner_opened":
-            if event != "mobile_owner_retired" or value.model_dump() != last.evidence:
+        elif last.event == "mobile_mode_intended":
+            expected = {**last.evidence, "mode": stat.S_IFREG | 0o600}
+            if event != "mobile_mode_observed" or value.after.model_dump() != expected:
+                raise ValueError("mobile_mode_unsettled")
+        elif (owner := _mobile_active_owner(prior)) is not None:
+            if event == "mobile_mode_intended":
+                before = value.model_dump()
+                allowed = {
+                    owner["path"]: witnesses[owner["path"]],
+                    **_mobile_sidecar_state(prior, owner["owner_id"]),
+                }
+                if (
+                    before != allowed.get(before["path"])
+                    or before["inode"] is None
+                    or not stat.S_ISREG(before["mode"])
+                    or stat.S_IMODE(before["mode"]) == 0o600
+                ):
+                    raise ValueError("mobile_mode_unreviewed")
+            elif event == "mobile_sidecars_observed":
+                if value.owner_id != owner["owner_id"]:
+                    raise ValueError("mobile_sidecar_scope_invalid")
+                _validate_mobile_sidecars(owner["path"], value.witnesses)
+            elif event != "mobile_owner_retired" or value.model_dump() != owner:
                 raise ValueError("mobile_owner_not_retired")
         elif event == "mobile_path_intended":
             if (
@@ -755,6 +829,9 @@ class _Event(_Evidence):
         "mobile_path_observed",
         "mobile_owner_opened",
         "mobile_owner_retired",
+        "mobile_mode_intended",
+        "mobile_mode_observed",
+        "mobile_sidecars_observed",
         "candidate_staged",
         "prepublication_aborted",
         "prepared",

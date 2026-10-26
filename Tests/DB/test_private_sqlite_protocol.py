@@ -24,7 +24,7 @@ def framed(body):
 
 def test_frame_round_trip_preserves_closed_request():
     codec = protocol()
-    value = {"version": 1, "operation": "close"}
+    value = {"version": 2, "operation": "close"}
     assert codec.decode_frame(codec.encode_frame(value)) == value
 
 
@@ -32,10 +32,10 @@ def test_frame_round_trip_preserves_closed_request():
     "body",
     [
         b'{"version":1,"version":2,"operation":"close"}',
-        b'{"version":1,"operation":"close","unexpected":true}',
-        b'{"version":1,"operation":"fetch"}',
+        b'{"version":2,"operation":"close","unexpected":true}',
+        b'{"version":2,"operation":"fetch"}',
         b'{"version":true,"operation":"close"}',
-        b'{"version":2,"operation":"close"}',
+        b'{"version":1,"operation":"close"}',
         b'{"version":NaN,"operation":"close"}',
         b'{"version":Infinity,"operation":"close"}',
         b'{"version":-Infinity,"operation":"close"}',
@@ -83,7 +83,7 @@ def test_reader_refuses_oversized_header_before_reading_body():
 
 def test_reader_handles_short_reads_and_clean_eof():
     codec = protocol()
-    value = {"version": 1, "operation": "close"}
+    value = {"version": 2, "operation": "close"}
 
     class ShortReads(io.BytesIO):
         def read(self, count):
@@ -107,12 +107,13 @@ def test_encode_rejects_oversized_path_and_nonfinite_values():
 
 def request(path, operation="prepare", **flags):
     return {
-        "version": 1,
+        "version": 2,
         "operation": operation,
         "path": str(path),
         "writable": False,
         "create_if_missing": False,
         "preserve_source_mode": False,
+        "require_private_mode": False,
         **flags,
     }
 
@@ -123,6 +124,7 @@ def request(path, operation="prepare", **flags):
         {"writable": 1},
         {"create_if_missing": 0},
         {"preserve_source_mode": "yes"},
+        {"require_private_mode": 1},
         {"path": 1},
         {"path": "a\x00b"},
         {"suffix": "-other"},
@@ -141,7 +143,7 @@ def test_recheck_cannot_supply_new_path():
     codec = protocol()
     with pytest.raises(codec.ProtocolError):
         codec.encode_frame(
-            {"version": 1, "operation": "recheck_source", "path": "/other"}
+            {"version": 2, "operation": "recheck_source", "path": "/other"}
         )
 
 
@@ -155,7 +157,7 @@ def test_identity_projection_is_exact_private_and_bool_is_not_integer(tmp_path):
     assert identity.same_inode(codec.FileIdentity.from_stat(target.stat()))
     assert "ino=" not in repr(identity)
     response = {
-        "version": 1,
+        "version": 2,
         "operation": "prepare",
         "status": "ok",
         "result": {
@@ -287,7 +289,7 @@ def test_real_child_lstat_failure_remains_a_private_path_error(tmp_path, artifac
         target.touch(mode=0o600)
     result = run_child(request(target), tmp_path)
     assert result == {
-        "version": 1,
+        "version": 2,
         "operation": "prepare",
         "status": "private_path_error",
         "privacy_status": "operation_failed",
@@ -417,7 +419,7 @@ def test_real_source_pin_rechecks_bound_authority_and_closes(tmp_path, replace):
                 target.chmod(0o644)
             else:
                 target.write_bytes(b"changed size is allowed for a live backup")
-            result = exchange(child, {"version": 1, "operation": "recheck_source"})
+            result = exchange(child, {"version": 2, "operation": "recheck_source"})
             assert result["status"] == (
                 "ok" if replace == "none" else "private_path_error"
             )
@@ -426,8 +428,8 @@ def test_real_source_pin_rechecks_bound_authority_and_closes(tmp_path, replace):
                     result["result"]["main_identity"]["size"]
                     != first["result"]["main_identity"]["size"]
                 )
-                assert exchange(child, {"version": 1, "operation": "close"}) == {
-                    "version": 1,
+                assert exchange(child, {"version": 2, "operation": "close"}) == {
+                    "version": 2,
                     "operation": "close",
                     "status": "ok",
                 }
@@ -480,9 +482,10 @@ def test_isolated_entry_skips_all_package_initializers(tmp_path):
         shutil.copyfile(
             source_package / "DB" / f"{name}.py", installed / "DB" / f"{name}.py"
         )
-    shutil.copyfile(
-        source_package / "Utils/private_paths.py", installed / "Utils/private_paths.py"
-    )
+    for name in ("private_paths", "platform_files"):
+        shutil.copyfile(
+            source_package / "Utils" / f"{name}.py", installed / "Utils" / f"{name}.py"
+        )
     result = subprocess.run(
         [
             sys.executable,
@@ -562,16 +565,16 @@ def test_real_pinned_child_exits_on_eof(tmp_path):
 @pytest.mark.parametrize(
     "payload",
     [
-        {"version": 1, "operation": "close", "status": "ok", "result": {}},
+        {"version": 2, "operation": "close", "status": "ok", "result": {}},
         {
-            "version": 1,
+            "version": 2,
             "operation": "close",
             "status": "helper_unavailable",
             "reason": "private text",
         },
-        {"version": 1, "operation": "prepare", "status": "ok", "result": {}},
+        {"version": 2, "operation": "prepare", "status": "ok", "result": {}},
         {
-            "version": 1,
+            "version": 2,
             "operation": "prepare",
             "status": "private_path_error",
             "privacy_status": "operation_failed",
@@ -691,7 +694,7 @@ def test_source_pin_initialization_path_failure_is_classified(
         monkeypatch.setattr(files, "prepare_batch", substitute_after_preparation)
         assert helper.run(os.getppid()) == 0
         assert codec.decode_frame(output_pipe.getvalue()) == {
-            "version": 1,
+            "version": 2,
             "operation": "pin_source",
             "status": "private_path_error",
             "privacy_status": expected_status,
@@ -749,7 +752,7 @@ def test_tts_frames_are_closed_and_reject_mixed_or_payload_authority(
     codec = protocol()
     identity = codec.FileIdentity.from_stat(tmp_path.stat()).to_payload()
     reply = {
-        "version": 1,
+        "version": 2,
         "operation": operation,
         "status": "ok",
         "identity": {
@@ -797,5 +800,37 @@ def test_tts_initializer_refuses_mutation_flags_and_controls_refuse_targets(tmp_
     ):
         with pytest.raises(codec.ProtocolError):
             codec.encode_frame(
-                {"version": 1, "operation": operation, "path": str(tmp_path)}
+                {"version": 2, "operation": operation, "path": str(tmp_path)}
             )
+
+
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+def test_strict_private_mode_refuses_hardening_in_actual_helper(tmp_path, suffix):
+    target = tmp_path / "db"
+    target.write_bytes(b"native file preparation test")
+    target.chmod(0o600)
+    changed = Path(str(target) + suffix)
+    changed.write_bytes(b"reviewed generation")
+    changed.chmod(0o644)
+    result = run_child(
+        request(target, writable=True, require_private_mode=True), tmp_path
+    )
+    assert result["status"] == "private_path_error"
+    assert result["reason"] == "private_sqlite_mode_change_refused"
+    assert changed.stat().st_mode & 0o777 == 0o644
+    assert changed.read_bytes() == b"reviewed generation"
+    assert run_child(request(target, writable=True), tmp_path)["status"] == "ok"
+    assert changed.stat().st_mode & 0o777 == 0o600
+
+
+def test_v2_requires_closed_mode_field_and_refuses_old_peer():
+    codec = protocol()
+    current = request("/tmp/exact")
+    assert codec.VERSION == 2
+    for value in (
+        {**current, "version": 1},
+        {key: value for key, value in current.items() if key != "require_private_mode"},
+        {**current, "preserve_source_mode": True, "require_private_mode": True},
+    ):
+        with pytest.raises(codec.ProtocolError):
+            codec.encode_frame(value)

@@ -1599,6 +1599,8 @@ class _CaptureLease:
     def attach(self, connection):
         self.connection = connection
         self.resource_closed = False
+        if type(self.scope) is _MobileScope:
+            self.scope.handed_off = True
 
     def native_closed(self):
         self.connection = None
@@ -2217,7 +2219,7 @@ class _MobileScope:
         raise TypeError("mobile_scope_is_native_issued")
 
     def check(self):
-        from .journal import _mobile_state
+        from .journal import _mobile_active_owner, _mobile_state
 
         session = getattr(self, "session", None)
         if (
@@ -2235,14 +2237,121 @@ class _MobileScope:
         prepared, witnesses = _mobile_state(records)
         control_records._mobile_pending(self.session, self.journal, prepared)
         if (
-            records[-1].event != "mobile_owner_opened"
-            or records[-1].evidence != self.owner
+            records[-1].event == "mobile_mode_intended"
+            or _mobile_active_owner(records) != self.owner
         ):
             raise bootstrap.RecoveryRequired("mobile_journal_operation_changed")
         if witnesses != self.witnesses or any(
             _mobile_witness(Path(path)) != row for path, row in witnesses.items()
         ):
             raise bootstrap.RecoveryRequired("mobile_object_changed")
+
+    def sidecar_witnesses(self):
+        from .mobile_consolidation import _sqlite_sidecars
+
+        return {
+            row[0]: dict(zip(("path", "device", "inode", "mode"), row, strict=True))
+            for row in _sqlite_sidecars(Path(self.owner["path"]))
+        }
+
+    def observe_sidecars(self, phase):
+        _MobileScope.check(self)
+        observed = self.sidecar_witnesses()
+        with self.journal._locked(exclusive=True) as parent:
+            self.journal._append(
+                parent,
+                "mobile_sidecars_observed",
+                {
+                    "owner_id": self.owner["owner_id"],
+                    "phase": phase,
+                    "witnesses": list(observed.values()),
+                },
+            )
+        self.sidecars = observed
+
+    def harden_store(self):
+        """Prepare only reviewed main/sidecar objects before native factory handoff."""
+        _MobileScope.check(self)
+        if self.sidecar_witnesses() != self.sidecars:
+            raise bootstrap.RecoveryRequired("mobile_sidecar_changed")
+        for path in (self.owner["path"], *self.sidecars):
+            self._harden_path(Path(path))
+
+    def _harden_path(self, path):
+        """Journal one fixed private-mode transition on the bound generation."""
+        from .native_files import pinned_directory
+        from .native_platform import flush_file
+
+        _MobileScope.check(self)
+        evidence = self.witnesses if str(path) in self.witnesses else self.sidecars
+        before = evidence[str(path)]
+        if before["inode"] is None or stat.S_IMODE(before["mode"]) == 0o600:
+            return
+        with pinned_directory(path.parent) as parent:
+            parent_info = os.fstat(parent)
+            expected_parent = self.witnesses[str(path.parent)]
+            if (parent_info.st_dev, parent_info.st_ino, parent_info.st_mode) != (
+                expected_parent["device"],
+                expected_parent["inode"],
+                expected_parent["mode"],
+            ):
+                raise bootstrap.RecoveryRequired("mobile_object_changed")
+            self.mode_fd = os.open(
+                path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+            )
+            try:
+                info = os.fstat(self.mode_fd)
+                _MobileScope.check(self)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                    or (info.st_dev, info.st_ino, info.st_mode)
+                    != (before["device"], before["inode"], before["mode"])
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_object_changed")
+                with self.journal._locked(exclusive=True) as journal_fd:
+                    self.journal._append(journal_fd, "mobile_mode_intended", before)
+                    if any(
+                        _mobile_witness(Path(name)) != row
+                        for name, row in (self.witnesses | self.sidecars).items()
+                    ):
+                        raise bootstrap.RecoveryRequired("mobile_object_changed")
+                    os.fchmod(self.mode_fd, 0o600)
+                    flush_file(self.mode_fd)
+                    expected = {**before, "mode": stat.S_IFREG | 0o600}
+                    after = os.fstat(self.mode_fd)
+                    if (
+                        (
+                            after.st_dev,
+                            after.st_ino,
+                            after.st_mode,
+                            after.st_nlink,
+                            after.st_uid,
+                        )
+                        != (
+                            expected["device"],
+                            expected["inode"],
+                            expected["mode"],
+                            1,
+                            os.geteuid(),
+                        )
+                        or _mobile_witness(path) != expected
+                        or any(
+                            _mobile_witness(Path(name)) != row
+                            for name, row in (self.witnesses | self.sidecars).items()
+                            if name != str(path)
+                        )
+                    ):
+                        raise bootstrap.RecoveryRequired("mobile_object_changed")
+                    self.journal._append(
+                        journal_fd, "mobile_mode_observed", {"after": expected}
+                    )
+                    evidence[str(path)] = expected
+            finally:
+                os.close(self.mode_fd)
+                self.mode_fd = None
+        _MobileScope.check(self)
 
     def require_repository(self, repository):
         _MobileScope.check(self)
@@ -2263,6 +2372,12 @@ class _MobileScope:
         try:
             for resource in tuple(self.resources):
                 resource.retire()
+            if self.mode_fd is not None:
+                os.close(self.mode_fd)
+                self.mode_fd = None
+            if self.handed_off:
+                self.observe_sidecars("retired")
+                self.handed_off = False
             if self.execution_use is not None:
                 self.execution_use.__exit__(None, None, None)
                 self.execution_use = None
@@ -2299,6 +2414,20 @@ def _mobile_repository_scope(repository):
         raise bootstrap.RecoveryRequired("mobile_repository_scope_invalid")
     _MobileScope.require_repository(scope, repository)
     return scope
+
+
+def _mobile_private_preparation(path):
+    scope = getattr(_local, "mobile_scope", None)
+    if scope is None:
+        return False
+    if type(scope) is not _MobileScope:
+        raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+    _MobileScope.check(scope)
+    if lexical_path(path) != Path(scope.owner["path"]):
+        raise bootstrap.RecoveryRequired("mobile_connection_scope_invalid")
+    if not scope.handed_off and scope.sidecar_witnesses() != scope.sidecars:
+        raise bootstrap.RecoveryRequired("mobile_sidecar_changed")
+    return True
 
 
 def _acquire_mobile_storage(path, *, owner_id, factory):
@@ -2597,6 +2726,7 @@ class MaintenanceSession:
         approved_scope,
         source_fingerprint,
         destination_witnesses,
+        destination_sidecars,
     ):
         """Bind reviewed selectors under native gates, then persist the startup fence.
 
@@ -2685,6 +2815,18 @@ class MaintenanceSession:
                 or reviewed_witnesses != destination_witnesses
             ):
                 raise ValueError("mobile_review_changed")
+            original_sidecars = tuple(
+                (
+                    row.witnesses[-1].path,
+                    tuple(
+                        (item.path, item.device, item.inode, item.mode)
+                        for item in row.sidecars
+                    ),
+                )
+                for row in prepared.targets
+            )
+            if original_sidecars != destination_sidecars:
+                raise ValueError("mobile_review_changed")
             if prepared.source_fingerprint != source_fingerprint or tuple(
                 row.witnesses[-1].path for row in prepared.targets
             ) != tuple(map(str, target.paths)):
@@ -2693,10 +2835,13 @@ class MaintenanceSession:
                 _mobile_witness(Path(path)) != row for path, row in witnesses.items()
             ):
                 raise bootstrap.RecoveryRequired("mobile_object_changed")
-            if records[-1].event == "mobile_path_intended":
-                raise bootstrap.RecoveryRequired("mobile_creation_unsettled")
+            if records[-1].event in {"mobile_path_intended", "mobile_mode_intended"}:
+                raise bootstrap.RecoveryRequired("mobile_transition_unsettled")
         else:
-            if preview.destination_witnesses != destination_witnesses:
+            if (
+                preview.destination_witnesses != destination_witnesses
+                or preview.destination_sidecars != destination_sidecars
+            ):
                 raise ValueError("mobile_destination_changed")
             prepared = _MobilePrepared(
                 bootstrap_root=str(root),
@@ -2711,6 +2856,16 @@ class MaintenanceSession:
                 targets=[
                     {
                         "owner_id": owner,
+                        "sidecars": [
+                            dict(
+                                zip(
+                                    ("path", "device", "inode", "mode"),
+                                    item,
+                                    strict=True,
+                                )
+                            )
+                            for item in dict(destination_sidecars)[chain[-1][0]]
+                        ],
                         "witnesses": [
                             dict(
                                 zip(
@@ -2748,7 +2903,7 @@ class MaintenanceSession:
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
-        from .journal import _mobile_state
+        from .journal import _mobile_active_owner, _mobile_sidecar_state, _mobile_state
         from .native_files import flush_directory, pinned_directory
         from .native_platform import flush_file
 
@@ -2774,14 +2929,16 @@ class MaintenanceSession:
             "mobile_path_observed",
             "mobile_owner_retired",
             "mobile_owner_opened",
+            "mobile_mode_observed",
+            "mobile_sidecars_observed",
         }:
             raise bootstrap.RecoveryRequired("mobile_owner_not_retired")
         if (
-            records[-1].event == "mobile_owner_opened"
-            and records[-1].evidence["owner_id"] != owner_id
+            _mobile_active_owner(records) is not None
+            and _mobile_active_owner(records)["owner_id"] != owner_id
         ):
             raise bootstrap.RecoveryRequired("mobile_owner_not_retired")
-        recovering_owner = records[-1].event == "mobile_owner_opened"
+        recovering_owner = _mobile_active_owner(records) is not None
         target = next(row for row in prepared.targets if row.owner_id == owner_id)
         for witness in target.witnesses:
             if any(
@@ -2852,8 +3009,12 @@ class MaintenanceSession:
         scope = object.__new__(_MobileScope)
         scope.session, scope.journal, scope.owner = self, journal, owner
         scope.witnesses, scope.resources = witnesses, []
+        scope.sidecars = _mobile_sidecar_state(records, owner_id)
+        scope.handed_off = False
+        scope.recovering_owner = recovering_owner
         scope.active, scope.close_failed = True, False
         scope.execution_owner = None
+        scope.mode_fd = None
         scope.execution_use = None
         scope.execution_stream = None
         scope.execution_fd = None
@@ -2876,10 +3037,14 @@ class MaintenanceSession:
                     "reconcile_on_init": False,
                 }
             owner_admitted = True
+            if recovering_owner and owner_id != "db.agent_runs":
+                scope.observe_sidecars("recovered")
             if recovering_owner:
                 with journal._locked(exclusive=True) as parent:
                     journal._append(parent, "mobile_owner_retired", owner)
                     journal._append(parent, "mobile_owner_opened", owner)
+            if owner_id != "db.agent_runs":
+                scope.harden_store()
             classes[owner_id].__init__(
                 scope.repository, Path(owner["path"]), "mobile-consolidation", **kwargs
             )
@@ -2889,7 +3054,8 @@ class MaintenanceSession:
                 scope.retire()
                 if not recovering_owner or owner_admitted:
                     with journal._locked(exclusive=True) as parent:
-                        journal._append(parent, "mobile_owner_retired", owner)
+                        if journal._records(parent)[-1].event != "mobile_mode_intended":
+                            journal._append(parent, "mobile_owner_retired", owner)
             finally:
                 _local.mobile_scope = None
 
