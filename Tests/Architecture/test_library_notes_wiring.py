@@ -123,8 +123,11 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: anything, and the reason one keystroke starts one candidate load
 #: (114 + 1 = 115). **116**: TASK-34000.28 polish-1a task 4 (2026-10-26) --
 #: ``notice_refresh_offered``, whether the folder-conflict notice offers its
-#: Refresh control (115 + 1 = 116).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 116
+#: Refresh control (115 + 1 = 116). **117**: TASK-34000.28 polish-1a task 5
+#: (2026-10-26) -- ``link_origin``, the ``(note_id, title)`` a followed
+#: backlink or note link came from, offered as the editor heading's
+#: ``‹ <title>`` one-hop way back (116 + 1 = 117).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 117
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

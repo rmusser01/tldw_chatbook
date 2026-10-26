@@ -1581,6 +1581,7 @@ class LibraryNotesController:
             status_channels=status_channels,
             backlinks=self._library_notes_backlinks,
             backlinks_status=self._library_notes_backlinks_status,
+            link_origin=self._notes_state.link_origin,  # TASK-34000.28 N-21
             # TASK-34000.11: computed only while Preview is shown (the same
             # gate the preview source uses); the editor never scans for it.
             note_links=self._library_note_preview_links(),
@@ -1979,6 +1980,7 @@ class LibraryNotesController:
             "sort": "#library-notes-sort",
             # TASK-34000.28: the folder-conflict notice's Refresh control.
             "notice-refresh": "#library-notes-notice-refresh",
+            "link-back": "#library-note-link-back",  # TASK-34000.28 N-21
         }.get(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
@@ -3578,10 +3580,19 @@ class LibraryNotesController:
             )
         return None
     def _begin_library_note_load(
-        self, note_id: str, *, entry_origin: bool = False
+        self,
+        note_id: str,
+        *,
+        entry_origin: bool = False,
+        link_origin: tuple[str, str] | None = None,
     ) -> None:
-        """Reset presentation, invalidate old work, and start one editor load."""
+        """Reset presentation, invalidate old work, and start one editor load.
+
+        ``link_origin`` (TASK-34000.28 N-21) is the ``(note_id, title)`` a
+        followed link came from; every other open passes none and clears it.
+        """
         navigation_generation = self._supersede_library_notes_navigation()
+        self._notes_state.link_origin = link_origin
         self._library_note_session.close_session()
         self._clear_finished_library_notes_operation()
         self._selected_note_id = note_id
@@ -3706,15 +3717,44 @@ class LibraryNotesController:
         note_id = str(getattr(event.button, "note_id", "") or "")
         if not note_id or self._library_notes_mutation_fenced():
             return
+        await self._open_library_note_from_link(note_id, link_origin=True)
+    async def _open_library_note_from_link(
+        self, note_id: str, *, link_origin: bool
+    ) -> None:
+        """Flush, then open ``note_id`` -- the backlink, note-link and link-back way.
+
+        TASK-34000.28 (N-21): a followed link records the note it left as the
+        new editor's ``‹ <title>`` origin; the ``‹`` control itself opens with
+        none, so the way back is one hop. A vetoed flush keeps the user where
+        they are.
+        """
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        snapshot = self._library_note_session.snapshot
+        origin = (
+            (snapshot.note_id, snapshot.title or "Untitled")
+            if link_origin and snapshot is not None and snapshot.note_id
+            else None
+        )
         self._library_notes_notice = ""
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
         self._library_note_title_user_edited = False
-        self._begin_library_note_load(note_id)
+        self._begin_library_note_load(note_id, link_origin=origin)
         _sync_library_canvas(self, "notes")
+    @on(Button.Pressed, "#library-note-link-back")
+    async def handle_library_note_link_back(self, event: Button.Pressed) -> None:
+        """Return to the note a followed link came from (TASK-34000.28 N-21).
+
+        Args:
+            event: Press of the editor heading's ``‹ <title>`` control.
+        """
+        event.stop()
+        origin = self._notes_state.link_origin
+        if origin is None or self._library_notes_mutation_fenced():
+            return
+        await self._open_library_note_from_link(origin[0], link_origin=False)
     @on(LibraryNoteWorkPane.EditorReady)
     def handle_library_note_work_pane_editor_ready(
         self, event: LibraryNoteWorkPane.EditorReady
@@ -4433,16 +4473,7 @@ class LibraryNotesController:
             return
         if self._library_notes_mutation_fenced():
             return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            # A vetoed flush keeps the user where they are (the backlink rule).
-            return
-        self._library_notes_notice = ""
-        self._library_note_pending_blank_gc_id = None
-        self._library_note_session_blank_id = None
-        self._library_note_title_user_edited = False
-        self._begin_library_note_load(note_id)
-        _sync_library_canvas(self, "notes")
+        await self._open_library_note_from_link(note_id, link_origin=True)
 
     async def action_library_note_preview_follow_link(self) -> None:
         """Enter on the focused Preview: follow the one link, or list them."""
