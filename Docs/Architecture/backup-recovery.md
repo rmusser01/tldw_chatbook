@@ -107,3 +107,14 @@ before accepting new witnesses. Unexpected changes require review. The source
 fingerprint includes strict physical evidence, admitted logical row digests and
 referenced artifact digests. Preview itself creates neither source nor target
 parents. No mobile import, profile cutover or authority activation occurs here.
+
+
+Installed consolidation support qualifies exact Chat82/Workspace9/AgentRuns26
+catalogs and their file-backed native migrations. Read-only validation still
+accepts qualified Chat81/Workspace8/AgentRuns25 sources, including every
+previously admitted AgentRuns25 physical layout; migration creates a separately
+qualified successor. The Task7 mobile fixture deliberately retains those legacy
+source heads while canonical fixtures use installed heads. Candidate migration
+authorization permits only the fixed owner tables/indexes and native version
+stamps, and continues rejecting unknown catalogs. This installs receipts and
+quarantine consumers; the preview still performs no import or cutover.

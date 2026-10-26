@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import sqlite3
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
@@ -24,7 +25,7 @@ class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 8
+    _CURRENT_SCHEMA_VERSION = 9
     _MIGRATE_V2_TO_V3_SQL = """BEGIN IMMEDIATE;
 
 CREATE TABLE research_source_operations (
@@ -563,6 +564,8 @@ COMMIT;
                 self._migrate_v6_to_v7()
             if needs_v8:
                 self._migrate_v7_to_v8()
+            if version < 9:
+                self._migrate_v8_to_v9()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -624,6 +627,41 @@ COMMIT;
             self._migrate_v6_to_v7()
         if needs_v8:
             self._migrate_v7_to_v8()
+
+        if version < 9:
+            self._migrate_v8_to_v9()
+
+    def _migrate_v8_to_v9(self) -> None:
+        from .mobile_import_authority import WORKSPACE_MIGRATION
+
+        with self.transaction() as conn:
+            for statement in WORKSPACE_MIGRATION:
+                conn.execute(statement)
+
+    def hold_imported_bindings(
+        self,
+        cursor: sqlite3.Connection | sqlite3.Cursor,
+        operation_id: str,
+        binding_ids: Sequence[str],
+    ) -> None:
+        """Hold exact runtime bindings atomically with their imported rows."""
+        from .mobile_import_authority import hold_authorities
+
+        with self.connection() as conn:
+            hold_authorities(
+                conn,
+                cursor,
+                operation_id,
+                (("binding", identity) for identity in binding_ids),
+                workspace=True,
+            )
+
+    def imported_binding_allowed(self, binding_id: str) -> bool:
+        """A saved binding and a live folder do not constitute import review."""
+        from .mobile_import_authority import authority_allowed
+
+        with self.connection() as conn:
+            return authority_allowed(conn, "binding", binding_id)
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""

@@ -242,6 +242,9 @@ class WorkspaceRuntimeBinding:
     created_at: str = field(default_factory=registry_now_iso)
     updated_at: str = field(default_factory=registry_now_iso)
 
+    # Projection-only native hold; never persisted by save_runtime_binding.
+    import_review_required: bool = False
+
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "workspace_id", _required_text(self.workspace_id, "workspace_id")

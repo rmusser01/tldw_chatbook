@@ -196,6 +196,20 @@ def _seed(stores: CanonicalConsoleStores, *, legacy: bool) -> dict:
             "artifact_id": artifact.artifact_id,
         }
     finally:
+        if legacy:
+            # Qualified legacy 81/8/25 layouts differ only by these new empty tables.
+            for database, version in ((chat, 81), (workspace_db, 8), (runs, 25)):
+                with database.transaction() as cursor:
+                    cursor.execute("DROP TABLE mobile_consolidation_batches")
+                    if database is chat:
+                        cursor.execute(
+                            "UPDATE db_schema_version SET version=81 WHERE schema_name='rag_char_chat_schema'"
+                        )
+                    else:
+                        cursor.execute("DROP TABLE mobile_import_authority_holds")
+                        cursor.execute(
+                            "DELETE FROM schema_version WHERE version>?", (version,)
+                        )
         runs.close()
         chat.close_connection()
         workspace_db.close()

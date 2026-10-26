@@ -719,6 +719,8 @@ def _recompute_filesystem_binding_status(
         str(RuntimeBindingKind.LOCAL_FILESYSTEM),
     ):
         return binding
+    if binding.import_review_required:
+        return binding
     folder = Path(binding.locator)
     is_missing = True
     if folder.is_dir() and not folder.is_symlink():

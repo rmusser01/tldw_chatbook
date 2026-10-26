@@ -809,9 +809,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = (
-        81  # ADR-232 device-local response rules after browse-order indexes.
-    )
+    _CURRENT_SCHEMA_VERSION = 82  # ADR-244 imported history batch receipts.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8114,6 +8112,32 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v81_to_v82(self, conn: sqlite3.Connection) -> None:
+        """Install durable consolidation batch evidence."""
+        self._require_migration_entry_version(conn, 81, "V81→V82")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v81_to_v82_mobile_consolidation.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V81→V82"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 82 WHERE schema_name = ? AND version = 81",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V81→V82 version update failed")
+            if self._get_db_version(conn) != 82:
+                raise SchemaError("V81→V82 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V81→V82 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
         """Install native local rules without adding sync or metadata payloads."""
         self._require_migration_entry_version(conn, 80, "V80→V81")
@@ -8495,6 +8519,7 @@ DELETE FROM keywords
                     78: self._migrate_from_v78_to_v79,
                     79: self._migrate_from_v79_to_v80,
                     80: self._migrate_from_v80_to_v81,
+                    81: self._migrate_from_v81_to_v82,
                 }
 
                 if current_db_version == 0:

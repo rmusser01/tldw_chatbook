@@ -359,6 +359,34 @@ class _Restrictions:
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
+            if self.migration_owner in {
+                "db.chachanotes.primary",
+                "db.workspaces",
+                "db.agent_runs",
+            }:
+                tables = {"mobile_consolidation_batches"}
+                if self.migration_owner != "db.chachanotes.primary":
+                    tables.add("mobile_import_authority_holds")
+                if (
+                    database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in tables
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and (first, second)
+                        in {(f"sqlite_autoindex_{table}_1", table) for table in tables}
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        or self.migration_owner == "db.workspaces"
+                        and action == sqlite3.SQLITE_INSERT
+                        and first == "schema_version"
+                    )
+                ):
+                    return sqlite3.SQLITE_OK
             if self.migration_owner == "db.chachanotes.primary":
                 allowed = (
                     action == sqlite3.SQLITE_UPDATE
@@ -1059,6 +1087,7 @@ def _validate_candidate(
                         CHACHANOTES_V78_SCHEMAS,
                         CHACHANOTES_V79_SCHEMAS,
                         CHACHANOTES_V80_SCHEMAS,
+                        CHACHANOTES_V81_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1069,10 +1098,16 @@ def _validate_candidate(
                             *CHACHANOTES_V76_NATIVE_SCHEMAS,
                             *CHACHANOTES_V76_SHIPPED_SCHEMAS,
                         )
-                        or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
-                        or version == 78 and actual_sql in CHACHANOTES_V78_SCHEMAS
-                        or version == 79 and actual_sql in CHACHANOTES_V79_SCHEMAS
-                        or version == 80 and actual_sql in CHACHANOTES_V80_SCHEMAS
+                        or version == 77
+                        and actual_sql in CHACHANOTES_V77_SCHEMAS
+                        or version == 78
+                        and actual_sql in CHACHANOTES_V78_SCHEMAS
+                        or version == 79
+                        and actual_sql in CHACHANOTES_V79_SCHEMAS
+                        or version == 80
+                        and actual_sql in CHACHANOTES_V80_SCHEMAS
+                        or version == 81
+                        and actual_sql in CHACHANOTES_V81_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS

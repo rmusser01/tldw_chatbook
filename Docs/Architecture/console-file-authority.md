@@ -97,3 +97,15 @@ The fixed narrowing order: config gates → ephemeral restrictions → ADR-069 b
 3. `workspace_context_note` renders roots relative to the launch cwd (never `../..` chains) and JSON-escapes workspace names against prompt injection.
 4. The ledger's owner mapping must be the registry's cached mapping — a parallel lookup could disagree with dispatch about who owns a tool.
 5. Persona `require_confirmation` floors can only narrow; a persona can never lift a permission-store ask or deny.
+
+
+## Imported bindings (ADR-244)
+
+Workspace9 stores import holds against exact runtime binding IDs. Registry
+reads project an unreviewed binding as `BLOCKED` with
+`import_review_required=True`, retaining its locator, exclusions and historical
+row. Disk readiness, display-state recomputation, ordinary save, and SSH status
+caches cannot release this hold. Root advertisement, frozen-root revalidation
+and project-instruction binding admission exclude the held projection. A fresh
+manual turn retains its own scratch authority; it does not approve imported
+folders. No reviewed-release flow is installed.

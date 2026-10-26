@@ -131,3 +131,17 @@ queued; its later drain is the consumption boundary. Stop uses the owning
 service's existing cancel-event and approval-revocation path, including retained
 survivors. Finished/replaced targets refuse without relaunch. Subagent Redirect
 is unsupported.
+
+
+## Imported automatic authority (ADR-244)
+
+Persistent exact holds in AgentRuns26 exclude imported survivors from native
+pending-result, launch and delivery projections. Automatic-work admission checks
+the held identity and shared allowance family before idempotent attempt or
+reservation returns, and before final acceptance. Recovery leaves held attempts,
+reservations, Goal facts and run history intact; fresh process orphan and terminal
+repair also skip held runs. Goal dispatch and manual-send coordination preserve
+those held facts. A held prepared wake keeps its native per-conversation active
+attempt occupancy; a new manual turn can acquire independent fresh authority
+without releasing the imported attempt or delivering its result. See the exact
+owner APIs in [database-layer.md](./database-layer.md#imported-history-authority-adr-244).

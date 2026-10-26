@@ -87,7 +87,7 @@ def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
             # Same survivor predicate as AgentRunsDB.pending_wake_conversation_ids.
             # Do not construct AgentRunsDB here: its startup sweep mutates runs.
             rows = connection.execute(
-                "SELECT DISTINCT child.conversation_id FROM agent_runs AS child "
+                "SELECT child.id, child.conversation_id FROM agent_runs AS child "
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
                 f"WHERE {delivery_filter}child.agent_kind!='primary' "
                 "AND child.status IN ('done','error','cancelled') "
@@ -95,7 +95,14 @@ def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
                 "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
                 tuple(sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-        return tuple(str(row[0]) for row in rows)
+            version = connection.execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone()[0]
+            if version >= 26:
+                from tldw_chatbook.DB.mobile_import_authority import run_allowed
+
+                rows = [row for row in rows if run_allowed(connection, row[0])]
+        return tuple(sorted({str(row[1]) for row in rows}))
     except Exception as exc:  # noqa: BLE001 -- a launch never dies on discovery
         logger.warning(
             "launch wake result discovery failed (exception_type={})",

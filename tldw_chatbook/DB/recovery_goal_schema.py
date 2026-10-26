@@ -90,7 +90,7 @@ def validate_goal_rows(connection):
 
     if connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[
         0
-    ] not in (24, 25):
+    ] not in (24, 25, 26):
         return ()
     invalid = connection.execute(
         "SELECT 1 FROM goal_runs g JOIN automatic_work_chains c ON c.id=g.chain_id "

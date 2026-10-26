@@ -1296,6 +1296,8 @@ def _validate_project_instruction_binding(
         The admitted selection, or ``None`` when the binding is not
         admittable.
     """
+    if getattr(binding, "import_review_required", False):
+        return None
     if binding is None or str(getattr(binding, "workspace_id", "")) != str(
         session.workspace_id
     ):

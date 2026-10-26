@@ -140,6 +140,11 @@ _WORKSPACES_SCHEMA = (
 
 
 class _WorkspacesAdapter(_SQLiteDeclaration):
+    def schema_policy(self) -> SchemaPolicy:
+        return SchemaPolicy(
+            self.owner_id, self.versions, self.schemas, ((8, 9, WORKSPACE_MIGRATION),)
+        )
+
     def validate(self, candidate: Path) -> tuple[str, ...]:
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -278,6 +283,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (22, 23, _AGENT_RUNS_MIGRATION_22_23),
                 (23, 24, GOAL_MIGRATION),
                 (24, 25, COMMAND_RECEIPT_MIGRATION),
+                (25, 26, AGENT_RUNS_MIGRATION),
             ),
         )
 
@@ -1312,7 +1318,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.workspaces",
             "workspaces_db_path",
             "tldw_chatbook_workspaces.db",
-            (8,),
+            (9, 8),
             _WORKSPACES_SCHEMA,
             (),
         ),
@@ -1320,7 +1326,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24, 25),
+            (18, 21, 22, 23, 24, 25, 26),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1662,3 +1668,21 @@ def legacy_mobile_declarations(config, *, source_dir: Path | None = None):
         )
         for leaf, owner in LEGACY_STORES
     )
+
+
+from .mobile_import_authority import AGENT_RUNS_MIGRATION, WORKSPACE_MIGRATION
+from .recovery_core_schema import _installed_schema_order
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (
+        26,
+        tuple(sorted(catalog + AGENT_RUNS_MIGRATION[:-1], key=_installed_schema_order)),
+    )
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 25
+)
+_WORKSPACES_SCHEMA += tuple(
+    (9, tuple(sorted(catalog + WORKSPACE_MIGRATION[:-1], key=_installed_schema_order)))
+    for version, catalog in _WORKSPACES_SCHEMA
+    if version == 8
+)

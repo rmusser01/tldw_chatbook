@@ -672,6 +672,17 @@ class ConsoleGoalCoordinator:
             self._resume_goal_id = None
             self.notify_goal_changed(goal_id)
 
+    def _imported_goal_allowed(self, goal) -> bool:
+        from tldw_chatbook.DB.mobile_import_authority import (
+            authority_allowed,
+            chain_allowed,
+        )
+
+        with self.service.db.connection() as conn:
+            return authority_allowed(conn, "goal", goal.id) and chain_allowed(
+                conn, goal.chain_id
+            )
+
     def start(self, goal_id: str) -> asyncio.Task[GoalSnapshot]:
         """Start one runtime-owned chain; await the task to observe its next rest state."""
         if self._closed or self.controller._disposed:
@@ -699,7 +710,7 @@ class ConsoleGoalCoordinator:
                 # during that read must remain observable even if the snapshot is old.
                 self._wake.clear()
                 goal = await self.service.call(self.service.get, goal_id)
-                if goal.status != "ready":
+                if goal.status != "ready" or not self._imported_goal_allowed(goal):
                     return goal
                 if goal.retry_at is not None:
                     try:
@@ -805,9 +816,19 @@ class ConsoleGoalCoordinator:
         """An explicit manual instruction pauses only this conversation’s successors."""
         with self.service.db.connection() as conn:
             row = conn.execute(
-                "SELECT id FROM goal_runs WHERE conversation_id=? AND status IN ('ready','pause_requested')",
+                "SELECT id, chain_id FROM goal_runs WHERE conversation_id=? AND status IN ('ready','pause_requested')",
                 (conversation_id,),
             ).fetchone()
+            if row:
+                from tldw_chatbook.DB.mobile_import_authority import (
+                    authority_allowed,
+                    chain_allowed,
+                )
+
+                if not authority_allowed(conn, "goal", row[0]) or not chain_allowed(
+                    conn, row[1]
+                ):
+                    return
         if row:
             self.service.pause(row[0])
 
@@ -933,6 +954,16 @@ class ConsoleGoalCoordinator:
             )
         if goal.status != "ready" or goal.request is None:
             return GoalIterationResult(goal_id, 0, None, None, None, "goal_not_ready")
+        if not await self.service.call(self._imported_goal_allowed, goal):
+            return GoalIterationResult(
+                goal_id,
+                0,
+                None,
+                None,
+                None,
+                "import_review_required",
+                reason_code="import_review_required",
+            )
         if not _coerce_autowake_enabled(_setting("goal_runs_enabled", False)):
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "goal_runs_disabled"

@@ -119,3 +119,29 @@ and current-owner valid evidence are never reclaimed under pressure.
 A new served owner changes prior pending handoffs to `outcome_unknown`, without
 replaying them or changing the original native run/dispatch recovery facts.
 Unresolved reads use bounded keyset pages, including receipts for closed chats.
+
+
+## Imported history authority (ADR-244)
+
+The installed heads are ChaChaNotes82, Workspace9 and AgentRuns26. Their
+file-backed `*_mobile_consolidation.sql` migrations add
+`mobile_consolidation_batches(operation_id, source_fingerprint, batch_key,
+mapping_json, committed_at)` with primary key `(operation_id, batch_key)`.
+AgentRuns and Workspace also own `mobile_import_authority_holds`, keyed by
+`(authority_kind, authority_id)` with an operation identity and nullable
+`reviewed_at`. These schemas provide native storage; they do not perform imports.
+
+`AgentRunsDB.hold_imported_authority(cursor, operation_id, authorities)` borrows
+its active owner transaction, so imported rows, holds and batch evidence can
+commit or roll back together. It requires the execution owner and refuses a
+foreign cursor. Exact kinds identify native `agent_runs.id` (`run`),
+`automatic_work_chains.id` (`chain`), `goal_runs.id` (`goal`),
+`automatic_wake_attempts.id` (`wake_attempt`), progress message identity
+(`progress`), and `automatic_chat_start_attempts.id` (`chat_start_attempt`).
+Holding a chain marks it review-required without rewriting runs or accounting.
+`WorkspaceDB.hold_imported_bindings(cursor, operation_id, binding_ids)` similarly
+holds exact `workspace_runtime_bindings.binding_id` values. The corresponding
+`imported_authority_allowed` / `imported_binding_allowed` methods read exact
+holds; `DB/mobile_import_authority.py` adds linked run and allowance-family
+checks for automatic consumers. There is no release API: manual work or saving
+a binding never constitutes review.

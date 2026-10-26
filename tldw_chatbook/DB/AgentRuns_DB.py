@@ -322,7 +322,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 25
+    _CURRENT_SCHEMA_VERSION = 26
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-228): connections open through BaseDB's
@@ -1004,6 +1004,50 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     raise
                 finally:
                     conn.execute("RELEASE SAVEPOINT console_command_receipts_v25")
+
+            from .mobile_import_authority import AGENT_RUNS_MIGRATION
+
+            if (
+                conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+                < 26
+            ):
+                conn.execute("SAVEPOINT mobile_import_v26")
+                try:
+                    for statement in AGENT_RUNS_MIGRATION:
+                        conn.execute(statement)
+                except BaseException:
+                    conn.execute("ROLLBACK TO SAVEPOINT mobile_import_v26")
+                    raise
+                finally:
+                    conn.execute("RELEASE SAVEPOINT mobile_import_v26")
+
+    def hold_imported_authority(
+        self,
+        cursor: sqlite3.Connection | sqlite3.Cursor,
+        operation_id: str,
+        authorities: Sequence[tuple[str, str]],
+    ) -> None:
+        """Record exact import holds in the caller's owning transaction."""
+        from .mobile_import_authority import hold_authorities
+
+        self._require_execution_owner()
+        with self.connection() as conn:
+            authorities = tuple(authorities)
+            hold_authorities(conn, cursor, operation_id, authorities)
+            for kind, identity in authorities:
+                if kind == "chain":
+                    conn.execute(
+                        "UPDATE automatic_work_chains SET status='review_required', "
+                        "pause_reason='import_review_required' WHERE id=?",
+                        (identity,),
+                    )
+
+    def imported_authority_allowed(self, kind: str, authority_id: str) -> bool:
+        """Read the persistent exact hold; ordinary work never releases it."""
+        from .mobile_import_authority import authority_allowed
+
+        with self.connection() as conn:
+            return authority_allowed(conn, kind, authority_id)
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -2520,6 +2564,8 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 while sweeping; the path is left unregistered so a later
                 call in this process retries the sweep.
         """
+        from .mobile_import_authority import run_allowed
+
         self._require_execution_owner()
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
@@ -2589,6 +2635,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "FROM agent_runs WHERE status = 'running' "
                 "AND agent_kind IN ('primary', 'subagent')"
             ).fetchall()
+            orphan_rows = [row for row in orphan_rows if run_allowed(conn, row["id"])]
             orphan_ids = [row["id"] for row in orphan_rows]
             local_orphan_ids = [
                 row["id"]
@@ -2596,6 +2643,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     "SELECT id FROM agent_runs WHERE status = 'running' "
                     "AND agent_kind = 'local_command'"
                 ).fetchall()
+            ]
+            local_orphan_ids = [
+                identity for identity in local_orphan_ids if run_allowed(conn, identity)
             ]
             observed_at = _now_iso()
             diagnostic_index = AGENT_LIFECYCLE_INDEX_BASE + 500
@@ -2641,6 +2691,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "SELECT id, status FROM agent_runs WHERE status != 'running' "
                 "AND agent_kind IN ('primary', 'subagent')"
             ).fetchall()
+            terminal_rows = [
+                row for row in terminal_rows if run_allowed(conn, row["id"])
+            ]
             # Pre-load the whole scan's step payloads in one batched read so
             # run_observations below never queries per row (TASK-32804.10).
             _hydrated_terminal = self._batch_hydrate_steps(
@@ -3364,6 +3417,8 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             Matching run records (``steps``/``budget`` JSON-decoded),
             oldest ``updated_at`` first.
         """
+        from .mobile_import_authority import run_allowed
+
         with self.connection() as conn:
             rows = conn.execute(
                 "SELECT child.* FROM agent_runs AS child "
@@ -3378,7 +3433,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "ORDER BY child.updated_at ASC, child.id ASC",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-            return self._rows_to_dicts(conn, rows)
+            return self._rows_to_dicts(
+                conn, [row for row in rows if run_allowed(conn, row["id"])]
+            )
 
     def pending_wake_conversation_ids(self) -> tuple[str, ...]:
         """Discover saved survivor results, including claims awaiting review.
@@ -3386,9 +3443,11 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Attention badges are a view projection and never the discovery index.
         This projection reads identity only; result bodies are loaded per session.
         """
+        from .mobile_import_authority import run_allowed
+
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT child.conversation_id FROM agent_runs AS child "
+                "SELECT child.id, child.conversation_id FROM agent_runs AS child "
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
                 "WHERE child.wake_delivered_at IS NULL AND child.agent_kind!='primary' "
                 "AND child.status IN ('done','error','cancelled') "
@@ -3396,10 +3455,20 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
                 tuple(sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-        return tuple(str(row[0]) for row in rows)
+            return tuple(
+                sorted(
+                    {
+                        str(row["conversation_id"])
+                        for row in rows
+                        if run_allowed(conn, row["id"])
+                    }
+                )
+            )
 
     def pending_wake_results(self, conversation_id: str) -> list[dict]:
         """Read pending survivor identity and status without loading run bodies."""
+        from .mobile_import_authority import run_allowed
+
         with self.connection() as conn:
             rows = conn.execute(
                 "SELECT child.id, child.status, child.work_chain_id FROM agent_runs AS child "
@@ -3410,7 +3479,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "AND child.updated_at>=parent.updated_at ORDER BY child.updated_at, child.id",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-        return [dict(row) for row in rows]
+            return [dict(row) for row in rows if run_allowed(conn, row["id"])]
 
     def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
         """Stamp runs as wake-delivered; already-stamped rows are left alone.
@@ -3431,12 +3500,17 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Returns:
             How many rows were newly stamped.
         """
+        from .mobile_import_authority import run_allowed
+
         self._require_execution_owner()
         ids = [str(run_id) for run_id in run_ids if run_id]
         if not ids:
             return 0
-        placeholders = ", ".join("?" for _ in ids)
         with self.transaction() as conn:
+            ids = [identity for identity in ids if run_allowed(conn, identity)]
+            if not ids:
+                return 0
+            placeholders = ", ".join("?" for _ in ids)
             cursor = conn.execute(
                 "UPDATE agent_runs SET wake_delivered_at = ? "
                 f"WHERE id IN ({placeholders}) AND wake_delivered_at IS NULL",

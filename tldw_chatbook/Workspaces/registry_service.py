@@ -3019,7 +3019,9 @@ class LocalWorkspaceRegistryService:
         refreshed: list[WorkspaceRuntimeBinding] = []
         for binding in filtered:
             actual = (
-                RuntimeBindingStatus.MISSING
+                RuntimeBindingStatus.BLOCKED
+                if not self.db.imported_binding_allowed(binding.binding_id)
+                else RuntimeBindingStatus.MISSING
                 if _filesystem_binding_missing(binding.locator)
                 else RuntimeBindingStatus.READY
             )
@@ -3034,6 +3036,7 @@ class LocalWorkspaceRegistryService:
                     metadata=binding.metadata,
                     created_at=binding.created_at,
                     updated_at=binding.updated_at,
+                    import_review_required=binding.import_review_required,
                 )
             )
         return tuple(refreshed)
@@ -3144,6 +3147,19 @@ class LocalWorkspaceRegistryService:
             )
         )
 
+    def _import_binding_projection(
+        self, binding: WorkspaceRuntimeBinding
+    ) -> WorkspaceRuntimeBinding:
+        from dataclasses import replace
+
+        if not self.db.imported_binding_allowed(binding.binding_id):
+            return replace(
+                binding,
+                status=RuntimeBindingStatus.BLOCKED,
+                import_review_required=True,
+            )
+        return binding
+
     def get_runtime_binding(self, binding_id: str) -> WorkspaceRuntimeBinding | None:
         """Return one runtime binding if it exists."""
 
@@ -3166,7 +3182,7 @@ class LocalWorkspaceRegistryService:
             self._delete_default_runtime_bindings()
             return None
         binding = _runtime_binding_from_row(row)
-        return binding
+        return self._import_binding_projection(binding)
 
     def list_runtime_bindings(
         self,
@@ -3191,7 +3207,10 @@ class LocalWorkspaceRegistryService:
                 ).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        return tuple(_runtime_binding_from_row(row) for row in rows)
+        return tuple(
+            self._import_binding_projection(_runtime_binding_from_row(row))
+            for row in rows
+        )
 
     def read_change_review_consent(self, workspace_id: str) -> ChangeReviewConsent:
         """Read explicit per-workspace Change Review consent and revision.

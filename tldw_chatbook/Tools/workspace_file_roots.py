@@ -190,9 +190,10 @@ def _iter_valid_folder_bindings(
 ) -> Iterator[tuple[WorkspaceRuntimeBinding, Path]]:
     """Yield existing folder bindings whose stored path has not drifted."""
     for binding in bindings:
-        kind = (
-            getattr(getattr(binding, "binding_kind", None), "value", None)
-            or str(getattr(binding, "binding_kind", ""))
+        if getattr(binding, "import_review_required", False):
+            continue
+        kind = getattr(getattr(binding, "binding_kind", None), "value", None) or str(
+            getattr(binding, "binding_kind", "")
         )
         if kind == "ssh-filesystem":
             # Phase 4a: an ssh binding's root lives on the REMOTE host;
@@ -273,6 +274,8 @@ def _remote_note_lines(
     dropped: list[str] = []
     unaddressable = 0
     for binding in _list_remote_bindings(registry, workspace_id):
+        if getattr(binding, "import_review_required", False):
+            continue
         binding_id = str(getattr(binding, "binding_id", ""))
         if not binding_id:
             continue
@@ -530,7 +533,7 @@ def frozen_workspace_roots(
         roots: list[Path] = []
         for frozen in binding_authority:
             binding = live.get(str(getattr(frozen, "binding_id", "")))
-            if binding is None:
+            if binding is None or getattr(binding, "import_review_required", False):
                 continue
             root = Path(binding.locator)
             if (
