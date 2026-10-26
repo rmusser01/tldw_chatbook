@@ -330,3 +330,22 @@ digests and explicit removed-payload tombstones retain the rules above. Retained
 captures never authorize resurrection of erased bodies. These fixed rules avoid
 replaying mutable process authority or silently discarding user history; failures
 require revising the specific disposition while preserving recovery copies.
+
+### Fixed legacy-exchange preflight disposition
+
+A-chat refuses a populated `message_exchanges` table before imported rows, exact
+holds, batch receipts or history-file publication. Already-normalized
+`console_trace_*` graph rows and artifact BLOBs remain in the fixed import scope.
+Native `ConsoleLegacyTraceMaintenance.run_batch` deletes each old exchange only
+after `normalize_exchange` reports verified semantic equivalence, and its cursor
+is local to that database. Copying either the raw exchange or its source cursor
+cannot establish readable imported trace history. The mapper neither invokes a
+second normalizer nor mutates the source.
+
+The actionable refusal identifies the populated legacy exchange family and
+requires the supported native source-normalization path, followed by a fresh
+review/capture. It does not promise that a repair command exists or authorize
+writes while the current consolidation operation is pending. Retirement/recovery
+of that operation belongs to the terminal recovery workflow. The cost is an
+explicitly blocked legacy capture until its native semantic history is ready;
+the retained source and authenticated captures remain unchanged.
