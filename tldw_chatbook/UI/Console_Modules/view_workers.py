@@ -37,6 +37,8 @@ _GROUPS = frozenset(
         "console-flat-conversation-search",
     }
 )
+
+
 async def owned_display_read(database: Any, operation: Any, /, *args: Any) -> Any:
     """Run one finite display read off the UI loop, retired before cancellation.
 
