@@ -154,6 +154,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: start warms the checked config display (one call; the logic lives in
     #: Console_Modules/config_sync.py::warm_run_presentation). Dev 5b5920b8e2
     #: measures 24344/736; with the fix, 24345/736, the exact measurement.
+    #: Rebased 2026-10-25 onto dev 7a5e2513c5, which measures 24345 against
+    #: its own 24344 row (9688ac373f's line, TASK-36960): this row stays dev's
+    #: row + 1 and does not absorb dev's line.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24345, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
