@@ -29,7 +29,7 @@ Every structural PR lowers the ratchet it affects in the same commit.
   - No test or probe may write the real profile; a sandboxed launch denies writes to `~/.config/tldw_cli` and `~/.local/share/tldw_cli`.
 - **Preflight:** run `./scripts/preflight.sh` before opening a PR, and again after any rebase that touches `backlog/`.
 - **Owner decisions (all made 2026-10-25) are not reopened by implementers:**
-  - TASK-36941.3: keep ADR-012. A stored credential (config or keychain) wins over the environment variable; the hosted engine and the custom-endpoint registry are aligned to it, re-confirmed with ADR-012 in view.
+  - TASK-36941.3: keep ADR-012 and align the hosted engine to it (stored key before the environment variable when no credential source is recorded). Re-confirmed with ADR-012 in view. Custom endpoints are an owner choice recorded inside that task.
   - TASK-36943.2/.3: on an ADR-number collision the oldest file keeps the number and each younger file is renumbered with provenance.
   - TASK-36947.1: adopt a frozen, typed, per-feature services bundle built once in `app_service_wiring`, with a shared factory for the other entry points and no DI container. TASK-36947.1 writes the ADR; TASK-36947.2 waits for the owner to accept it.
 - **Defer to existing owners:** TASK-32807.5 (dead Chat modules and `_chat_api_kwargs`), TASK-32898 (Interop helpers), TASK-34905 and TASK-33132 (transaction consolidation), TASK-34906 (migration registry), TASK-32463 (over-budget screens). Do not re-solve their scope inside these tasks.
@@ -42,7 +42,7 @@ The failure modes most likely to bite users that no single task's tests cover by
 2. **A DB split or injected coordinator moves work outside the write transaction** (TASK-36949.2–.4). The semantic-mutation authorizer fails closed, so the symptom is a refused write, not corruption. Each task asserts the moved writes and the coordination run inside one `transaction()`, including a rollback case.
 3. **Boot import cost regresses** because a new package or shim imports eagerly (TASK-36944.x, 36945.1, 36947.2). The boot-import snapshot and pre-import ratchets (ADR-097 `097-boot-budget-ratchets.md`, TASK-33276) must stay green; new neutral packages must not import Chat, DB or Textual at module level.
 4. **Settings save order changes** when a category moves into the panel registry (TASK-1378.x). Pin ADR-033 (`backlog/decisions/033-settings-commit-models-three-honestly-labeled.md`) commit behaviour per category, including unsaved-change prompts on navigation, before moving it.
-5. **The credential alignment silently switches a user's key** (TASK-36941.3). Users of engine presets or custom endpoints who have both an env var and a stored key will now see the stored key used. The task pins the order with both present (including a keychain-recorded key) and adds a CHANGELOG entry.
+5. **The credential alignment silently switches a user's key** (TASK-36941.3). Users of engine presets who have both an env var and a stored key, and no recorded credential source, will now see the stored key used. The task pins the order with both present and adds a CHANGELOG entry.
 
 ---
 
@@ -83,7 +83,7 @@ The failure modes most likely to bite users that no single task's tests cover by
 
 **Cross-task interfaces fixed here, which later tasks consume:**
 
-- **TASK-36944.1:** the neutral package is `tldw_chatbook/Provider_Contract/`. Its modules hold the provider exceptions (from `Chat/Chat_Deps.py`), continuation, sampling-parameter and thinking-block types. Importing it loads none of the Chat, DB, Agents, LLM_Calls, UI, Widgets or Event_Handlers packages, nor config, textual, httpx or sqlite3. TASK-36944.2's boundary test and TASK-36944.10 import from it.
+- **TASK-36944.1:** the neutral package is `tldw_chatbook/Provider_Contract/`. Its modules hold the provider exceptions (from `Chat/Chat_Deps.py`), continuation, sampling-parameter and thinking-block types, plus `provider_endpoint_contract`, which continuation imports. Importing it loads none of the Chat, DB, Agents, LLM_Calls, UI, Widgets or Event_Handlers packages, nor config, textual, httpx or sqlite3. TASK-36944.2's boundary test and TASK-36944.10 import from it.
 - **TASK-36949.1:** `CharactersRAGDB.managed_transaction_depth() -> int` (0 outside a managed transaction). It serves both kinds of caller, those asking whether a transaction is open and the Persona_Visual guards asking whether they own the outermost one. TASK-36949.2–.4 and the existing repositories call it instead of reading `_local.transaction_depth`.
 - **TASK-36942.3:** the allowlist is a TSV beside the test, one `src_module<TAB>dst_module<TAB>kind` row per allowed upward edge. Phase-2 PRs delete rows.
 - **TASK-36942.4:** the census is a TSV of `package<TAB>count`, plus a frozen list of allowed private names. Phase-3 PRs lower counts.

@@ -47,7 +47,7 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 ### F1 — The application object is a service locator · Critical · Pattern/DIP · Entire codebase
 - **Evidence:**
   - `app.py` plus the `app_*.py` mixins assign **397 distinct attributes** on `TldwCli`. About 199 are named like services (`local_X_service` / `server_X_service` / `X_scope_service` for ~30 domains).
-  - Outside `UI/`, `Widgets/` and `css/`, **352 functions in 71 modules** take `app`/`app_instance`. They read 233 distinct attribute names from it and make **222 `getattr(app, "<literal>")` calls** over 86 names.
+  - Outside `UI/`, `Widgets/` and `css/`, **352 functions in 71 modules** take `app`/`app_instance`. They read 189 distinct attribute names from it; **222 of those reads are `getattr`/`hasattr` string lookups** (219 + 3) over 86 names.
   - Inside `UI/`, there are **1,176** such string lookups across **247 names**, 71 of them private (135 private call sites). This holds even though `UI/Navigation/base_app_screen.py:101` types `app_instance` as `TldwCli`.
   - `library_screen.py:11828` writes an undeclared private app attribute (`_library_source_snapshot_cache`).
   - `ConsoleChatController` holds a settable `self.app` (`console_chat_controller.py:4590`, assigned at `chat_screen.py:9256` and `console_launch_wake.py:223`). It reads ≥18 app attributes and forwards the whole app into 5 helpers (`:8886`, `:20998`, `:21010-21014`, `:21070`, `:21126-21129`).
@@ -117,11 +117,11 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 - **Evidence:**
   - **`_run_one`:** `AgentService._run_one` (`agent_service.py:5006-9168`) is **4,163 lines** with 45 nested functions. The biggest are `spawn` 551 (`:6281`), `_launch_fleet_child` 490 (`:5707`) and `_resume_retained_child` 324 (`:7078`).
   - **`run_agent_loop`** (`agent_runtime.py:1073-3523`): its `while True` (1729–3523) is 1,795 lines. The per-call loop (2637–3506) is 870 lines with 20 `call.name ==` and 3 `call.name in` branches. A dict dispatch already exists at `:3103-3108`.
-  - **Not pure:** `agent_runtime.py:400-404` says the module is "a pure module today (no Textual, app, DB, or I/O imports)". A sandboxed probe shows importing it loads `sqlite3`, `httpx`, **`textual`**, `DB.ChaChaNotes_DB`, `Chat` and `config` (207 tldw_chatbook modules). There is no single cause:
-    - `:23` (and `agent_models.py:24/:28`) import Chat provider modules, which run `Chat/__init__` and load the DB.
+  - **Not pure:** `agent_runtime.py:400-404` says the module is "a pure module today (no Textual, app, DB, or I/O imports)". A sandboxed probe shows importing it loads `sqlite3`, `httpx`, **`textual`**, `DB.ChaChaNotes_DB`, `Chat` and `config` (207 tldw_chatbook modules). Three import chains cause it:
+    - `:22` and `project_instruction_runtime.py:15` import `EPHEMERAL_ORIGIN_KEY` from `Chat.console_project_instructions` (httpx at `:12`), which runs `Chat/__init__` and loads the DB.
+    - `:23` and `agent_models.py:24/:28` import Chat provider modules, which also run `Chat/__init__`.
     - `project_instruction_runtime.py:40` imports `tool_catalog`, whose built-in provider chain reaches `RAG_Search`, `config`, the DB and `UI.destination_recovery`.
-    - Even with `Chat/__init__` treated as empty, the static closure is 188 modules.
-    - A PR review corrected the first claim that the `:22` constant import was the cause.
+    - Even with `Chat/__init__` treated as empty, the static closure is 188 modules. The first pass named only the first chain.
   - **No guard:** `agent_models` has a purity test (`Tests/Agents/test_agent_models.py:409`); `agent_runtime` has none.
 - **Recommended structure:** a special-tool dispatch table, then phase functions over a `LoopState`; `_run_one`'s fleet closures become a per-run class.
 - **Tests affected:** 144 test files reference `AgentService`; 54 reference `run_agent_loop`.
@@ -209,9 +209,9 @@ Each finding lists the backlog tasks filed for it. Task IDs are `TASK-<stream>.<
 | `moonshot.py:626`, `zai.py:595`, `qwencloud.py:365` | explicit → **stored** → env |
 | Custom-endpoint registry (`Chat/custom_endpoint_registry.py:495`) | env → stored |
 
-  ADR-012 (`backlog/decisions/012-provider-credential-settings-boundary.md`, Accepted) rules in its 2026-09-19 amendment (TASK-32806.2) that a stored credential (config or keychain) outranks the env var, which is the fallback. CLAUDE.md says the same. The engine and the custom-endpoint registry are the resolvers out of line; ADR-146 (`backlog/decisions/146-console-custom-endpoint-registry.md`) recorded the registry's env-first order as mirroring the provider semantics of its time. A user with both set gets a different key depending on the provider family.
+  ADR-012 (`backlog/decisions/012-provider-credential-settings-boundary.md`, Accepted) rules in its 2026-09-19 amendment (TASK-32806.2) that the stored `api_settings` key outranks the env var, which is the fallback. Its 2026-10-17 amendment makes a recorded `credential_source` decisive, and its keychain amendment is not built yet (TASK-34100.31). CLAUDE.md says the same. The engine and the custom-endpoint registry are the resolvers out of line; ADR-146 (`backlog/decisions/146-console-custom-endpoint-registry.md`) recorded the registry's env-first order as mirroring the provider semantics of its time. A user with both set gets a different key depending on the provider family.
 - **Kwargs-builder drift:** the drifted builder is the dead `_chat_api_kwargs` (zero production callers, 23 test calls), already owned by **TASK-32807.5**. Not re-filed.
-- **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25, with ADR-012 in view: keep ADR-012 and align the engine and the custom-endpoint registry), TASK-36946.1–.2.
+- **Tasks:** TASK-36941.3 (precedence; owner decided 2026-10-25, with ADR-012 in view: keep ADR-012 for the hosted engine; the custom-endpoint order is an owner choice recorded in the task), TASK-36946.1–.2. Gaps already owned elsewhere: TASK-35227 (key readers ignoring a recorded source) and TASK-35369 (Moonshot/Z.ai readiness leftover key).
 
 ### F12 — Shared code lives in widget/screen files; Chat identity-checks UI internals · Medium · Layering · Module
 - **Evidence:** pure helpers sit in Textual modules:

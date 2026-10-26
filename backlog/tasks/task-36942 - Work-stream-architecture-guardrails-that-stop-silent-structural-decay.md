@@ -23,7 +23,7 @@ Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Layer direction, app string lookups, module size and agent_runtime import purity are each enforced by an architecture test that runs in the existing Architecture lane
+- [ ] #1 Layer direction, app string lookups, module size and the agent runtime's import footprint are each enforced by an architecture test that runs in the existing Architecture lane
 <!-- AC:END -->
 
 ## Implementation Notes

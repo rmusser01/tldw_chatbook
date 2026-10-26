@@ -37,15 +37,15 @@ Each was re-verified in source before the fix.
   - import-time SCCs: 2, both in the app shell, sizes 3 and 2;
   - an SCC of 1,217 modules over 67 packages from executable (top-level plus function-level) edges, or 1,496 over 93 when TYPE_CHECKING-only edges are included;
   - a 91-package SCC at package level from top-level edges only;
-  - 55 package pairs that import each other at top level, or 129 counting every import kind.
-- `layers.py graph.json` gives the upward edges:
-  - domain → presentation: 83, of which 42 top-level;
-  - DB → feature: 358, of which 169 top-level;
-  - kernel → higher: 99.
+  - 55 package pairs that import each other at top level, 123 counting executable imports, or 129 counting every import kind.
+- `layers.py graph.json` gives the upward edges. Executable (top-level plus function-level) first, with TYPE_CHECKING-only included in brackets:
+  - domain → presentation: 80 (83), of which 42 top-level;
+  - DB → feature: 335 (358), of which 169 top-level;
+  - kernel → higher: 89 (99), of which 26 top-level.
 - `classes.py graph.json classes|funcs|app` gives:
   - 102 classes over 2,000 lines and 50 functions with complexity over 100;
   - 397 `TldwCli` attributes (an inline script over `app.py` plus `app_*.py`).
-- `appparam.py graph.json` gives 352 non-UI functions in 71 modules taking the app, reading 233 attributes, 222 of them through `getattr` string lookups.
+- `appparam.py graph.json` gives 352 non-UI functions in 71 modules taking the app. They read 189 distinct attribute names; 222 of the reads are `getattr`/`hasattr` string lookups (219 + 3) over 86 names. The script prints 233 because it counts `getattr:X` keys separately from `.X` reads.
 - `deleg.py <file>:<Class> …` gives delegator and largest-method counts per class.
 
 ## Ratchet coverage (F16)
