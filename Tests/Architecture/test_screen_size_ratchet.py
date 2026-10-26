@@ -1190,7 +1190,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: decision): a class-level ``_library_notes_filter_row_handoff = None``
     #: default, so a screen built by ``__new__`` reads it on suspend: 38164 ->
     #: 38166 lines, 1373 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38166, 1373),
+    #: 2026-10-26, PR #3259 CI fix round 1 (TASK-34000.28; same owner
+    #: decision): ``_withdraw_library_notes_filter_row_handoff`` renamed
+    #: ``_withdraw_library_notes_pending_focus_handoffs`` and now also
+    #: withdraws Back's pending row hand-off (a ``/`` pressed before the
+    #: list's source snapshot landed had focus taken back to the row), and
+    #: Down's T5-a landing focuses the painted result at once instead of only
+    #: through the list-entry arm's after-refresh attempt: 38166 -> 38195
+    #: lines, 1373 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38195, 1373),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

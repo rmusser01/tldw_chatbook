@@ -159,7 +159,10 @@ editor's own Back control returns to its list.
   dates, version details, copy/export actions, and Delete. Save status and
   frequent actions remain in the header. On wide terminals the editor's own
   `‹ Notes` control returns to the exact prior list row, scope, and
-  scroll positions; on compact terminals use `‹ Back to list`. While you are
+  scroll positions; on compact terminals use `‹ Back to list`. A key or
+  click before the list has finished refreshing (`/` for the filter, say)
+  keeps focus where it took you rather than pulling it back to that row.
+  While you are
   typing, the title, body and keyword fields are each their own authority: a
   background refresh never rewrites the field under your hands, and it never
   moves your place in the Items list beside it. Tab out of any of them —

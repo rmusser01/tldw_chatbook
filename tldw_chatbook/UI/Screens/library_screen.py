@@ -8571,7 +8571,7 @@ class LibraryScreen(BaseAppScreen):
             target = None
         self._advance_library_ordinary_emergency_user_interaction(target)
         self._mark_library_notes_user_interaction()
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -8581,7 +8581,7 @@ class LibraryScreen(BaseAppScreen):
             getattr(event, "widget", None)
         )
         self._mark_library_notes_user_interaction()
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -8591,7 +8591,7 @@ class LibraryScreen(BaseAppScreen):
             getattr(event, "widget", None)
         )
         self._mark_library_notes_user_interaction()
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
 
@@ -9197,7 +9197,7 @@ class LibraryScreen(BaseAppScreen):
                     focused = self._move_library_screen_focus(-1)
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         if emergency_tab:
@@ -9448,13 +9448,13 @@ class LibraryScreen(BaseAppScreen):
         marking twice is a no-op).
         """
         self._mark_library_notes_user_interaction()
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         self._move_library_screen_focus(1)
 
     def action_focus_previous(self) -> None:
         """Shift+Tab: the reverse of ``action_focus_next``."""
         self._mark_library_notes_user_interaction()
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         self._move_library_screen_focus(-1)
 
     #: task-32246: the Tab region INSIDE the open Notes work pane -- the
@@ -9599,7 +9599,7 @@ class LibraryScreen(BaseAppScreen):
     def action_focus_previous_workbench_pane(self) -> None:
         """Shift+F6: move focus to the previous Library workbench pane."""
         # A priority binding never reaches ``on_key`` (TASK-34000.28 R2-2).
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         focus_relative_workbench_pane(
             self,
             self._library_workbench_focus_targets(),
@@ -9690,7 +9690,7 @@ class LibraryScreen(BaseAppScreen):
             self._artifacts_controller.suspend()
         self._unavailable_navigation.clear_character_return(self)
         self._disarm_library_list_entry_focus()
-        self._withdraw_library_notes_filter_row_handoff()
+        self._withdraw_library_notes_pending_focus_handoffs()
         self._stop_library_media_selection_debounce()
         self._stop_library_media_filter_timer()
         for attr in ("_library_source_snapshot_timeout_timer",):
@@ -25483,10 +25483,10 @@ class LibraryScreen(BaseAppScreen):
         """Focus the box after a painted result, or its first row for a Down.
 
         Ruling T5-a (TASK-34000.28 N-21): a Down that applied ``query`` (or
-        met it loading) hands focus to the NEW result's first row through the
-        list-entry arm, which falls back to the box on an empty result. A key
-        or click since the Down leaves focus where it went; text typed since
-        (the carried draft) keeps it in the box.
+        met it loading) hands focus to the NEW result's first row -- at once,
+        and through the list-entry arm's retries -- falling back to the box on
+        an empty result. A key or click since the Down leaves focus where it
+        went; text typed since (the carried draft) keeps it in the box.
         """
         handoff = self._library_notes_filter_row_handoff
         if handoff is None or handoff[0] != query:
@@ -25507,23 +25507,52 @@ class LibraryScreen(BaseAppScreen):
         typed = boxes.first(Input).value if boxes else ""
         if self._safe_text(typed, max_length=200).strip() == query:
             self._arm_library_list_entry_focus()
+            # PR #3259 CI fix round 1: land NOW too -- this is the painted
+            # result's own canvas-sync ``then``, so its rows are mounted. The
+            # arm alone tries after the next refresh, and the sync's restore
+            # of the box (just before this call) has a DescendantFocus queued;
+            # when that event was handled first it read as the user leaving
+            # the list and disarmed the landing, so Down left focus in the box
+            # (1 of 10 runs under CPU load). The arm stays for its retry and
+            # settle window; its own attempt then finds the row focused.
+            self._focus_library_list_entry()
         else:
             self._focus_library_notes_filter_input()
 
-    def _withdraw_library_notes_filter_row_handoff(self) -> None:
-        """The user's own input takes over from a pending Down (ruling T5-a).
+    def _withdraw_library_notes_pending_focus_handoffs(self) -> None:
+        """The user's own input takes over from every pending Notes landing.
+
+        Two landings wait on a load and then move focus:
+
+        - a pending Down's move to the first result row (ruling T5-a,
+          TASK-34000.28 N-21) -- kept, marked not live, so the landing knows
+          to leave focus where the user put it;
+        - Back's hand-off to the row the note was opened from, which waits
+          for the list's source snapshot (``pending_focus_identity``). PR
+          #3259 CI fix round 1: a ``/`` pressed in that window put the user
+          in the filter, and the released snapshot then focused the row over
+          them, so their next keys hit the row's accelerators. Withdrawn
+          outright, as a newer navigation's supersede withdraws it.
 
         TASK-34000.28 R2-2: called from every site real input reaches --
         ``on_key``, ``on_mouse_down``, the wheel, the priority-bound focus
         actions ``on_key`` never sees (the note fields' Tab/Shift+Tab, and
         Shift+F6) -- and from ``on_screen_suspend`` (a dialog over Library,
-        e.g. Ctrl+Q's). Not from ``on_descendant_focus``: the apply's own
-        recompose prunes the focused box, and Textual's focus reset there
-        reads as a user move -- that withdrew every hand-off (measured: both
-        T5-a Pilot pins red).
+        e.g. Ctrl+Q's). Not from ``on_descendant_focus``: a recompose that
+        prunes the focused widget makes Textual reset focus, and that reset
+        reads as a user move -- it withdrew every Down hand-off (measured:
+        both T5-a Pilot pins red). Back's prune of the editor does the same:
+        a ``focus_intent_generation`` stamp taken at Back was already stale
+        with no key pressed, and the no-move control of
+        ``test_slash_right_after_back_keeps_the_filter_when_the_list_snapshot_lands``
+        went red (focus left on the Library grip).
         """
         if handoff := self._library_notes_filter_row_handoff:
             self._library_notes_filter_row_handoff = (handoff[0], False)
+        if self._notes_state.pending_focus_identity is not None:
+            self._notes_state.pending_focus_identity = None
+            self._notes_state.pending_focus_waits_for_snapshot = False
+            self._notes_state.pending_focus_generation = None
 
     def _library_notes_filter_down(self) -> bool:
         """Down in the Notes filter: the first result row (TASK-34000.28 N-21).
