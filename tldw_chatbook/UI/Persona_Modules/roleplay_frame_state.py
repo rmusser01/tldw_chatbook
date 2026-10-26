@@ -1084,6 +1084,22 @@ class ListWindowState:
         self.intent = None
         return True
 
+    def landed_elsewhere(self, fence: ListFence) -> None:
+        """Another list's rows landed without a replace of this module's windows.
+
+        A first-match landing owed on a list other than ``fence``'s can never
+        land (its render was superseded), so it is dropped, as ``landing()``
+        does for a character replace. ``rows_fence`` is not touched.
+        """
+        intent = self.intent
+        if (
+            intent is not None
+            and intent.reason == "first"
+            and intent.fence is not None
+            and not same_list(intent.fence, fence)
+        ):
+            self.intent = None
+
     def asked_for(self, intent: WindowIntent | None, fence: ListFence) -> None:
         """The screen saw ``intent``'s request: it belongs to the list the user waits for."""
         if intent is not None and intent is self.intent:

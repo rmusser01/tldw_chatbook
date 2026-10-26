@@ -1433,6 +1433,9 @@ class PersonasScreen(BaseAppScreen):
         self._selected_lore_book_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
+        #: Bumped by every set and cancel of the search timer: a callback
+        #: delivered for a superseded or stopped timer carries an old serial.
+        self._search_timer_serial = 0
         self._conversation_search_debounce_timer: Timer | None = None
         self._console_readiness_poll_timer: Timer | None = None
         self._console_readiness_block_reason: str | None = None
@@ -3843,6 +3846,9 @@ class PersonasScreen(BaseAppScreen):
     def _land_first_match(self, fence: frame_state.ListFence) -> None:
         """The searched list's rows are in the list: the cursor to its first match, if owed."""
         if not self._window_state.take_first(fence):
+            # A newer query or source landed: a landing owed on the older
+            # list can never land (its cancelled render skips read_failed).
+            self._window_state.landed_elsewhere(fence)
             return
         try:
             self.query_one(PersonasLibraryPane).land_on_first()
@@ -4308,23 +4314,26 @@ class PersonasScreen(BaseAppScreen):
         self._cancel_search_debounce()
         query = self.state.search_query
         mode = self.state.active_mode
+        serial = self._search_timer_serial
         self._search_debounce_timer = self.set_timer(
             PERSONAS_SEARCH_DEBOUNCE_SECONDS,
-            lambda: self._search_timer_fired(query=query, mode=mode),
+            lambda: self._search_timer_fired(serial=serial, query=query, mode=mode),
         )
 
-    def _search_timer_fired(self, *, query: str, mode: str) -> None:
-        """A debounce timer fired: start its render unless a newer keystroke superseded it.
+    def _search_timer_fired(self, *, serial: int, query: str, mode: str) -> None:
+        """A debounce timer fired: start its render unless it was superseded or stopped.
 
-        A timer stopped as it fires can still run its callback. Starting the
-        stale query's render would clear ``_search_debounce_timer``, which by
-        then names the newer keystroke's live timer, and Enter in the search
-        box would take the search for done (it owed no landing and put the
-        cursor on the previous results' first row, then the live timer's
-        search landed without it). That hole is on dev today (it shows under
-        load) and is closed here.
+        A timer stopped as it fires can still run its callback, and Enter
+        stops the live timer and starts the search itself. Starting a stale
+        callback's render would clear ``_search_debounce_timer``, which by
+        then names the newer keystroke's live timer (Enter in the search box
+        would take the search for done: it owed no landing and put the cursor
+        on the previous results' first row), or would read the same search
+        twice. Both are on dev today (the first shows under load) and are
+        closed here: each set and cancel bumps a serial, and a callback
+        carrying an old one starts nothing.
         """
-        if query != self.state.search_query or mode != self.state.active_mode:
+        if serial != self._search_timer_serial:
             return
         self._start_debounced_search_render(query=query, mode=mode)
 
@@ -4389,6 +4398,7 @@ class PersonasScreen(BaseAppScreen):
     def _cancel_search_debounce(self) -> None:
         """Cancel a pending search render when newer state supersedes it."""
 
+        self._search_timer_serial += 1
         if self._search_debounce_timer is not None:
             self._search_debounce_timer.stop()
             self._search_debounce_timer = None

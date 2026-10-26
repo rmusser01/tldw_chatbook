@@ -2553,6 +2553,9 @@ async def test_the_four_key_find_opens_the_first_match_after_a_read_slower_than_
                 assert screen._search_debounce_timer is not None
             held_since = time.monotonic()
             await pilot.press("enter")
+            # Dev's Enter holds the screen for 2 s; 1.5 s is the margin. Timed
+            # right after the key, not after the polling that follows.
+            assert time.monotonic() - held_since < 1.5
             await wait_until(
                 pilot, held.reading.is_set, what="the read, started by Enter"
             )
@@ -2561,8 +2564,6 @@ async def test_the_four_key_find_opens_the_first_match_after_a_read_slower_than_
             # AC#1: a key right after Enter is handled while the read is held.
             await pilot.press("escape")
             assert escapes == [False]
-            # Dev's Enter holds the screen for 2 s; 1.5 s is the margin.
-            assert time.monotonic() - held_since < 1.5
             # AC#3: Enter on the list opens nothing, and the landing stays owed.
             await pilot.press("enter")
             await _pause_without_settling(pilot)
@@ -2623,11 +2624,11 @@ async def test_the_four_key_find_opens_the_first_match_after_a_slow_server_searc
         await pilot.press("ctrl+f", *"Remote 042")
         pressed = time.monotonic()
         await pilot.press("enter")
+        assert time.monotonic() - pressed < 1.5  # dev's Enter holds it 2 s
         try:
             await wait_until(pilot, searching.is_set, what="the held server search")
             assert screen.focused is item_list
             await pilot.press("escape")  # AC#1: handled while the search is held
-            assert time.monotonic() - pressed < 1.5
             await pilot.press("enter")  # AC#3: nothing to open yet
             await pilot.pause(2.4)
             assert screen.state.selected_entity_id == opened_before
@@ -2872,3 +2873,211 @@ async def test_a_stale_debounce_timer_firing_does_not_hide_the_live_search_from_
             what="the first match under the cursor",
         )
         assert visible_item_ids(screen) == (f"character:{target['id']}",)
+
+
+async def test_a_newer_dictionary_query_drops_the_landing_owed_on_the_older_one(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Real keys, Dictionaries mode, a held ``list_dictionaries``: Enter owes
+    the landing on "Book"; a newer query "Book C" cancels that render (the
+    group is exclusive) and lands its own list. The cancelled render never
+    reaches ``read_failed``, so on this PR's first push the landing stayed
+    owed for a list that can never land and Enter on the list opened nothing
+    until an arrow key or a click. Dev has no inert Enter; new here, fixed
+    here."""
+    records = [
+        {"id": n, "name": f"Book {letter}", "entry_count": 2, "enabled": True}
+        for n, letter in enumerate("ABCDE", start=1)
+    ]
+    hold = asyncio.Event()
+    calls: list[dict] = []
+
+    async def list_dictionaries(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:  # Enter's search (call 1 is the mode switch)
+            await hold.wait()
+        return {"dictionaries": records}
+
+    mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+        list_dictionaries=list_dictionaries
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        assert await pilot.click("#personas-mode-dictionaries")
+        await wait_until(
+            pilot, lambda: len(visible_item_ids(screen)) == 5, what="dictionaries"
+        )
+        monkeypatch.setattr(
+            personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
+        )
+        try:
+            await pilot.press("ctrl+f", *"Book")
+            await pilot.press("enter")
+            await wait_until(pilot, lambda: len(calls) == 2, what="the held search")
+            assert screen._window_state.landing_owed()
+            monkeypatch.setattr(
+                personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 0.2
+            )
+            await pilot.press("ctrl+f", *" C")  # no Enter: the debounce renders
+            await wait_until(pilot, lambda: len(calls) == 3, what="the newer render")
+        finally:
+            hold.set()
+        await wait_until(
+            pilot,
+            lambda: (
+                [item_list.row(i).name for i in visible_item_ids(screen)] == ["Book C"]
+            ),
+            what="Book C listed",
+        )
+        await settle(pilot)
+        assert not screen._window_state.landing_owed()
+        selected: list[str] = []
+
+        async def record(entity_id, entity_name, **kwargs):
+            selected.append(entity_id)
+
+        monkeypatch.setattr(screen, "_select_dictionary", record)
+        item_list.focus()
+        item_list.highlighted = 0
+        await pilot.pause()
+        await pilot.press("enter")
+        await wait_until(pilot, lambda: selected == ["3"], what="the listed row opened")
+
+
+async def test_a_source_change_during_a_dictionary_search_drops_the_landing(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """The same orphan for a source change: the landing is owed on the local
+    "Book" list; the source flips to server before that render ends, so the
+    list the landing belongs to can never land. New here (dev has no landing)."""
+    records = [
+        {"id": n, "name": f"Book {letter}", "entry_count": 2, "enabled": True}
+        for n, letter in enumerate("ABC", start=1)
+    ]
+    hold = asyncio.Event()
+    calls: list[dict] = []
+
+    async def list_dictionaries(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:
+            await hold.wait()
+        return {"dictionaries": records}
+
+    mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+        list_dictionaries=list_dictionaries
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#personas-mode-dictionaries")
+        await wait_until(
+            pilot, lambda: len(visible_item_ids(screen)) == 3, what="dictionaries"
+        )
+        try:
+            await pilot.press("ctrl+f", *"Book")
+            await pilot.press("enter")
+            await wait_until(pilot, lambda: len(calls) == 2, what="the held search")
+            assert screen._window_state.landing_owed()
+            mock_app_instance.runtime_backend = "server"
+            mock_app_instance.active_server_id = "server-a"
+            await screen.handle_runtime_backend_changed("server")
+        finally:
+            hold.set()
+        await settle(pilot)
+        await _pause_without_settling(pilot)
+        assert not screen._window_state.landing_owed()
+
+
+async def test_a_timer_callback_delivered_after_enter_stopped_it_starts_no_second_search(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Enter stops the live timer and starts the search itself; that timer's
+    callback can still be delivered. The query is unchanged, so a query check
+    passes it and the same search read twice (the landing survived, the read
+    ran again). Exists on dev today (Enter stops the timer there too) and is
+    fixed here: a callback whose timer was superseded or stopped starts
+    nothing."""
+    target = volume_348.get_character_card_by_name("Character 0042")
+    reads: list[int] = []
+    gate, reading = threading.Event(), threading.Event()
+    page = personas_screen_module.get_character_page_for_ui
+
+    def counted(db, **kwargs):
+        if "0042" in str(kwargs.get("search_term") or ""):
+            reads.append(1)
+            if not reading.is_set():
+                reading.set()
+                gate.wait(20)
+        return page(db, **kwargs)
+
+    monkeypatch.setattr(
+        personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        monkeypatch.setattr(
+            personas_screen_module, "get_character_page_for_ui", counted
+        )
+        try:
+            await pilot.press("ctrl+f", *"Character 0042")
+            live = screen._search_debounce_timer
+            await pilot.press("enter")
+            await wait_until(pilot, reading.is_set, what="the held read")
+            live._callback()  # delivered after Enter stopped it
+            await _pause_without_settling(pilot)
+        finally:
+            gate.set()
+        await wait_until(
+            pilot,
+            lambda: highlighted_item_id(screen) == f"character:{target['id']}",
+            what="the first match under the cursor",
+        )
+        await settle(pilot)
+        assert len(reads) == 1
+
+
+async def test_enter_with_no_new_query_waits_for_a_sort_reload_in_flight(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Enter pressed with no query change while a sort reload is still reading:
+    no timer and no search render is pending, but the loaded rows are the old
+    sort's, so the landing is owed to the sort's rows (not put on rows the
+    reload is about to replace). New with this PR (dev has no landing)."""
+    gate, reading = threading.Event(), threading.Event()
+    page = personas_screen_module.get_character_page_for_ui
+
+    def held(db, **kwargs):
+        if not reading.is_set():
+            reading.set()
+            gate.wait(20)
+        return page(db, **kwargs)
+
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        item_list.highlighted = 5
+        await pilot.pause()
+        monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", held)
+        sorting = asyncio.create_task(screen._cycle_sort())
+        try:
+            await wait_until(pilot, reading.is_set, what="the sort's held read")
+            await pilot.press("ctrl+f")
+            await pilot.press("enter")
+            await _pause_without_settling(pilot)
+            assert screen._search_debounce_timer is None
+            assert screen._window_state.landing_owed()
+            assert item_list.highlighted == 5  # not moved onto the stale rows
+        finally:
+            gate.set()
+        await sorting
+        await settle(pilot)
+        assert not screen._window_state.landing_owed()
+        assert highlighted_item_id(screen) == visible_item_ids(screen)[0]

@@ -1138,14 +1138,6 @@ class PersonasLibraryPane(Vertical):
             # The bar takes the pane's bottom row: keep the cursor row in view.
             item_list.call_after_refresh(item_list.scroll_to_highlight)
 
-    def focus_first_result(self) -> None:
-        """Into the list with the cursor on the first row (Enter in the search box)."""
-        item_list = self.item_list
-        item_list.focus()
-        item_list.window_state.user_moved()
-        if item_list.option_count:
-            item_list.highlighted = 0
-
     def land_on_first(self) -> None:
         """The cursor to the first row (a searched list's rows have arrived)."""
         item_list = self.item_list

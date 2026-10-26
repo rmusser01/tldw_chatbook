@@ -1139,11 +1139,16 @@ async def test_a_newer_cursor_move_or_selection_forgets_an_owed_end(move):
         elif move == "selection":
             pane.mark_active_row("character", "50")
         elif move == "enter":
-            pane.focus_first_result()
+            # Enter in the search box owes the first match: a newer move than
+            # the End it replaces (TASK-33910.35).
+            item_list.window_state.owe_first(_search_fence())
         else:
             await pilot.press(move)
         await pilot.pause()
-        assert item_list.window_state.intent is None
+        if move == "enter":
+            assert item_list.window_state.landing_owed()
+        else:
+            assert item_list.window_state.intent is None
 
 
 async def test_a_re_mark_of_the_open_row_keeps_an_owed_end_and_enter_on_it_does_not():
@@ -1445,3 +1450,18 @@ async def test_enter_on_the_list_is_inert_while_the_first_match_is_owed():
         await pilot.press("enter")
         await pilot.pause()
         assert len(pilot.app.selected) == 1
+
+
+def test_a_landing_owed_on_another_list_is_dropped_when_that_list_can_never_land():
+    """A non-character render ends without landing(): ``landed_elsewhere`` drops
+    a first-match landing owed on a superseded list, keeps one owed on this
+    list, and leaves an owed End alone."""
+    window = frame_state.ListWindowState()
+    window.owe_first(_search_fence())
+    window.landed_elsewhere(_search_fence(generation=9))
+    assert window.landing_owed()
+    window.landed_elsewhere(_search_fence(query="newer"))
+    assert not window.landing_owed()
+    window.want("end", read=False)
+    window.landed_elsewhere(_search_fence(query="newer"))
+    assert window.intent is not None and window.intent.reason == "end"
