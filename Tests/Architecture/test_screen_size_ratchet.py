@@ -1153,8 +1153,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: pruned-control substitution narrowed to Textual's own landing, the
     #: operation-origin capture rule removed (the origin now stays enabled),
     #: and the Discard tail's docstring: 38233 -> 38228 lines, 1374 methods
-    #: (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38228, 1374),
+    #: (measured). Rebased 2026-10-26 onto polish-1a's PR #3259 CI fix round
+    #: (its +29 lines above): 38228 -> 38257 lines, 1374 methods (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38257, 1374),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
