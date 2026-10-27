@@ -118,6 +118,14 @@ LOCAL_PORTS: dict[str, tuple[int, ...]] = {
     "custom_2": (1234,),
 }
 
+#: An engine whose setup address is a route, not its root: KoboldCpp's send
+#: posts KoboldAI's native payload to the saved URL, so the example is that
+#: route (the endpoint contract keeps it whole and lists at the root's
+#: ``/v1/models``, TASK-35010); a typed root resolves as an OpenAI chat URL.
+ENDPOINT_EXAMPLES: dict[str, str] = {
+    "koboldcpp": "http://127.0.0.1:5001/api/v1/generate",
+}
+
 #: Providers whose saved base already ends in its API version, so the chat
 #: route is ``<base>/chat/completions`` -- never ``<base>/v1/chat/completions``
 #: (review provider-20 / task-33621.32: Z.ai's ``/api/paas/v4``).
@@ -191,6 +199,8 @@ def endpoint_example(facts: ProviderSetupFacts) -> str:
     """An example address for the endpoint field, or ""."""
     if facts.base_url_example:
         return facts.base_url_example
+    if facts.provider_key in ENDPOINT_EXAMPLES:
+        return ENDPOINT_EXAMPLES[facts.provider_key]
     if facts.local_ports:
         return f"http://127.0.0.1:{facts.local_ports[0]}"
     return ""
