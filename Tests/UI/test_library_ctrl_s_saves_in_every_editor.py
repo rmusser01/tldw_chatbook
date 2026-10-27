@@ -8,16 +8,19 @@ focused editor's visible commit, flushes an autosaving editor at once, says
 why at the editor when it refuses, and is unbound outside an editor.
 
 Every test here drives the production ``TldwCli`` booted into Library and
-presses the real keys. The data claims read real stores: a ChaChaNotes
-database, a Prompts database and a Folder files vault on disk. The two Media
-forms run against the production stylesheet harness in
-``test_library_ctrl_s_saves_in_every_editor_media.py``.
+presses the real keys; the data claims read a real ChaChaNotes database. This
+file holds the notes arms; split for the 30 s census budget, the siblings
+hold the prompt and Folder files arms (``_extended``), the skill editor
+(``_skills``), the two Media forms on the production stylesheet harness
+(``_media``), the chip following a save state no key changed
+(``test_library_ctrl_s_chip_follows_save_state.py``) and the boot-free
+refusal branches (``test_library_ctrl_s_refusals.py``).
 """
 
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, TextArea
+from textual.widgets import Button, TextArea
 
 # Stubs first: they register the optional modules the app imports below probe.
 import Tests.UI._optional_module_stubs  # noqa: F401
@@ -35,23 +38,14 @@ from Tests.UI.library_quit_guard_support import (
     _type,
     _until,
 )
-from Tests.UI.test_library_file_notes_workspace import _production_workspace_context
-from Tests.UI.test_library_shell import _wait_for_condition
-from Tests.UI.test_library_prompts_canvas import (
-    _open_prompt_editor,
-    _real_prompt_scope_service,
-)
-from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
-from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
-    LibraryFileNotesWorkspace,
-)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
-#: Owner ruling 2026-10-27 (TASK-34000.40 AC#3): a clean editor's Ctrl+S.
-NOTHING_TO_FLUSH = "Saved — nothing to flush."
+#: TASK-34000.40 AC#3 (owner ruling "ctrl-s should save in every editor";
+#: controller ruling T9-g): a clean editor's Ctrl+S, the note Save's answer.
+NO_CHANGES = "Saved — no changes."
 
 
 def _painted(app, widget) -> str:
@@ -75,12 +69,17 @@ def _within(widget, selector_id: str) -> bool:
 
 
 async def _f1_keys(pilot, app, screen) -> set[str]:
-    """Open F1, read the keys it lists, close it again."""
+    """Open F1, read the keys it lists, close it again.
+
+    Ruling T9-h: F1 lists keys, so no keyless status row ("- : typing in
+    field") may reach it -- checked on every opening.
+    """
     await pilot.press("f1")
     await _until(
         pilot, lambda: isinstance(app.screen, WorkbenchHelpPanel), "F1 to open help"
     )
     keys = {key for key, _label in app.screen.state.shortcuts}
+    assert "" not in keys, f"F1 lists a keyless row: {app.screen.state.shortcuts}"
     await pilot.press("escape")
     await _until(pilot, lambda: app.screen is screen, "help to close")
     return keys
@@ -97,8 +96,11 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
     """Rule (b): the key writes the draft now, not when the debounce fires.
 
     Autosave is pushed out to an hour, so the only thing that can write the
-    row is the key. Then a second Ctrl+S on the clean note says so on the
-    editor's own status line -- no toast -- and the caret never moves.
+    row is the key. The footer chips Ctrl+S only while the note has unsaved
+    changes (ruling T9-j): none on the clean note, one after one typed
+    character, none again once the key has saved. A second Ctrl+S on the
+    clean note says "Saved — no changes." on the editor's own status line --
+    no toast -- and the caret never moves.
     """
     _no_autosave(monkeypatch)
     app, profile = _library_app(tmp_path, monkeypatch, [], lambda notes: None)
@@ -108,7 +110,19 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
             screen = await _library(app, pilot)
             await _open_note(screen, pilot, _TITLE, profile.note_id)
             body = await _click_into_body(pilot, screen)
-            await _type(pilot, "ctrl-s test ")
+            await _until(
+                pilot,
+                lambda: "esc back to notes" in _footer(app),
+                "the body's footer to paint",
+            )
+            assert "ctrl+s" not in _footer(app), f"clean note chipped: {_footer(app)}"
+            await _type(pilot, "c")
+            await _until(
+                pilot,
+                lambda: "ctrl+s save now" in _footer(app),
+                "one typed character to chip Ctrl+S",
+            )
+            await _type(pilot, "trl-s test ")
             await _until(
                 pilot,
                 lambda: screen._library_note_session.snapshot.dirty,
@@ -135,13 +149,17 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
                 "the status line to say Saved",
             )
             assert screen.focused is body, f"Ctrl+S moved focus to {screen.focused!r}"
-            assert "ctrl+s save now" in _footer(app), _footer(app)
+            await _until(
+                pilot,
+                lambda: "ctrl+s" not in _footer(app),
+                "the saved, clean note to drop the Ctrl+S chip",
+            )
 
             await pilot.press("ctrl+s")
             await _until(
                 pilot,
-                lambda: NOTHING_TO_FLUSH in _painted(app, status),
-                "a clean note's Ctrl+S to say there was nothing to flush",
+                lambda: NO_CHANGES in _painted(app, status),
+                "a clean note's Ctrl+S to say there were no changes",
             )
             assert screen.focused is body
             assert not [toast for toast in toasts if "Saved" in toast], toasts
@@ -159,10 +177,12 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
 async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
     tmp_path, monkeypatch
 ):
-    """Rules (c), (d), (e). The Delete confirm refuses at the editor without
-    moving focus; the Notes list does nothing even with a dirty note open
-    beside it (ruling T9-d), and neither the footer nor F1 offers the key
-    there, while the body's footer and F1 do."""
+    """Rules (c), (d), (e). The Delete confirm refuses at the editor -- on the
+    status line, no toast (review M-3) -- without moving focus, and F1 there
+    does not offer the key it refuses (ruling T9-h); the Notes list does
+    nothing even with a dirty note open beside it (ruling T9-d), and neither
+    the footer nor F1 offers the key there, while the body's footer and F1
+    do."""
     _no_autosave(monkeypatch)
     app, profile = _library_app(tmp_path, monkeypatch, [], lambda notes: None)
     toasts = _record_toasts(monkeypatch, app)
@@ -187,6 +207,10 @@ async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
             )
             assert screen.focused is cancel
             assert profile.note(profile.note_id)["content"] == _BODY
+            assert not [toast for toast in toasts if "Save locked" in toast], toasts
+            assert "ctrl+s" not in await _f1_keys(pilot, app, screen)
+            # (F1's push and pop may rebuild the confirm row: same control.)
+            assert getattr(screen.focused, "id", None) == "library-note-delete-cancel"
             await pilot.press("enter")
             await _until(
                 pilot,
@@ -253,143 +277,3 @@ async def _until_selector(pilot, screen, selector: str):
         f"{selector} to mount",
     )
     return screen.query_one(selector)
-
-
-async def test_ctrl_s_saves_a_prompt_and_refuses_when_the_button_would(
-    tmp_path, monkeypatch
-):
-    """The prompt editor's Ctrl+S is its Save button: a dirty prompt is written
-    to the Prompts database; a disabled Save (an update in flight) refuses at
-    the editor with the reason; a clean editor says nothing was pending."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _message = db.add_prompt(
-        name="Iota", author="Original", details="d", user_prompt="x"
-    )
-    app, _profile = _library_app(tmp_path, monkeypatch, [], lambda _p: None, notes=False)
-    app.prompt_scope_service = service
-    toasts = _record_toasts(monkeypatch, app)
-    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
-        async with app.run_test(size=SIZE) as pilot:
-            screen = await _library(app, pilot)
-            await _open_prompt_editor(screen, pilot, prompt_id)
-            name = await _until_selector(pilot, screen, "#library-prompt-name")
-            assert isinstance(name, Input)
-            await _until(pilot, lambda: name.region.height > 0, "the Name field laid out")
-            await pilot.click("#library-prompt-name")
-            await _until(pilot, lambda: screen.focused is name, "focus in Name")
-            await pilot.press("end")
-            await _type(pilot, " two")
-            await _until(pilot, lambda: name.value == "Iota two", "the typed name")
-
-            await pilot.press("ctrl+s")
-            await _until(
-                pilot,
-                lambda: db.fetch_prompt_details(prompt_id)["name"] == "Iota two",
-                "Ctrl+S to write the prompt",
-                timeout=5.0,
-            )
-            assert db.fetch_prompt_details(prompt_id)["version"] == 2
-            def _status() -> str:
-                return _painted(app, screen.query_one("#library-prompt-save-status"))
-
-            await _wait_for_condition(
-                pilot,
-                lambda: "Saved." in _status(),
-                message=lambda: f"no painted Saved receipt; the status line paints {_status()!r}",
-            )
-            assert screen.focused is name
-
-            await pilot.press("ctrl+s")
-            await _until(
-                pilot,
-                lambda: NOTHING_TO_FLUSH in _status(),
-                "a clean prompt's Ctrl+S to say nothing was pending",
-            )
-            assert db.fetch_prompt_details(prompt_id)["version"] == 2
-
-            # A disabled Save: the key refuses with the reason, writes nothing.
-            await _type(pilot, "x")
-            await _until(pilot, lambda: screen._prompts_state.dirty, "a new edit")
-            screen._prompts_state.mutation_in_flight = True
-            screen._prompts_controller._sync_library_prompt_save_action_widgets()
-            await pilot.pause()
-            assert screen.query_one("#library-prompt-save", Button).disabled
-            await pilot.press("ctrl+s")
-            await _until(
-                pilot,
-                lambda: "Save unavailable" in _status(),
-                "a disabled Save to refuse Ctrl+S with its reason",
-            )
-            assert db.fetch_prompt_details(prompt_id)["name"] == "Iota two"
-            assert screen.focused is name
-            assert not [toast for toast in toasts if "Save" in toast], toasts
-            screen._prompts_state.mutation_in_flight = False
-            screen._prompts_controller._sync_library_prompt_save_action_widgets()
-    db.close_connection()
-
-
-async def test_ctrl_s_in_folder_files_flushes_the_draft_to_disk(tmp_path):
-    """Folder files autosaves after 2 s; Ctrl+S writes the file now. A file
-    changed on disk under a dirty draft refuses at the editor, keeps the
-    caret, and never overwrites the other writer."""
-    root = tmp_path / "vault"
-    root.mkdir()
-    note = root / "today.md"
-    note.write_text("first line\n", encoding="utf-8")
-    replica = FileNotesReplica(":memory:")
-    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, autosave_delay=3600)
-    async with _production_workspace_context(workspace, size=SIZE) as pilot:
-        screen = pilot.app.screen
-        assert await workspace.open_path("today.md")
-        await _until(
-            pilot, lambda: workspace.current_path == "today.md", "today.md to open"
-        )
-        editor = workspace.query_one("#file-notes-editor", TextArea)
-        await _until(pilot, lambda: editor.region.height > 0, "the editor laid out")
-        await pilot.click("#file-notes-editor")
-        await _until(pilot, lambda: screen.focused is editor, "focus in the editor")
-        await _type(pilot, "typed ")
-        await _until(pilot, lambda: workspace.save_state == "dirty", "a dirty draft")
-        assert note.read_text(encoding="utf-8") == "first line\n"
-
-        await pilot.press("ctrl+s")
-        await _until(
-            pilot,
-            lambda: note.read_text(encoding="utf-8") == editor.text,
-            "Ctrl+S to write the draft to disk",
-            timeout=5.0,
-        )
-        assert "ctrl+s save file" in _footer(pilot.app), _footer(pilot.app)
-        action = workspace.query_one("#file-notes-action-status")
-        await _until(
-            pilot, lambda: "Saved." in _painted(pilot.app, action), "the Saved receipt"
-        )
-        assert screen.focused is editor
-
-        await pilot.press("ctrl+s")
-        await _until(
-            pilot,
-            lambda: NOTHING_TO_FLUSH in _painted(pilot.app, action),
-            "a clean file's Ctrl+S to say nothing was pending",
-        )
-
-        await _type(pilot, "mine ")
-        await _until(pilot, lambda: workspace.save_state == "dirty", "a second draft")
-        note.write_text("someone else wrote this\n", encoding="utf-8")
-        await pilot.press("ctrl+s")
-        await _until(
-            pilot,
-            lambda: "Save refused" in _painted(pilot.app, action),
-            "a changed file to refuse Ctrl+S at the editor",
-            timeout=5.0,
-        )
-        assert note.read_text(encoding="utf-8") == "someone else wrote this\n"
-        assert screen.focused is editor
-        # The key refuses here, so the footer stops promising "save file".
-        await _until(
-            pilot,
-            lambda: "ctrl+s" not in _footer(pilot.app),
-            "the refused save to withdraw the footer's ctrl+s chip",
-        )
-    await workspace.shutdown()
-    replica.close()

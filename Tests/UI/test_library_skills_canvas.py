@@ -3916,7 +3916,7 @@ def test_check_action_gates_skill_editor_keys_to_editor():
     TASK-34000.40 (N-33), rewritten 2026-10-27: the skill's Ctrl+S is now the
     screen's one ``library_editor_save`` binding, gated on the skill editor
     holding FOCUS (ADR-031 rule (d)) -- clean or dirty, since a clean editor
-    answers "Saved — nothing to flush." The old ``library_skill_save`` gate
+    answers "Saved — no changes." (ruling T9-g). The old ``library_skill_save`` gate
     ("a save is available", focus anywhere, the Skills list included) went
     with its binding. Pinned live by
     ``test_library_ctrl_s_saves_in_every_editor_skills.py``.

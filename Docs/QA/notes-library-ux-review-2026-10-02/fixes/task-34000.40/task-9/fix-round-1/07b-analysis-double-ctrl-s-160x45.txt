@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  Conference talk notes                                    │
+│ │ Navigation                     │  a  │ Media (23)      Sets                                 │  t  Seed                                                     │
+│ │     Import…                    │  v  │ Media · 23 of 23 · all types · sort: Newest          │  e    ○ Find  Note  Read later  Use in Console  More         │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  Finish editing the analysis first.                       │
+│ │ ▊ Search Library…        ▎▊x▎  │     │  ▊  Title/keyword…                  ▎                │  s                                                           │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │       Read  Analysis (selected)  Highlights  Info            │
+│ │                                │     │    type: All types    sort: Newest                   │     ┌──────────────────────────────────────────────────────┐ │
+│ │ ─────────────────────────────  │     │                                                      │     │ Twice                                                │ │
+│ │ Browse                    ▾    │     │    Export…     Trash     Select                      │     │                                                      │ │
+│ │  ▸ Media (23) — your files     │     │    Review these                                      │     │                                                      │ │
+│ │    Conversations (0)           │     │    Garden plan 2027 (final)                          │     │                                                      │ │
+│ │    Notes (122)                 │     │      document · updated 1h · analysed                │     │                                                      │ │
+│ │    Prompts (1) — reuse         │     │    Workshop handout                                  │     │                                                      │ │
+│ │    Skills (2) — AI add-ons     │<--- │      pdf · updated 1h                                │     │                                                      │ │
+│ │    Collections (0)             │     │    Interview with a librarian                        │     │                                                      │ │
+│ │    Search / RAG — find all     │     │      audio · updated 1h                              │     │                                                      │ │
+│ │ ─────────────────────────────  │     │    Changelog 2026-09                                 │     │                                                      │ │
+│ │ Artifacts                 ▾    │     │      plaintext · updated 1h                          │     │                                                      │ │
+│ │    All artifacts               │     │  ▸ Conference talk notes                             │<--- │                                                      │ │
+│ │    Chatbooks                   │     │      document · updated 1h · loaded                  │     │                                                      │ │
+│ │    Reports                     │     │    Thesis proposal v3                                │     │                                                      │ │
+│ │    Dreams                      │     │      pdf · updated 1h                                │     │                                                      │ │
+│ │ ─────────────────────────────  │     │    Birdsong field recording                          │     │                                                      │ │
+│ │ Create                    ▾    │     │      audio · updated 1h                              │     │                                                      │ │
+│ │    New note                    │<--- │    Onboarding checklist                            ▄ │     │                                                      │ │
+│ │    New prompt                  │     │      document · updated 1h                           │     │                                                      │ │
+│ │    New skill                   │     │    City council minutes 2026-09                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │      document · updated 1h                           │     │                                                      │ │
+│ │ Study                     ▾    │     │    Kitchen timer manual                              │     │                                                      │ │
+│ │    Study decks (0)             │     │      document · updated 1h                           │     │                                                      │ │
+│ │    Flashcards due: 0           │     │    paper-retrieval-practice                          │     │                                                      │ │
+│ │    Quizzes (0)                 │     │      pdf · updated 1h                                │     │                                                      │ │
+│ │ ─────────────────────────────  │     │    Q3 planning memo                                  │     │                                                      │ │
+│ │ Import / Export           ▾    │     │      document · updated 1h                           │     │                                                      │ │
+│ │    Import…                     │     │               1-20 of 23 · Page 1 of 2               │     │                                                      │ │
+│ │    Export                    ▇ │     │              Already on the first page.              │     └──────────────────────────────────────────────────────┘ │
+│ │  ▾ scroll for more             │     │                 ○ Previous     Next                  │            Save         Discard changes                      │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘     Already saving.                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc save or discard first | after esc: / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

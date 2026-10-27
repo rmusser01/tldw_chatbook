@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_notes_state import (
     NoteValidationVeto,
     validate_database_note_draft,
 )
+from tldw_chatbook.Library.library_shell_state import LIBRARY_EDITOR_SAVE_NO_CHANGES
 
 
 class DatabaseNoteSessionPort(Protocol):
@@ -540,7 +541,7 @@ class DatabaseNoteSessionCoordinator:
                 note_id=snapshot.note_id,
                 revision=snapshot.draft_revision,
                 version=snapshot.version,
-                message="Saved — no changes.",
+                message=LIBRARY_EDITOR_SAVE_NO_CHANGES,
             )
 
         task = self._save_task
@@ -572,7 +573,7 @@ class DatabaseNoteSessionCoordinator:
                     note_id=snapshot.note_id,
                     revision=snapshot.draft_revision,
                     version=snapshot.version,
-                    message="Saved — no changes.",
+                    message=LIBRARY_EDITOR_SAVE_NO_CHANGES,
                 )
 
             note_id = snapshot.note_id
