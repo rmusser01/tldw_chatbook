@@ -8,7 +8,7 @@ those literal-name lookups per top-level package (top-level modules count under
 app-like when its last name segment is ``app``, ``app_instance``, ``tldw_app``,
 ``_app`` or ``_app_instance`` (``app``, ``self.app_instance``, ``screen.app``).
 
-Non-literal lookups such as ``getattr(app, name)`` are not counted (about 45,
+Non-literal lookups such as ``getattr(app, name)`` are not counted (exactly 45 at the base of this change, by this module's own walk;
 e.g. ``Event_Handlers/LLM_Management_Events/server_lifecycle.py``), so they
 bypass both the count and the private-name rule.
 
