@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from itertools import zip_longest
 
 import pytest
 from textual.screen import Screen
@@ -354,3 +355,131 @@ async def test_an_inspector_opened_after_a_send_matches_one_open_throughout(
     # section's "Run history" shown).
     assert frames, "the opening painted no frame"
     assert set(frames) == {((False,), ("Run history",))}, frames
+
+
+def _attach_enabled(inspector: ConsoleRunInspector) -> bool:
+    return _action(
+        inspector.state.dictionary_actions, "console-inspector-dictionaries-attach"
+    ).enabled
+
+
+#: The outer body's fold: its "more sections" hint and the body's box, which
+#: the hint shortens by a row. A rail opened late after a chat switch drops
+#: the hint on the base build too (TASK-37000.5), apart from the held
+#: rebuilds this file pins, so the switch comparison leaves the fold out.
+_FOLD_IDS = frozenset(
+    {"console-inspector-outer-scroll-hint", "console-inspector-rail-body"}
+)
+
+
+def _without_fold(witness: list[tuple]) -> list[tuple]:
+    return [row for row in witness if row[1] not in _FOLD_IDS]
+
+
+async def _rail_across_chat_switches(
+    tmp_path, *, open_throughout: bool
+) -> list[tuple[str, list[tuple]]]:
+    """The rail's witness after each chat switch that follows a first send.
+
+    Late arm: the rail is collapsed through each switch, then opened for its
+    witness and collapsed again, so each switch meets a collapsed rail.
+    """
+    from Tests.UI.test_console_composer_run_controls import _mounted
+
+    gateway, host = _console_host(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        await pilot.pause(0.5)
+        rail = console.query_one("#console-right-rail")
+        inspector = console.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        store = console._ensure_console_chat_store()
+        session = console._session
+        assert not rail.display
+        if open_throughout:
+            await _open_inspector(console, pilot)
+        await _send(console, composer, pilot, gateway, "stream and hold 0", mcp=True)
+        saved = store.active_session_id
+        assert saved is not None and _attach_enabled(inspector)
+        witnesses: list[tuple[str, list[tuple]]] = []
+        for step in ("new tab", "temporary tab", "back to the saved chat"):
+            before = store.active_session_id
+            # The actions' own bodies: in this harness a new tab opens the
+            # first-run setup modal, whose guard the actions honour.
+            if step == "new tab":
+                await session._create_native_console_session_from_active_context()
+            elif step == "temporary tab":
+                await session._create_native_console_session_from_active_context(
+                    ephemeral=True
+                )
+            else:
+                await session._activate_native_console_session(saved)
+
+            def switched(before=before, step=step) -> bool:
+                active = store.active_session_id
+                if step.startswith("back"):
+                    return active == saved
+                return active not in (None, before, saved)
+
+            await _wait_for(pilot, switched, f"{step}: the tab never activated")
+            active = next(
+                item for item in store.sessions() if item.id == store.active_session_id
+            )
+            assert active.ephemeral is (step == "temporary tab"), step
+            await _wait_for(
+                pilot,
+                lambda step=step: _attach_enabled(inspector) is step.startswith("back"),
+                f"{step}: the Inspector's state never followed the switch",
+            )
+            await pilot.pause(0.5)
+            if not open_throughout:
+                assert not rail.display
+                await _open_inspector(console, pilot)
+            witnesses.append((step, _without_fold(_witness(rail))))
+            if not open_throughout:
+                await console.action_toggle_console_inspector_rail()
+                await _wait_for(
+                    pilot, lambda: not rail.display, "the Inspector never closed"
+                )
+                await pilot.pause(0.3)
+        if open_throughout:
+            # Leave the stored rail preference collapsed for the next arm.
+            await console.action_toggle_console_inspector_rail()
+            await _wait_for(
+                pilot, lambda: not rail.display, "the Inspector never closed"
+            )
+            await pilot.pause(0.3)
+        return witnesses
+
+
+@private_profile_test
+async def test_an_inspector_opened_after_chat_switches_matches_one_open_throughout(
+    request, tmp_path
+) -> None:
+    """A new tab, a temporary tab and the saved chat again, each met collapsed.
+
+    Each switch changes the dictionary Attach action, so the collapsed rail
+    holds a rebuild for its opening every time; each opened rail must match
+    one that was open throughout, widget for widget and box for box.
+    """
+    (tmp_path / "open").mkdir()
+    (tmp_path / "late").mkdir()
+    open_throughout = await _rail_across_chat_switches(
+        tmp_path / "open", open_throughout=True
+    )
+    opened_late = await _rail_across_chat_switches(
+        tmp_path / "late", open_throughout=False
+    )
+    assert [step for step, _ in opened_late] == [step for step, _ in open_throughout]
+    for (step, late), (_step, shown) in zip(opened_late, open_throughout):
+        attach = [
+            row for row in shown if row[1] == "console-inspector-dictionaries-attach"
+        ]
+        # The witness covers the action each switch changes.
+        assert len(attach) == 1, step
+        assert attach[0][3] is (not step.startswith("back")), step
+        assert late == shown, (
+            step,
+            [pair for pair in zip_longest(late, shown) if pair[0] != pair[1]][:6],
+        )
