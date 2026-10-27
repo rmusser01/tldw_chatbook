@@ -573,7 +573,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # private-profile journey), so no existing entry changes shard: 964 -> 965.
 # Environment panel's worker root reads through the real registry (two
 # private-profile journeys), so no existing entry changes shard: 964 -> 965.
-MINIMUM_FILES = 971
+# TASK-33620.15.1.6 (2026-10-27) appends 2 whole-file entries at the tail: the
+# Environment panel's worker root reads through the real registry, and consent
+# revoked in the hop before a landing (one private-profile journey each), so
+# no existing entry changes shard: 964 -> 966.
+MINIMUM_FILES = 972
 
 
 def read_census(path: Path) -> list[str]:
