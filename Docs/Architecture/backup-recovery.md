@@ -699,6 +699,79 @@ retirement and restoration of private test isolation. Their native constructors 
 not prove import-write authority or preservation of constructor-generated audit
 creation timestamps. An eventual owning writer must also qualify native artifact
 reuse behavior when identical bytes need distinct planned IDs. The current plan
-preserves every timestamp consumed by readers and never inserts rows. Legacy exchange
-normalization, sync, AgentRuns, integrated validation and owner writes remain separate
-gates; `require_complete()` always refuses this pending plan.
+preserves every timestamp consumed by readers and never inserts rows. The standalone
+T plan remains noninsertable; its fixed S/integrated composition is described below.
+AgentRuns, owner writes and public cutover remain separate gates.
+
+### Private fixed sync and integrated planning (S)
+
+`_CapturedSQLite.sync_plan()` composes the native trace/content plans with the eight
+fixed `sync_log` columns and nine installed entity frontiers. The current proof is
+planned for the native target INSERT; captured current rows are never replayed as
+additional target proofs. Live messages above version one require their unique
+immediate predecessor, using the native continuation, generation-state, thinking
+and envelope hash rules. Deleted owners retain body-free tombstones and their
+captured base hash, or the explicitly marked native legacy reconstruction. No
+proof recreates deleted content. Conversation archive-only bumps retain their
+last emitted source frontier; ambiguous current proofs, missing predecessors,
+foreign payloads and surplus retained rows refuse their exact owner.
+
+Native hard-deleted `world_book_entries` retain each original proof and parent
+association. Validated integer IDs from live rows and body-free tombstones in both
+partitions share one reservation domain. Only identity occupancy is deduplicated;
+repeated deletions and a recreated live ID do not merge proof rows. Every tombstone
+needs its accepted mapped `world_book` parent. The fixed native payload grammar,
+CAST-as-text identity correspondence and signed SQLite bounds reject malformed
+history before any mapped output.
+
+The S operation owns one existing `_TraceReadBudget` and passes that same instance
+through the private `_plan_traces` argument, then spends its remaining allowance on
+S accumulation, decode, hash and serialization work. Standalone trace planning
+still constructs its ordinary budget. The returned immutable plans expose no
+budget or renewed allowance. This bounds the representation work receiving that
+allowance, not all pre-existing R/I/C allocations or Python heap usage; the original
+SQLite cancellation, deadline and step bounds independently remain in force.
+
+`integrated_plan()` obtains its own actual S/T/C plan and composes the fixed manifest
+and Workspaces. It passes the exact identity object from that active chain into the
+private Workspace builder, which validates its actual type, source fingerprint and
+both authenticated manifest digests against the current capture. The public
+no-argument Workspace builder retains its full native identity construction. There
+is no cached plan or caller-supplied identity argument on the captured API. All
+Workspace table reads, native defaults, raw persona/permission references, binding
+checks and six-member custody checks remain in place.
+
+The combined plan retains originals, field ownership, exact refusal records and
+mapped rows. Native T proof fills only C's pending local-character authority field.
+Fixed historical metadata closure checks the accepted Workspace binding, Canvas
+revision/message association and original opaque Canvas token, or the accepted
+trace call turn and its typed message map for a fork alias. These historical facts
+confer no execution authority. Source Sync control, routing, grants, cursors,
+receipts and reconciliation state remain the manifest's populated refusals.
+
+T retains each qualified call's exact original input incidence, including visited
+messages and attachments, as immutable tuples bound to its original/mapped call
+and both authenticated manifests. Retention is charged before accumulation on the
+same T/S budget. Final composition compares those inputs to the actual qualified
+T/C projections; only the separately checked fixed fork metadata transformation
+may change a projected value. Missing, ambiguous, lost or changed inputs refuse
+that call without rejecting unrelated calls. Original absent historical inputs
+remain absent; incidence does not create a new requirement or replay a native graph.
+
+Canvas closure uses C's actual native batch and complete original revision
+ownership. A later lost revision removes its document and dependent cards/hints;
+unrelated complete documents survive. Integration repeats semantic, forward and
+native-input closure to a fixed point. It retains only discharges and Sync
+frontiers whose exact owners remain accepted, while keeping original proof
+provenance. S and integrated planning recheck all six captured members and their
+resource restrictions before returning. Nested component plans remain diagnostic
+proofs, never insertion capabilities.
+
+Every S and integrated `require_complete()` unconditionally refuses. Typed pending
+duties identify native Run/Goal handlers, all-owner preflight before any file or data
+effect, complete reference/artifact closure, atomic binding holds and actual passive
+workflow quarantine, native writer lifecycle/creation timestamps/distinct artifact
+IDs, receipts and public cutover. A quarantine tag is an obligation, never evidence
+of native consumer behavior. Public restore must still qualify durable native Sync
+continuation, deletion privacy and zero provider/tool dispatch. These planners
+perform no imported writes, publication, holds, receipts, provisioning or activation.

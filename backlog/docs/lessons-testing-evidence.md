@@ -1,5 +1,20 @@
 # Lessons: what counts as evidence a change works
 
+## Native fixture success must include the local-only value (TASK-36766, 2026-10-27)
+
+**Incident.** The mobile integrated-planning qualification reached its Workspace
+assertion with `console_project_context_json` still unset even though the fixture's
+`update_conversation()` returned success. The general synchronized update does not
+write this local-only column. Source inspection also identified the dedicated
+message-metadata path. After using `set_conversation_console_project_context()`
+with a read-back assertion and `update_message_metadata_local()`, both captured
+Workspace/Canvas/fork cases passed, including the raw persona/permission case.
+
+**What to do.** Seed local-only state through its actual owner API and verify the
+value before capture/finalization. A general CRUD success result does not prove
+that every supplied field was persisted. Keep a setup mistake separate from a
+reached planning or native-consumer failure.
+
 ## Read-only SQLite census can change reviewed sidecars (TASK-36766, 2026-10-25)
 
 **Incident.** Mobile consolidation had reviewed absent canonical WAL/SHM names,

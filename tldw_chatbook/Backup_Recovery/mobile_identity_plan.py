@@ -414,6 +414,41 @@ def _historical_locators(reads, purpose):
     }
 
 
+def _retired_world_entry(row):
+    """Validate the native hard-delete proof without recreating a live owner."""
+    from .mobile_workspace_plan import _object
+
+    try:
+        payload = _object(row["payload"])
+        if (
+            row["entity"] != "world_book_entries"
+            or row["operation"] != "delete"
+            or type(row["version"]) is not int
+            or row["version"] != 1
+            or set(payload) != {"id", "world_book_id"}
+            or any(
+                type(v) is not int or not -(2**63) <= v < 2**63
+                for v in payload.values()
+            )
+            or type(row["entity_id"]) is not str
+            or row["entity_id"] != str(payload["id"])
+        ):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(
+            "mobile_retired_entry_proof_invalid:" + str(row["change_id"])
+        ) from None
+    return payload
+
+
+def _retired_world_entries(reads, purpose):
+    return {
+        _retired_world_entry(row)["id"]
+        for row in _rows(reads, purpose, "chat", "sync_log")
+        if row["entity"] == "world_book_entries" and row["operation"] == "delete"
+    }
+
+
 def _plan_identities(reads):
     from .mobile_captured_sqlite import _CapturedSQLite
 
@@ -436,6 +471,14 @@ def _plan_identities(reads):
                 rows += tuple(
                     {domain.column: value}
                     for value in sorted(historical[purpose][domain.name] - existing)
+                )
+            if domain.name == "world_book_entry":
+                existing = {row[domain.column] for row in rows}
+                rows += tuple(
+                    {domain.column: value}
+                    for value in sorted(
+                        _retired_world_entries(reads, purpose) - existing
+                    )
                 )
             partitions.append(rows)
         reservations.extend(_reserve(domain, *partitions, fingerprint))

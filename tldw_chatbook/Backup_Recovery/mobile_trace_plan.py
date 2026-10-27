@@ -160,6 +160,15 @@ class _CitationDisposition:
 
 
 @dataclass(frozen=True)
+class _TraceInputIncidence:
+    original_call_id: str
+    mapped_call_id: str
+    source_manifest_digest: str
+    canonical_manifest_digest: str
+    inputs: tuple[tuple[str, tuple], ...]
+
+
+@dataclass(frozen=True)
 class _TracePlan:
     content: object = field(repr=False)
     inputs: object = field(repr=False)
@@ -171,6 +180,7 @@ class _TracePlan:
     reconstructions: tuple[_TraceReconstruction, ...] = field(repr=False)
     field_ownership: tuple[tuple[str, tuple[str, ...]], ...]
     authority_discharges: tuple[_ContentRow, ...] = field(repr=False)
+    input_incidence: tuple[_TraceInputIncidence, ...] = field(repr=False)
     pending_handlers: tuple[str, ...] = ("S", "A-runs", "integrated", "owner-write")
 
     @property
@@ -504,6 +514,7 @@ class _TraceInputClosure:
                 None if value is None else self.builder.identities.mapped(domain, value)
             ):
                 raise _UnprovedReference("message", identity)
+        self.remember(key)
         for row in self.builder.inputs.source.rows:
             if row.table != "message_attachments":
                 continue
@@ -518,8 +529,10 @@ class _TraceInputClosure:
                 values[name] != result[name] for name in _ATTACHMENT_FIELDS
             ):
                 raise _UnprovedReference("message_attachment", row.original)
+            self.remember((row.table, row.original))
 
     def call(self, call):
+        self.budget.container(2)
         self.seen = set()
         self.pending = []
         self.policy = call["policy_id"]
@@ -563,13 +576,19 @@ class _TraceInputClosure:
             elif table == "console_trace_artifacts":
                 self.masks("artifact_id", original["artifact_id"])
 
+    def remember(self, key):
+        if key in self.seen:
+            return False
+        self.budget.value(key)
+        self.seen.add(key)
+        return True
+
     def add(self, table, row):
         if row is None:
             return  # Original absence stays absent; native uncertainty is retained.
         key = (table, self.builder.key(table, row))
-        if key not in self.seen:
+        if self.remember(key):
             self.budget.container(4)
-            self.seen.add(key)
             self.pending.append(key)
 
     def owned(self, table, column, identity, *, policy=False):
@@ -656,12 +675,34 @@ class _TraceInputClosure:
 def _close_native_inputs(builder):
     closure = _TraceInputClosure(builder)
     refused = set()
+    builder.budget.container()
+    incidence = []
     for call in builder.source["console_trace_calls"]:
         key = ("console_trace_calls", (call["call_id"],))
         if key not in closure.accepted:
             continue
         try:
             closure.call(call)
+            identities = builder.identities
+            mapped = identities.mapped("trace_call", call["call_id"])
+            builder.budget.container(5)
+            for value in (
+                call["call_id"],
+                mapped,
+                identities.source_manifest_digest,
+                identities.canonical_manifest_digest,
+            ):
+                builder.budget.value(value)
+            builder.budget.container(len(closure.seen) * 2)
+            incidence.append(
+                _TraceInputIncidence(
+                    call["call_id"],
+                    mapped,
+                    identities.source_manifest_digest,
+                    identities.canonical_manifest_digest,
+                    tuple(sorted(closure.seen)),
+                )
+            )
         except _UnprovedReference as exc:
             builder.block(
                 "console_trace_calls",
@@ -675,6 +716,14 @@ def _close_native_inputs(builder):
         row for row in builder.rows if (row.table, row.original) not in refused
     ]
     builder.close_dependencies()
+    builder.budget.container(len(builder.rows))
+    accepted = {(row.table, row.original) for row in builder.rows}
+    builder.budget.container(len(incidence))
+    return tuple(
+        proof
+        for proof in incidence
+        if ("console_trace_calls", (proof.original_call_id,)) in accepted
+    )
 
 
 def _native_call(payload, budget):
@@ -836,14 +885,14 @@ def _reconstructions(builder):
     return tuple(result)
 
 
-def _plan_traces(reads):
+def _plan_traces(reads, *, _read_budget=None):
     from .mobile_captured_sqlite import _CapturedSQLite
 
     if type(reads) is not _CapturedSQLite:
         raise ValueError("mobile_trace_native_snapshot_required")
     reads.check()
     content = reads.content_plan()
-    budget = _TraceReadBudget()
+    budget = _TraceReadBudget() if _read_budget is None else _read_budget
     inputs = _read_trace_inputs(reads, _read_budget=budget)
     if (
         content.identities.source_manifest_digest != inputs.source.manifest_digest
@@ -858,7 +907,7 @@ def _plan_traces(reads):
     builder.unproved_conversations.update(b.original[0] for b in authority_blockers)
     builder.blockers.extend(authority_blockers)
     builder.build()
-    _close_native_inputs(builder)
+    incidence = _close_native_inputs(builder)
     reconstructions = _reconstructions(builder)
     _check_trace_members(reads)
     return _TracePlan(
@@ -872,4 +921,5 @@ def _plan_traces(reads):
         reconstructions,
         tuple((t, s.columns) for t, s in builder.specs.items()),
         authority_discharges,
+        incidence,
     )

@@ -279,6 +279,18 @@ class _CapturedSQLite:
 
         return _plan_content_workflows(self)
 
+    def sync_plan(self):
+        """Transform fixed native sync frontiers without owning-write authority."""
+        from .mobile_sync_plan import _plan_sync
+
+        return _plan_sync(self)
+
+    def integrated_plan(self):
+        """Compose all fixed captured semantic plans; owner effects stay pending."""
+        from .mobile_integrated_plan import _plan_integrated
+
+        return _plan_integrated(self)
+
     def trace_plan(self):
         """Plan fixed normalized history without granting owning-write authority."""
         from .mobile_trace_plan import _plan_traces

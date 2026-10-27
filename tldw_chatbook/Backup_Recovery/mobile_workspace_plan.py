@@ -1,5 +1,6 @@
 """Pure Workspace transformations from the fixed authenticated native captures."""
 
+import hashlib
 import json
 from dataclasses import dataclass
 
@@ -148,7 +149,7 @@ def _default_sidecar_meaning(table, row):
     return frozenset(scope.items)
 
 
-def _plan_workspaces(reads):
+def _plan_workspaces(reads, *, _identities=None):
     from tldw_chatbook.Workspaces.registry_service import (
         _membership_from_row,
         _runtime_binding_from_row,
@@ -160,7 +161,17 @@ def _plan_workspaces(reads):
     if type(reads) is not _CapturedSQLite:
         raise ValueError("mobile_workspace_native_snapshot_required")
     reads.check()
-    identities = reads.identity_plan()
+    identities = reads.identity_plan() if _identities is None else _identities
+    captured = reads.captured
+    if (
+        type(identities) is not _IdentityPlan
+        or identities.source_fingerprint != captured.preview.source_fingerprint
+        or identities.source_manifest_digest
+        != hashlib.sha256(captured.source.manifest_bytes).hexdigest()
+        or identities.canonical_manifest_digest
+        != hashlib.sha256(captured.canonical.manifest_bytes).hexdigest()
+    ):
+        raise ValueError("mobile_workspace_identity_binding_changed")
     source = {table: _rows(reads, "legacy", "workspaces", table) for table in _TABLES}
     canonical = {
         table: _rows(reads, "canonical", "workspaces", table) for table in _TABLES
