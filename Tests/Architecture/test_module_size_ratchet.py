@@ -559,7 +559,11 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 4968,
-    "tldw_chatbook/Model_Artifacts/service.py": 4853,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.14 +43 -- the
+    # cancelled download's stage discard (_discard_download_stage_for, run
+    # while the session lease is still held) and its provision-continuation
+    # allowlist entry; dev pinned this row while the branch was in flight.
+    "tldw_chatbook/Model_Artifacts/service.py": 4896,
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
     "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
