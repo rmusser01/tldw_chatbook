@@ -74,7 +74,7 @@ class RagStep(SetupStep):
         self.auto_retrieve: bool = self._current_auto_retrieve
 
     def compose_step(self) -> ComposeResult:
-        deps = bool(self._deps_installed())
+        deps = self._extras_installed = bool(self._deps_installed())
         with Vertical(classes="setup-rag"):
             yield Static(rag_state.SEARCH_TITLE, classes="setup-title")
             yield Static(rag_state.SEARCH_SUBTITLE, classes="setup-subtitle")
@@ -88,14 +88,27 @@ class RagStep(SetupStep):
                     value=not self.auto_retrieve,
                     id="setup-rag-auto-retrieve-on-request",
                 )
+                # AC#5 (owner ruling 2026-10-20): without the extras every
+                # automatic search is blocked and each send pauses, so the
+                # choice reads unavailable and cannot be picked. A saved
+                # "automatic" stays pressed (that is the setting today);
+                # "only when I ask" still turns it off.
                 yield SetupRadioButton(
-                    rag_state.SEARCH_AUTOMATIC_LABEL,
+                    rag_state.SEARCH_AUTOMATIC_LABEL
+                    if deps
+                    else rag_state.SEARCH_AUTOMATIC_UNAVAILABLE_LABEL,
                     value=self.auto_retrieve,
                     id="setup-rag-auto-retrieve-automatic",
-                    # Without the extras every automatic search is blocked
-                    # and each send would pause; a saved "automatic" stays
-                    # selectable so a re-run can still turn it off.
-                    disabled=not deps and not self.auto_retrieve,
+                    disabled=not deps,
+                )
+            if not deps:
+                yield Static(
+                    rag_state.search_unavailable_copy(
+                        saved_automatic=self._current_auto_retrieve
+                    ),
+                    id="setup-rag-unavailable",
+                    classes="setup-step-note",
+                    markup=False,
                 )
             yield Static(
                 "Embedding model: checking…",
@@ -114,13 +127,10 @@ class RagStep(SetupStep):
             download.display = False
             yield download
             if not deps:
-                yield Static(
-                    rag_state.SEARCH_EXTRAS_MISSING_COPY,
-                    id="setup-rag-extras",
-                    classes="setup-step-note",
-                    markup=False,
-                )
-                with Horizontal(classes="setup-rag-extras-row"):
+                # The secondary line: the package to add, with a copy action.
+                with Horizontal(
+                    id="setup-rag-extras-row", classes="setup-rag-extras-row"
+                ):
                     yield Static(
                         rag_state.RAG_EXTRAS_PACKAGE,
                         id="setup-rag-extras-package",
@@ -131,6 +141,12 @@ class RagStep(SetupStep):
                         id="setup-rag-copy-extras",
                         classes="setup-tertiary-button",
                     )
+                yield Static(
+                    rag_state.SEARCH_EXTRAS_INSTALL_COPY,
+                    id="setup-rag-extras",
+                    classes="setup-step-note",
+                    markup=False,
+                )
 
     def on_mount(self) -> None:
         self._model_worker = run_wizard_worker(
@@ -160,16 +176,20 @@ class RagStep(SetupStep):
         self._show_download_note()
 
     _facts: Optional[rag_state.EmbeddingModelFacts] = None
+    _extras_installed: bool = True
 
     def _show_download_note(self) -> None:
-        """Under "automatically": what the first automatic search can fetch."""
+        """Under "automatically": what the first automatic search can fetch
+        (nothing without the extras: no search runs)."""
         try:
             note = self.query_one("#setup-rag-download", Static)
         except NoMatches:
             return
         text = rag_state.automatic_download_note(self._facts)
         note.update(text)
-        note.display = bool(text) and self._pressed_is_automatic()
+        note.display = (
+            bool(text) and self._extras_installed and self._pressed_is_automatic()
+        )
 
     @on(RadioSet.Changed, "#setup-rag-auto-retrieve")
     def _on_auto_retrieve(self, event: RadioSet.Changed) -> None:

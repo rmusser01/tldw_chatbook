@@ -40,19 +40,47 @@ SEARCH_CHOICE_LABEL = "When you chat:"
 SEARCH_ON_REQUEST_LABEL = "Search my Library only when I ask (default)"
 SEARCH_AUTOMATIC_LABEL = "Search my Library automatically"
 
-#: Shown, and the automatic choice disabled, when the extras are missing.
-#: Console's automatic search runs in ``rag`` mode, which the Library search
-#: service answers with a blocked outcome when the RAG runtime is absent
-#: (``library_local_rag_search_service._rag_mode_unavailable_recovery_state``)
-#: -- every send would pause on "retrieval failed". Library ▸ Search's
-#: keyword mode works without the extras.
-SEARCH_EXTRAS_MISSING_COPY = (
-    "Automatic search needs the optional search extras, which aren't "
-    "installed. Until then, search your Library yourself from Library ▸ "
-    "Search. To add them, install the extras package below with the tool "
-    f"you installed chatbook with, restart chatbook, and choose automatic "
-    f"search in {SEARCH_SETTINGS_PATH}."
+#: AC#5, owner ruling 2026-10-20: without the extras the automatic choice is
+#: shown unavailable and says why, directly under the control. Console's
+#: automatic search runs in ``rag`` mode, which the Library search service
+#: answers with a blocked outcome when the RAG runtime is absent
+#: (``library_local_rag_search_service._rag_mode_unavailable_recovery_state``),
+#: so the send pauses as "Not sent: Library search failed"
+#: (``console_turn_preparation.LIBRARY_PAUSE_COPY``). Library ▸ Search /
+#: RAG's keyword Search mode works without the extras. A keyword fallback
+#: for Console's automatic search is TASK-34100.35, not this step.
+SEARCH_AUTOMATIC_UNAVAILABLE_LABEL = f"{SEARCH_AUTOMATIC_LABEL} — unavailable"
+SEARCH_UNAVAILABLE_COPY = (
+    "Unavailable: Console's automatic search needs the optional search "
+    "extras, which aren't installed. Until then, search your Library "
+    "yourself from Library ▸ Search / RAG."
 )
+#: The same, for a re-run where automatic search was saved before.
+SEARCH_UNAVAILABLE_SAVED_ON_COPY = (
+    "Unavailable: automatic search is on, but it needs the optional search "
+    "extras, which aren't installed, so each Console message stops at "
+    '"Library search failed" before it is sent. Choose "only when I ask" '
+    "to chat without it."
+)
+#: The secondary line under the package name: no installer is assumed.
+SEARCH_EXTRAS_INSTALL_COPY = (
+    "Install it with the tool you installed chatbook with, restart chatbook, "
+    f"then turn on Automatic retrieval in {SEARCH_SETTINGS_PATH}."
+)
+
+
+def search_unavailable_copy(*, saved_automatic: bool) -> str:
+    """Why automatic search is unavailable without the extras.
+
+    Args:
+        saved_automatic: Whether automatic search is already the saved choice.
+
+    Returns:
+        The line shown directly under the "When you chat" control.
+    """
+    if saved_automatic:
+        return SEARCH_UNAVAILABLE_SAVED_ON_COPY
+    return SEARCH_UNAVAILABLE_COPY
 
 
 @dataclass(frozen=True)
@@ -192,10 +220,31 @@ def automatic_download_note(facts: EmbeddingModelFacts | None) -> str:
     )
 
 
+#: The Summary's half-sentence for missing extras (AC#5).
+SEARCH_EXTRAS_MISSING_SUMMARY = "the optional search extras aren't installed"
+
+
 def search_summary_detail(
-    *, auto_retrieve: bool, facts: EmbeddingModelFacts | None
+    *,
+    auto_retrieve: bool,
+    facts: EmbeddingModelFacts | None,
+    extras_installed: bool = True,
 ) -> str:
-    """The Summary's Search row detail: the flag, then the resolved model."""
+    """The Summary's Search row detail: the flag, then the resolved model.
+
+    Without the extras no model runs, so the row says automatic search is
+    unavailable instead of naming one (AC#5).
+    """
+    if not extras_installed:
+        if auto_retrieve:
+            return (
+                "automatic when you chat — unavailable: "
+                f"{SEARCH_EXTRAS_MISSING_SUMMARY}"
+            )
+        return (
+            "only when you ask · automatic search unavailable: "
+            f"{SEARCH_EXTRAS_MISSING_SUMMARY}"
+        )
     when = "automatic when you chat" if auto_retrieve else "only when you ask"
     if facts is None or not facts.name:
         return when
