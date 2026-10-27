@@ -181,7 +181,8 @@ different key for this app**, which shows the key field; the line under it
 says the variable must be set in the shell that starts chatbook. A saved key
 is used instead of an exported one, and the step says so. If you move to
 another provider after typing a key, a line under the list says that key
-won't be saved unless you choose its provider. When setup saves your
+won't be saved unless you choose its provider (a key setup already saved,
+when you come Back from a later step, gets no such line). When setup saves your
 provider, every other provider whose key is exported, and that your config
 doesn't already decide, is saved with the variable's name
 (`api_key_env_var`). The key itself is never written to `config.toml`, and
@@ -198,7 +199,8 @@ A provider whose model-list route answers that it isn't there (HTTP 404 or
 405) can't be checked without a paid request, and the line says so. A
 provider that answered without a usable list says what it answered instead:
 that it won't list models for this key (HTTP 403, which never keeps you on
-the step: the key may still chat), an error with its status code, or an
+the step: the key may still chat, though the tracker shows Provider with
+**!** rather than ✓), an error with its status code, or an
 empty list. OpenRouter, Hugging Face and Novita list models
 without a valid key, so that list can't confirm one. A rejected key (a 401)
 keeps you on the Provider step, with the reason under the key field; for an
