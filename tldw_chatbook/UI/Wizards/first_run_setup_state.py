@@ -1482,6 +1482,7 @@ def setup_attention_ids(
     wizard_data: Mapping[str, object] | None,
     *,
     probe_failed: bool = False,
+    provider_warned: bool = False,
 ) -> frozenset[str]:
     """Which visited steps must not wear the completion tick.
 
@@ -1502,6 +1503,10 @@ def setup_attention_ids(
             non-mapping (or missing step) counts as unconfigured.
         probe_failed: Whether the provider probe demonstrably failed, which
             flags both steps regardless of what was configured.
+        provider_warned: Whether Provider's own check ended in a warning
+            that never blocks -- an HTTP 403 to the listing (TASK-34100.6
+            review v3r1, G6-BV3-03). Flags Provider only: Model's model ID
+            is the user's and stays ✓ once set.
 
     Returns:
         frozenset[str]: Step ids that must render the attention marker
@@ -1520,6 +1525,8 @@ def setup_attention_ids(
     flagged: set[str] = set()
     if probe_failed:
         flagged.update({STEP_PROVIDER, STEP_MODEL})
+    if provider_warned:
+        flagged.add(STEP_PROVIDER)
     if not _configured(STEP_PROVIDER, "provider_key"):
         flagged.add(STEP_PROVIDER)
     if not _configured(STEP_MODEL, "model_id"):
@@ -1585,6 +1592,7 @@ def setup_progress_items(
     wizard_data: Mapping[str, object] | None,
     *,
     probe_failed: bool = False,
+    provider_warned: bool = False,
 ) -> tuple[SetupProgressItem, ...]:
     """The tracker rows the container renders, from what each step recorded.
 
@@ -1593,6 +1601,7 @@ def setup_progress_items(
         current_index: The active step's position on that track.
         wizard_data: Collected per-step values, keyed by step id.
         probe_failed: Whether the provider probe demonstrably failed.
+        provider_warned: Whether Provider has a nonblocking check warning.
 
     Returns:
         The rows, with attention ('!') and nothing-to-do ('–') applied.
@@ -1600,7 +1609,9 @@ def setup_progress_items(
     return build_setup_progress(
         active_ids,
         current_index,
-        attention_ids=setup_attention_ids(wizard_data, probe_failed=probe_failed),
+        attention_ids=setup_attention_ids(
+            wizard_data, probe_failed=probe_failed, provider_warned=provider_warned
+        ),
         not_needed_ids=setup_not_needed_ids(wizard_data),
         skipped_ids=setup_skipped_ids(wizard_data),
     )

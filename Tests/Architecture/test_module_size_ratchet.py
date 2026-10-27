@@ -587,7 +587,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-34100.6: Model's failed-discovery copy moved to
     # first_run_model_discovery.connection_failed_text and the evidence
     # category mapping there too; rebased onto dev -> 973.
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 973,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +2.
+    # 2026-10-27, review v3r1 G6-BV3-03: Model keeps the rendered failure
+    # category beside its rendered probe failure, so a 403 still marks
+    # Provider '!' after Model hides -> 975.
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4930,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of

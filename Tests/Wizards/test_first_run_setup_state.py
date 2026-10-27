@@ -2878,6 +2878,20 @@ class TestSetupAttentionIds:
             {"provider", "model"}
         )
 
+    def test_a_warning_on_provider_flags_provider_only(self):
+        """TASK-34100.6 review v3r1, G6-BV3-03: a 403 to Provider's check is
+        '!' on Provider, never a failure that also flags the model the user
+        chose."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_attention_ids
+
+        wizard_data = {
+            "provider": {"provider_key": "openai"},
+            "model": {"model_id": "gpt-4.1"},
+        }
+        assert setup_attention_ids(wizard_data, provider_warned=True) == frozenset(
+            {"provider"}
+        )
+
     def test_optional_steps_are_never_flagged(self):
         """Skipping voice or protection is legitimate; do not cry wolf."""
         flagged = self._ids({})

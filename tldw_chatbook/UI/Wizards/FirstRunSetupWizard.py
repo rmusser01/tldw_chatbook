@@ -1577,6 +1577,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 self._active_position(self.current_step or 0),
                 self.wizard_data,
                 probe_failed=bool(self.provider_probe_failure()),
+                provider_warned=model_discovery.provider_check_forbidden(self),
             )
             self.query_one(".wizard-progress", SetupWizardProgress).set_items(items)
         except Exception:

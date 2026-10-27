@@ -128,6 +128,7 @@ class ModelStep(SetupStep):
         # whenever the rendered key no longer matches the live identity —
         # the same staleness discipline the rest of this step uses.
         self._rendered_probe_failure: str = ""
+        self._rendered_failure_category = ""  # "forbidden": a 403 (G6-BV3-03)
 
     def current_probe_failure(self) -> str:
         """The failed-probe classification for the CURRENT provider identity.
@@ -165,7 +166,7 @@ class ModelStep(SetupStep):
         self._shown_for_discovery_key = None
         self._selection_discovery_key = None
         self._rendered_discovery_key = None
-        self._rendered_probe_failure = ""
+        self._rendered_probe_failure = self._rendered_failure_category = ""
         self._selection_config_precondition = None
         self._manual_decision_active = False
         self.selected_model_id = ""
@@ -622,6 +623,7 @@ class ModelStep(SetupStep):
         # (tracker "!", Model-step confirm gate, Summary override) before
         # the retry-button lookup's early return can skip it.
         self._rendered_probe_failure = probe_failure
+        self._rendered_failure_category = failure_category
         try:
             retry = self.query_one("#setup-model-retry", Button)
             # Retry shows for a failure a retry can fix (start the server, wait
