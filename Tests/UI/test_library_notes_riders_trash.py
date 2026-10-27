@@ -27,6 +27,7 @@ from Tests.UI.test_library_notes_wave_list import (
     _passthrough_service_call,
 )
 from tldw_chatbook.Library.library_notes_state import (
+    LibraryNotesFocusIdentity,
     LibraryNotesTrashRow,
     LibraryNotesTrashState,
     build_library_notes_trash_state,
@@ -173,6 +174,187 @@ async def test_empty_trash_view_says_so_and_offers_the_way_back() -> None:
         empty = app.query_one("#library-notes-trash-empty", Static)
         assert "Nothing deleted" in LibraryNotesCanvas._static_text(empty)
         assert app.query_one("#library-notes-trash-back", Button)
+
+
+# -- TASK-34000.29 (N-29, 8a): every deleted note is one page away ----------
+
+
+def _deleted_records(start: int, stop: int) -> list[dict]:
+    """Repository rows for deleted notes ``start``..``stop - 1`` (1-based)."""
+    return [
+        {"id": f"d{index}", "title": f"Deleted {index:02d}", "version": 2}
+        for index in range(start, stop)
+    ]
+
+
+def _painted(app) -> str:
+    return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+async def _until_painted(pilot, app, fragment: str) -> str:
+    for _ in range(200):
+        text = _painted(app)
+        if fragment in text:
+            return text
+        await pilot.pause(0.01)
+    raise AssertionError(f"{fragment!r} never painted:\n{_painted(app)}")
+
+
+@pytest.mark.asyncio
+async def test_trash_pager_names_the_exact_range_and_page_on_the_first_page() -> None:
+    """37 deleted: the first page says so, and Next is the way on.
+
+    Base (734e632f07): ``TypeError`` -- the builder has no ``page``; the view
+    painted "Showing the 20 most recently deleted of 37. Restore one to see
+    the rest." and no way to reach the other 17.
+    """
+    trash = build_library_notes_trash_state(
+        _deleted_records(1, 21), total=37, page=1, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        text = await _until_painted(pilot, app, "1–20 of 37 · Page 1 of 2")
+        assert "Restore one to see the rest" not in text
+        previous = app.query_one("#library-notes-trash-previous", Button)
+        following = app.query_one("#library-notes-trash-next", Button)
+        assert previous.disabled and "Previous" in str(previous.label)
+        assert not following.disabled and str(following.label) == "Next"
+
+
+@pytest.mark.asyncio
+async def test_trash_pager_on_the_last_page_disables_next() -> None:
+    trash = build_library_notes_trash_state(
+        _deleted_records(21, 38), total=37, page=2, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        text = await _until_painted(pilot, app, "21–37 of 37 · Page 2 of 2")
+        assert "Deleted 21" in text and "Deleted 37" in text
+        assert not app.query_one("#library-notes-trash-previous", Button).disabled
+        assert app.query_one("#library-notes-trash-next", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_a_trash_that_fits_one_page_hides_the_pager_controls() -> None:
+    """``library_pager_layout``'s one-page rule: the range stays, the rest goes."""
+    trash = build_library_notes_trash_state(
+        _deleted_records(1, 13), total=12, page=1, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        text = await _until_painted(pilot, app, "1–12 of 12")
+        assert "Page 1 of 1" not in text
+        assert not app.query("#library-notes-trash-previous")
+        assert not app.query("#library-notes-trash-next")
+
+
+def test_trash_state_clamps_a_page_past_the_end_to_the_last_page() -> None:
+    """A restore that empties the last page must not leave it numbered."""
+    state = build_library_notes_trash_state(
+        _deleted_records(1, 21), total=20, page=2, now=NOW
+    )
+
+    assert state.page == 1
+    assert state.pager.range_copy == "1–20 of 20"
+    assert state.pager.single_page
+
+
+# -- ruling T8-d: where focus goes after a page or a Restore ---------------
+
+
+def _focus_host(app) -> SimpleNamespace:
+    """A controller-shaped receiver over the mounted canvas's own widgets."""
+    fake = SimpleNamespace(query=app.query, query_one=app.query_one)
+    fake._library_notes_trash_focus_target = MethodType(
+        LibraryNotesController._library_notes_trash_focus_target, fake
+    )
+    return fake
+
+
+def _role(app, selector: str) -> str:
+    receiver = SimpleNamespace(
+        _library_landing_focus_control_id=lambda _widget: "",
+        _file_notes_active=lambda: False,
+    )
+    return LibraryScreen._library_notes_semantic_role(
+        receiver, app.query_one(selector, Button)
+    )
+
+
+def _target(app, role: str):
+    identity = LibraryNotesFocusIdentity(
+        stage="notes", region="trash", note_id=None, semantic_role=role
+    )
+    return LibraryNotesController._library_notes_role_target(_focus_host(app), identity)
+
+
+@pytest.mark.asyncio
+async def test_the_trash_controls_carry_portable_focus_roles_both_halves() -> None:
+    """A control with no role loses focus at the next canvas sync.
+
+    Library Notes replays a captured focus by ROLE after every canvas sync
+    (lessons-textual, "fix the ROLE, not the timing"); Previous, Next, Back
+    and each Restore get one, and each role resolves back to its control.
+    """
+    trash = build_library_notes_trash_state(
+        _deleted_records(1, 21), total=37, page=1, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, app, "1–20 of 37")
+        assert _role(app, "#library-notes-trash-next") == "trash-next"
+        assert _role(app, "#library-notes-trash-previous") == "trash-previous"
+        assert _role(app, "#library-notes-trash-back") == "trash-back"
+        assert _role(app, "#library-notes-trash-restore-7") == "trash-restore:7"
+        assert _target(app, "trash-next") is app.query_one(
+            "#library-notes-trash-next", Button
+        )
+        assert _target(app, "trash-back") is app.query_one(
+            "#library-notes-trash-back", Button
+        )
+        assert _target(app, "trash-restore:7") is app.query_one(
+            "#library-notes-trash-restore-7", Button
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_pager_role_hands_focus_to_the_other_control() -> None:
+    """Next on the last page is disabled: focus belongs on Previous."""
+    trash = build_library_notes_trash_state(
+        _deleted_records(21, 38), total=37, page=2, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, app, "21–37 of 37")
+        assert _target(app, "trash-next") is app.query_one(
+            "#library-notes-trash-previous", Button
+        )
+        # A Restore index past the shortened list lands on its last row.
+        assert _target(app, "trash-restore:19") is app.query_one(
+            "#library-notes-trash-restore-16", Button
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_pager_role_with_no_pager_lands_on_the_first_row_then_back() -> None:
+    trash = build_library_notes_trash_state(
+        _deleted_records(1, 4), total=3, page=1, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, app, "1–3 of 3")
+        assert _target(app, "trash-previous") is app.query_one(
+            "#library-notes-trash-restore-0", Button
+        )
+    empty = _CanvasApp(pane_width=100, mode="trash", trash=_trash())
+    async with empty.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, empty, "Nothing deleted")
+        assert _target(empty, "trash-next") is empty.query_one(
+            "#library-notes-trash-back", Button
+        )
+        assert _target(empty, "trash-restore:0") is empty.query_one(
+            "#library-notes-trash-back", Button
+        )
 
 
 # -- Restore rides the Undo seam -----------------------------------------
@@ -439,3 +621,256 @@ def test_a_trash_refresh_is_never_dropped_by_an_in_flight_read() -> None:
     finally:
         for coroutine, _kwargs in scheduled:
             coroutine.close()
+
+
+class _PagedTrashService:
+    """``list_deleted_notes`` over ``total`` tombstones, recording each offset."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.offsets: list[int] = []
+
+    async def list_deleted_notes(self, *, scope, user_id, limit, offset):
+        self.offsets.append(offset)
+        return {
+            "items": _deleted_records(offset + 1, min(offset + limit, self.total) + 1),
+            "total": self.total,
+        }
+
+
+def _trash_loader_fake(service: _PagedTrashService, *, page: int = 1):
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(notes_scope_service=service),
+        _run_library_service_call=_passthrough_service_call,
+        _library_notes_user_id=lambda: "local",
+        _library_notes_trash=None,
+        _library_notes_trash_page=page,
+        is_mounted=False,
+    )
+    fake._library_notes_trash_focus_target = lambda _role: None
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_a_trash_page_past_the_end_reads_the_last_page_instead() -> None:
+    """Ruling T8-d, read-side clamp: page 3 of 37 shows page 2, never empty.
+
+    The view keeps no stale total to clamp against, so the read itself does
+    it: a page past the (shrunken) total re-reads the last page once.
+    Base (734e632f07): ``TypeError`` -- the loader has no ``page`` and read
+    ``limit=20`` from offset 0, every time.
+    """
+    service = _PagedTrashService(total=37)
+    fake = _trash_loader_fake(service)
+
+    await LibraryNotesController._load_library_notes_trash(fake, page=3)
+
+    assert service.offsets == [40, 20]
+    assert fake._library_notes_trash_page == 2
+    trash = fake._library_notes_trash
+    assert trash.page == 2 and trash.total == 37
+    assert [row.title for row in trash.rows] == [
+        f"Deleted {index:02d}" for index in range(21, 38)
+    ]
+    assert trash.pager.range_copy == "21–37 of 37"
+
+
+@pytest.mark.asyncio
+async def test_a_trash_reload_reads_the_page_the_view_is_on() -> None:
+    """A Restore's (or any) reload re-reads the current page, not page 1."""
+    service = _PagedTrashService(total=45)
+    fake = _trash_loader_fake(service, page=2)
+
+    await LibraryNotesController._load_library_notes_trash(fake)
+
+    assert service.offsets == [20]
+    assert fake._library_notes_trash.page == 2
+    assert fake._library_notes_trash.pager.range_copy == "21–40 of 45"
+
+
+def _pager_press_fake(*, fenced: bool):
+    """A controller-shaped receiver on page 1 of 37 tombstones."""
+    refreshes: list[dict] = []
+    fake = SimpleNamespace(
+        _library_notes_trash=build_library_notes_trash_state(
+            _deleted_records(1, 21), total=37, page=1, now=NOW
+        ),
+        _library_notes_trash_page=1,
+        _library_notes_mutation_fenced=lambda: fenced,
+        _refresh_library_notes_trash=lambda **kwargs: refreshes.append(kwargs),
+    )
+    fake._page_library_notes_trash = MethodType(
+        LibraryNotesController._page_library_notes_trash, fake
+    )
+    return fake, refreshes
+
+
+def test_next_reads_the_next_page_without_taking_the_notes_interlock() -> None:
+    """Paging is a read: no fence, one read, focus owed to the pressed role."""
+    fake, refreshes = _pager_press_fake(fenced=False)
+
+    LibraryNotesController.handle_library_notes_trash_next(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_notes_trash_page == 2
+    assert len(refreshes) == 1
+    assert refreshes[0] == {"focus_role": "trash-next"}
+    assert fake._trash_focus_role == "trash-next"
+    assert not hasattr(fake, "_library_notes_mutation_in_flight")
+
+    # Already on the last page: Next asks for nothing.
+    fake._library_notes_trash_page = 2
+    LibraryNotesController.handle_library_notes_trash_next(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    assert len(refreshes) == 1
+
+
+def test_a_page_press_under_a_running_restore_is_queued_never_dropped() -> None:
+    """Ruling T8-c: no page read starts while a Restore holds the interlock.
+
+    The press moves the page and is owed to the interlock's release, which
+    reads it exactly once -- the press is not lost and not doubled.
+    """
+    fake, refreshes = _pager_press_fake(fenced=True)
+
+    LibraryNotesController.handle_library_notes_trash_next(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert refreshes == []
+    assert fake._library_notes_trash_page == 2
+    assert fake._trash_reload_owed == "trash-next"
+
+    fake._library_notes_mutation_fenced = lambda: False
+    fake._library_notes_mutation_in_flight = True
+    fake._tree_reload_owed = False
+    LibraryNotesController._release_library_notes_mutation(fake)
+    LibraryNotesController._release_library_notes_mutation(fake)
+
+    assert fake._library_notes_mutation_in_flight is False
+    assert refreshes == [{"focus_role": "trash-next"}]
+    assert fake._trash_reload_owed == ""
+
+
+@pytest.mark.asyncio
+async def test_a_trash_page_taller_than_its_pane_scrolls_to_the_focused_row() -> None:
+    """Every row of a page is reachable, not only those above the fold.
+
+    Found while checking the pager below 120x36: at 100x30 the work pane
+    gives the trash list 15 rows for a 20-row page, and the list was a plain
+    ``Vertical`` (``overflow: hidden``) -- rows 16-20 sat under the pager,
+    focusable but never painted (the folder tree's TASK-34000.7 shape).
+    Base (734e632f07): "Deleted 20" never paints with its Restore focused.
+    """
+    trash = build_library_notes_trash_state(
+        _deleted_records(1, 21), total=37, page=1, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 18)) as pilot:
+        await _until_painted(pilot, app, "Deleted 01")
+        assert "Deleted 20" not in _painted(app)
+        last = app.query_one("#library-notes-trash-restore-19", Button)
+        last.focus()
+        await _until_painted(pilot, app, "Deleted 20")
+        listing = app.query_one("#library-notes-trash-list")
+        assert listing.region.contains_region(last.region)
+        # The pager is the list's last row: the next Tab stop scrolls it in.
+        following = app.query_one("#library-notes-trash-next", Button)
+        following.focus()
+        await _until_painted(pilot, app, "1–20 of 37 · Page 1 of 2")
+        assert listing.region.contains_region(following.region)
+
+
+@pytest.mark.asyncio
+async def test_the_pager_follows_a_short_page_instead_of_the_pane_foot() -> None:
+    """No blank rows between the last deleted note and its pager.
+
+    The list is ``1fr``; a pager composed after it sat at the foot of the
+    pane, a dozen blank rows below a short page (live, 160x45) -- the
+    detached-affordance shape task-28015 fixed in the Media Trash.
+    """
+    trash = build_library_notes_trash_state(
+        _deleted_records(1, 4), total=3, page=1, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, app, "1–3 of 3")
+        last_row = list(app.query(".library-notes-trash-row"))[-1]
+        pager = app.query_one("#library-notes-trash-pager")
+        assert pager.region.y == last_row.region.bottom
+
+
+def test_the_trash_landing_yields_to_the_users_own_input() -> None:
+    """Real input wins: any key or click withdraws the owed Trash landing.
+
+    The landing cannot be vetoed by the focus-intent generation: every reload
+    prunes the focused control, and Textual's reset of focus onto a pane grip
+    bumps that generation as well, which vetoed every landing (traced). The
+    role is cleared instead from the screen's one real-input withdrawal.
+    """
+    landed: list[str] = []
+    fake = SimpleNamespace(
+        _library_notes_view="trash",
+        _trash_focus_role="trash-restore:4",
+        _restore_library_notes_focus_identity=lambda identity: landed.append(
+            identity.semantic_role
+        ),
+    )
+
+    LibraryNotesController._land_library_notes_trash_focus(fake, "trash-restore:4")
+    assert landed == ["trash-restore:4"]
+
+    screen = SimpleNamespace(
+        _library_notes_filter_row_handoff=None,
+        _notes_state=SimpleNamespace(pending_focus_identity=None),
+        _notes_controller=fake,
+    )
+    LibraryScreen._withdraw_library_notes_pending_focus_handoffs(screen)
+    assert fake._trash_focus_role == ""
+
+    LibraryNotesController._land_library_notes_trash_focus(fake, "trash-restore:4")
+    assert landed == ["trash-restore:4"]
+
+    # Leaving the view withdraws it too.
+    fake._trash_focus_role = "trash-next"
+    fake._library_notes_view = "list"
+    LibraryNotesController._land_library_notes_trash_focus(fake, "trash-next")
+    assert landed == ["trash-restore:4"]
+
+
+@pytest.mark.asyncio
+async def test_a_roleless_capture_in_the_trash_falls_back_to_the_owed_row() -> None:
+    """A replay another sync replaced must not drop focus on the first row.
+
+    Traced under load: a Restore's reload pruned the focused row, Textual
+    parked focus on a pane grip, and a later sync captured that grip (no
+    role) and REPLACED the pending replay -- whose fallback was the first
+    row. The Trash fallback is the owed landing's role while one is owed.
+    """
+    trash = build_library_notes_trash_state(
+        _deleted_records(21, 38), total=37, page=2, now=NOW
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, app, "21–37 of 37")
+        fake = _focus_host(app)
+        fake._library_notes_compact = False
+        fake._library_notes_stage = "notes"
+        fake._library_notes_focus_region = lambda: "trash"
+        fake._trash_focus_role = "trash-restore:19"
+        grip_capture = LibraryNotesFocusIdentity(
+            stage="notes", region="trash", note_id=None, semantic_role=""
+        )
+
+        target = LibraryNotesController._library_notes_fallback_focus_target(
+            fake, grip_capture
+        )
+        assert target is app.query_one("#library-notes-trash-restore-16", Button)
+
+        fake._trash_focus_role = ""
+        target = LibraryNotesController._library_notes_fallback_focus_target(
+            fake, grip_capture
+        )
+        assert target is app.query_one("#library-notes-trash-restore-0", Button)

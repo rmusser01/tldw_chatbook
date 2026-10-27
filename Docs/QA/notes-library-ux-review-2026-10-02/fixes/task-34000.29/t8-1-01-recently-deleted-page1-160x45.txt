@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌───────────────────────────────────────────────────────┐  N  Ready · Next: Create a note or add from files.          │
+│ │ Navigation                     │  a  │ Library notes · Ready · Next: Create a note or add    │  o  Recently deleted                                        │
+│ │     Import…                    │  v  │ from files.                                           │  t  Deleted notes stay here until you restore them. Restore │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (97)                                            │  e  puts a note back where it was; nothing is removed for   │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for  │  s  good from here.                                         │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ notes that live in a folder on disk, switch to Folder │       ‹ Notes                                               │
+│ │                                │     │ files. To copy or keep a folder synced, choose Add    │     Daily log 2026-09-01 · 4m                 ┃ Restore ┃   │
+│ │ ─────────────────────────────  │     │ from files.                                           │     Daily log 2026-09-02 · 4m                   Restore     │
+│ │ Browse                    ▾    │     │                                                       │     Daily log 2026-09-03 · 4m                   Restore     │
+│ │    Media (23) — your files     │     │ Filter                                                │     Daily log 2026-09-04 · 4m                   Restore     │
+│ │    Conversations (0)           │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Daily log 2026-09-05 · 4m                   Restore     │
+│ │  ▸ Notes (97)                  │     │ ▊ Filter notes… (Enter)                             ▎ │     Daily log 2026-09-06 · 4m                   Restore     │
+│ │    Prompts (0) — reuse         │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     Daily log 2026-09-07 · 4m                   Restore     │
+│ │    Skills (1) — AI add-ons     │<--- │                                                       │     Daily log 2026-09-08 · 4m                   Restore     │
+│ │    Collections (0)             │     │    New     Sort: Newest     Select                    │     Daily log 2026-09-09 · 4m                   Restore     │
+│ │    Search / RAG — find all     │     │    Add from files…     Export                         │     Daily log 2026-09-10 · 4m                   Restore     │
+│ │ ─────────────────────────────  │     │ Folders & placement                                   │     Daily log 2026-09-11 · 4m                   Restore     │
+│ │ Artifacts                 ▾    │     │    New folder     ○ Add to folder     ○ Move note     │     Daily log 2026-09-12 · 4m                   Restore     │
+│ │    All artifacts               │     │    ○ Remove placement                                 │<--- Daily log 2026-09-13 · 4m                   Restore     │
+│ │    Chatbooks                   │     │ Note actions unavailable — select a note in the list  │     Daily log 2026-09-14 · 4m                   Restore     │
+│ │    Reports                     │     │                                                       │     Daily log 2026-09-15 · 4m                   Restore     │
+│ │    Dreams                      │     │                                                       │     Daily log 2026-09-16 · 4m                   Restore     │
+│ │ ─────────────────────────────  │     │  ▸ Agent_Lessons                                      │     Daily log 2026-09-17 · 4m                   Restore     │
+│ │ Create                    ▾    │<--- │  ▸ Journal                                            │     Daily log 2026-09-18 · 4m                   Restore     │
+│ │    New note                    │     │  ▸ Meetings                                           │     Daily log 2026-09-19 · 4m                   Restore     │
+│ │    New prompt                  │     │  ▸ Projects                                           │     Daily log 2026-09-20 · 4m                   Restore     │
+│ │    New skill                   │     │  ▸ Recipes                                            │     1–20 of 25 · Page 1 of 2                                │
+│ │ ─────────────────────────────  │     │  ▸ Research                                           │       ○ Previous   Next                                     │
+│ │ Study                     ▾    │     │  ▸ Study                                              │                                                             │
+│ │    Study decks (0)             │     │  ▾ Unfiled                                            │                                                             │
+│ │    Flashcards due: 0           │     │    Scratch · 4m                                       │                                                             │
+│ │    Quizzes (0)                 │     │    Untitled · 4m                                      │                                                             │
+│ │ ─────────────────────────────  │     │    Quotes · 4m                                      ▅ │                                                             │
+│ │ Import / Export           ▾  ▆ │     │    A very long note title that keeps going so we c…   │                                                             │
+│ │    Import…                     │     │    📚 Reading queue 2026 ✨ · 4m                      │                                                             │
+│ │  ▾ scroll for more             │     │    Gardening log · 4m                                 │                                                             │
+│ └────────────────────────────────┘     └───────────────────────────────────────────────────────┘                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  r restore note | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
