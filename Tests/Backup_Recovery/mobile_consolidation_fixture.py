@@ -30,6 +30,7 @@ def _seed(
     legacy: bool,
     artifact_root: Path | None = None,
     chat_seed=None,
+    linked_chat_seed=None,
 ) -> dict:
     for path in stores.paths:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -184,7 +185,7 @@ def _seed(
         )
         if chat_seed is not None:
             chat_seed(chat, legacy)
-        return {
+        result = {
             "conversation_id": conversation,
             "message_ids": (user, first, second),
             "branches": ((first, user), (second, user)),
@@ -204,6 +205,9 @@ def _seed(
             "trace_owner_id": owner.owner_id,
             "artifact_id": artifact.artifact_id,
         }
+        if linked_chat_seed is not None:
+            linked_chat_seed(chat, legacy, result)
+        return result
     finally:
         if legacy:
             # Qualified legacy 81/8/25 layouts differ only by these new empty tables.

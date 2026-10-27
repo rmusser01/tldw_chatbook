@@ -20401,3 +20401,13 @@ and exercising actual owner entry rather than a public wrapper closed the gap.
 Use distinct enrolled selector objects and an input without the optional file
 family when qualifying a cross-owner witness contract; same-byte replacement
 must reach the actual protected boundary to count as evidence.
+
+
+## Seed legacy fixtures before their final schema downgrade
+
+During TASK-36766 C2a qualification, a workflow fixture reopened CharactersRAGDB
+after the shared fixture had finalized legacy schema81. The native constructor
+migrated it back to82, and authenticated capture correctly refused the member
+(expected81, manifest82). Seed linked metadata with actual returned IDs while the
+native owner is still open, before legacy finalization; preserve the admission
+check instead of changing captured versions or weakening schema validation.

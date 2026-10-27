@@ -386,6 +386,15 @@ installed catalog, version, integrity, foreign-key and domain checks run on
 restricted disposable descriptor-bound connections before row access; no live
 repository constructor, migration or destination connection participates.
 
+Both fixed-purpose archives finish authenticated member extraction and final
+sealed-byte verification before any retained candidate/row-reader SQLite
+connection opens. Preparation retains
+at most six member/candidate metadata jobs. Each readonly connection then starts
+its original native restriction budget under the same custody and ExitStack;
+archive decryption and extraction do not consume an already-open connection's
+deadline. Scope, descriptor, named-parent, hash, schema and retirement checks still
+run at their original boundaries, with a scope check before each open.
+
 `versions` identifies the available fixed members. `page(purpose, family, table,
 *, offset=0, limit=100)` returns immutable column names and native SQLite scalar
 rows, bounded to 1000 rows and 16 MiB. `purpose` is legacy/canonical and `family` is
@@ -498,3 +507,26 @@ cutover guidance must qualify a supported preoperation conflict-resolution path
 before presenting this case as migratable; the planner never renames or merges
 cards. Historical non-NULL Note locators also retain the installed BINARY partial
 unique-index conflict behavior, including deleted rows, without probing paths.
+
+### Private conversation settings planning (C2a)
+
+`content_settings_plan()` consumes the captured C1 graph and its typed identities.
+It validates all conversation settings, the five pending message metadata/state
+fields, and capture/library policy rows through fixed installed readers. Native
+metadata namespaces and discriminated message variants reject unknown meaning;
+provider/thinking bodies and prompt text remain opaque. Typed workflow, actor,
+visual, binding and authority references carry explicit successor obligations.
+The combined dependency closure rejects settings whose C1 inputs were blocked.
+
+Local character IDs and decimal assistant IDs map together. A non-NULL local
+assistant authority remains an explicit pending column with an original-value T
+proof slot, absent from projected values until both native contexts are proved.
+Explicit NULL stays NULL; remote identities keep their namespace. Persona
+references require actual captured authority coverage and a later C2c proof.
+
+C2a also retains the native metadata-to-dictionary attachment/unresolved derivation
+for C1's owned index rows. Live video and Media references require exact physical
+member proof; the plan does not invent an asset reader or publisher. This remains
+a pure partial projection: `require_complete()` always refuses pending C2b/C2c,
+C3, T, S and A-runs obligations, including when their source families are empty.
+There are no imported rows, instruction activation, dispatch, holds or receipts.

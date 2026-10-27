@@ -209,6 +209,12 @@ class _CapturedSQLite:
 
         return _plan_content_graph(self)
 
+    def content_settings_plan(self):
+        """Plan C2a settings through fixed native types; successors remain pending."""
+        from .mobile_content_settings import _plan_content_settings
+
+        return _plan_content_settings(self)
+
     def retire(self):
         self.active = False
         for resource in reversed(tuple(self.resources)):
@@ -481,6 +487,7 @@ def _sqlite_reads(captured, *, password, cancel):
         scope.check()
         with ExitStack() as connections:
             versions = []
+            prepared = []
             for purpose, source in (
                 ("legacy", captured.source),
                 ("canonical", captured.canonical),
@@ -523,43 +530,50 @@ def _sqlite_reads(captured, *, password, cancel):
                 members = _members(scope, partition, document)
                 if purpose == "canonical":
                     scope._canonical_archive = (partition, document, sealed)
-                for family, owner_id, expected, payload, candidate in _extract(
-                    scope, sealed, members, root
-                ):
-                    connection, restrictions = connections.enter_context(
-                        open_recovery_validation(
-                            owner_id,
-                            candidate,
-                            writable=False,
-                            with_restrictions=True,
-                            cancel=cancel,
-                            _custody=scope.custody,
-                        )
-                    )
-                    _verify_candidate(scope, restrictions, candidate, payload.sha256)
-                    owner = sqlite_validation._installed_owner(owner_id)
-                    issues, version = sqlite_validation._check(
-                        connection, owner, owner.schema_policy(), restrictions
-                    )
-                    if issues or version != expected:
-                        raise ValueError(
-                            issues[0] if issues else "mobile_sqlite_schema_changed"
-                        )
-                    tables = frozenset(
-                        row[0]
-                        for row in connection.execute(
-                            "SELECT name FROM sqlite_schema WHERE type='table'"
-                        )
-                    )
-                    _verify_candidate(scope, restrictions, candidate, payload.sha256)
-                    scope._connections[purpose, family] = (
-                        connection,
-                        restrictions,
-                        tables,
+                # Exhaust the generator, including final sealed-byte verification,
+                # before any connection's single native budget starts.
+                prepared.extend(
+                    (purpose, *member)
+                    for member in _extract(scope, sealed, members, root)
+                )
+            if len(prepared) > 2 * len(_FAMILIES):
+                raise ValueError("mobile_sqlite_member_limit")
+            for purpose, family, owner_id, expected, payload, candidate in prepared:
+                scope.check()
+                connection, restrictions = connections.enter_context(
+                    open_recovery_validation(
+                        owner_id,
                         candidate,
-                        payload.sha256,
+                        writable=False,
+                        with_restrictions=True,
+                        cancel=cancel,
+                        _custody=scope.custody,
                     )
-                    versions.append((purpose, family, version))
+                )
+                _verify_candidate(scope, restrictions, candidate, payload.sha256)
+                owner = sqlite_validation._installed_owner(owner_id)
+                issues, version = sqlite_validation._check(
+                    connection, owner, owner.schema_policy(), restrictions
+                )
+                if issues or version != expected:
+                    raise ValueError(
+                        issues[0] if issues else "mobile_sqlite_schema_changed"
+                    )
+                tables = frozenset(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_schema WHERE type='table'"
+                    )
+                )
+                _verify_candidate(scope, restrictions, candidate, payload.sha256)
+                scope._connections[purpose, family] = (
+                    connection,
+                    restrictions,
+                    tables,
+                    candidate,
+                    payload.sha256,
+                )
+                versions.append((purpose, family, version))
             scope.versions = tuple(versions)
             scope.check()
             yield scope
