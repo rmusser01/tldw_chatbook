@@ -1025,6 +1025,12 @@ class SpeechSetupStep(SetupStep):
         if self._download is not None:  # review F4: never start after setup
             self._download.cancel_if_waiting()
 
+    async def recompose(self) -> None:
+        """Rebuild, keeping the keyboard in the step if it was there."""
+        focused_id = speech_layout.focus_inside(self)
+        await super().recompose()
+        speech_layout.restore_focus(self, focused_id)
+
     # -- lazy installed-state load ----------------------------------------
     def on_show(self) -> None:
         """Trigger the lazy installed-state read for the selected artifact.
@@ -1037,6 +1043,7 @@ class SpeechSetupStep(SetupStep):
         choice is re-detected: a key saved on Connect this run adds Cloud.
         """
         super().on_show()
+        self._arriving = True  # see speech_layout.focus_inside
         engines.refresh_engine_facts(self)
         self._ensure_loaded()
 

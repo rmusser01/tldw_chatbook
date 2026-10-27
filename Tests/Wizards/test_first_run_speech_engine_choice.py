@@ -268,6 +268,27 @@ async def test_each_down_press_moves_to_the_next_engine(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_arriving_at_speech_leaves_the_keyboard_on_the_engine_choice(
+    monkeypatch,
+) -> None:
+    """Live (TASK-34100.13 resume): reaching Speech with Next, Down and Space
+    did nothing until the radio was clicked. The wizard focused the engine
+    radio, then the step's first-show reload rebuilt it and the focus went
+    with the old widget."""
+    wizard = _wizard_with_facts(monkeypatch)
+    async with _WizardHost(wizard).run_test(size=(120, 40)) as pilot:
+        step = await _speech_in_wizard(pilot, wizard, monkeypatch)
+        focused = wizard.app.focused
+        engine = step.query_one("#setup-speech-engine")
+        on_engine = focused is not None and engine in focused.ancestors_with_self
+        await pilot.press("down")
+        await pilot.pause()
+        chosen = step._engine
+    assert on_engine, f"focus is on {focused!r}"
+    assert chosen == engines.ENGINE_INSTALLED
+
+
+@pytest.mark.asyncio
 async def test_a_rebuilt_engine_radio_keeps_its_highlight_on_the_choice(
     monkeypatch,
 ) -> None:
