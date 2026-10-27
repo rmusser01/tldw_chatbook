@@ -83,6 +83,22 @@ def frame_console_region(
     return widget
 
 
+def _set_class_restyling_only(
+    region: Any, class_name: str, on: bool, reached: list[Any]
+) -> None:
+    """Toggle ``class_name`` on ``region``, restyling only it and ``reached``.
+
+    A plain ``set_class`` makes Textual restyle the region's whole subtree.
+    Each caller passes every node a rule naming its class can style (each
+    bound pinned by a test), so restyling only those is exact.
+    """
+    region.set_class(on, class_name, update=False)
+    try:
+        region.app.stylesheet.update_nodes([region, *reached], animate=True)
+    except NoActiveAppError:
+        pass
+
+
 #: The transcript focus cue; one rule paints it, on the title row.
 TRANSCRIPT_REGION_FOCUSED = "console-transcript-region-focused"
 
@@ -98,16 +114,12 @@ def _paint_transcript_region_focus(region: Any, focused: bool) -> None:
     """
     if region.has_class(TRANSCRIPT_REGION_FOCUSED) == focused:
         return
-    region.set_class(focused, TRANSCRIPT_REGION_FOCUSED, update=False)
-    nodes = [region]
+    reached: list[Any] = []
     try:
-        nodes.append(region.query_one("#console-transcript-title"))
+        reached.append(region.query_one("#console-transcript-title"))
     except QueryError:
         pass
-    try:
-        region.app.stylesheet.update_nodes(nodes, animate=True)
-    except NoActiveAppError:
-        pass
+    _set_class_restyling_only(region, TRANSCRIPT_REGION_FOCUSED, focused, reached)
 
 
 #: The edge focus cue on the four edge-owned regions. Its rules style only
@@ -130,14 +142,12 @@ def _paint_edge_region_focus(
     restyle.
     """
     if framed.has_class(EDGE_REGION_FOCUSED) != focused_within:
-        framed.set_class(focused_within, EDGE_REGION_FOCUSED, update=False)
-        nodes = [framed]
-        if focus_control is not None:
-            nodes.append(focus_control)
-        try:
-            framed.app.stylesheet.update_nodes(nodes, animate=True)
-        except NoActiveAppError:
-            pass
+        _set_class_restyling_only(
+            framed,
+            EDGE_REGION_FOCUSED,
+            focused_within,
+            [] if focus_control is None else [focus_control],
+        )
     if focus_control is not None:
         focus_control.styles.text_style = "bold underline" if focused_within else "none"
 
