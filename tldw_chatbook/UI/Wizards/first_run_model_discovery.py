@@ -473,7 +473,11 @@ def _reveal_auth_unless_browsing(owner: Any, auth: Any) -> None:
     keep = getattr(owner, "keep_browsed_row_in_view", None)
     if callable(keep) and keep():
         return
-    auth.scroll_visible(animate=False)
+    # Immediate: a clicked check's answer also asks for the status line above
+    # this section (G6-VR2-06). Both deferred scrolls were computed from the
+    # same offset, so the later one put the section back below the fold
+    # (TASK-34100.6 rebase); the line's own scroll now starts from this one.
+    auth.scroll_visible(animate=False, immediate=True)
 
 
 def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") -> None:
