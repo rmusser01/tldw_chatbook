@@ -78,7 +78,9 @@ class AppearanceStep(SetupStep):
             sections["appearance"]
         )
         self._ascii_start = look.ascii_checkbox_value(
-            sections["appearance"], self._environ
+            sections["appearance"],
+            self._environ,
+            rerun=bool(getattr(self.wizard, "rerun", False)),
         )
         self._card_selection = str(
             sections["splash_screen"].get("card_selection") or ""

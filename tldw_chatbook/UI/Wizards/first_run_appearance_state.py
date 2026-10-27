@@ -6,8 +6,8 @@ could not be reduced, and themes were listed by raw id. It now offers
 "Startup animation: Off / Short (2 s) / Full", "Reduce motion" and "Plain
 ASCII status marks", names the current splash card read-only, and labels
 themes by display name with a tone tag. Every write is a delta: an untouched
-control writes nothing, except the ASCII box's terminal preset when no glyph
-choice was ever saved (see ``ascii_checkbox_value``).
+control writes nothing, except the ASCII box's terminal preset on a first
+run (see ``ascii_checkbox_value``).
 """
 
 from __future__ import annotations
@@ -85,18 +85,32 @@ def ascii_preset_from_environment(environ: Mapping[str, str]) -> bool:
 
 
 def ascii_checkbox_value(
-    appearance: Mapping[str, Any], environ: Mapping[str, str]
+    appearance: Mapping[str, Any],
+    environ: Mapping[str, str],
+    *,
+    rerun: bool = False,
 ) -> bool:
     """The ASCII box's starting value: the saved choice, else the terminal preset.
 
     Review F2 (TASK-34100.13): the preset stands in only for a choice never
-    made. A saved ``ascii_glyphs = false`` stays unticked under NO_COLOR, so
-    Next on an untouched step writes nothing. With no saved choice the preset
-    is the step's proposal, and Next saves it like any other change.
+    made. On a re-run a saved ``ascii_glyphs = false`` stays unticked under
+    NO_COLOR, so Next on an untouched step writes nothing. On a first run the
+    value in config.toml is the shipped template's ``ascii_glyphs = false``
+    (every new profile has it), not a choice, so the preset is the step's
+    proposal there and Next saves it like any other change.
+
+    Args:
+        appearance: The full-TOML ``[appearance]`` table.
+        environ: The process environment.
+        rerun: Whether setup has run before (Settings or the palette).
+
+    Returns:
+        Whether the box starts ticked.
     """
-    if "ascii_glyphs" in appearance:
-        return read_comfort(appearance)[1]
-    return ascii_preset_from_environment(environ)
+    saved = read_comfort(appearance)[1]
+    if rerun and "ascii_glyphs" in appearance:
+        return saved
+    return saved or ascii_preset_from_environment(environ)
 
 
 def build_comfort_commit(
