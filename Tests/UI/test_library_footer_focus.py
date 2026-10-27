@@ -126,6 +126,10 @@ def test_typing_flip_routes_through_the_notes_aware_dispatcher():
     fake = SimpleNamespace(
         _library_footer_typing_context=False,
         _apply_library_notes_footer_context=lambda: calls.append("dispatch"),
+        # TASK-34000.40 (N-33, 2026-10-27): the flip gate also carries the
+        # Ctrl+S save target (the chip follows focus into an editor); no
+        # editor holds focus in this fake.
+        _library_editor_save_target=lambda: None,
     )
     fake._library_focus_enter_label = MethodType(
         LibraryScreen._library_focus_enter_label, fake

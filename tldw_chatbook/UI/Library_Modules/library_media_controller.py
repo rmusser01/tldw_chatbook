@@ -5446,6 +5446,11 @@ class LibraryMediaController:
                 "Save" action.
         """
         event.stop()
+        self._save_library_media_analysis_from_form()
+
+    def _save_library_media_analysis_from_form(self) -> None:
+        """The analysis form's Save, event-free: the press and Ctrl+S share it
+        (TASK-34000.40 N-33; TASK-34000.22 AC#7)."""
         media_id = self._library_media_reader_target_id()
         if not media_id:
             self._library_media_editing_analysis = False
@@ -7024,6 +7029,11 @@ class LibraryMediaController:
             event: Button press event emitted by the edit form's "Save" action.
         """
         event.stop()
+        self._save_library_media_edit_from_form()
+
+    def _save_library_media_edit_from_form(self) -> None:
+        """The metadata form's Save, event-free: the press and Ctrl+S share it
+        (TASK-34000.40 N-33; TASK-34000.22 AC#7)."""
         if self._media_state.bulk_delete_in_flight:
             return
         # TASK-34000.18: the form is prefilled from the Reader's item, so the

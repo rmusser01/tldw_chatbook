@@ -586,7 +586,11 @@ _BUDGETS: dict[str, int] = {
     # paragraph's present-tense host claim corrected and the forwarding noted.
     # TASK-41757 fix round 2 (review N1): 11140 -> 11141 (+1), the forwarding
     # sentence says "on each access" and names the captured-callback case.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11141,
+    # 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33; owner decision --
+    # expand limits, don't contort code): the analysis form's Save body moved
+    # into ``_save_library_media_analysis_from_form`` so the press and Ctrl+S
+    # share it: 5281 -> 5286 (measured with ``_measure``).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11085,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -811,6 +815,10 @@ _BUDGETS: dict[str, int] = {
     # owner records no offset (``_trash_landing_settling``), so a sync on
     # either side of the keep-in-view cannot hide the landed control:
     # 8393 -> 8421 (measured).
+    # 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33; same owner decision
+    # -- expand limits, don't contort code): the Save press's body as
+    # ``_begin_library_note_explicit_save``, which Ctrl+S runs too:
+    # 8421 -> 8425 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7492,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
@@ -923,6 +931,13 @@ _BUDGETS: dict[str, int] = {
     # (+3): the detail sync's ``arm_editor`` lands a pending stage pick.
     # 2026-11-19, TASK-41715 (review r17ls-rev1): the action-result reveal
     # reads `is_attached` on its own line before `app.screen`: 5068 -> 5069.
+    # 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33; owner decision --
+    # expand limits, don't contort code): the Save handler's body as
+    # ``_save_library_prompt_from_editor`` (shared with Ctrl+S, which also
+    # reveals the receipt below the fold), Ctrl+S's own seam
+    # (``_save_library_prompt_from_key``: a held Save says why, a conflict
+    # shows its banner, a clean editor says nothing was pending) and the
+    # canvas-backed refusal reading: 5100 -> 5161 (measured with ``_measure``).
     "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5069,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
