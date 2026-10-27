@@ -166,7 +166,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: rail change can repaint the handles alone at no line cost. Dev
     #: 0d7e418db1 measured 24323/736; with the change, 24319/736, the exact
     #: measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24319, 736),
+    #: Raised 24319 -> 24322 (methods unchanged) 2026-10-27 by TASK-37000,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the rail cascade's
+    #: opening runs the rebuild a hidden Inspector widget held back (+3, one of
+    #: them its comment), and the Agents section's display write goes through
+    #: the cascade-aware helper (-1, +1 for its import). The deferral itself
+    #: lives in Widgets/Console/console_inspector_section.py and
+    #: console_run_inspector.py. Dev 3be493413a measured 24319/736; with the
+    #: fix, 24322/736, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24322, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
