@@ -110,6 +110,38 @@ def _paint_transcript_region_focus(region: Any, focused: bool) -> None:
         pass
 
 
+#: The edge focus cue on the four edge-owned regions. Its rules style only
+#: the region's own divider and the region's collapse/open control.
+EDGE_REGION_FOCUSED = "console-edge-region-focused"
+
+
+def _paint_edge_region_focus(
+    framed: Any, focused_within: bool, focus_control: Any | None
+) -> None:
+    """Toggle a rail's edge focus cue without restyling the rail's subtree.
+
+    A plain ``set_class`` makes Textual restyle the region's whole subtree:
+    every node in the Inspect rail (about 160) or the Context rail (about
+    140, conversation browser included). Live, that held the UI loop a
+    median 47 ms on each Inspect-rail open and 62 ms on each close, up to
+    293 ms in one callback at load 12-16 (TASK-33620.15.1.4). Only the
+    region and its control can match a rule naming the class (pinned by
+    ``Tests/UI/test_console_edge_focus_restyle_scope.py``), so only they
+    restyle.
+    """
+    if framed.has_class(EDGE_REGION_FOCUSED) != focused_within:
+        framed.set_class(focused_within, EDGE_REGION_FOCUSED, update=False)
+        nodes = [framed]
+        if focus_control is not None:
+            nodes.append(focus_control)
+        try:
+            framed.app.stylesheet.update_nodes(nodes, animate=True)
+        except NoActiveAppError:
+            pass
+    if focus_control is not None:
+        focus_control.styles.text_style = "bold underline" if focused_within else "none"
+
+
 def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
     """Paint dimension-stable focus cues on the Console-owned rail edges."""
 
@@ -133,12 +165,8 @@ def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
         except QueryError:
             continue
         focused_within = screen._is_descendant_or_self(focused, framed)
-        framed.set_class(focused_within, "console-edge-region-focused")
         try:
             focus_control = framed.query_one(f"#{control_id}", Button)
         except QueryError:
             focus_control = None
-        if focus_control is not None:
-            focus_control.styles.text_style = (
-                "bold underline" if focused_within else "none"
-            )
+        _paint_edge_region_focus(framed, focused_within, focus_control)
