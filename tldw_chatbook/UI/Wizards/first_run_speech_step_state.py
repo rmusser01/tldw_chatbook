@@ -490,6 +490,34 @@ def speech_install_status(
     return None
 
 
+#: Names the GGUF path's managed VAD download for an install that has to
+#: wait for it (TASK-34100.14 review F3).
+EXTERNAL_VAD_DOWNLOAD_LABEL = "Silero VAD (voice-activity detector)"
+
+
+def external_vad_install_status(progress: Any) -> str:
+    """The GGUF path's status line while its managed VAD dependency installs.
+
+    TASK-34100.14 review F3: that install now waits in line behind another
+    model download (it used to fail fast as busy, saying only that it could
+    not be installed) and says which download it is waiting for.
+
+    Args:
+        progress: The latest ``AcquisitionProgress`` of the VAD install.
+
+    Returns:
+        The status text.
+    """
+    if getattr(progress, "phase", None) == "queued":
+        from tldw_chatbook.UI.Screens.model_browser_state import waiting_for_copy
+
+        return waiting_for_copy(getattr(progress, "waiting_for", None))
+    return (
+        "Installing managed VAD dependency · "
+        f"{progress.bytes_done:,} / {progress.bytes_total:,} bytes"
+    )
+
+
 def speech_not_installed_status(outcome: str | None) -> str:
     """"Not installed." plus the last install's outcome, when there is one.
 

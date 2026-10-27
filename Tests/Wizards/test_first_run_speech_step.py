@@ -1761,7 +1761,7 @@ async def test_vad_provision_cancellation_reaches_underlying_coroutine(
     release = threading.Event()
     terminal_results = []
 
-    async def gated_provision(report, *, progress=None):
+    async def gated_provision(report, *, progress=None, control=None):
         started.set()
         try:
             while not release.is_set():
@@ -2736,3 +2736,70 @@ async def test_leaving_setup_abandons_a_speech_download_still_waiting_in_line(
         await pilot.pause()
 
     assert control.cancel_requested is (not started)
+
+
+@pytest.mark.asyncio
+async def test_external_vad_install_waits_in_line_naming_what_it_waits_for(
+    monkeypatch, tmp_path
+):
+    """TASK-34100.14 review F3: the GGUF path's managed VAD install was the
+    one wizard install without a DownloadControl. While OmniVoice downloaded
+    from the Voice step it failed fast as busy and said only "could not be
+    installed"; it now waits in line, says which download it waits for, and
+    names itself for any install that has to wait for it.
+    """
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+
+    seen: dict = {}
+    statuses: list[str] = []
+    release = asyncio.Event()
+
+    async def queued_provision(report, *, progress=None, control=None):
+        seen["control"] = control
+        progress(
+            AcquisitionProgress(
+                "queued", parakeet_vad_reference(), None, 0, 0,
+                waiting_for="OmniVoice voice model",
+            )
+        )
+        await release.wait()
+        progress(
+            AcquisitionProgress(
+                "fetch", parakeet_vad_reference(), "silero_vad.onnx", 1024, 2048
+            )
+        )
+        return tmp_path / "vad"
+
+    monkeypatch.setattr(
+        speech_step_module, "run_parakeet_vad_provision", queued_provision
+    )
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step = _step(wizard=_wizard_with_source(_OwnerTrackingSource()))
+    step._apply_external_vad_provision_result = lambda *args: None
+    app = _StepHost(step)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        token = step._next_external_token()
+        step._external_selection_token = token
+        step._owns_external_token = lambda candidate: candidate == token
+        step._external_selection_worker = step._provision_external_vad(
+            token, prepared, _vad_report(destination=tmp_path / "vad")
+        )
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if "control" in seen:
+                break
+        statuses.append(step._external_status)
+        release.set()
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if step._external_status != statuses[0]:
+                break
+        statuses.append(step._external_status)
+
+    control = seen["control"]
+    assert control.label == "Silero VAD (voice-activity detector)"
+    assert control.wait_if_busy is True
+    assert statuses[0] == "Waiting for the OmniVoice voice model download to finish…"
+    assert statuses[1] == "Installing managed VAD dependency · 1,024 / 2,048 bytes"

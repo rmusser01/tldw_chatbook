@@ -1042,14 +1042,16 @@ class SpeechSetupStep(SetupStep):
         report: Any,
     ) -> None:
         def progress(event: Any) -> None:
-            self._apply_external_vad_progress(
-                token,
-                event.bytes_done,
-                event.bytes_total,
-            )
+            self._apply_external_vad_progress(token, event)
 
+        # Review F3: wait in line behind another download, naming this one.
+        control = DownloadControl(
+            label=speech_state.EXTERNAL_VAD_DOWNLOAD_LABEL, wait_if_busy=True
+        )
         try:
-            await run_parakeet_vad_provision(report, progress=progress)
+            await run_parakeet_vad_provision(
+                report, progress=progress, control=control
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1069,16 +1071,10 @@ class SpeechSetupStep(SetupStep):
             None,
         )
 
-    def _apply_external_vad_progress(
-        self,
-        token: tuple[int, int],
-        done: int,
-        total: int,
-    ) -> None:
+    def _apply_external_vad_progress(self, token: tuple[int, int], event: Any) -> None:
         if self._owns_external_token(token):
             self._set_external_status(
-                f"Installing managed VAD dependency · {done:,} / {total:,} bytes",
-                busy=True,
+                speech_state.external_vad_install_status(event), busy=True
             )
 
     def _apply_external_vad_provision_result(
