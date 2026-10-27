@@ -4671,3 +4671,18 @@ scrolling up and down; prior static-pair checks and timing review missed this.
 and at the exported viewing scale. Do not infer that a one-pixel shift is subtle.
 Keep codec portraits stationary; verify native painted pixels equal one of the
 prepared eye/mouth poses. An enlarged detail replay must not add displacement.
+
+## Finer session identities change retention and late-response cleanup (TASK-37143, 2026-10-27)
+
+**Incident.** Fixing two served tabs sharing a login required fresh per-page
+terminal scopes. The existing gateway retained booted sessions for 30 minutes;
+unique page scopes could therefore exhaust its slots after repeated refreshes.
+A capacity-two regression reproduced HTTP 500 on the third page after one closed.
+Review then found that a snapshot awaited before tab closure could recreate the
+already revoked shell. Holding a real child snapshot across closure reproduced a
+stale ready response; holding it across Canvas disable reproduced HTTP 500.
+
+**What to do.** When identity granularity becomes finer, test retirement against
+the actual finite capacity and hold in-flight operations across that retirement.
+Free unreachable session/shell/capability state, and revalidate the captured owner
+and runtime after awaits before publishing a replacement resource.

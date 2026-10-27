@@ -39,6 +39,7 @@ from ..config import get_media_ingestion_defaults, get_cli_setting
 from ..Chat.Chat_Functions import chat_api_call
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Utils.text import sanitize_filename
+from ..STT.failure_diagnostics import STTFailureDiagnostic
 
 if TYPE_CHECKING:
     from ..Utils.egress import UrlProvenance
@@ -873,6 +874,9 @@ class LocalAudioProcessor:
             failed_attempt = getattr(e, "stt_failure_provenance", None)
             if isinstance(failed_attempt, dict):
                 result["stt_failure_provenance"] = failed_attempt
+            diagnostic = getattr(e, "stt_diagnostic", None)
+            if type(diagnostic) is STTFailureDiagnostic:
+                result["stt_diagnostic"] = diagnostic
 
         return result
 

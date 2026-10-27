@@ -3162,6 +3162,7 @@ def test_direct_refusal_is_privacy_safe_and_starts_no_work(
     top_up.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 class TestSubmitLibraryIngestJob:
     """Coverage for TldwCli.submit_library_ingest_job."""
 
@@ -3241,6 +3242,56 @@ class TestSubmitLibraryIngestJob:
         assert original.ingest_options["audio_video"]["transcription_provider"] == (
             "transcribe-cpp"
         )
+
+    @pytest.mark.parametrize("has_stt_failure", [False, True])
+    def test_retry_can_persist_transcript_with_or_without_prior_stt_attempt(
+        self, has_stt_failure: bool
+    ) -> None:
+        from Tests.STT.test_persistence import _result
+        from tldw_chatbook.STT.persistence import (
+            build_transcription_provenance_document,
+        )
+
+        app = _minimal_app(media_db="present")
+        original = app.submit_library_ingest_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={
+                "generic": {"analyze": False},
+                "audio_video": {"transcription_provider": "parakeet-onnx"},
+            },
+        )
+        app.library_ingest_jobs.mark_failed(
+            original.job_id,
+            error="A previous import failed.",
+            stt_failure_provenance=_direct_failed_attempt()
+            if has_stt_failure
+            else None,
+        )
+        retry = app.library_ingest_jobs.requeue(original.job_id)
+        assert retry is not None
+        context = app._ingest_job_options(retry)["transcription_context"]
+        result = _result(
+            attempt_id=context["attempt_id"],
+            batch_id=context["batch_id"],
+            job_id=context["job_id"],
+            retry_of_attempt_id=context["retry_of_attempt_id"],
+            retry_of_job_id=context["retry_of_job_id"],
+        )
+
+        persisted = build_transcription_provenance_document(
+            result, failed_attempt=context["retry_source_failure_provenance"]
+        )
+
+        assert retry.retry_of_job_id == original.job_id
+        assert persisted["job_id"] == retry.job_id
+        if has_stt_failure:
+            assert persisted["retry_of_attempt_id"] == "attempt-1"
+            assert persisted["retry_of_job_id"] == original.job_id
+            assert persisted["failed_attempt"] == _direct_failed_attempt()
+        else:
+            assert persisted["retry_of_attempt_id"] is None
+            assert persisted["retry_of_job_id"] is None
+            assert persisted["failed_attempt"] is None
 
     def test_retry_preserves_shared_generic_snapshot_values(self) -> None:
         app = _minimal_app(media_db="present")

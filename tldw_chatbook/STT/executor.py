@@ -33,6 +33,7 @@ from .executor_process_tree import (
     ProcessContainmentError,
     WorkerContainmentIdentity,
 )
+from .failure_diagnostics import STTFailureDiagnostic
 
 _MAX_RECOVERY_ACTIONS = 8
 _MAX_RECOVERY_ACTION_LENGTH = 80
@@ -357,6 +358,7 @@ class ExecutorFailure:
     failed_attempt: dict[str, Any] | None = field(default=None, repr=False)
     device_failure_origin: DeviceFailureOrigin | None = None
     failed_device: ExecutionDevice | None = None
+    diagnostic: STTFailureDiagnostic | None = None
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
@@ -385,6 +387,11 @@ class ExecutorFailure:
             and type(self.failed_device) is not ExecutionDevice
         ):
             raise TypeError("failed_device must be an ExecutionDevice")
+        if (
+            self.diagnostic is not None
+            and type(self.diagnostic) is not STTFailureDiagnostic
+        ):
+            raise TypeError("diagnostic must be an STTFailureDiagnostic")
 
 
 class _AttemptTerminalGuard:
@@ -1131,6 +1138,7 @@ __all__ = [
     "LocalSourceSnapshot",
     "LocalSTTExecutor",
     "ModelIdentity",
+    "STTFailureDiagnostic",
     "WorkerPhase",
     "snapshot_local_source",
     "validate_local_source_snapshot",

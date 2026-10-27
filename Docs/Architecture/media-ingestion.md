@@ -38,6 +38,25 @@ Source classes normalize into `Media.type` ∈ pdf / document / ebook / plaintex
 
 ## Failure behaviors
 
+Library retry links and STT attempt lineage are separate. A retry after a download
+or preparation failure keeps its `retry_of_job_id` in the job registry, but emits
+STT predecessor job/attempt fields only when it has a complete failed-attempt
+snapshot. This permits a successful transcript from a retry to pass provenance
+validation without inventing an earlier transcription attempt.
+
+Local Parakeet failures carry an optional `STTFailureDiagnostic` through the
+runtime, audio/video parse adapters and executor terminal. It contains only
+allowlisted stage and exception-category enums (`STT/failure_diagnostics.py`).
+The parent log and job error detail expose `failure_stage` and
+`exception_category`, alongside the job/attempt/generation and worker phase.
+Stages distinguish model load, media preparation, audio decode, VAD, inference,
+normalization and provenance. Missing legacy diagnostics read as `unknown`.
+No native message, traceback, source text or path is included. For short files,
+the upstream `recognize` call owns its internal decoding/preprocessing; its
+failure is attributed to that inference boundary, rather than claiming a more
+precise internal stage. Cancellation and stale terminals retain their existing
+quiet behavior.
+
 | Case | Behavior |
 | --- | --- |
 | Permanent URL error (4xx, bad content type) | Typed permanent failure — no retry |

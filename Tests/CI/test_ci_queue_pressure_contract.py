@@ -42,6 +42,10 @@ FAST_LANE_TARGETS = (
     "Tests/UI/test_mcp_workbench.py",
     "Tests/UI/test_mcp_tools_mode.py",
     "Tests/Widgets/test_detach_safe_text_area.py",
+    "Tests/Web_Server/test_served_tab_isolation.py",
+    "Tests/STT/test_parakeet_diagnostics.py",
+    "Tests/Library/test_stt_failure_diagnostics.py",
+    "Tests/App/test_submit_library_ingest_job.py::TestSubmitLibraryIngestJob::test_retry_can_persist_transcript_with_or_without_prior_stt_attempt",
     "Tests/Architecture/test_console_controllers_define_their_self_attributes.py",
     # TASK-34000.1: a Screen that flushes on navigation must answer the quit
     # walk; quit prompts are awaited only through the choke point; the Notes

@@ -696,10 +696,10 @@ def test_worker_file_source_uses_existing_parser_with_path_options_and_runner() 
 
     assert callbacks.failures == []
     assert callbacks.results[0].payload == {
-        "file_path": "/private/audio/file.wav",
+        "file_path": str(source.path),
         "options": options,
         "runner_payload": {
-            "audio_path": "/private/audio/file.wav",
+            "audio_path": str(source.path),
             "kwargs": {"provider": "parakeet-onnx"},
         },
     }
@@ -2395,6 +2395,7 @@ def test_parakeet_provider_keeps_external_root_out_of_vad_provenance(
 
 
 @pytest.mark.parametrize("suffix", (".wav", ".mp4"))
+@pytest.mark.bootstrap_profile
 def test_parakeet_failure_survives_media_parse_and_executor_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

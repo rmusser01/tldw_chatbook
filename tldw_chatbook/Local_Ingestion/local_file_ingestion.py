@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from loguru import logger
 
+from ..STT.failure_diagnostics import STTFailureDiagnostic
+
 if TYPE_CHECKING:
     from ..Utils.egress import UrlProvenance
 
@@ -240,9 +242,13 @@ class DirectLocalSTTIngestError(FileIngestionError):
         *,
         error_detail: dict[str, Any],
         failed_attempt: dict[str, Any],
+        diagnostic: STTFailureDiagnostic | None = None,
     ) -> None:
         self.error_detail = error_detail
         self.stt_failure_provenance = failed_attempt
+        self.stt_diagnostic = (
+            diagnostic if type(diagnostic) is STTFailureDiagnostic else None
+        )
         super().__init__(message)
 
 
@@ -1484,6 +1490,7 @@ def parse_local_file_for_ingest(
                             result_data.get("error", "Speech-to-text failed."),
                             error_detail=result_data["error_detail"],
                             failed_attempt=result_data["stt_failure_provenance"],
+                            diagnostic=result_data.get("stt_diagnostic"),
                         )
                     raise FileIngestionError(
                         f"Audio processing failed: {result_data.get('error', 'Unknown error')}"
@@ -1618,6 +1625,7 @@ def parse_local_file_for_ingest(
                             result_data.get("error", "Speech-to-text failed."),
                             error_detail=result_data["error_detail"],
                             failed_attempt=result_data["stt_failure_provenance"],
+                            diagnostic=result_data.get("stt_diagnostic"),
                         )
                     raise FileIngestionError(
                         f"Video processing failed: {result_data.get('error', 'Unknown error')}"

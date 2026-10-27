@@ -20,6 +20,7 @@ from .audio_processing import LocalAudioProcessor, build_ffmpeg_trim_args
 from ..config import get_cli_setting
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..STT.failure_diagnostics import STTFailureDiagnostic
 from ..Utils.egress import (
     EgressBlockedError,
     UrlProvenance,
@@ -972,6 +973,9 @@ class LocalVideoProcessor:
                         result["stt_failure_provenance"] = audio_result[
                             "stt_failure_provenance"
                         ]
+                    diagnostic = audio_result.get("stt_diagnostic")
+                    if type(diagnostic) is STTFailureDiagnostic:
+                        result["stt_diagnostic"] = diagnostic
                     return result
             else:
                 logger.error("[VIDEO] Audio processing failed - no result returned")

@@ -129,6 +129,7 @@ from tldw_chatbook.STT.executor import (
     ExecutorUnavailableError,
     LocalSTTExecutor,
     ModelIdentity,
+    STTFailureDiagnostic,
     WorkerPhase,
     snapshot_local_source,
 )
@@ -2471,7 +2472,10 @@ class LibraryIngestQueueMixin:
                 "retry_of_attempt_id": failed_attempt.get("attempt_id")
                 if failed_attempt
                 else None,
-                "retry_of_job_id": job.retry_of_job_id,
+                # A Library retry may follow a download/preparation failure
+                # that produced no STT attempt. Keep that job link in the
+                # registry without inventing an incomplete STT lineage.
+                "retry_of_job_id": job.retry_of_job_id if failed_attempt else None,
                 "retry_source_failure_provenance": failed_attempt,
             }
             external_scope_id = str(
@@ -3172,14 +3176,28 @@ class LibraryIngestQueueMixin:
                 phase = WorkerPhase(phase_value).value
             except (TypeError, ValueError):
                 phase = "unknown"
+            diagnostic = failure.diagnostic
+            failure_stage = (
+                diagnostic.stage.value
+                if type(diagnostic) is STTFailureDiagnostic
+                else "unknown"
+            )
+            exception_category = (
+                diagnostic.exception_category.value
+                if type(diagnostic) is STTFailureDiagnostic
+                else "unknown"
+            )
             logger.error(
                 "Library local STT failed "
-                "(job_id={}, attempt_id={}, generation={}, phase={}, code={}).",
+                "(job_id={}, attempt_id={}, generation={}, phase={}, code={}, "
+                "failure_stage={}, exception_category={}).",
                 job_id,
                 failure.attempt_id,
                 failure.generation,
                 phase,
                 failure.code.value,
+                failure_stage,
+                exception_category,
             )
             self.library_ingest_jobs.mark_failed(
                 job_id,
@@ -3190,6 +3208,8 @@ class LibraryIngestQueueMixin:
                     "code": failure.code.value,
                     "message": message,
                     "actions": list(failure.recovery_actions),
+                    "failure_stage": failure_stage,
+                    "exception_category": exception_category,
                 },
                 stt_failure_provenance=failure.failed_attempt,
             )
