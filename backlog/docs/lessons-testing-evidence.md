@@ -535,6 +535,8 @@ The 57 tests from the first round passed throughout. No test interrupted a chang
 
 **What to do.** Before investigating a CI flake, read the log to the first exception rather than the summary line, then check whether dev has changed that code since, with `git merge-base --is-ancestor <fix> <failing head>` for each failing run. If the heads predate the fix, the work left is counting the runs since it.
 
+**Seen again (TASK-33620.15.23, 2026-10-27): a commit date is not a merge date.** The task was filed on 2026-10-24 from the two nothing-focused composer tests failing "in most runs" on dev 5b5920b8e2. The wait that fixed them (a19334f0e6) is dated 2026-10-20, four days earlier, so it read as already on dev. It reached dev only on 2026-10-26, with the merge of PR #3211 (c398d3a4d0), and 5b5920b8e2 does not contain it. On dev a2b7104d1e the two tests passed 8 of 8 serial runs before any change. Run the ancestry check against the failing head, never compare dates.
+
 ## A held-lock test's blocked stack names the product read to fix (TASK-35444, 2026-10-18)
 
 **Incident.** The response-rules phase test holds config's rebuild lock and fails
