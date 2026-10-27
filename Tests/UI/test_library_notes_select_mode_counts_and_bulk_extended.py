@@ -17,7 +17,9 @@ second connection.
   checked, with select mode kept, so the same action retries only it. The
   failure is one injected refusal on the real scope service (the source
   detach of one note), the Task 6 precedent for an outcome no real database
-  produces on demand.
+  produces on demand. Before it, Escape on the Actions… chooser and in the
+  Move picker each write nothing and hand focus back to Actions… (moved here
+  from the gated file in fix round 1, to keep that file inside 30 seconds).
 """
 
 from __future__ import annotations
@@ -80,7 +82,7 @@ async def _keyword(host, pilot, screen, option_id: str, keyword: str, title: str
 
 
 async def test_actions_add_and_remove_a_keyword_on_every_selected_note(
-    tmp_path,
+    tmp_path, monkeypatch
 ) -> None:
     host, seed = mounted(tmp_path)
     picked = ("Ideas inbox", "Reading list", "Trip Oslo")
@@ -112,6 +114,36 @@ async def test_actions_add_and_remove_a_keyword_on_every_selected_note(
         )
         assert seed.keyword_links("food") == set()
         assert seed.keyword_links("travel") == {seed.note_ids["Trip Oslo"]}
+        assert screen._notes_state.select_mode and _selected(screen) == 3
+
+        # Input that parses to no keyword (a lone comma) closes the dialog
+        # with one toast that says so, writes nothing and keeps the
+        # selection (review R0 M-8: it used to close without a word). The
+        # toast is read at the app's ``notify``: this harness paints the
+        # Library, not the app object the screen notifies through.
+        toasts: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            screen.app_instance,
+            "notify",
+            lambda message, **options: toasts.append((message, options)),
+        )
+        before = seed.keyword_state()
+        await _keyword(
+            host,
+            pilot,
+            screen,
+            "library-notes-select-action-add-keyword",
+            ",",
+            "Add a keyword to 3 notes",
+        )
+        await until(pilot, lambda: bool(toasts), "the empty-keyword toast")
+        assert toasts == [
+            (
+                "No keywords entered — nothing changed.",
+                {"severity": "warning", "markup": False},
+            )
+        ]
+        assert seed.keyword_state() == before
         assert screen._notes_state.select_mode and _selected(screen) == 3
 
         await _keyword(
@@ -149,7 +181,9 @@ async def test_actions_add_and_remove_a_keyword_on_every_selected_note(
         assert not screen._notes_state.select_mode
 
         # A real key still works afterwards: Enter on Select re-enters it.
-        screen.query_one("#library-notes-select-toggle").focus()
+        select = screen.query_one("#library-notes-select-toggle")
+        select.focus()
+        await until(pilot, lambda: screen.focused is select, "focus on Select")
         await pilot.press("enter")
         await until(pilot, lambda: screen._notes_state.select_mode, "Enter on Select")
 
@@ -238,6 +272,54 @@ async def test_a_partial_bulk_move_names_what_did_not_move_and_keeps_it_checked(
         )
         await enter_select_mode(host, pilot, screen)
         await _check(host, pilot, screen, ("Soup", "Ideas inbox"))
+        before = seed.memberships()
+
+        # Escape on the open chooser closes it; focus returns to Actions….
+        await pilot.click("#library-notes-select-actions")
+        await until(
+            pilot,
+            lambda: bool(screen.query(".library-notes-select-action-choice"))
+            and screen.focused is not None
+            and screen.focused.has_class("library-notes-select-action-choice"),
+            lambda: f"the Actions chooser with focus in it: {painted(host)}",
+        )
+        await pilot.press("escape")
+        await until(
+            pilot,
+            lambda: not screen.query(".library-notes-select-action-choice")
+            and getattr(screen.focused, "id", "") == "library-notes-select-actions",
+            lambda: f"Escape to close the chooser (focus {screen.focused!r})",
+        )
+        assert screen._notes_state.select_mode and _selected(screen) == 2
+
+        # Escape in the picker writes nothing and keeps the selection; focus
+        # is back on the opener (Actions…), not in a text field.
+        await pilot.press("enter")
+        await until(
+            pilot,
+            lambda: getattr(screen.focused, "id", "")
+            == "library-notes-select-action-move",
+            "Enter on Actions… to focus Move to folder…",
+        )
+        await pilot.press("enter")
+        await until(
+            pilot,
+            lambda: isinstance(host.screen, LibraryNoteFolderTargetDialog)
+            and "Move 2 notes to…" in painted(host),
+            lambda: f"the picker titled 'Move 2 notes to…': {painted(host)}",
+        )
+        await pilot.press("escape")
+        await until(pilot, lambda: host.screen is screen, "the picker to close")
+        await pilot.pause(0.3)
+        assert seed.memberships() == before
+        assert screen._notes_state.select_mode and _selected(screen) == 2
+        await until(
+            pilot,
+            lambda: getattr(screen.focused, "id", "") == "library-notes-select-actions",
+            lambda: f"focus back on Actions…, got {screen.focused!r}",
+        )
+
+        # Now the move itself, with Soup's detach refused.
         await _choose_action(host, pilot, screen, "library-notes-select-action-move")
         await until(
             pilot,
