@@ -53,6 +53,7 @@ FAST_LANE_TARGETS = (
     # each) and pure unit tests: a few seconds for the lane in total.
     "Tests/Architecture/test_flush_screens_have_quit_hooks.py",
     "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+    "Tests/Architecture/test_app_string_lookup_census.py",
     "Tests/Library/test_library_note_autosave_max_wait.py",
     # TASK-34000 wave 1a final review (I2): the fast pins for the export seam
     # (atomic write, no-clobber, symlink write-through, the Report and
