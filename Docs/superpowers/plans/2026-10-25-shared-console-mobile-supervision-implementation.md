@@ -546,6 +546,8 @@ This review issue blocks apply until a fresh explicit destination choice is boun
 
 ### Task 8: Journaled consolidation and imported-authority quarantine — TASK-36766
 
+**Execution dependency notes (R98/R99; original Task8 AC/status/BASE retained).** Complete R/I/C/T/S pure planning is independently approved through `01f42ea55592296224f69b5964449b3fd3bc91b4`; this is not owning-write or cutover approval. Before the pure A-runs foundation, support the actual pre-feature `81/8/24` source alongside existing `81/8/25`, keeping canonical AgentRuns26 unchanged, captured24 bytes/schema intact and ONLY authenticated native24 `console_command_receipts` absence. Amend ADR244 and preserve contemporary before-code evidence for this fixed compatibility prerequisite; independently review it. Then derive complete PURE Run/Goal transformations and ALL-owner supported-content/reference/artifact preflight before native Chat/Workspace writer activation. The foundation has no imported DB/file/hold/receipt/dispatch/cutover effects and does not make pending `require_complete()` succeed. Subsequent real same-operation owner writes must obtain complete actual all-owner preflight before the first file publication or data batch, preserve native legal lifecycle and atomic rows/maps/holds/receipts, and resume from actual receipts. Actual runtime quarantine/history consumers, all-owner closure, public B recovery/cutover/full original Task8 review, Tasks9–11 and the root whole-branch gate remain mandatory.
+
 **Files**
 
 - Create: `tldw_chatbook/Backup_Recovery/mobile_consolidation_apply.py`, `Tests/Backup_Recovery/test_mobile_consolidation_apply.py`, `test_mobile_consolidation_recovery.py`.

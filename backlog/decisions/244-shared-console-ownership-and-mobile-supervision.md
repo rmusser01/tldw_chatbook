@@ -861,3 +861,30 @@ must be qualified with the real allowance. A smaller injected limit is not
 capacity evidence. This prevents disconnected proof phases from expanding the
 same operation outside its existing bound without introducing a new reader or
 capability.
+
+### Exact pre-feature AgentRuns source24 compatibility
+
+Fixed captured consolidation admits only native-validated legacy Chat81,
+Workspace8 and AgentRuns24 or25; canonical AgentRuns26 is unchanged. The actual
+authenticated owner declaration and observed installed catalog version must agree.
+Source24 bytes, schema and version remain intact: no execution constructor,
+migration, repair or synthesized25 catalog is permitted.
+
+The sole version-bound table absence is `console_command_receipts` in an actual
+legacy runs24 member authenticated by the active captured scope and validated
+against its complete installed native catalog. Fixed manifest coverage accounts
+for that absence, and typed identity/history occupancy may consume it as absent.
+No table, row or proof is fabricated. Physical schema metadata remains exact and
+public fixed `page()` still refuses nonexistent tables. Runs25 receipts remain
+real A-runs-owned history. A missing25 table, unexpected24 table, declared/observed
+version disagreement, unknown shape/type or arbitrary read error must refuse.
+Whole optional-member absence remains a separate existing rule.
+
+All six member pins, hashes, names, ancestors, schema, session, claim, journal,
+authorizer, cancellation, deadline, step/resource and physical-retirement fences
+remain. There is no new reader, capture owner, SQL role, callback, factory, cache,
+allowance, reset or cap change. Plans remain noninsertable. Qualification must
+exercise actual native81/8/24 preview, preparation, encrypted capture, identity
+and complete integrated planning, exact absence/version negatives, unchanged25/26
+controls, unchanged source/canonical/journal state and physical retirement before
+any owning write or public cutover is released.
