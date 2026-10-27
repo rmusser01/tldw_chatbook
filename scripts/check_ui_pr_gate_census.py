@@ -601,6 +601,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Conversations tray's run-marker diff composes style no throwaway node (two
 # cases, about 8 s locally), so no existing entry changes shard: dev's 1141 + 1
 # = 1142.
+# Conversations tray's run-marker patch builds no throwaway widget, and its
+# A/B parity and drift cases (four tests, three app runs, about 15 s locally),
+# so no existing entry changes shard: dev's 1141 + 1 = 1142.
 MINIMUM_FILES = 1144
 
 
