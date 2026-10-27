@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-21 01:32'
-updated_date: '2026-10-27 17:09'
+updated_date: '2026-10-27 18:38'
 labels:
   - console
   - performance
@@ -66,4 +66,18 @@ TASK-33620.15.6 merged the Console Character display check's scope probe and rel
 Mutation checks: (a) skipping the worker's entry check for a settled check makes the changed body run (refusal test red); (b) passing the full `require_current` to the first midpoint again turns the loop-cost test red.
 
 **Not addressed (outside the ACs).** The two remaining fallback costs from the description: a refresh dispatch customized during the read (5 finite callbacks against 4) and a final pair that keeps failing (groups loaded 4 times against 3). Filed as TASK-35961.1. The new Backup_Recovery file, like 15.6's, runs only in the core suite, not a PR lane.
+
+**Review follow-ups (2026-10-27, pre-merge review of the first cut; no blocking findings).**
+- Fixed: a settled check's selection now also qualifies `_await_database_work` on the loop (`_CHARACTER_SETTLED_SELECTION_READERS`). The display entry's whole-set checks run before ambient accessors, and the first cut handed `read_current` to a dispatch changed in between. New test: the dispatch changed as `_check_recent_batch` starts never receives the merged callback (red on the first cut, green on dev and now).
+- Pinned: the settled midpoint's `require_loop_readers` had no failing test when made a no-op. New test: an identity reader changed as a settled pair's midpoint starts never runs its changed body on the loop (4 cases; red only under that mutation, by design green on dev, which checks the whole set there).
+- Pinned: AC#2's failed-read branch. New test: a first scope read that fails reloads through 2 finite callbacks and 2 helpers (red on dev: 3 and 3; red again when the read-error probe is returned as None).
+- Wording: the midpoint check covers every attempt of the first scope read (not only the first pair), and the catch-all hands any callback failure, also one after that read, over as a read error (both callers reload once, as the original route does). Docs/Architecture/console.md, ADR-126 and the docstrings say so.
+- Filed: TASK-35961.2 (these regression files, and the drill test's resumed-run case, run in no PR lane).
+
+**Merge evidence (final head, rebased on dev 416feb50ee).**
+- New tests, plain command: test_character_settled_check_loop_cost.py 16 passed; on origin/dev 10 failed (the 8 original cases plus the 2 failed-read cases), 6 pass by design (4 midpoint pins, 2 dispatch cases).
+- Neighbour files, one per command, branch vs a detached origin/dev worktree, compared by test id: no test fails on the branch that passes on dev (Character Backup_Recovery suites all green on both; the environmental RecoveryRequired/inventory/ratchet reds are identical ids on both arms).
+- Paired in-process loop CPU, final head minus the original probe route, 2 runs x 150 checks per arm: run-time -0.012 and -0.026 ms, idle -0.044 and -0.045 ms (AC#1 still holds with the added qualification).
+- Live round 2 (real app, Anthropic claude-haiku-4-5 via the review proxy, isolated profile, null keyring, 160x45, caffeinate held; dev 416feb50ee vs this head, same scenario): unchanged checks that read the scope, median loop CPU 1.31 ms on dev (n=29) vs 0.64 ms here (n=24). Changed checks: max 12.7 ms on dev, 13.0 ms here, medians 6.7 vs 7.3 ms (n=10/12). Round 1's two branch outliers (57.9 and 35.5 ms at host load about 30) did not recur, which fits host noise; this diff does not change the changed path's loop work beyond the selection.
+- ./scripts/preflight.sh passes on the final head.
 <!-- SECTION:NOTES:END -->
