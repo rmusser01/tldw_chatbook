@@ -1253,10 +1253,13 @@ MINIMUM_FILES = 2520
 #   160x45 boots, ~26 s): 916 -> 917.
 # - task 6 fix round 1: Tests/UI/test_library_notes_focus_capture_and_export_
 #   outcomes.py (two 160x45 boots, ~27 s): 917 -> 918.
+# - task 7: Tests/UI/test_library_notes_select_mode_counts_and_bulk.py (four
+#   real-Library boots, ~27 s) and its `_extended` sibling (three boots,
+#   ~25 s alone, so it is gated too -- the task 5 R2-1 precedent): 918 -> 920.
 # Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2457 + 2 = 2459.
-MINIMUM_FILES = 2459
+# moves; the floor is the measured entry count: 2457 + 4 = 2461.
+MINIMUM_FILES = 2461
 
 
 MINIMUM_FILES = 2038
