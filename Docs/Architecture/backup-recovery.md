@@ -798,3 +798,81 @@ IDs, receipts and public cutover. A quarantine tag is an obligation, never evide
 of native consumer behavior. Public restore must still qualify durable native Sync
 continuation, deletion privacy and zero provider/tool dispatch. These planners
 perform no imported writes, publication, holds, receipts, provisioning or activation.
+
+
+### Pure Run/Goal all-owner preflight
+
+The actual issued captured SQLite scope also exposes the fixed no-argument
+`runs_preflight()`. It composes the original integrated proof with fixed A-runs
+transformations in `mobile_runs_preflight.py`, `mobile_runs_goals.py`,
+`mobile_runs_snapshots.py`, and `mobile_runs_history.py`. The outer immutable
+projection retains the exact original integrated/I/S proof objects as diagnostics;
+its additional native uniqueness domains never replace the original reservations.
+All six captured members are checked before and after composition. The original
+16 MiB materialization allowance is shared through integrated planning and new
+Run/Goal, operational-history, identity, history, and closure work; it is neither
+renewed nor a measurement of Python heap usage.
+
+Goal requests use native typed JSON validation and canonical serialization after
+mapping their actual Workspace/binding references. Request hashes are recomputed
+for that exact transformed request and both hashes are retained. Checkpoint
+fingerprints of full original iteration results, artifact review digests, evidence
+manifests, verifier hashes, bodies, accounting, and delivery/status fields remain
+historical facts. They do not prove current files, permission, freshness, or result
+approval. Removed Goals retain their erased request and non-resumable accounting.
+Native Goal-coupled `goal:<id>` work-submission identities remain coupled to the
+mapped Goal; arbitrary opaque launch/submission strings are not parsed as IDs.
+
+Source runtime-owner and command-receipt rows are retained separately as original
+operational history. The canonical singleton is unchanged. Original command
+owner epochs, clocks, sessions, targets and fingerprints never become current
+command tickets. A later owner must provide passive historical storage and exclude
+these records from active receipt capacity, invalidation, pruning and dispatch.
+Definitions retain their exact names, enabled/deleted state and content; live-name
+collisions refuse. A Run's historical definition name/fingerprint does not prove
+identity with a currently installed definition or grant its advertised tools.
+
+Private RunLog qualification consumes the scope's own sealed source capture under
+its existing custody. Its fixed source-selector path preserves native owned-file,
+nofollow, original preview fingerprint/witness and 1 MiB admission, including
+ordinary 0644 modes. The same budget admits the bounded read before it occurs and
+TOML lexical/container/implicit-prefix expansion before the installed decoder;
+model clones are separately charged before construction. Checked configuration
+is parsed once, with the installed native RunLog name/fallback function shared by
+discovery and proof. No caller selector or cross-operation cache is accepted.
+It checks every selected member's CRC/hash/size/topology and complete native record framing, including trailing bytes, and proves recorded Run
+ownership from actual captured parent/conversation relations. Raw bytes and their
+original IDs remain unchanged. Partial, foreign, unknown or ambiguous histories
+produce exact prewrite blockers. This seam neither publishes files nor relaxes the
+separate HistoryFiles/SQLite lifetime exclusion. A RunLog digest cannot prove Git
+objects or worktree authority.
+
+Retained change notes may legitimately reference snapshots already pruned by the
+native retention owner. The outer snapshot domain reserves both partitions' live
+IDs and retained non-null locators, preserving NULL and exact per-note provenance.
+It creates no synthetic snapshot. Collision with an existing base target refuses.
+The actual `sqlite_sequence` entry and required mapped frontier are provenance,
+with an unresolved native allocator admission duty before later effects. No source
+sequence is copied. Self-contained note excerpts survive; full diff/revert access
+still requires the exact original snapshot/root/Git bytes and native availability
+semantics. Physical worktree dependencies without captured proof refuse.
+
+Outer closure includes actual Run/Goal dependencies and the original qualified
+trace/Canvas inputs. Losing an originally present required step or Goal child
+removes its owning candidate and propagates through the existing fixed-point
+closure; originally absent/partial history is not fabricated. Final Sync frontiers
+and semantic discharges retain only accepted owners. All native holds, passive
+history, current binding/authority/advertising gates, file access and atomic
+rows/maps/receipts remain explicit pending duties. `require_complete()` always
+refuses, including on saved or replaced plan data. This foundation performs no
+imported writes, file publication, hold/receipt installation, provisioning, provider
+dispatch or public cutover. Every later writer must acquire a fresh complete
+all-owner preflight before its first file or data effect (ADR-244 R98–R104).
+
+The private Run preflight selects native RunLog directory names once. It charges
+the selected environment/config value before native `str`/`strip`, component and
+set construction, including native TOML scalar/container representations, then
+passes the same immutable names and live captured source scope through both the
+nested mobile preview and inventory discovery. Native default discovery keeps its
+ordinary behavior. These local names are data; source capture, native topology
+and session custody remain the read authority.

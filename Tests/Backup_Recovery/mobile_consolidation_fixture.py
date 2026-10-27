@@ -31,6 +31,7 @@ def _seed(
     artifact_root: Path | None = None,
     chat_seed=None,
     linked_chat_seed=None,
+    runs_seed=None,
     legacy_runs_version=25,
 ) -> dict:
     for path in stores.paths:
@@ -206,6 +207,8 @@ def _seed(
             "trace_owner_id": owner.owner_id,
             "artifact_id": artifact.artifact_id,
         }
+        if runs_seed is not None:
+            runs_seed(runs, legacy, result)
         if linked_chat_seed is not None:
             linked_chat_seed(chat, legacy, result)
         return result

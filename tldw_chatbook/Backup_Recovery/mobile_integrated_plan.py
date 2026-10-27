@@ -105,7 +105,9 @@ def _workspace_rows(workspace, *, _read_budget):
     return tuple(transformed), tuple(original_rows)
 
 
-def _close_dependencies(rows, originals, blockers, *, _read_budget):
+def _close_dependencies(
+    rows, originals, blockers, *, _read_budget, _include_runs=False
+):
     budget = _read_budget
     budget.value(originals)
     budget.container(len(originals) * 4)
@@ -113,13 +115,13 @@ def _close_dependencies(rows, originals, blockers, *, _read_budget):
     for row in originals:
         values = dict(row.values)
         for domain in _DOMAINS:
-            if domain.family != "runs" and domain.table == row.table:
+            if (domain.family != "runs" or _include_runs) and domain.table == row.table:
                 budget.container(5)
                 known.setdefault((domain.name, values[domain.column]), set()).add(
                     (row.table, row.original)
                 )
         for name, family, table, fields in _COMPOSITES:
-            if family != "runs" and table == row.table:
+            if (family != "runs" or _include_runs) and table == row.table:
                 budget.container(len(fields) + 5)
                 identity = tuple(values[column] for column, _kind in fields)
                 known.setdefault((name, identity), set()).add((row.table, row.original))
@@ -159,7 +161,7 @@ def _close_dependencies(rows, originals, blockers, *, _read_budget):
         rows = retained
 
 
-def _plan_integrated(reads):
+def _plan_integrated(reads, *, _read_budget=None):
     from .mobile_captured_sqlite import _CapturedSQLite
 
     if type(reads) is not _CapturedSQLite:
@@ -169,7 +171,7 @@ def _plan_integrated(reads):
 
     from .mobile_sync_plan import _plan_sync
 
-    budget = _TraceReadBudget()
+    budget = _TraceReadBudget() if _read_budget is None else _read_budget
     sync = _plan_sync(reads, _read_budget=budget)
     trace = sync.trace
     manifest = reads.plan_manifest()

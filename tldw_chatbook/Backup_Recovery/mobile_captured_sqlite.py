@@ -291,6 +291,12 @@ class _CapturedSQLite:
 
         return _plan_integrated(self)
 
+    def runs_preflight(self):
+        """Qualify fixed all-owner history without granting native write authority."""
+        from .mobile_runs_preflight import _plan_runs
+
+        return _plan_runs(self)
+
     def trace_plan(self):
         """Plan fixed normalized history without granting owning-write authority."""
         from .mobile_trace_plan import _plan_traces
@@ -599,6 +605,7 @@ def _sqlite_reads(captured, *, password, cancel):
     scope.active, scope.resources, scope.roots, scope.cancel = True, [], [], cancel
     scope._connections = {}
     scope._canonical_archive = None
+    scope._source_archive = None
     scope.versions = ()
     session._scopes.append(scope)
     _local.mobile_sqlite_scope = scope
@@ -650,6 +657,8 @@ def _sqlite_reads(captured, *, password, cancel):
                 members = _members(scope, partition, document)
                 if purpose == "canonical":
                     scope._canonical_archive = (partition, document, sealed)
+                else:
+                    scope._source_archive = (partition, document, sealed)
                 # Exhaust the generator, including final sealed-byte verification,
                 # before any connection's single native budget starts.
                 prepared.extend(

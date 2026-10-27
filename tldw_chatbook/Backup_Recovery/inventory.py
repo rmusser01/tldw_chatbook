@@ -524,12 +524,29 @@ def read_profile_config(selected: Path) -> dict:
         return _parse_profile_config(stream.read())
 
 
-def _parse_profile_config(payload: bytes) -> dict:
+def _parse_profile_config(payload: bytes, *, _read_budget=None) -> dict:
     """Apply the installed selector decoding/validation to already owned bytes."""
+    if _read_budget is not None:
+        from .mobile_runs_selector import _charge_toml
+
+        _charge_toml(payload, _read_budget)
     raw_config = tomllib.loads(payload.decode("utf-8"))
+    if _read_budget is not None:
+        _read_budget.value(raw_config, text_copies=2)
+        _read_budget.container(len(_ProfileSelectors.model_fields))
+        for name, definition in _ProfileSelectors.model_fields.items():
+            if name not in raw_config:
+                if definition.default_factory is not dict:
+                    raise ValueError("mobile_selector_default_unproved")
+                _read_budget.value(name, text_copies=2)
+                _read_budget.container()  # Native missing-field dictionary.
+                _read_budget.container()  # Its later model_dump clone.
     if DISCOVERY_CONTEXT_KEY in raw_config:
         raise ValueError("reserved_context_key")
-    return _ProfileSelectors.model_validate(raw_config).model_dump()
+    parsed = _ProfileSelectors.model_validate(raw_config)
+    if _read_budget is not None:
+        _read_budget.value(raw_config, text_copies=2)
+    return parsed.model_dump()
 
 
 def discover(

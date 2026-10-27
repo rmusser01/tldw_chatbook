@@ -379,7 +379,16 @@ def _destination_sidecars(destination):
     return tuple((str(path), _sqlite_sidecars(path)) for path in destination.paths)
 
 
-def _preview(source_dir, destination, config=None, *, review_destination=True):
+def _preview(
+    source_dir,
+    destination,
+    config=None,
+    *,
+    review_destination=True,
+    _runs_scope=None,
+    _run_names=None,
+    _read_budget=None,
+):
     source_dir = lexical_path(source_dir)
     issues, schemas, counts, mappings, dependencies, derived, scope = (
         set(),
@@ -543,6 +552,9 @@ def _preview(source_dir, destination, config=None, *, review_destination=True):
             for item in _referenced_files(
                 file_config,
                 legacy_mobile_declarations(file_config, source_dir=source_dir),
+                _runs_scope=_runs_scope,
+                _run_names=_run_names,
+                _read_budget=_read_budget,
             ):
                 if item.status in {"unsupported", "unavailable", "missing_required"}:
                     issues.add("mobile_missing_file_dependency")
@@ -643,7 +655,7 @@ def preview_mobile_consolidation(
         return _preview(source_dir, destination)
 
 
-def mobile_inventory(config):
+def mobile_inventory(config, *, _runs_scope=None, _run_names=None, _read_budget=None):
     """Add legacy files to normal coherent capture with existing native owners."""
     from dataclasses import replace
 
@@ -662,6 +674,9 @@ def mobile_inventory(config):
         CanonicalConsoleStores(*canonical_console_paths(config)),
         config,
         review_destination=False,
+        _runs_scope=_runs_scope,
+        _run_names=_run_names,
+        _read_budget=_read_budget,
     )
     items = [*stores, *controls]
     for issue in preview.issues:
@@ -677,7 +692,15 @@ def mobile_inventory(config):
             )
         )
     if preview.has_data:
-        items.extend(_referenced_files(config, stores))
+        items.extend(
+            _referenced_files(
+                config,
+                stores,
+                _runs_scope=_runs_scope,
+                _run_names=_run_names,
+                _read_budget=_read_budget,
+            )
+        )
     lock = legacy_mobile_dir(config) / ".runs.db.execution.lock"
     lock_item = _inventory_root(lock, owner="db.agent_runs", external=False)
     items.append(
@@ -694,11 +717,17 @@ def mobile_inventory(config):
     return tuple(items)
 
 
-def _referenced_files(config, stores):
+def _referenced_files(
+    config, stores, *, _runs_scope=None, _run_names=None, _read_budget=None
+):
     from tldw_chatbook.Agents.recovery import _RunLogs
 
     return _RunLogs("agents.history").discover_for_stores(
-        config, {item.owner: item for item in stores}
+        config,
+        {item.owner: item for item in stores},
+        _runs_scope=_runs_scope,
+        _run_names=_run_names,
+        _read_budget=_read_budget,
     )
 
 

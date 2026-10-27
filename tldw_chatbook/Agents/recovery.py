@@ -3,6 +3,7 @@
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
+from datetime import date, datetime, time
 from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.models import (
@@ -20,17 +21,95 @@ from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
 from tldw_chatbook.Utils.platform_files import os
 
 
+def _run_log_name_size(value, *, nested=False):
+    """Bound str/repr of the closed native TOML value types without formatting."""
+    if type(value) is str:
+        # Container repr may escape each code point as \Uxxxxxxxx and add quotes.
+        return 10 * len(value) + 2 if nested else len(value)
+    if type(value) is bool:
+        return 5
+    if type(value) is int:
+        # 30103/100000 is an upper bound on log10(2), plus sign/zero.
+        return (value.bit_length() * 30103) // 100000 + 2
+    if type(value) is float:
+        return len("-1.7976931348623157e+308")
+    if type(value) is datetime:
+        return len(
+            "datetime.datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=86399)))"
+        )
+    if type(value) is date:
+        return len("datetime.date(9999, 12, 31)")
+    if type(value) is time:
+        return len("datetime.time(23, 59, 59, 999999)")
+    if type(value) is list:
+        return 2 + sum(_run_log_name_size(item, nested=True) + 2 for item in value)
+    if type(value) is dict:
+        return 2 + sum(
+            _run_log_name_size(key, nested=True)
+            + _run_log_name_size(item, nested=True)
+            + 4
+            for key, item in value.items()
+        )
+    raise ValueError("mobile_runs_selector_non_native_value")
+
+
+def _run_log_names(config, *, _read_budget=None):
+    """Installed RunLogWriter directory names, including its safe fallback."""
+    name = os.environ.get("TLDW_AGENTS_RUN_LOG_DIR_NAME") or setting(
+        config, "agents", "run_log_dir_name", "agent-runs"
+    )
+    if _read_budget is not None:
+        size = max(_run_log_name_size(name), len("agent-runs"))
+        # Native str, strip, Path component, dotted name and retained name facts.
+        _read_budget.reserve(5 * (64 + 4 * (size + 1)))
+        _read_budget.container(2)  # Native set, before its construction.
+    name = str(name).strip()
+    if (
+        not name
+        or name in (".", "..")
+        or "/" in name
+        or "\\" in name
+        or Path(name).is_absolute()
+    ):
+        name = "agent-runs"  # Exact RunLogWriter's safe component fallback.
+    names = {name if name.startswith(".") else "." + name, name}
+    return names
+
+
 class _RunLogs(_RawDeclaration):
     def discover(self, config):
         return self.discover_for_stores(config)
 
-    def discover_for_stores(self, config, stores=None):
+    def discover_for_stores(
+        self,
+        config,
+        stores=None,
+        *,
+        _runs_scope=None,
+        _run_names=None,
+        _read_budget=None,
+    ):
         """Use the same installed log roots for explicitly reviewed legacy stores."""
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
         from tldw_chatbook.DB.recovery_operations import recovery_adapters
         from tldw_chatbook.Skills_Interop.recovery import default_script_output_root
 
         context = discovery_context(config)
+        if _runs_scope is not None:
+            from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
+                _CapturedSQLite,
+            )
+
+            if (
+                type(_runs_scope) is not _CapturedSQLite
+                or type(_run_names) is not frozenset
+                or _read_budget is None
+                or context.config_path != _runs_scope.captured.preview.source_selector
+            ):
+                raise ValueError("mobile_runs_selector_scope_required")
+            _runs_scope.check()
+        elif _run_names is not None or _read_budget is not None:
+            raise ValueError("mobile_runs_selector_scope_required")
         script_output = default_script_output_root(config)
         configured = setting(config, "tools", "file_sandbox_root")
         default_root = (
@@ -108,19 +187,7 @@ class _RunLogs(_RawDeclaration):
                         (item.logical_id,),
                     )
                 )
-        name = os.environ.get("TLDW_AGENTS_RUN_LOG_DIR_NAME") or setting(
-            config, "agents", "run_log_dir_name", "agent-runs"
-        )
-        name = str(name).strip()
-        if (
-            not name
-            or name in (".", "..")
-            or "/" in name
-            or "\\" in name
-            or Path(name).is_absolute()
-        ):
-            name = "agent-runs"  # Exact RunLogWriter's safe component fallback.
-        names = {name if name.startswith(".") else "." + name, name}
+        names = _run_log_names(config) if _runs_scope is None else _run_names
         result = list(issues)
         retained_logs = False
         for root in sorted(roots):
@@ -148,6 +215,8 @@ class _RunLogs(_RawDeclaration):
                     )
                     continue
             container = None
+            if _read_budget is not None:
+                _read_budget.container(len(names))
             leaves = set(names)
             if root == default_root and script_output is not None:
                 leaves.add(script_output.name)
@@ -217,7 +286,9 @@ class _RunLogs(_RawDeclaration):
                                 metadata=replace(
                                     item.metadata,
                                     root_id=container.logical_id,
-                                    relative_path=item.path.relative_to(root).as_posix(),
+                                    relative_path=item.path.relative_to(
+                                        root
+                                    ).as_posix(),
                                     parent_id=container.logical_id
                                     if item.path == path
                                     else item.metadata.parent_id,

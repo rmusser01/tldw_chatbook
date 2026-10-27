@@ -44,20 +44,50 @@ def _root_component(root_id):
     return hashlib.sha256(root_id.encode()).hexdigest()
 
 
-def _members(captured, document):
+def _members(captured, document, *, _read_budget=None, _scope=None):
     from .inventory import read_profile_config
     from .mobile_consolidation import mobile_inventory
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
 
+    if _read_budget is not None:
+        _read_budget.value(document)
+        _read_budget.container(
+            (
+                len(document.files)
+                + len(document.directories)
+                + len(document.producer_inventory)
+            )
+            * 8
+        )
+    names = None
     selector = captured.preview.source_selector
-    config = read_profile_config(selector)
+    if _scope is None:
+        config = read_profile_config(selector)
+    else:
+        from tldw_chatbook.Agents.recovery import _run_log_names
+
+        from .mobile_captured_sqlite import _CapturedSQLite
+        from .mobile_runs_selector import _source_config
+
+        if (
+            type(_scope) is not _CapturedSQLite
+            or _scope.captured is not captured
+            or _read_budget is None
+        ):
+            raise ValueError("mobile_runs_selector_scope_required")
+        _scope.check()
+        config = _source_config(_scope, _read_budget)
+        _read_budget.container(8)
+        names = frozenset(_run_log_names(config, _read_budget=_read_budget))
     config[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(
         selector, hashlib.sha256(str(selector).encode()).hexdigest()[:24]
     )
     with captured.session._discovery_reads(private_sqlite=True):
         declarations = {
             row.logical_id: row
-            for row in mobile_inventory(config)
+            for row in mobile_inventory(
+                config, _runs_scope=_scope, _run_names=names, _read_budget=_read_budget
+            )
             if row.owner == "agents.history"
             and row.status in {"included", "included_directory"}
         }
@@ -102,7 +132,11 @@ def _members(captured, document):
                 getattr(row, "sha256", None),
             )
         )
-    return tuple(sorted(result, key=lambda row: row.location))
+    members = tuple(sorted(result, key=lambda row: row.location))
+    if _scope is not None:
+        _scope.check()
+        return members, names
+    return members
 
 
 class _HistoryFiles:

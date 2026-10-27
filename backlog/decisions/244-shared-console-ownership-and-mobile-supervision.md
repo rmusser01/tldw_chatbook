@@ -888,3 +888,135 @@ exercise actual native81/8/24 preview, preparation, encrypted capture, identity
 and complete integrated planning, exact absence/version negatives, unchanged25/26
 controls, unchanged source/canonical/journal state and physical retirement before
 any owning write or public cutover is released.
+
+
+### Fixed runtime-owner and command historical facts
+
+The source automatic-work runtime-owner singleton is immutable historical
+provenance only. Canonical runtime authority or its absence remains unchanged.
+Reservation/attempt owner IDs and chain clock-owner, monotonic, wall-clock and
+accounting anchors retain their original historical meaning. Equal owner strings
+do not discharge exact imported holds or existing native guards.
+
+Source25 command receipts retain all twelve original recorded fields, validated
+with the native decoder. Original epoch, Console target, fingerprint, status,
+reason, timestamps and native ID are historical facts. Shape validation cannot
+authenticate the unavailable HMAC key or monotonic execution context. Separate
+mapped associations cover only proved persistent native ownership references;
+session, incarnation, handle, epoch and unproved turn/native-ID strings stay
+opaque. Source24's authenticated receipt-table absence remains distinct.
+
+Each historical receipt carries an exact unresolved passive-history/retention
+duty. The later owning writer must qualify bounded complete retention and reads
+outside live command capacity, control observation, invalidation, pruning and
+dispatch. This pure disposition creates no storage schema, hold type, release
+workflow or native consumer, and never copies these facts into the active table.
+
+### One bounded pure Run/Goal preflight composition
+
+A fixed no-argument runs_preflight() on the actual issued captured SQLite scope
+owns one existing 16 MiB _TraceReadBudget. A private optional _read_budget argument
+passes that same object through integrated planning and its existing Sync/Trace
+chain; the same remaining allowance covers every newly introduced Run/Goal,
+operational fact, history proof, identity-domain and closure representation.
+Reserve before raw accumulation, decoding/model construction, clones, indexes,
+repeated references, serialization and retained result containers. Public
+no-argument integrated planning and standalone default-None behavior remain.
+
+The immutable output binds the actual source fingerprint, capture manifests and
+original/typed mapped identities and carries unresolved native duties. It is
+unconditionally noninsertable even when pending tuples are replaced. No mutable
+allowance, caller plan, SQL/path, factory, callback, cached verdict or authority
+predicate is accepted. Existing six-member qualification and scope, claim,
+journal, schema, pin, hash, name, ancestor, authorizer, cancellation, deadline,
+step and physical retirement fences remain, with a final complete native recheck.
+
+This bounds new composed representations, not total Python heap or pre-existing
+R/I/C allocations. Resource exhaustion propagates as the distinct body-free
+_TraceReadLimit; no phase gets a new allowance or omitted fields. Archive/history
+limits remain independent. This API creates no new history-reader/capture role,
+execution owner, publication or write authority.
+
+
+### Pure captured agents.history qualification
+
+The actual issued captured SQLite/Run-preflight operation may qualify only its
+own authenticated source agents.history partition and sealed archive. Reuse the
+native history _members inventory/root/topology proof and archive reader's
+_regular, _central_preflight, _local_ranges, _member_chunks and verify_sealed
+primitives under the same existing custody. Preserve full member size, SHA/CRC,
+producer/topology and sealed-archive qualification before and after consumption.
+The existing archive/member limits and cancellation remain independent.
+
+The same remaining preflight representation allowance pays before new metadata,
+bytes, native framing decode, models, associations and retained proof containers.
+Return immutable original root/run/member/size/digest facts and separately proved
+mapped associations. Accept no caller paths, selectors, manifests, streams,
+callbacks or independent history capability. Saved plans do not carry authority.
+
+Native frames require complete byte association to actual source Run parentage
+and native root semantics. A filename, header kind, equal ID or digest alone is
+insufficient; the native parser's skipped torn/unframed/trailing bytes cannot be
+claimed as complete ownership. Preserve raw bytes, original frame IDs and partial
+or uncertain state. Unknown or foreign ownership, missing members and incomplete
+association cause exact body-free blockers. This adds no other physical/Git/Goal
+evidence owner and never relocates shadow Git metadata or core.worktree.
+
+No history publication, journal event, imported hold/receipt, source write or
+runtime/scratch/tool grant occurs. Existing HistoryFiles read_member still needs
+published verified state, SQLite/history scopes stay mutually exclusive, and
+runtime history needs later committed native receipts. All six native members,
+actual scope/claim/journal/selector/resource fences and final rechecks remain;
+uncertain retirement retains native exclusion.
+
+
+### Retained change-note snapshot locators and allocator admission (R103)
+
+The outer pure Run preflight extends the existing integer snapshot domain with
+retained non-NULL note locators from both captured partitions. Native integer
+bounds, live snapshot and note run/root ownership, canonical historical occupancy
+and every previously reserved target constrain the extension. Existing I/S and
+Workspace proofs and reservations remain exact; a conflicting base target is
+refused. Missing snapshots remain missing, with original/mapped per-note
+provenance and unchanged excerpts, line text and delivery state. No synthetic row
+or NULL replacement repairs history.
+
+The fixed native `runs.sqlite_sequence` entry for `change_snapshots` supplies
+source/canonical allocator provenance. Its source value is never copied. The pure
+result records the required mapped frontier and an unresolved native allocator
+admission duty, atomic with eventual owning rows/maps/receipts, so a future INSERT
+cannot attach an old note to a new snapshot. Unproved frontiers and int64
+exhaustion refuse. This authorizes no sequence mutation, new capture/read role or
+writer. Full diff/revert still requires actual Git bytes or its exact pending
+physical consumer duty; native self-contained note history survives pruning.
+
+
+### Fixed pure-history selector parsing under the same allowance (R104)
+
+Only the actual active captured SQLite history operation may read its own source
+selector through the exact preview provenance. Preserve native selector admission:
+owned regular file, pinned nofollow parent/name, original ancestors/fingerprint,
+and existing 1 MiB MAX_RECORD. Ordinary modes such as 0644 remain valid; unrelated
+private-copy 0600/nlink1 restrictions do not apply. Descriptors and parent pins use
+the same native custody. Reserve the same remaining preflight allowance before a
+bounded size+1 read within the native limit; exact length, descriptor/name/ancestor
+identity and original SHA must agree before parsing. Growth/change/short reads or
+unproved provenance refuse and retire normally.
+
+The installed inventory `_parse_profile_config` remains the UTF8/TOML/reserved-key/
+Pydantic authority, with an optional private budget defaulting to None for existing
+callers. Before decoding, a bounded lexical accounting pass reserves raw/text,
+values/keys, arrays, inline tables, table prefixes (including implicit dotted
+prefixes) and parser representations. It does not validate or reinterpret TOML;
+native comments, quoted/multiline strings/keys and array-table grammar remain
+native. Additional actual decoded-tree/model clones are reserved before construction.
+No JSON-only charge, gross guessed multiplier or heap-measurement claim substitutes
+for native structure accounting.
+
+Parse checked bytes once and retain only immutable required native RunLog root/name
+association facts. Any private `_members` plumbing checks the actual scope and
+captured-object identity; ordinary behavior remains unchanged. Preserve the native
+environment/directory-name fallback and inventory/root/topology semantics. There is
+no caller selector/config/reader, cache, new capture role, altered permission,
+publication, runtime grant or writer release. R101's same allowance and R102's
+source/archive/member/fence/cancellation/final-check/retirement requirements remain.

@@ -329,7 +329,11 @@ def _rows(reads, purpose, family, table, *, _read_budget=None):
         offset += len(rows)
 
 
-def _reserve(domain, source, canonical, fingerprint):
+def _reserve(domain, source, canonical, fingerprint, *, _read_budget=None):
+    if _read_budget is not None:
+        _read_budget.container((len(source) + len(canonical)) * 12)
+        for row in (*source, *canonical):
+            _read_budget.value(row[domain.column], text_copies=2)
     original = [row[domain.column] for row in source]
     existing = [row[domain.column] for row in canonical]
     if any(type(value) is not domain.scalar for value in original + existing):
@@ -363,6 +367,10 @@ def _reserve(domain, source, canonical, fingerprint):
             else:
                 attempt = 0
                 while True:
+                    if _read_budget is not None:
+                        _read_budget.value(
+                            (fingerprint, domain.name, identity, attempt), text_copies=3
+                        )
                     seed = json.dumps(
                         (fingerprint, domain.name, identity, attempt),
                         ensure_ascii=False,
