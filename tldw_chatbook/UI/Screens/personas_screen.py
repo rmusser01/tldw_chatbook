@@ -184,7 +184,6 @@ from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
 )
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
@@ -359,7 +358,6 @@ from ...Widgets.Persona_Widgets.personas_state import (
     PersonasWorkbenchState,
 )
 from ..Persona_Modules import roleplay_frame_state as frame_state
-from ..Persona_Modules import persona_search_completion
 from ..Workbench.workbench_widgets import FittedText
 from ...Widgets.workbench_focus import (
     WorkbenchPaneTarget,
@@ -3849,10 +3847,6 @@ class PersonasScreen(BaseAppScreen):
             and not self._window_state.rows_current(fence)
         )
 
-    def _land_first_match(self, fence: frame_state.ListFence) -> None:
-        """Complete the existing first-match intent at actual row publication."""
-        persona_search_completion.land_first_match(self, fence)
-
     async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
         """One window run: fetch until the request is met, fence, apply once."""
         fence = request.fence
@@ -4132,7 +4126,8 @@ class PersonasScreen(BaseAppScreen):
             if request.to_end and window.take_end():
                 library.item_list.move_to_end()
             if request.replace and not blank:
-                self._land_first_match(fence)
+                from ..Persona_Modules import persona_search_completion
+                persona_search_completion.land_first_match(self, fence)
             replay = (
                 window.take_replay(fence) if request.replace and not blank else None
             )
@@ -4289,6 +4284,7 @@ class PersonasScreen(BaseAppScreen):
                 and self.state.selected_entity_id
             ):
                 library.mark_active_row("persona", self.state.selected_entity_id)
+            from ..Persona_Modules import persona_search_completion
             persona_search_completion.publish_first_match(self, library, fence)
 
     @on(PersonaSearchChanged)
@@ -4593,6 +4589,7 @@ class PersonasScreen(BaseAppScreen):
                 recovery_copy=recovery_copy,
             )
             library.item_list.set_more_available(False)
+            from ..Persona_Modules import persona_search_completion
             persona_search_completion.publish_first_match(self, library, fence, request_generation)
 
     def _lore_manager(self) -> Any:
@@ -4696,6 +4693,7 @@ class PersonasScreen(BaseAppScreen):
                 recovery_copy=recovery_copy,
             )
             library.item_list.set_more_available(False)
+            from ..Persona_Modules import persona_search_completion
             persona_search_completion.publish_first_match(self, library, fence, request_generation)
 
     # ===== Mode switching =====
@@ -5451,6 +5449,7 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
         message.stop()
+        from ..Persona_Modules import persona_search_completion
         if not persona_search_completion.accept_selection(self, message):
             return
         # Explicit user intent supersedes a restore payload retained after a
@@ -13848,6 +13847,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._local_character_actions_allowed():
                 return
             try:
+                from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
                 choice = await self.app.push_screen_wait(ConsoleStylePickerModal())
             except Exception:
                 logger.opt(exception=True).warning(
