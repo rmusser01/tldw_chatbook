@@ -47,6 +47,12 @@
 
 **What to do.** When a change adds a "pending" state that short-circuits other paths (a held rebuild, a dirty flag, a coalesced request), list which path each step of a test actually takes. Drain the pending state before the step that is meant to cover another path. Then mutate each path once and check that some test fails.
 
+## A wait that looks for a framework's stored callback can be blind to it (TASK-33620.15.23, 2026-10-27)
+
+**Incident.** Two successive waits for the Console's activation focus restore, TASK-33620.15.7's and the first version of TASK-33620.15.23's, looked for a pending 0.2 s timer with `timer._callback == restore`. That is never true: Textual's `set_timer` stores `partial(self.call_next, callback)`, not the callback (the TASK-34982 entry below records the same wrapping). Each wait was reported as the fix, with 31 of 32 and then 10 of 10 green runs, because the timer usually fired before the test cleared focus anyway. The independent review then measured 3 failures in 29 runs. A probe that logged every restore over 42 runs found 8 failures, and they were exactly the 8 runs where the wait returned with 2 of the 3 scheduled restores run; the third was the timer's, through `_flush_next_callbacks`.
+
+**What to do.** Before you trust a wait on a pending callback, show that it can see one: lengthen the delay it waits for (here 0.2 s to 0.6 s, applied with Edit and then restored) and check that it still waits. The old wait returned early in 6 of 6 runs; the fix waited in 6 of 6. Rather than looking for the callback in framework internals (timer lists, callback lists, a batch already copied off one), record each one as it is scheduled and mark it when it has run. Do that by wrapping the scheduling calls before the app starts, then wait until every recorded callback has run. A green streak only counts once that check has passed.
+
 ## A render deferred to "when it opens" races the open's own geometry passes (TASK-35970, 2026-10-26)
 
 **Incident.** The collapsed Character browser stopped recomposing on every send and rendered its newest snapshot when the section opened instead. Every mounted test was green: no recompose while collapsed, the newest chats after opening, not one stale painted frame. Live, at 160x45, opening the section left it below the fold with a "▼ Model · Agent · Details" hint, where dev scrolled it into view. A probe on `ConsoleLeftRail._run_allocation_reconcile` and `_reveal_active_section` showed why: the deferred recompose started an allocation pass before layout, which measured the half-mounted body at 0 rows, so `fallback_active_section` moved the active section off Character and dropped the open's deliberate reveal. The mounted test had not caught it because `pilot.click` let the harness run one queued allocation pass between the rail's activation and the screen's open, and that pass dropped the reveal on dev as well. The test has to call the rail's activation and the screen's toggle back to back, which is the order the live app runs them in. Doing that reproduced dev's reveal and the branch's lost one.
@@ -318,7 +324,9 @@ interleaved and over 20 or more runs, before calling it pre-existing. A
 performance change can move a test's own race without changing the product's
 behaviour; trace what actually wrote the asserted state. Then make the test
 wait for the event it races (here, the timer's task finishing), not for a
-fixed sleep: 31 of 32 runs passed after that, 8 of 8 on dev.
+fixed sleep: 31 of 32 runs passed after that, 8 of 8 on dev. (That wait could
+not see the timer, and the streak was luck. The TASK-33620.15.23 entry at the
+top of this file has the measurement.)
 
 ## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
 
