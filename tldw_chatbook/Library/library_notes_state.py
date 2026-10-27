@@ -489,6 +489,9 @@ class LibraryNotesTrashState:
         loading: Page 1 is being read over a snapshot of another page
             (reopening the view, review R0 m-7): the view says so instead
             of painting the old page or claiming the Trash is empty.
+        retry_page: The page a failed read asked for, or ``0`` when the
+            last read succeeded (review R1 N-2): the view keeps what it
+            painted, says the read failed, and offers Retry for that page.
     """
 
     rows: tuple[LibraryNotesTrashRow, ...] = ()
@@ -496,6 +499,12 @@ class LibraryNotesTrashState:
     page: int = 1
     page_size: int = LIBRARY_NOTES_TRASH_PAGE_SIZE
     loading: bool = False
+    retry_page: int = 0
+
+    @property
+    def failed(self) -> bool:
+        """Whether the last read failed (the failure line and Retry show)."""
+        return self.retry_page > 0
 
     @property
     def pager(self) -> LibraryPagerDisplay:
