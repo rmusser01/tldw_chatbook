@@ -1457,6 +1457,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, ported onto dev b31e3e9241 (round 24): dev's 4,035 plus 6,
     # exact measurement 4,041.
     "tldw_chatbook/DB/private_sqlite.py": 4041,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +755 -- its
+    # first-chat readiness (capacity blocker, send-outcome ledger, template
+    # samples, per-model words) took the module from 3,474 on dev 0923ec0ca2
+    # past the 4,000-line guard: born governed at its measured size.
+    "tldw_chatbook/Chat/console_session_settings.py": 4229,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that
