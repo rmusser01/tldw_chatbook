@@ -388,6 +388,13 @@ FAST_LANE_TARGETS = (
     # install set). Their three UI siblings are in the UI census.
     "Tests/Backup_Recovery/test_prompt_history_path_memo.py",
     "Tests/MCP/test_server_manifest_parse_reuse.py",
+    # TASK-34100.5.3 (plain chat's light tool surface): the Full agent tools
+    # gate in the gate enumerator and its off-count, and the Summary's Tools
+    # row naming what is on. Not bootstrap_profile; ~10 s, 3 of 3 serial.
+    "Tests/Agents/test_builtin_tool_gate.py::test_all_tool_gates_enumerates_every_gate_with_sections_and_groups",
+    "Tests/Agents/test_builtin_tool_gate.py::test_tool_gate_breadcrumb_names_the_off_count",
+    "Tests/Agents/test_builtin_tool_gate.py::test_count_off_tool_gates_constructs_no_tools",
+    "Tests/Wizards/test_first_run_setup_state.py::TestSummaryThreeState::test_tools_row_off_detail_names_where_to_enable",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -483,6 +490,19 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word",
     "Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule",
     "Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once",
+    # TASK-34100.5.3 (plain chat's light tool surface): its suites and the
+    # wizard/owner-binding nodes it changed. All bootstrap_profile (they read
+    # and write the gates through the profile's config), so they run here, in
+    # this order, the light-surface files last.
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_summary_quick_track_shows_defaults_note",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_tools_step_copy_comes_from_the_shared_gate_table",
+    "Tests/Chat/test_console_owner_live_bindings.py::test_compaction_reads_replaced_services_globals_and_accounting",
+    "Tests/Chat/test_console_light_tool_surface.py",
+    "Tests/Chat/test_console_light_surface_context_meter.py",
+    "Tests/Chat/test_console_light_surface_voice.py",
+    "Tests/Chat/test_console_light_surface_goal_runs.py",
+    "Tests/UI/test_mcp_full_agent_tools_gate.py",
+    "Tests/Wizards/test_first_run_tool_surface_summary.py",
 )
 
 #: The second admission-sensitive job's invocation, exactly, in order
