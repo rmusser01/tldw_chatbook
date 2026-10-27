@@ -37,9 +37,13 @@ from Tests.UI.test_console_session_tab_close import (
 from Tests.UI.test_console_tab_publication_maintenance import (
     _awaiting,
     _loop_wait,
+    _publication_quiet,
     _quiet,
 )
 
+# CPython's asyncio.Lock frames for `async with lock` (checked on 3.12). If a
+# release renames them, the chain checks below time out loudly; they cannot
+# pass falsely.
 _AWAITING_LOCK = ["_ContextManagerMixin.__aenter__", "Lock.acquire"]
 
 
@@ -71,6 +75,9 @@ async def test_tab_holder_finishes_while_the_screen_pump_waits_for_it(request):
         controller.switch_session(keeper)
         # The holder has a real remount to do: three tabs to add.
         assert _open_tab_ids(console) == {keeper}
+        # No await since `_quiet`: the new sessions queued nothing for the
+        # screen's pump.
+        assert _publication_quiet(console, projection)
         # Only a gate: the holder parks on it, so the screen's pump can be
         # parked behind the holder before the holder does any DOM work.
         await surface._session_sync_lock.acquire()

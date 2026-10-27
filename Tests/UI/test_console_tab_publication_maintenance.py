@@ -180,6 +180,9 @@ async def test_original_maintenance_drain_waits_for_coalesced_actual_tab_publica
         entry.start()
         try:
             controller.switch_session(target.id)
+            # No await since `_quiet`; re-check that the switch queued
+            # nothing for the screen's pump before taking the lock.
+            assert _publication_quiet(console, projection)
             # Hold the actual original Surface await, because current cold
             # readiness correctly returns False instead of blocking FULL.
             await surface._session_sync_lock.acquire()
@@ -271,6 +274,7 @@ async def test_original_maintenance_waits_for_actual_tabs_with_idle_whole_pass(r
         entry = _OriginalSurfaceEntry(console, surface)
         entry.start()
         try:
+            assert _publication_quiet(console, projection)
             await surface._session_sync_lock.acquire()
             lock_owned = True
             publication = asyncio.create_task(
@@ -336,6 +340,20 @@ def _publication_quiet(console, projection) -> bool:
     quiet asks for the screen's pump itself to be waiting for a message with
     none queued, besides the attach reconciled, no sync running, owed or
     replaying, and no Console worker still running.
+
+    This covers the screen's pump only, not pending timers. Textual runs a
+    ``set_timer`` callback on the timer's own task, off the screen's pump, so
+    a timer cannot park the pump. These pins wait with ``_loop_wait`` while
+    they hold the lock, so a timer that started a publication after the lock
+    was taken would fail the pin after 10 s instead of hanging it. Nothing
+    here proves that no view-start timer publishes tabs. The coalesced
+    control-bar replay is the one timer path checked above, through
+    ``_console_control_bar_replay_whole_sync``.
+
+    The pump reads lean on Textual 8.x internals (``_message_queue``,
+    ``_next_callbacks``, ``_callbacks``, ``_task`` and the
+    ``MessagePump._get_message`` qualname). If Textual renames one, this
+    raises or never holds, so ``_quiet`` fails loudly instead of passing.
     """
     return (
         console._console_attach_reconciled
@@ -406,6 +424,7 @@ async def test_admitted_real_tab_publication_rechecks_replaced_controller(reques
             # `_quiet` returned with nothing queued and no await since, so
             # this acquire does not suspend and no other publication can be
             # waiting for the lock.
+            assert _publication_quiet(console, projection)
             await surface._session_sync_lock.acquire()
             lock_owned = True
             publication = asyncio.create_task(console._sync_console_native_session_tabs())

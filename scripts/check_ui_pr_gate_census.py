@@ -584,7 +584,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Textual audit controls retain every dev entry plus 167 tail entries.
 # TASK-36611 (2026-10-27) appends 1 whole-file entry at the tail: a tab
 # publication holding the session locks finishes while the Console screen's
-# pump waits for it (one mounted case, about 9 s locally), so no existing
+# pump waits for it (one mounted case, 9-24 s per call locally depending on
+# load, most of it the private-profile child's start-up), so no existing
 # entry changes shard: 908 -> 909.
 MINIMUM_FILES = 1159
 
