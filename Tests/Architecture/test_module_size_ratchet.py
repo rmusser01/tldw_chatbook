@@ -606,7 +606,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8938,
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8160,
+    # 2026-10-31, PR #3293: explicit user size-limit waiver; exact integrated measurement.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8181,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
@@ -651,7 +652,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
-    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
+    # Whisper never sends an enc: key).
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
     "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     "tldw_chatbook/Workspaces/registry_service.py": 4304,
