@@ -559,6 +559,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.15 (2026-10-27) raised it to 966 (dev's 964 + 2): the
 # run-start yield node becomes its whole file in the node's own slot (net
 # zero), and the first-send import-cycle and warm-up files join at the tail.
+# zero), and the first-send warm-up and import-cycle files join at the tail.
+# Replayed over seven green 17-shard runs, each new file charged at its local
+# time under load ~38 (CI ran the run-start node in 4.3-6.1 s against 8.8 s
+# at that load), shards 13, 14 and 17 come to 15.8, 16.3 and 16.0 pytest min;
+# the heaviest shard (11, 17.2) is unchanged.
 MINIMUM_FILES = 967
 
 
