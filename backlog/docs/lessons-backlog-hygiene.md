@@ -1448,3 +1448,9 @@ marker, leave the box unchecked, and keep the task In Progress. Put the options
 and their measured costs where the owner reads them, so one line answers it. Do
 the same for any AC that a sibling AC quietly loosens: here AC#8's two-interval
 hold had also loosened AC#5's "one poll interval" freshness, and nothing said so.
+
+
+
+## Fetch the live target before diagnosing stale PR mergeability
+
+PR #3251 (2026-10-26): its REST/GraphQL base snapshot still showed `7a5e2513c5` after dev had merged PR #3234 as `e554f25812`. Comparing the feature branch against that old snapshot correctly said zero behind, but did not establish that it was current with live dev. A documentation push did not fix the reported conflict; reopening refreshed the base snapshot, and fetching the actual dev ref exposed shared census conflicts. Rebase preserved every reviewed product/test blob while retaining both census tails. Before treating a dirty PR as a GitHub calculation bug, fetch the live target and compare against that ref (or read `git/ref/heads/dev` directly); the PR base snapshot is not proof of the current target.

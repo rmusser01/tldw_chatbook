@@ -44,9 +44,38 @@ Placeholder expansion (`replace_placeholders`) handles `{{char}}`, `{{user}}`, `
 
 All three are managed in the Personas screen.
 
+## Search activation
+
+The pure `UI/Persona_Modules/roleplay_list_window_state.py` owns the existing
+single `WindowIntent`; `roleplay_frame_state.py` re-exports its public types and
+helpers with identical object identity. Search Enter owes the first match and
+returns immediately. A second Enter while matching rows are pending marks that
+same intent for one activation; repeats coalesce. Actual current row publication
+uses the stateless `persona_search_completion.py` helper to land the cursor and
+post a deferred selection. The same owner retains that intent until the screen
+accepts its exact published generation, row and cursor; newer user/context
+intent, failure or empty results retires it. Thus Ctrl+F, query, Enter, Enter
+opens the first match without a handler wait or third Enter, while no pending
+activation can open an old row. Ordinary row selection still uses its existing
+dirty-editor and selection guards.
+
 ## World books and world info
 
 `WorldBookManager` owns world-book CRUD, conversation association, and character attachment; imports normalize lorebook JSON into the managed block shape. At send time, `apply_world_info_to_message` runs the `WorldInfoProcessor`: entries are scanned against recent history with per-book `scan_depth`, `token_budget`, and `recursive_scanning`; matching entries are sorted by `insertion_order` and injected into the ephemeral provider payload (never the stored transcript — see [chat-pipeline.md](./chat-pipeline.md)). Disabled-entry diagnostics surface candidate near-misses.
+
+Lore Settings Save admits one screen-owned worker and releases the screen message
+queue before its threaded manager operation finishes. The operation captures its
+manager, book identity/version, payload, and exact selected record/panel. Repeated
+Save cannot cancel or duplicate an admitted write; cancellation drains an active
+native write before reopening admission. Completion adopts the committed version
+only for that original selection and panel, retains newer raw controls, and labels
+those later edits as unsaved. A retired selection receives feedback naming the
+captured book without changing its replacement. This uses the existing Lore
+transition/dirty-state ownership; it does not add entry/Options draft domains.
+If Save refresh supersedes a submitted Lore search, the existing first-match
+intent stays owed until current matching rows publish. Generation, query, mode
+and attachment are rechecked after the row-update await. Background Save marks
+the loaded book without moving the search cursor or creating load-through intent.
 
 ## Chat dictionaries
 

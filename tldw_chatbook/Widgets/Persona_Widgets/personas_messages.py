@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from textual.message import Message
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Persona_Modules.roleplay_list_window_state import WindowIntent
 
 
 PersonaWorkbenchMode = Literal[
@@ -178,6 +181,23 @@ class PersonaEntitySelected(Message):
         self.entity_id = entity_id
         self.entity_name = entity_name
         self.runtime_target = runtime_target
+
+
+class DeferredPersonaEntitySelected(PersonaEntitySelected):
+    """A first-match activation still owned by its cancellable window intent."""
+
+    def __init__(
+        self,
+        *,
+        entity_kind: PersonaEntityKind,
+        entity_id: str,
+        entity_name: str,
+        intent: WindowIntent,
+    ) -> None:
+        super().__init__(
+            entity_kind=entity_kind, entity_id=entity_id, entity_name=entity_name
+        )
+        self.intent = intent
 
 
 class PersonaSearchChanged(Message):

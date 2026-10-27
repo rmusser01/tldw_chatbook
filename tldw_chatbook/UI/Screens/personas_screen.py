@@ -15,6 +15,7 @@ import threading
 import weakref
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import UUID
@@ -183,7 +184,6 @@ from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
 )
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
@@ -1431,6 +1431,8 @@ class PersonasScreen(BaseAppScreen):
         self._selected_lore_book: dict | None = None
         self._selected_lore_entries: list[dict] = []
         self._selected_lore_book_version: int | None = None
+        self._lore_settings_save_worker_handle: Worker[None] | None = None
+        self._lore_settings_save_started = False
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
         #: Bumped by every set and cancel of the search timer: a callback
@@ -3802,7 +3804,9 @@ class PersonasScreen(BaseAppScreen):
 
         Returns at once (TASK-33910.35): the list takes the cursor to the
         searched list's first match when that list's rows land, and Enter on
-        the list opens nothing until then. On dev, Enter within the 0.2 s
+        the list opens nothing until then. A pending list Enter is retained
+        once for current row publication; newer user/context intent cancels it.
+        On dev, Enter within the 0.2 s
         debounce put the cursor on the previous result's first row, so
         ``ctrl+f isolde ⏎ ⏎`` could open the wrong card (spec 1.6's 4-key
         find); B2a waited for the render inside this handler, which held
@@ -3842,18 +3846,6 @@ class PersonasScreen(BaseAppScreen):
             and window_running
             and not self._window_state.rows_current(fence)
         )
-
-    def _land_first_match(self, fence: frame_state.ListFence) -> None:
-        """The searched list's rows are in the list: the cursor to its first match, if owed."""
-        if not self._window_state.take_first(fence):
-            # A newer query or source landed: a landing owed on the older
-            # list can never land (its cancelled render skips read_failed).
-            self._window_state.landed_elsewhere(fence)
-            return
-        try:
-            self.query_one(PersonasLibraryPane).land_on_first()
-        except QueryError:
-            pass
 
     async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
         """One window run: fetch until the request is met, fence, apply once."""
@@ -4133,8 +4125,9 @@ class PersonasScreen(BaseAppScreen):
                 )
             if request.to_end and window.take_end():
                 library.item_list.move_to_end()
-            if request.replace and not blank and window.take_first(fence):
-                library.land_on_first()
+            if request.replace and not blank:
+                from ..Persona_Modules import persona_search_completion
+                persona_search_completion.land_first_match(self, fence)
             replay = (
                 window.take_replay(fence) if request.replace and not blank else None
             )
@@ -4246,6 +4239,8 @@ class PersonasScreen(BaseAppScreen):
             offset=0,
             page_size=max(1, len(self._profiles)),
         )
+        self._window_state.reload_started()
+        fence = self._list_fence()
         async with self._render_lock:
             if not self._library_render_snapshot_is_current(
                 expected_query=expected_query,
@@ -4289,6 +4284,8 @@ class PersonasScreen(BaseAppScreen):
                 and self.state.selected_entity_id
             ):
                 library.mark_active_row("persona", self.state.selected_entity_id)
+            from ..Persona_Modules import persona_search_completion
+            persona_search_completion.publish_first_match(self, library, fence)
 
     @on(PersonaSearchChanged)
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
@@ -4442,8 +4439,6 @@ class PersonasScreen(BaseAppScreen):
                     "Could not re-render profile rows after search."
                 )
                 self._window_state.read_failed()
-            else:
-                self._land_first_match(self._list_fence())
         elif mode == "dictionaries":
             try:
                 await self._render_dictionary_rows(query=query)
@@ -4452,8 +4447,6 @@ class PersonasScreen(BaseAppScreen):
                     "Could not re-render dictionary rows after search."
                 )
                 self._window_state.read_failed()
-            else:
-                self._land_first_match(self._list_fence())
         elif mode == "lore":
             try:
                 await self._render_lore_rows(query=query)
@@ -4462,8 +4455,6 @@ class PersonasScreen(BaseAppScreen):
                     "Could not re-render lore rows after search."
                 )
                 self._window_state.read_failed()
-            else:
-                self._land_first_match(self._list_fence())
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -4537,6 +4528,8 @@ class PersonasScreen(BaseAppScreen):
             expected_mode=expected_mode,
         ):
             return
+        self._window_state.reload_started()
+        fence = self._list_fence()
         self._dictionary_lore_request_generation += 1
         request_generation = self._dictionary_lore_request_generation
 
@@ -4596,6 +4589,8 @@ class PersonasScreen(BaseAppScreen):
                 recovery_copy=recovery_copy,
             )
             library.item_list.set_more_available(False)
+            from ..Persona_Modules import persona_search_completion
+            persona_search_completion.publish_first_match(self, library, fence, request_generation)
 
     def _lore_manager(self) -> Any:
         """A ``WorldBookManager`` bound to the app's local DB, or None when absent."""
@@ -4640,6 +4635,8 @@ class PersonasScreen(BaseAppScreen):
             expected_mode=expected_mode,
         ):
             return
+        self._window_state.reload_started()
+        fence = self._list_fence()
         self._dictionary_lore_request_generation += 1
         request_generation = self._dictionary_lore_request_generation
 
@@ -4696,6 +4693,8 @@ class PersonasScreen(BaseAppScreen):
                 recovery_copy=recovery_copy,
             )
             library.item_list.set_more_available(False)
+            from ..Persona_Modules import persona_search_completion
+            persona_search_completion.publish_first_match(self, library, fence, request_generation)
 
     # ===== Mode switching =====
 
@@ -5450,6 +5449,9 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
         message.stop()
+        from ..Persona_Modules import persona_search_completion
+        if not persona_search_completion.accept_selection(self, message):
+            return
         # Explicit user intent supersedes a restore payload retained after a
         # transient view-mount failure.
         self._pending_restore = None
@@ -6995,10 +6997,16 @@ class PersonasScreen(BaseAppScreen):
         await self._run_lore_entry_op(_op, "Could not reorder entries")
 
     @on(LoreBookSettingsSaveRequested)
-    async def _handle_lore_settings_save(
+    def _handle_lore_settings_save(
         self, message: LoreBookSettingsSaveRequested
     ) -> None:
         message.stop()
+        previous = self._lore_settings_save_worker_handle
+        if previous is not None and (
+            self._lore_settings_save_started
+            or not (previous.is_cancelled or previous.is_finished)
+        ):
+            return
         if (
             self.state.selected_entity_kind != "lore"
             or not self.state.selected_entity_id
@@ -7015,57 +7023,33 @@ class PersonasScreen(BaseAppScreen):
                 "Lore is not configured: the database is unavailable.", "error"
             )
             return
-        entity_id = self.state.selected_entity_id
-        try:
-            ok = await asyncio.to_thread(
-                manager.update_world_book,
-                int(entity_id),
-                name=payload.get("name"),
-                description=payload.get("description"),
-                scan_depth=payload.get("scan_depth"),
-                token_budget=payload.get("token_budget"),
-                recursive_scanning=payload.get("recursive_scanning"),
-                enabled=payload.get("enabled"),
-                expected_version=self._selected_lore_book_version,
-            )
-        except ConflictError:
-            detail.set_status(
-                "Save failed: the lore book changed since it was loaded. Reselect and try again."
-            )
-            return
-        except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not save lore book {entity_id}.")
-            detail.set_status(f"Save failed: {exc}")
-            return
-        if not ok:
-            # update_world_book() only returns False (rather than raising)
-            # when expected_version was None and the row vanished/mismatched;
-            # world_books.version is NOT NULL so this path is effectively
-            # unreachable once a book is selected, but stay defensive.
-            detail.set_status("Save failed: the lore book could not be found.")
-            return
-        try:
-            record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Could not reload lore book {entity_id} after save."
-            )
-            record = None
-        if record is not None:
-            raw_version = record.get("version")
-            self._selected_lore_book_version = (
-                int(raw_version) if raw_version is not None else None
-            )
-            self._selected_lore_book = record
-            self.state.selected_entity_name = str(record.get("name") or "")
-            self.query_one(PersonasInspectorPane).show_selection(
-                name=self.state.selected_entity_name, kind="lore"
-            )
-        detail.set_status("Saved.")
-        self._update_title()
-        await self._render_lore_rows(query=self.state.search_query)
-        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
-        self._sync_inspector_console_actions()
+        from ..Persona_Modules.persona_save_completion import save_lore_settings
+
+        submitted = message.submitted_snapshot
+        if submitted is None:
+            submitted = detail.settings_snapshot()
+        # Capture authority before dispatch. A cancelled, unstarted worker may
+        # be replaced; a running native write owns admission until it drains.
+        self._lore_settings_save_started = False
+        self._lore_settings_save_worker_handle = self.run_worker(
+            partial(
+                save_lore_settings,
+                self,
+                detail,
+                manager,
+                self.state.selected_entity_id,
+                self._selected_lore_book_version,
+                payload,
+                self._selected_lore_book,
+                self.state.selected_entity_name,
+                submitted,
+            ),
+            name="personas-lore-settings-save",
+            description="Save Lore settings",
+            group="personas-lore-save",
+            exclusive=False,
+            exit_on_error=False,
+        )
 
     @on(LoreBookExportRequested)
     async def _handle_lore_export(self, message: LoreBookExportRequested) -> None:
@@ -13863,6 +13847,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._local_character_actions_allowed():
                 return
             try:
+                from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
                 choice = await self.app.push_screen_wait(ConsoleStylePickerModal())
             except Exception:
                 logger.opt(exception=True).warning(

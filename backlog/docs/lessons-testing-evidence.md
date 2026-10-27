@@ -12469,6 +12469,13 @@ tests, so the failure looks exactly like a pre-existing red in someone else's
 area. Do not edit the tree while a run you intend to quote is running — and
 before A/B-ing any suspicious red, re-run it once against a quiescent tree.
 
+**Recurrence, TASK-36931, 2026-10-25.** Compacting a parametrization while its
+private-profile parent was running selected the old `[True-mark-read]` node,
+but the child imported the edited file and found zero matching cases. That
+receipt was retained as invalid, not counted as an expected defect failure.
+Freeze test node definitions and production source until the actual child has
+settled; verify its exact selected case and assertion before quoting RED/GREEN.
+
 ## A filing's prescribed fix is a hypothesis, not a spec (TASK-21128, 2026-08-23)
 
 The finding I filed said: scope the `messages_au` FTS trigger to `AFTER UPDATE OF
@@ -22018,3 +22025,25 @@ CPU (`time.process_time()` around the call and its settle), not only the counter
 the fix targets. Put a cheap check in front of the expensive proof. Pin the
 refused path's cost structurally; here a test asserts that a refused sync
 composes the tray exactly once.
+
+## Normalize evidence report paths before matching them across platforms (post-PR #3248)
+
+During the 2026-10-25 Textual audit, the first standalone collector raised
+StopIteration although the Study parent and both actual child XML reports
+existed and independently showed one ordinary pass, one intended retention
+failure and zero errors. It serialized str(path.relative_to(base)) on Windows,
+then searched for study/result.xml with forward slashes. The collector error
+was not another product failure. Using relative_path.as_posix() selected the
+existing parent exactly once; the corrected packet was rerun with fresh private
+profiles. Normalize portable report paths before serializing or comparing them,
+and inspect the actual child reports when a collector disagrees with its inputs.
+Evidence: [post-merge audit](../../Docs/superpowers/qa/2026-10-25-textual-book-after-pr3248.md).
+
+
+## Settled data and settled workers can still leave the authoring surface stale (PR #3251, 2026-10-26)
+
+**Incident.** PR #3251's metadata-only CI failed two previously passing UI assertions. Chunking Undo had already restored the canonical empty sample and cleared its Undo stack, yet the editor stayed at `x`: a coordinator status render rejected sample publication while the edit consumer was running, then its newer render generation invalidated that consumer's final echo. A controlled worker-first ordering retained the stale editor even after the ordinary worker/Pilot settle. The Library create-arrival test had a different gap: root slices were settled and replacement list children were attached, but a production-canvas probe measured their region as 0x0 until layout, so the compositor crop was empty.
+
+**What to do.** Diagnose canonical state and painted state separately at the failing boundary. A render generation is not proof another render fulfilled the same publication obligation; preserve newer-input/session/retirement fences while letting the final owned sample edit finish its echo. Focused review caught the initial exception also reaching configuration presentation: a held real Name key was erased before the next key, yielding canonical z instead of yz. Keep that exception sample-specific and retain the prior configuration generation gate; a sample revision is not global input authority. For compositor assertions, wait on an observable current paint boundary rather than a fixed pause after state/mount. Keep semantic assertions independent: the Library Unfiled-only negative control passed baseline paint readiness and still failed the original missing-folder assertion. These controlled observations explain mechanisms; they do not measure natural race frequency or certify full app/server behavior.
+
+**Integration follow-up.** Rebasing the same PR onto non-blocking Roleplay search exposed a different false completion: search S returned after a newer Save refresh R superseded it, but its caller treated that return as row publication and released Enter. A real Enter opened First Lore while query Second and R were still pending. Discharge the existing first-match intent at actual current row publication, not at the end of a superseded caller. A separate controlled arm also showed the Save marker could then steal the fresh first-match cursor; background row marking must not move the cursor or create a load-through intent.

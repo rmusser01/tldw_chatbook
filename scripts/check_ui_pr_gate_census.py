@@ -554,7 +554,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Character section renders nothing while a send refreshes it (seven cases,
 # about 29 s locally), so no existing entry changes shard: 906 -> 907. It also
 # drops the dead 906 assignment that stood above dev's effective 905.
-MINIMUM_FILES = 908
+# PR #3251 retains all 908 live dev slots plus 56 exact controls.
+MINIMUM_FILES = 964
 
 
 def read_census(path: Path) -> list[str]:

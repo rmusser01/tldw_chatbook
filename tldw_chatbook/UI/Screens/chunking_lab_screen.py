@@ -586,8 +586,10 @@ class ChunkingLabScreen(BaseAppScreen):
                         lab_state.is_result_stale, session, candidate_id
                     )
                 )
+        # The consumer owns its final sample echo: a same-session status
+        # render may have deferred that echo while this edit task was running.
         if (
-            generation != self._render_generation
+            (generation != self._render_generation and not edit_complete)
             or session is not self.coordinator.session
             or not self.is_mounted
             or not self.query("#lab-message")
@@ -617,7 +619,8 @@ class ChunkingLabScreen(BaseAppScreen):
                 if editor.text != sample:
                     editor.load_text(sample)
                     self._sample_input_revision = sample_editor.sample_revision
-            self.query_one(EditorRegion).present(draft, validation, document)
+            if generation == self._render_generation:
+                self.query_one(EditorRegion).present(draft, validation, document)
         self.query_one(SampleRegion).disabled = (
             self.coordinator.guarded or self._leaving
         )

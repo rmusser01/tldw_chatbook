@@ -1409,17 +1409,24 @@ def test_the_first_match_landing_belongs_to_its_list():
     assert window.landing_owed()
     assert not window.take_first(_search_fence(query="other"))
     assert window.landing_owed()
-    assert window.take_first(_search_fence(generation=9))  # any generation of that list
+    intent = window.intent
+    assert window.take_first(_search_fence(generation=9)) is intent  # any generation
     assert not window.landing_owed()
     assert not window.take_first(_search_fence())
 
 
 def test_landing_another_list_or_a_failed_read_or_a_newer_move_drops_the_first_match():
     window = frame_state.ListWindowState()
+    for change in (
+        {"sort_key": "name_asc"}, {"tag": "other"}, {"mode": "lore"},
+        {"runtime_source": "server", "server_id": "other"},
+    ):
+        window.owe_first(_search_fence())
+        window.defer_first_activation()
+        window.landing(_search_fence(**change))
+        assert window.intent is None
     window.owe_first(_search_fence())
-    window.landing(_search_fence(sort_key="name_asc"))
-    assert not window.landing_owed()
-    window.owe_first(_search_fence())
+    window.defer_first_activation()
     window.read_failed()
     assert not window.landing_owed()
     window.owe_first(_search_fence())

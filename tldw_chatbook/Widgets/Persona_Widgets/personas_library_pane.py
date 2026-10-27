@@ -491,10 +491,8 @@ class RoleplayItemList(OptionList):
     # load-through still owed is not wanted any more (TASK-33910.34).
 
     def action_select(self) -> None:
-        if self._window.landing_owed():
-            # The searched list's rows are pending: the cursor is on rows they
-            # replace, so Enter opens nothing; the landing is still owed
-            # (TASK-33910.35).
+        if self._window.defer_first_activation():
+            # Open no stale row; matching publication fulfils this Enter once.
             return
         self._window.user_moved()
         super().action_select()

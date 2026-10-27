@@ -8031,7 +8031,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `exit_on_error=True` does exactly that).
         self.run_worker(
             self._mark_notification_read(event.notification_id),
-            exclusive=True,
+            exclusive=False,  # Each native commit must reach its refresh.
             group="wc_mark_notification_read",
             exit_on_error=False,
         )
@@ -8051,7 +8051,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # TASK-21238: same guard as the mark-read worker above.
         self.run_worker(
             self._dismiss_notification(event.notification_id),
-            exclusive=True,
+            exclusive=False,  # Each native commit must reach its refresh.
             group="wc_dismiss_notification",
             exit_on_error=False,
         )

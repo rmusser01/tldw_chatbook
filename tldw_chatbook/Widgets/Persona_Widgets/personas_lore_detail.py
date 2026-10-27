@@ -63,9 +63,12 @@ class LoreEntriesReorderRequested(Message):
 
 
 class LoreBookSettingsSaveRequested(Message):
-    def __init__(self, payload: dict) -> None:
+    def __init__(
+        self, payload: dict, *, submitted_snapshot: tuple | None = None
+    ) -> None:
         super().__init__()
         self.payload = payload
+        self.submitted_snapshot = submitted_snapshot
 
 
 class LoreBookExportRequested(Message):
@@ -489,6 +492,17 @@ class PersonasLoreDetailWidget(Vertical):
             "regex": regex,
         }
 
+    def settings_snapshot(self) -> tuple:
+        """Capture raw submitted controls without normalizing unfinished input."""
+        return (
+            self.query_one("#personas-lore-name", Input).value,
+            self.query_one("#personas-lore-description", TextArea).text,
+            self.query_one("#personas-lore-scan-depth", Input).value,
+            self.query_one("#personas-lore-token-budget", Input).value,
+            self.query_one("#personas-lore-recursive", Switch).value,
+            self.query_one("#personas-lore-enabled", Switch).value,
+        )
+
     def settings_payload(self) -> dict:
         raw_scan_depth = (
             self.query_one("#personas-lore-scan-depth", Input).value.strip() or "3"
@@ -648,7 +662,11 @@ class PersonasLoreDetailWidget(Vertical):
     @on(Button.Pressed, "#personas-lore-settings-save")
     def _settings_save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(LoreBookSettingsSaveRequested(self.settings_payload()))
+        self.post_message(
+            LoreBookSettingsSaveRequested(
+                self.settings_payload(), submitted_snapshot=self.settings_snapshot()
+            )
+        )
 
     @on(Button.Pressed, "#personas-lore-export")
     def _export_pressed(self, event: Button.Pressed) -> None:
